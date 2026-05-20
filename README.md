@@ -1,6 +1,3 @@
-bashcd ~/Documents/agentic-workflow-platform.nosync
-
-cat > README.md << 'EOF'
 # Agentic Workflow Platform
 
 A learning project: a node-typed AI workflow runtime where users compose workflows from RAG agents, MCP agents, human-in-loop agents, routers, transforms, and tool nodes for Excel, PowerPoint, and PDF.
