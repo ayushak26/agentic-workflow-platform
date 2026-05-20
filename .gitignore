@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Node (Phase 9 onwards)
+node_modules/
+ui/dist/
+ui/.vite/
+
+# Docker
+.docker/
+
+# Local data (volumes mount through Docker)
+data/
+*.log
