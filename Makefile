@@ -26,7 +26,10 @@ ps:
 
 test:
 	docker compose exec app pytest -v
-
+	
+ingest:
+	@if [ -z "$(FILE)" ]; then echo "usage: make ingest FILE=path/to/document.pdf [META='industry=mining doc_type=case_study']"; exit 2; fi
+	@docker compose exec app python -m app.ingestion.cli $(FILE) $(addprefix --meta ,$(META))
 fmt:
 	ruff format app tests
 	ruff check --fix app tests

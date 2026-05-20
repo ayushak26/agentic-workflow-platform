@@ -21,6 +21,8 @@ services:
       - ./app:/code/app
       - ./workflows:/code/workflows
       - ./tests:/code/tests
+      - ./samples:/code/samples
+      - ./scripts:/code/scripts
     networks:
       - awp
 
