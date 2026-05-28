@@ -21,15 +21,16 @@ from app.retrieval.models import RetrievedChunk
 log = structlog.get_logger(__name__)
 
 
-_COMPRESS_SYSTEM = """You are an extraction tool. You will be given a
-question and a passage. Return only the sentences from the passage,
-verbatim and in the original order, that help answer the question.
+_COMPRESS_SYSTEM = """Return sentences from the passage, verbatim and in the original
+order, that are relevant to the question or provide useful context.
 
 Rules:
 - Do not paraphrase. Do not summarize. Copy sentences exactly.
 - Preserve original punctuation and capitalization.
-- If no sentence in the passage helps answer the question, return the
-  single token: NONE
+- Include sentences even if they provide partial or contextual relevance.
+  The downstream caller decides what's useful.
+- If literally no sentence in the passage has any bearing on the question,
+  return the single token: NONE
 - Do not add any preamble, explanation, or closing remark.
 """
 

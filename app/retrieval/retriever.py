@@ -20,6 +20,7 @@ from app.retrieval.compressor import compress_chunks
 from app.retrieval.hybrid_search import hybrid_search
 from app.retrieval.models import RetrievalQuery, RetrievalResult, RetrievedChunk
 from app.retrieval.query_understanding import rewrite_query
+from app.ingestion.embedder import Embedder
 from app.retrieval.reranker import rerank
 
 log = structlog.get_logger(__name__)
@@ -30,6 +31,7 @@ async def retrieve(
     *,
     weaviate_client: weaviate.WeaviateAsyncClient,
     llm: LLMGateway,
+    embedder: Embedder, 
 ) -> RetrievalResult:
     """Run the four-stage retrieval pipeline.
 
@@ -68,7 +70,8 @@ async def retrieve(
     # ---- Stage 2 — hybrid search with metadata pre-filter ------------
     candidates, t = await hybrid_search(
         client=weaviate_client,
-        collection_name=settings.WEAVIATE_COLLECTION,
+        embedder=embedder,
+        collection_name=settings.weaviate_collection,
         query=effective_query,
         filters=q.filters,
         top_k=q.top_k_candidates,

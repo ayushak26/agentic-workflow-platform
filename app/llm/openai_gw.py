@@ -5,11 +5,12 @@ Live provider for this build. Anthropic is the architectural default
 serves all routed requests via the fallback map in registry.py.
 
 GPT-5 family quirks absorbed in this file (so callers don't have to know):
-  - max_tokens          → max_completion_tokens
-  - temperature != 1    → dropped (GPT-5 locks temperature to default)
+  - max_tokens          -> max_completion_tokens
+  - temperature != 1    -> dropped (GPT-5 locks temperature to default)
+  - reasoning tokens    -> share max_completion_tokens budget; enforce floor
 
 Structured output uses the SDK's .parse() shortcut with a Pydantic model
-as response_format — never free-text JSON parsing.
+as response_format -- never free-text JSON parsing.
 """
 from __future__ import annotations
 
@@ -26,10 +27,14 @@ T = TypeVar("T", bound=BaseModel)
 log = structlog.get_logger(__name__)
 
 
-# GPT-5 family models lock temperature to the default (1). Older models
-# still accept custom values. Centralize the policy here so callers can
-# keep passing temperature=0.0 without caring which model family they hit.
+# GPT-5 family quirks ---------------------------------------------------
+
 _GPT5_FAMILY_PREFIXES = ("gpt-5",)
+
+# Reasoning tokens share max_completion_tokens. A budget of 800 on a
+# small chunk leaves 0 visible output once reasoning is done. Floor
+# protects callers who don't know about reasoning overhead.
+_GPT5_MIN_COMPLETION_TOKENS = 4096
 
 
 def _supports_custom_temperature(model: str) -> bool:
@@ -37,9 +42,22 @@ def _supports_custom_temperature(model: str) -> bool:
     return not model.startswith(_GPT5_FAMILY_PREFIXES)
 
 
+def _completion_tokens_for(model: str, requested: int) -> int:
+    """Apply provider-specific minimums to max_completion_tokens.
+
+    GPT-5 reasoning models silently truncate to empty output if the
+    budget is too tight. Older models pass through unchanged.
+    """
+    if model.startswith(_GPT5_FAMILY_PREFIXES):
+        return max(requested, _GPT5_MIN_COMPLETION_TOKENS)
+    return requested
+
+
+# ---------------------------------------------------------------------
+
+
 class OpenAIGateway(LLMGateway):
-    """OpenAI-backed gateway. One AsyncOpenAI client per instance,
-    reused across the whole app."""
+    """OpenAI-backed gateway. One AsyncOpenAI client per instance."""
 
     def __init__(self, api_key: str):
         self._client = AsyncOpenAI(api_key=api_key)
@@ -59,7 +77,7 @@ class OpenAIGateway(LLMGateway):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_completion_tokens": max_tokens,
+            "max_completion_tokens": _completion_tokens_for(model, max_tokens),
         }
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
@@ -82,7 +100,7 @@ class OpenAIGateway(LLMGateway):
         user: str,
         response_model: Type[T],
         temperature: float = 0.0,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
     ) -> T:
         call_kwargs: dict = {
             "model": model,
@@ -91,7 +109,7 @@ class OpenAIGateway(LLMGateway):
                 {"role": "user", "content": user},
             ],
             "response_format": response_model,
-            "max_completion_tokens": max_tokens,
+            "max_completion_tokens": _completion_tokens_for(model, max_tokens),
         }
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature

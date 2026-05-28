@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # Retrieval — defaults flipped to GPT while OpenAI is the live provider.
     # YAML workflows targeting claude-* will route to the Anthropic stub.
-    retrieval_reranker_model: str = "gpt-5"
+    retrieval_reranker_model: str = "gpt-5-mini"
     retrieval_compressor_model: str = "gpt-5-mini"
     weaviate_collection: str = "DocumentChunk"
 
