@@ -8,6 +8,16 @@ Concurrency: this function is async. Mongo (motor) and the embedder
 (AsyncOpenAI) are natively async. Weaviate's v4 client is sync, so writes
 to Weaviate run in a thread executor via asyncio.to_thread to avoid blocking
 the event loop. Same pattern for MinIO uploads (boto3 is sync).
+
+Ingest one document end-to-end. Idempotent.
+
+`metadata` lets the caller tag the document with application-level fields
+(industry, doc_type, session_id, etc.) that flow into Weaviate as per-chunk
+metadata and into the manifest as document-level metadata. Defaults to {}.
+
+If `metadata["session_id"]` is omitted, chunks are written under the
+"default" session — fine for dev/demo. Real workflows must pass an
+explicit session_id; Phase 11's isolation verifier enforces this.
 """
 from __future__ import annotations
 
@@ -150,6 +160,7 @@ async def ingest_file(
                 "industry": str(metadata.get("industry", "")),
                 "doc_type": str(metadata.get("doc_type", "")),
                 "language": str(c.metadata.get("doc_language", "")),
+                "session_id": str(metadata.get("session_id", "default"))
             }
             weaviate_objects.append(obj)
 

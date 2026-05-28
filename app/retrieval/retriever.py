@@ -15,7 +15,7 @@ import structlog
 import weaviate
 
 from app.config import settings
-from app.llm.gateway import LLMGateway
+from app.llm import LLMGateway
 from app.retrieval.compressor import compress_chunks
 from app.retrieval.hybrid_search import hybrid_search
 from app.retrieval.models import RetrievalQuery, RetrievalResult, RetrievedChunk

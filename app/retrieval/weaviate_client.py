@@ -38,6 +38,7 @@ SCHEMA_PROPERTIES = [
     Property(name="industry", data_type=DataType.TEXT, index_filterable=True),
     Property(name="doc_type", data_type=DataType.TEXT, index_filterable=True),
     Property(name="language", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="session_id", data_type=DataType.TEXT, index_filterable=True)
 ]
 
 
@@ -131,7 +132,6 @@ class WeaviateClient:
         vectors: list[list[float]],
     ) -> int:
         """Insert or replace chunks. Idempotent on chunk_id.
-
         Each chunk dict must contain all schema properties. vectors[i] is the
         embedding for chunks[i]. Length mismatch raises ValueError.
         """
@@ -143,30 +143,40 @@ class WeaviateClient:
         client = self.connect()
         collection = client.collections.get(COLLECTION_NAME)
 
-        # Batch insert — Weaviate v4 uses a context-managed batcher
+        # Weaviate v4 batch context: the `batch` object's stats are only
+        # readable WHILE the context is open. Capture before exit.
         with collection.batch.dynamic() as batch:
             for chunk, vector in zip(chunks, vectors):
-                # Use chunk_id as the deterministic UUID seed for upsert behavior
-                # weaviate auto-generates UUID v5 from a deterministic name
                 batch.add_object(
                     properties=chunk,
                     vector=vector,
                     uuid=weaviate.util.generate_uuid5(chunk["chunk_id"]),
                 )
 
-        if batch.number_errors > 0:
-            log.error(
-                "weaviate.upsert_errors",
-                error_count=batch.number_errors,
-                total=len(chunks),
-            )
+        # After the `with` block, use the v4 helpers on the collection's batch
+        # interface to read failure stats. `failed_objects` lists every failure
+        # with its error message — much more useful than just a count.
+        failed = collection.batch.failed_objects
+        failed_count = len(failed) if failed else 0
+        inserted = len(chunks) - failed_count
+
+        if failed_count > 0:
+            # Log the first few failures so the cause is visible without
+            # dumping potentially huge lists to stdout.
+            for f in failed[:3]:
+                log.error(
+                    "weaviate.upsert_error",
+                    message=getattr(f, "message", str(f)),
+                    obj=getattr(f, "object_", None),
+                )
 
         log.info(
             "weaviate.upsert_done",
-            inserted=len(chunks) - batch.number_errors,
-            errors=batch.number_errors,
+            inserted=inserted,
+            errors=failed_count,
+            total=len(chunks),
         )
-        return len(chunks) - batch.number_errors
+        return inserted
 
     def count_chunks(self) -> int:
         """Total chunks in the collection. Useful for tests and diagnostics."""

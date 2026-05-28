@@ -17,7 +17,7 @@ from typing import Optional
 import structlog
 from pydantic import BaseModel, Field
 
-from app.llm.gateway import LLMGateway
+from app.llm import LLMGateway
 from app.retrieval.models import RetrievedChunk
 
 log = structlog.get_logger(__name__)

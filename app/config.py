@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # YAML workflows targeting claude-* will route to the Anthropic stub.
     retrieval_reranker_model: str = "gpt-5"
     retrieval_compressor_model: str = "gpt-5-mini"
-    weaviate_collection: str = "DocumentChunks"
+    weaviate_collection: str = "DocumentChunk"
 
     # Infrastructure endpoints
     mongo_url: str = "mongodb://mongo:27017"
