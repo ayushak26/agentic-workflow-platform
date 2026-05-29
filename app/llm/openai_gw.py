@@ -20,7 +20,7 @@ import structlog
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
-from app.llm.base import LLMGateway, LLMResponse
+from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -123,3 +123,84 @@ class OpenAIGateway(LLMGateway):
                 f"{response_model.__name__}. refusal={refusal!r}"
             )
         return parsed
+    
+    async def chat_with_tools(
+        self,
+        *,
+        model: str,
+        system: str,
+        messages: list[dict],
+        tools: list[dict],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> LLMToolUseResponse:
+        import json  # local import keeps module-level imports lean
+
+        # Translate neutral messages → OpenAI format
+        openai_messages: list[dict] = [{"role": "system", "content": system}]
+        for m in messages:
+            role = m["role"]
+            if role == "user":
+                openai_messages.append({"role": "user", "content": m["content"]})
+            elif role == "assistant":
+                msg: dict = {"role": "assistant", "content": m.get("content")}
+                if m.get("tool_calls"):
+                    msg["tool_calls"] = [
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": json.dumps(tc["arguments"]),
+                            },
+                        }
+                        for tc in m["tool_calls"]
+                    ]
+                openai_messages.append(msg)
+            elif role == "tool":
+                openai_messages.append({
+                    "role": "tool",
+                    "tool_call_id": m["tool_call_id"],
+                    "content": m["content"],
+                })
+
+        openai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"],
+                },
+            }
+            for t in tools
+        ]
+
+        response = await self._client.chat.completions.create(
+            model=model,
+            messages=openai_messages,
+            tools=openai_tools,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+        choice = response.choices[0]
+        message = choice.message
+
+        tool_calls: list[ToolCall] = []
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                tool_calls.append(ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=json.loads(tc.function.arguments),
+                ))
+
+        return LLMToolUseResponse(
+            text=message.content,
+            tool_calls=tool_calls,
+            model=response.model,
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
+            stop_reason=choice.finish_reason,
+        )

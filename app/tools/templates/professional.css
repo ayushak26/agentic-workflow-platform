@@ -1,0 +1,8 @@
+@page { size: Letter; margin: 1.5cm; @bottom-center { content: "— " counter(page) " —"; } }
+body { font-family: "Liberation Serif", Georgia, serif; color: #222; }
+.cover h1 { font-size: 28pt; text-align: center; font-weight: normal; }
+.cover .client { text-align: center; font-style: italic; }
+.proposal-section { page-break-before: always; }
+.proposal-section h2 { font-size: 18pt; font-weight: normal; border-bottom: 1px solid #999; }
+.content { font-size: 11pt; line-height: 1.6; }
+footer { text-align: center; font-style: italic; font-size: 9pt; }

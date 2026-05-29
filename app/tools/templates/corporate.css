@@ -1,0 +1,8 @@
+@page { size: A4; margin: 2cm; @bottom-right { content: counter(page); } }
+body { font-family: "Liberation Sans", Helvetica, sans-serif; color: #1a2b4a; }
+.cover h1 { font-size: 32pt; color: #002b5c; border-bottom: 4px solid #002b5c; padding-bottom: 12pt; }
+.cover .client { font-size: 14pt; color: #555; }
+.proposal-section { page-break-before: always; }
+.proposal-section h2 { color: #002b5c; font-size: 20pt; border-left: 6px solid #c8a44e; padding-left: 10pt; }
+.content { font-size: 11pt; line-height: 1.55; }
+footer { font-size: 9pt; color: #888; }

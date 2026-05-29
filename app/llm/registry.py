@@ -100,3 +100,40 @@ def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
     if gw_cls is AnthropicGateway:
         return AnthropicGateway()
     raise ValueError(f"Don't know how to construct {gw_cls.__name__}")
+
+class RegistryLLMGateway(LLMGateway):
+    """LLMGateway adapter that dispatches every call through the registry.
+
+    Nodes consume a single LLMGateway instance via DI. This adapter is that
+    instance — it doesn't bind to one provider. On every call it asks the
+    registry which concrete gateway handles the requested model, applies
+    any documented fallback (e.g., claude-sonnet-4-5 → gpt-5 while the
+    Anthropic provider is stubbed), and delegates.
+
+    Interview line: 'per-node YAML picks the model, the adapter routes,
+    the registry's fallback table is the degradation pattern we'd use in
+    prod when a primary provider is degraded.'
+    """
+
+    async def complete(self, *, model: str, **kwargs):
+        gateway, resolved = get_gateway(model)
+        return await gateway.complete(model=resolved, **kwargs)
+
+    async def complete_structured(self, *, model: str, **kwargs):
+        gateway, resolved = get_gateway(model)
+        return await gateway.complete_structured(model=resolved, **kwargs)
+    
+    async def chat_with_tools(self, *, model: str, **kwargs):
+        gateway, resolved = get_gateway(model)
+        return await gateway.chat_with_tools(model=resolved, **kwargs)
+
+
+_default_registry_gateway: RegistryLLMGateway | None = None
+
+
+def get_llm_gateway() -> RegistryLLMGateway:
+    """Module-level singleton used by main.py's lifespan."""
+    global _default_registry_gateway
+    if _default_registry_gateway is None:
+        _default_registry_gateway = RegistryLLMGateway()
+    return _default_registry_gateway

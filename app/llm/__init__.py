@@ -1,11 +1,12 @@
-"""LLM provider gateway.
-
-Public API:
-    LLMGateway       — abstract base
-    LLMResponse      — plain text response
-    get_gateway(name)— resolve a model name to its gateway
+"""LLM gateway package. Public API:
+  - LLMGateway, LLMResponse: contract + response shape (in .base)
+  - get_llm_gateway(): module-level singleton routing through the registry
 """
-from app.llm.base import LLMGateway, LLMResponse
-from app.llm.registry import get_gateway
+from .base import LLMGateway, LLMResponse
+from .registry import get_llm_gateway, RegistryLLMGateway, get_gateway, resolve_model
 
-__all__ = ["LLMGateway", "LLMResponse", "get_gateway"]
+__all__ = [
+    "LLMGateway", "LLMResponse",
+    "get_llm_gateway", "RegistryLLMGateway",
+    "get_gateway", "resolve_model",
+]
