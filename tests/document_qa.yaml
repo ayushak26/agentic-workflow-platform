@@ -1,0 +1,18 @@
+name: "Document Q&A"
+description: "Ask a question against the knowledge base with grounded citations."
+version: "1.0"
+
+inputs:
+  question:
+    type: text
+
+nodes:
+  - id: answer
+    type: RAGAgent
+    config:
+      model: "claude-sonnet-4-5"
+      query: "{{inputs.question}}"
+      filters: {}
+      top_n_final: 5
+
+edges: []

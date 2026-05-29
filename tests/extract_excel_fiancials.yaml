@@ -1,0 +1,31 @@
+name: "Extract Excel Financials"
+description: "Extract tables from an Excel file, then summarize via LLM."
+version: "1.0"
+
+inputs:
+  excel_key:
+    type: text
+    description: "MinIO key of the uploaded .xlsx"
+
+nodes:
+  - id: extract
+    type: ExcelTableExtractor
+    config:
+      minio_key: "{{inputs.excel_key}}"
+
+  - id: summarize
+    type: TransformAgent
+    config:
+      model: "claude-sonnet-4-5"
+      prompt_template: |
+        Summarize key patterns in this financial data.
+
+        Tables: {{extract.tables}}
+      output_schema:
+        trends: list
+        anomalies: list
+        bottom_line: str
+
+edges:
+  - from: extract
+    to: summarize

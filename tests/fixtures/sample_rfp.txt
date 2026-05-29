@@ -1,0 +1,26 @@
+REQUEST FOR PROPOSAL — RFP-2026-04
+
+Issuing Organization: Acme Financial Services
+Industry: Financial Services
+Submission Deadline: 30 days from issuance
+
+Background:
+Acme Financial Services is undertaking a strategic review of our operations
+and seeking external advisory support. We have grown 40% YoY for three
+consecutive years but operational efficiency has declined.
+
+Required Capabilities:
+- Process re-engineering across customer onboarding
+- AI/ML feasibility assessment for fraud detection
+- Cost-to-serve analysis by customer segment
+- Change management for technology adoption
+
+Evaluation Criteria:
+- Relevant case studies in financial services (40%)
+- Methodology fit (30%)
+- Team experience (20%)
+- Commercial terms (10%)
+
+Timeline:
+Engagement to commence within 4 weeks of contract signature.
+Initial findings expected within 8 weeks.
