@@ -27,6 +27,10 @@ dependencies = [
   "openai>=1.50",
   # Phase 2 — resilience
   "tenacity>=8.5",
+  # Phase 4 — orchestration
+  "langgraph>=0.2.50",
+  "pyyaml>=6.0.2",
+  "mcp>=1.0",
 ]
 
 [project.optional-dependencies]

@@ -38,7 +38,9 @@ SCHEMA_PROPERTIES = [
     Property(name="industry", data_type=DataType.TEXT, index_filterable=True),
     Property(name="doc_type", data_type=DataType.TEXT, index_filterable=True),
     Property(name="language", data_type=DataType.TEXT, index_filterable=True),
-    Property(name="session_id", data_type=DataType.TEXT, index_filterable=True)
+    Property(name="session_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="collection_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="ingested_at", data_type=DataType.DATE),                             
 ]
 
 
@@ -184,7 +186,11 @@ class WeaviateClient:
         collection = client.collections.get(COLLECTION_NAME)
         return collection.aggregate.over_all(total_count=True).total_count
 
-
+    def add_property(self, prop: Property) -> None:
+        """Non-destructive schema evolution. Old objects get null for new field."""
+        collection = self.connect().collections.get(COLLECTION_NAME)
+        collection.config.add_property(prop)
+        log.info("weaviate.property_added", name=prop.name)
 # ---------- Module-level singleton -------------------------------------------
 
 _default_client: WeaviateClient | None = None

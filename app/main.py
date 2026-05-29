@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.observability.logging import configure_logging, get_logger
+from app.api import workflows
 
 # Configure logging at import time so even startup logs are JSON
 configure_logging()
@@ -37,6 +38,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.include_router(workflows.router)
 
 @app.get("/health", tags=["meta"])
 async def health() -> dict[str, str]:

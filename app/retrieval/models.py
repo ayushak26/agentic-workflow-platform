@@ -35,6 +35,7 @@ class RetrievalFilters(BaseModel):
     session_id: str = Field(..., min_length=1)
     industry: Optional[str] = None
     doc_types: Optional[list[DocType]] = None
+    collection_ids: Optional[list[str]] = None
     date_after: Optional[date] = None
     date_before: Optional[date] = None
 

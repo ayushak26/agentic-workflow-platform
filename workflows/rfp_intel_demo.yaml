@@ -1,0 +1,49 @@
+name: "RFP Intel Demo"
+description: "Phase 5 demo — Transform extracts industry, Router branches, HITL confirms."
+version: "1.0"
+
+inputs:
+  rfp_text:
+    type: text
+
+nodes:
+  - id: rfp_intel
+    type: TransformAgent
+    config:
+      model: "claude-sonnet-4-5"
+      prompt_template: "Extract the industry and top 3 requirements from this RFP:\n{{inputs.rfp_text}}"
+      output_schema:
+        industry: str
+        requirements: list
+
+  - id: industry_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: finance
+          condition: "rfp_intel.parsed.industry == 'finance'"
+        - name: other
+          default: true
+
+  - id: confirm_finance
+    type: HumanInLoopAgent
+    config:
+      question: "Confirm this is a finance RFP — proceed?"
+      context_fields: ["rfp_intel.parsed.requirements"]
+      allowed_actions: ["approve", "reject"]
+
+  - id: handle_other
+    type: TransformAgent
+    config:
+      model: "claude-sonnet-4-5"
+      prompt_template: "Summarize the requirements for industry {{rfp_intel.parsed.industry}}: {{rfp_intel.parsed.requirements}}"
+
+edges:
+  - from: rfp_intel
+    to: industry_router
+  - from: industry_router
+    condition: route
+    branches:
+      finance: confirm_finance
+      other: handle_other

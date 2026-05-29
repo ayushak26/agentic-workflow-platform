@@ -33,6 +33,7 @@ from app.ingestion.extractor import get_extractor
 from app.observability.logging import get_logger
 from app.retrieval.weaviate_client import WeaviateClient, get_weaviate_client
 from app.storage.minio_client import ObjectStore, get_object_store, key_for_path
+from datetime import datetime, timezone
 
 log = get_logger(__name__)
 
@@ -160,7 +161,9 @@ async def ingest_file(
                 "industry": str(metadata.get("industry", "")),
                 "doc_type": str(metadata.get("doc_type", "")),
                 "language": str(c.metadata.get("doc_language", "")),
-                "session_id": str(metadata.get("session_id", "default"))
+                "session_id": str(metadata.get("session_id", "default")),
+                "collection_id": str(metadata.get("collection_id", "default")),
+                "ingested_at": datetime.now(timezone.utc)
             }
             weaviate_objects.append(obj)
 

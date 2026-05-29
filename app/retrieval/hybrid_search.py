@@ -25,10 +25,12 @@ def _build_where_filter(f: RetrievalFilters) -> Filter:
         clauses.append(Filter.by_property("industry").equal(f.industry))
     if f.doc_types:
         clauses.append(Filter.by_property("doc_type").contains_any(f.doc_types))
+    if f.collection_ids:                                                            
+        clauses.append(Filter.by_property("collection_id").contains_any(f.collection_ids))    
     if f.date_after:
-        clauses.append(Filter.by_property("doc_date").greater_than(f.date_after))
+        clauses.append(Filter.by_property("ingested_at").greater_than(f.date_after))
     if f.date_before:
-        clauses.append(Filter.by_property("doc_date").less_than(f.date_before))
+        clauses.append(Filter.by_property("ingested_at").less_than(f.date_before))
     return Filter.all_of(clauses)
 
 
@@ -72,7 +74,7 @@ async def hybrid_search(
 
     chunks = [
         RetrievedChunk(
-            chunk_id=str(obj.uuid),
+            chunk_id=str(obj.properties.get("chunk_id", obj.uuid)),
             doc_id=obj.properties.get("source_path", ""),
             doc_title=obj.properties.get("source_path", "").split("/")[-1],
             doc_type=obj.properties["doc_type"],

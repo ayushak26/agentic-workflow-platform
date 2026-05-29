@@ -1,0 +1,43 @@
+name: "Parallel Demo"
+description: "Phase 4 stub workflow — proves fan-out and fan-in work."
+version: "1.0"
+
+inputs:
+  topic:
+    type: text
+
+nodes:
+  - id: source
+    type: Literal
+    config:
+      value: "agentic workflows"
+
+  - id: branch_a
+    type: Echo
+    config:
+      template: "Branch A on {{source.value}}"
+
+  - id: branch_b
+    type: Echo
+    config:
+      template: "Branch B on {{source.value}}"
+
+  - id: branch_c
+    type: Echo
+    config:
+      template: "Branch C on {{source.value}}"
+
+  - id: merge
+    type: Echo
+    config:
+      template: "Heard: [{{branch_a.text}}] [{{branch_b.text}}] [{{branch_c.text}}]"
+
+edges:
+  - from: source
+    to: [branch_a, branch_b, branch_c]
+  - from: branch_a
+    to: merge
+  - from: branch_b
+    to: merge
+  - from: branch_c
+    to: merge
