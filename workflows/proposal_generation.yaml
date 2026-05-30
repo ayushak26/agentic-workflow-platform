@@ -62,11 +62,6 @@ nodes:
     config:
       model: claude-sonnet-4-5
       query: Case studies and methodology for {{rfp_intel.parsed.industry}} engagements
-      filters:
-        industry: '{{rfp_intel.parsed.industry}}'
-        collection_ids:
-          - proudfoot_case_studies
-          - proudfoot_methodology
       top_n_final: 10
   - id: approve_retrievals
     type: HumanInLoopAgent

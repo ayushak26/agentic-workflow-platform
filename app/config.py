@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     mongo_url: str = "mongodb://mongo:27017"
     redis_url: str = "redis://redis:6379/0"
     weaviate_url: str = "http://weaviate:8080"
-    minio_endpoint: str = "minio:9000"
+    minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
 

@@ -19,6 +19,7 @@ class TransformConfig(BaseModel):
     system_prompt: str | None = None
     output_schema: dict[str, str] = Field(default_factory=dict)
     temperature: float = 0.2
+    max_tokens: int = 16384           # was implicitly 1024 at the gateway
     max_retries: int = 1
 
 
@@ -31,9 +32,6 @@ class TransformOutput(BaseModel):
     parsed: dict[str, Any]
 
 
-# Map the YAML type strings to Python types for dynamic model building.
-# list defaults to list[str] because OpenAI strict structured output requires
-# an item type; bare `list` produces an invalid schema for that provider.
 _TYPE_MAP: dict[str, Any] = {
     "str": str, "string": str,
     "int": int, "integer": int,
@@ -45,12 +43,10 @@ _TYPE_MAP: dict[str, Any] = {
 
 
 def _build_response_model(name: str, schema: dict[str, str]) -> Type[BaseModel]:
-    """Turn a YAML output_schema dict into a Pydantic model so the gateway's
-    complete_structured can use the provider's native structured-output mode."""
     fields: dict[str, Any] = {}
     for key, type_str in schema.items():
-        py_type = _TYPE_MAP.get(type_str.lower(), str)  # unknown → str
-        fields[key] = (py_type, ...)  # required
+        py_type = _TYPE_MAP.get(type_str.lower(), str)
+        fields[key] = (py_type, ...)
     return create_model(name, **fields)  # type: ignore[call-overload]
 
 
@@ -67,20 +63,17 @@ class TransformAgent(NodeType):
         cfg = TransformConfig(**resolved_config)
         system = cfg.system_prompt or ""
 
-        # Free-text transform (summarize, rewrite) — no schema declared.
         if not cfg.output_schema:
             resp = await llm.complete(
                 model=cfg.model,
                 system=system,
                 user=cfg.prompt_template,
                 temperature=cfg.temperature,
+                max_tokens=cfg.max_tokens,
             )
             return {"raw": resp.text, "parsed": {}}
 
-        # Structured transform (extract, classify) — provider guarantees the shape.
-        response_model = _build_response_model(
-            f"{self.node_id}_Output", cfg.output_schema
-        )
+        response_model = _build_response_model(f"{self.node_id}_Output", cfg.output_schema)
         try:
             instance = await llm.complete_structured(
                 model=cfg.model,
@@ -88,14 +81,10 @@ class TransformAgent(NodeType):
                 user=cfg.prompt_template,
                 response_model=response_model,
                 temperature=cfg.temperature,
+                max_tokens=cfg.max_tokens,
             )
             parsed = instance.model_dump()
             return {"raw": json.dumps(parsed), "parsed": parsed}
         except Exception as e:
-            # complete_structured failed even with the provider's structured mode.
-            # Return empty parsed; downstream templating will fail loudly on missing keys.
-            log.warning(
-                "transform.structured_failed",
-                node_id=self.node_id, error=str(e),
-            )
+            log.warning("transform.structured_failed", node_id=self.node_id, error=str(e))
             return {"raw": "", "parsed": {}}

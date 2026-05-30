@@ -40,6 +40,12 @@ export const api = {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ decision }),
     }).then(j<{ ok: true }>),
+
+    fileUrl(key: string, download = false): string {
+      const params = new URLSearchParams({ key });
+      if (download) params.set('download', 'true');
+      return `${BASE}/api/files?${params.toString()}`;
+    },  
 };
 
 export const wsUrl = (run_id: string) =>

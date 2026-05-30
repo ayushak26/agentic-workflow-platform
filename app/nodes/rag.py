@@ -88,23 +88,20 @@ class RAGAgent(NodeType):
                 "rewritten_query": result.rewritten_query,
             }
 
-        # 3. Build the grounded prompt — label each chunk [1], [2], ...
+        # 3. Build the labelled sources block — [1], [2], ...
         sources_block = "\n\n".join(
             f"[{i+1}] (from {c.doc_title})\n{c.compressed_text or c.text}"
             for i, c in enumerate(result.chunks)
         )
-        user_prompt = (
-            f"{cfg.generation_prompt}\n\n"
-            f"QUESTION: {cfg.query}\n\n"
-            f"SOURCES:\n{sources_block}"
-        )
 
-        # 4. Generate
-        answer = await llm.chat(
+        # 4. Generate (grounded). Instruction → system; question + sources → user.
+        resp = await llm.complete(
             model=cfg.model,
-            messages=[{"role": "user", "content": user_prompt}],
+            system=cfg.generation_prompt,
+            user=f"QUESTION: {cfg.query}\n\nSOURCES:\n{sources_block}",
             temperature=0.2,
         )
+        answer = resp.text
 
         # 5. Parse citations — keep only labels that exist in the sources
         valid_labels = {i + 1 for i in range(len(result.chunks))}

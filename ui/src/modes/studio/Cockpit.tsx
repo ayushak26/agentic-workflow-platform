@@ -12,6 +12,7 @@ import { useRunSocket } from '../../hooks/useRunSocket';
 import { Spinner } from '../../components/Spinner';
 import { CockpitNode } from './CockpitNode';
 import { HITLPanel } from './HITLPanel';
+import { OutputViewer } from './OutputViewer';
 import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } from './yaml-bridge';
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 
@@ -20,26 +21,53 @@ const nodeTypes = { workflow: CockpitNode };
 
 const STATUS_BADGE: Record<string, string> = {
   connecting: 'bg-slate-200 text-ink-700',
-  running:    'bg-accent-600 text-white',
-  paused:     'bg-warn text-white',
-  completed:  'bg-ok text-white',
-  failed:     'bg-bad text-white',
+  running: 'bg-accent-600 text-white',
+  paused: 'bg-warn text-white',
+  completed: 'bg-ok text-white',
+  rejected: 'bg-warn text-white',
+  failed: 'bg-bad text-white',
+};
+
+type Gate = {
+  nodeId: string;
+  context: unknown;
+  question: string;
+  allowedActions: string[];
+};
+
+type Finished = {
+  status: 'completed' | 'failed' | 'rejected';
+  state?: any;
+  error?: string;
+  node?: string;
+  reason?: string;
 };
 
 export function Cockpit() {
   const { runId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const navState = (location.state ?? {}) as {
-    workflowYaml?: string;
-    inputs?: Record<string, unknown>;
-    workflowName?: string;
-  };
+
+  // Snapshot navigation state ONCE so the component binds to a stable run for its
+  // whole life — re-deriving it each render could remount and kill the socket.
+  const [navState] = useState(
+    () =>
+      (location.state ?? {}) as {
+        workflowYaml?: string;
+        inputs?: Record<string, unknown>;
+        workflowName?: string;
+      }
+  );
 
   const [parsedWf, setParsedWf] = useState<YamlWorkflow | null>(null);
   const [runTriggered, setRunTriggered] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // HITL gates and final result are driven off the run/resume HTTP responses,
+  // NOT the WebSocket — so approvals work even if the socket drops mid-run.
+  const [gate, setGate] = useState<Gate | null>(null);
+  const [finished, setFinished] = useState<Finished | null>(null);
 
   const { events, open: wsOpen, error: wsError } = useRunSocket(runId ?? null);
 
@@ -48,17 +76,48 @@ export function Cockpit() {
     if (navState.workflowYaml) setParsedWf(parseYaml(navState.workflowYaml));
   }, [navState.workflowYaml]);
 
-  // After WS opens, trigger the run. Exactly once.
+  // Apply a run/resume response: advance to the next gate, or finish.
+  function applyResumeResult(res: any) {
+    if (!res) return;
+    if (res.status === 'paused') {
+      const v = res.state?.__interrupt__?.[0]?.value;
+      if (v) {
+        setGate({
+          nodeId: v.node_id,
+          context: v.context,
+          question: v.question ?? '',
+          allowedActions: v.allowed_actions ?? ['approve', 'reject'],
+        });
+      }
+    } else if (res.status === 'completed') {
+      setGate(null);
+      setFinished({ status: 'completed', state: res.state });
+    } else if (res.status === 'failed') {
+      setGate(null);
+      setFinished({ status: 'failed', error: res.error });
+    } else if (res.status === 'rejected') {
+      setGate(null);
+      setFinished({ status: 'rejected', node: res.node_id, reason: res.reason });
+    } else if (res.status === 'failed') {
+      setGate(null);
+      setFinished({ status: 'failed', error: res.error });
+    }
+  }
+
+  // After WS opens, trigger the run exactly once. The run response seeds the first gate.
   useEffect(() => {
     if (!wsOpen || runTriggered || !navState.workflowYaml || !runId) return;
     setRunTriggered(true);
-    api.runWorkflow(navState.workflowYaml, navState.inputs ?? {}, undefined, runId)
-      .catch(e => setTriggerError(String(e.message ?? e)));
+    api
+      .runWorkflow(navState.workflowYaml, navState.inputs, 'default', runId)
+      .then((res) => applyResumeResult(res))
+      .catch((e) => setTriggerError(String(e.message ?? e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsOpen, runTriggered, navState.workflowYaml, navState.inputs, runId]);
 
-  // Derive node states from events. Pure function, memoized.
+  // Derive node colors from WS events (best-effort animation).
   const cockpit = useMemo(() => {
-    const nodeIds = parsedWf?.nodes.map(n => n.id) ?? [];
+    const nodeIds = parsedWf?.nodes.map((n) => n.id) ?? [];
     return deriveCockpitState(nodeIds, events, wsOpen);
   }, [parsedWf, events, wsOpen]);
 
@@ -66,12 +125,21 @@ export function Cockpit() {
   const { nodes, edges } = useMemo(() => {
     if (!parsedWf) return { nodes: [] as RFNode<CockpitNodeData>[], edges: [] };
     const base = yamlToReactFlow(parsedWf);
-    const nodes = base.nodes.map<RFNode<CockpitNodeData>>(n => ({
+    const nodes = base.nodes.map<RFNode<CockpitNodeData>>((n) => ({
       ...n,
       data: { ...n.data, status: cockpit.nodeStates[n.data.nodeId] ?? 'pending' },
     }));
     return { nodes, edges: base.edges };
   }, [parsedWf, cockpit.nodeStates]);
+
+  // ✅ early returns go AFTER all hooks
+  if (finished?.status === 'completed') {
+    return <OutputViewer state={finished.state} workflowName={navState.workflowName ?? parsedWf?.name} />;
+  }
+
+  if (!runId) {
+    return <div className="p-8 text-ink-500">No run id in URL.</div>;
+  }
 
   if (!runId) {
     return <div className="p-8 text-ink-500">No run id in URL.</div>;
@@ -81,7 +149,8 @@ export function Cockpit() {
       <div className="p-8">
         <div className="text-bad">No workflow YAML in navigation state.</div>
         <div className="text-ink-500 text-sm mt-2">
-          Cockpits are launched from the Library's Run button. Direct navigation isn't supported yet (Phase 11 will add a snapshot endpoint that lets you reattach).
+          Cockpits are launched from the Library's Run button. Direct navigation isn't supported yet
+          (Phase 11 will add a snapshot endpoint that lets you reattach).
         </div>
         <button
           onClick={() => navigate('/studio/library')}
@@ -93,11 +162,16 @@ export function Cockpit() {
     );
   }
   if (!parsedWf) {
-    return <div className="p-8"><Spinner label="Parsing workflow…" /></div>;
+    return (
+      <div className="p-8">
+        <Spinner label="Parsing workflow…" />
+      </div>
+    );
   }
 
-  const selectedNode = selectedId ? nodes.find(n => n.id === selectedId) : null;
-  const showHITL = cockpit.pausedNode !== null;
+  const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : null;
+  const showHITL = gate !== null && finished === null;
+  const displayStatus = finished?.status ?? (gate ? 'paused' : cockpit.runStatus);
 
   return (
     <div className="h-full flex">
@@ -121,12 +195,14 @@ export function Cockpit() {
         <div className="absolute top-4 left-4 bg-white/90 backdrop-blur rounded-md px-3 py-2 shadow-sm border border-slate-200">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium">{navState.workflowName ?? parsedWf.name}</span>
-            <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 ${STATUS_BADGE[cockpit.runStatus]}`}>
-              {cockpit.runStatus}
+            <span
+              className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 ${STATUS_BADGE[displayStatus]}`}
+            >
+              {displayStatus}
             </span>
           </div>
           <div className="text-xs text-ink-500 mt-1 font-mono">run {runId.slice(0, 8)}…</div>
-          {wsError && <div className="text-xs text-bad mt-1">{wsError}</div>}
+          {wsError && <div className="text-xs text-ink-500 mt-1">live feed offline (gates still work)</div>}
           {triggerError && <div className="text-xs text-bad mt-1">{triggerError}</div>}
         </div>
       </div>
@@ -134,16 +210,29 @@ export function Cockpit() {
       <aside className="w-96 border-l border-slate-200 bg-white overflow-y-auto">
         {showHITL ? (
           <HITLPanel
+            key={gate!.nodeId}
             runId={runId}
-            pausedNodeId={cockpit.pausedNode!.id}
-            context={cockpit.pausedNode!.context}
+            pausedNodeId={gate!.nodeId}
+            context={gate!.context}
+            allowedActions={gate!.allowedActions}
+            onResult={applyResumeResult}
           />
-        ) : selectedNode === null ? (
-          <div className="p-6 text-ink-500 text-sm">
-            Click a node to see its output preview.
-            {cockpit.runStatus === 'completed' && <div className="mt-3 text-ok">Run completed.</div>}
-            {cockpit.runStatus === 'failed' && <div className="mt-3 text-bad">{cockpit.errorMessage}</div>}
+        ) : finished ? (
+          <div className="p-6">
+            {finished.status === 'rejected' ? (
+              <>
+                <div className="text-warn font-medium">Workflow rejected</div>
+                <div className="text-sm text-ink-500 mt-1">
+                  Rejected at <span className="font-mono">{finished.node}</span>
+                  {finished.reason ? ` — ${finished.reason}` : ''}
+                </div>
+              </>
+            ) : (
+              <div className="text-bad font-medium">Workflow failed: {finished.error}</div>
+            )}
           </div>
+        ) : selectedNode === null ? (
+          <div className="p-6 text-ink-500 text-sm">Click a node to see its output preview.</div>
         ) : (
           <div className="p-6">
             <div className="text-xs uppercase tracking-wide text-ink-500">{selectedNode.data.typeName}</div>

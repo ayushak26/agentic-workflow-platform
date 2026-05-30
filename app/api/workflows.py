@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import yaml
 from pathlib import Path
 from fastapi import WebSocket, WebSocketDisconnect
+from fastapi.responses import Response
 
 from app.nodes.registry import NodeRegistry
 from app.runtime.executor import run_workflow
@@ -61,6 +62,10 @@ async def resume(run_id: str, req: ResumeRequest):
         return await resume_workflow(run_id, req.decision)
     except HITLResumeError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        # A node failed after resume. Return clean so the POST doesn't become an
+        # unhandled 500 (which Starlette emits outside CORS → "Failed to fetch").
+        return {"status": "failed", "run_id": run_id, "error": str(e)}
     
 WORKFLOWS_DIR = Path("workflows")
 
@@ -140,3 +145,24 @@ async def ws_run(ws: WebSocket, run_id: str):
         pass
     finally:
         await bus.unsubscribe(run_id, q)
+
+@router.get("/files")
+def get_file(key: str, request: Request, download: bool = False):
+    """Stream a file from object storage by key (used by the Output Viewer).
+    POC: serves any workflow-scoped key. Phase 11 adds session-scoped access."""
+    if not key.startswith("workflows/"):
+        raise HTTPException(status_code=400, detail="only workflow-scoped keys are served")
+    store = getattr(request.app.state, "services", {}).get("object_store")
+    if store is None:
+        raise HTTPException(status_code=503, detail="object store unavailable")
+    try:
+        data = store.get_bytes(key)
+    except Exception:
+        raise HTTPException(status_code=404, detail="file not found")
+
+    media_type = "application/pdf" if key.endswith(".pdf") else "application/octet-stream"
+    headers = {}
+    if download:
+        filename = key.rsplit("/", 1)[-1]
+        headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return Response(content=data, media_type=media_type, headers=headers)        

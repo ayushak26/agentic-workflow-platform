@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 import structlog
 import weaviate
+import asyncio
 from weaviate.classes.query import Filter, HybridFusion
 
 from app.ingestion.embedder import Embedder
@@ -61,7 +62,8 @@ async def hybrid_search(
     collection = client.collections.get(collection_name)
 
     # 2. Hybrid call with both halves provided explicitly.
-    response = await collection.query.hybrid(
+    response = await asyncio.to_thread(
+    collection.query.hybrid, 
         query=query,
         vector=query_vector,                          # ← the fix
         alpha=alpha,

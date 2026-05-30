@@ -95,16 +95,14 @@ def _make_runtime_fn(instance, bus: RunEventBus | None):
     return runtime_fn
 
 
-def _wire_edges(graph: StateGraph, edges: list[EdgeSpec]) -> set[str]:
+def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) -> set[str]:
     """Add edges, return the set of 'source' node ids (used to compute terminals)."""
     sources: set[str] = set()
     for edge in edges:
         sources.add(edge.from_)
         if edge.condition and edge.branches:
-            # Conditional router edge — Phase 5 implements RouterAgent that
-            # writes the routing decision into its output; we read it here.
+            # Conditional router edge (RouterAgent writes 'route' into its output)
             def _router(state: dict, _edge=edge) -> str:
-                # Convention: routing decision lives at node_outputs[from_]['route']
                 decision = state["node_outputs"][_edge.from_].get("route")
                 target = _edge.branches.get(decision)
                 if target is None:
@@ -113,8 +111,26 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec]) -> set[str]:
                     )
                 return target
             graph.add_conditional_edges(edge.from_, _router, edge.branches)
+
+        elif edge.from_ in hitl_ids:
+            # Human-in-loop node: 'reject' halts the workflow (→ END);
+            # 'approve'/'edit' proceed to the declared target(s).
+            targets = edge.to if isinstance(edge.to, list) else [edge.to]
+
+            def _hitl_router(state: dict, _edge=edge):
+                decision = (
+                    state.get("node_outputs", {})
+                    .get(_edge.from_, {})
+                    .get("decision")
+                )
+                if decision == "reject":
+                    return END
+                # approve / edit → proceed (list fans out, string routes singly)
+                return _edge.to if isinstance(_edge.to, list) else _edge.to
+
+            graph.add_conditional_edges(edge.from_, _hitl_router, [*targets, END])
+
         elif isinstance(edge.to, list):
-            # Fan-out: from one node to many. LangGraph will run them in parallel.
             for target in edge.to:
                 graph.add_edge(edge.from_, target)
         elif edge.to:
@@ -133,12 +149,16 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
         node_class = NodeRegistry.get(node_spec.type)
         instances[node_spec.id] = node_class(node_spec.id, node_spec.config, services=services)
 
+    # which nodes are human-in-loop? their edges route reject → END
+    hitl_ids = {nid for nid, inst in instances.items()
+                if inst.type_name == "HumanInLoopAgent"}
+
     # 2. Add each node as a runtime function — now bus-aware
     for node_id, instance in instances.items():
-        graph.add_node(node_id, _make_runtime_fn(instance, bus))  # <-- pass bus
+        graph.add_node(node_id, _make_runtime_fn(instance, bus))
 
-    # 3-5: unchanged
-    sources = _wire_edges(graph, spec.edges)
+    # 3-5
+    sources = _wire_edges(graph, spec.edges, hitl_ids) 
     entry = spec.entry or spec.nodes[0].id
     graph.add_edge(START, entry)
     if spec.exit:

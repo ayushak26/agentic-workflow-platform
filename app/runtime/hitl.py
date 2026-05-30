@@ -8,6 +8,14 @@ class HITLResumeError(KeyError):
     pass
 
 
+def _find_rejection(state: dict) -> dict | None:
+    """Any node output carrying decision == 'reject' means a HITL gate was rejected."""
+    for node_id, out in (state.get("node_outputs") or {}).items():
+        if isinstance(out, dict) and out.get("decision") == "reject":
+            return {"node_id": node_id, "reason": out.get("reason")}
+    return None
+
+
 async def resume_workflow(run_id: str, decision: dict[str, Any]) -> dict[str, Any]:
     """Resume a paused workflow with the user's decision payload.
 
@@ -20,8 +28,8 @@ async def resume_workflow(run_id: str, decision: dict[str, Any]) -> dict[str, An
     config = {"configurable": {"thread_id": run_id}}
     final_state = await graph.ainvoke(Command(resume=decision), config=config)
 
+    # Paused again at the next HITL gate — keep the graph cached for the next resume.
     if "__interrupt__" in final_state:
-        # Workflow paused again (next HITL node). Keep the graph around.
         return {
             "status": "paused",
             "run_id": run_id,
@@ -29,6 +37,19 @@ async def resume_workflow(run_id: str, decision: dict[str, Any]) -> dict[str, An
             "state": final_state,
         }
 
-    # Workflow completed — drop the graph from the cache
+    # Terminal — drop the graph from the cache.
     _PAUSED_GRAPHS.pop(run_id, None)
+
+    # A rejected HITL gate routed to END: report it as 'rejected', not 'completed'.
+    rejection = _find_rejection(final_state)
+    if rejection:
+        return {
+            "status": "rejected",
+            "run_id": run_id,
+            "node_id": rejection["node_id"],
+            "reason": rejection["reason"],
+            "state": final_state,
+        }
+
+    # Normal completion.
     return {"status": "completed", "run_id": run_id, "state": final_state}

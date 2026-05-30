@@ -13,24 +13,28 @@ export function useRunSocket(runId: string | null) {
     setOpen(false);
     setError(null);
 
-    let terminal = false;    // saw run_completed / run_failed
-    let cancelled = false;   // this socket was cleaned up (StrictMode or unmount)
+    let terminal = false;
+    let cancelled = false;
 
+    console.log('[WS] opening for', runId);
     const ws = new WebSocket(wsUrl(runId));
-    ws.onopen = () => { if (!cancelled) setOpen(true); };
+
+    ws.onopen = () => { if (!cancelled) { console.log('[WS] open'); setOpen(true); } };
     ws.onmessage = (m) => {
       if (cancelled) return;
       const evt = JSON.parse(m.data) as RunEvent;
+      console.log('[WS] event', evt.type, (evt as any).node_id ?? '');
       setEvents((prev) => [...prev, evt]);
       if (evt.type === 'run_completed' || evt.type === 'run_failed') terminal = true;
     };
-    ws.onerror = () => {
-      // Ignore errors from a cancelled socket or after the run already finished.
-      if (!cancelled && !terminal) setError('WebSocket error');
+    ws.onerror = () => { if (!cancelled && !terminal) setError('WebSocket error'); };
+    ws.onclose = (e) => {
+      console.log('[WS] closed', { code: e.code, reason: e.reason, cancelled, terminal });
+      if (!cancelled) setOpen(false);
     };
-    ws.onclose = () => { if (!cancelled) setOpen(false); };
 
     return () => {
+      console.log('[WS] cleanup → cancelled=true for', runId);
       cancelled = true;
       ws.close();
     };
