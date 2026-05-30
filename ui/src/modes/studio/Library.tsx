@@ -3,40 +3,54 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import type { WorkflowSummary } from '../../api/types';
 import { Spinner } from '../../components/Spinner';
+import { parseYaml, type WorkflowInputSpec } from './yaml-bridge';
+import { RunDialog } from './RunDialog';
 
 export function Library() {
   const navigate = useNavigate();
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<{
+    workflowName: string;
+    workflowYaml: string;
+    inputs: Record<string, WorkflowInputSpec>;
+  } | null>(null);
 
   useEffect(() => {
-    api.listWorkflows()
-      .then(setWorkflows)
-      .catch(e => setError(String(e)));
+    api.listWorkflows().then(setWorkflows).catch(e => setError(String(e)));
   }, []);
 
-  if (error) {
-    return (
-      <div className="p-8 text-bad">
-        Failed to load workflows: {error}
-      </div>
-    );
+  async function onRun(workflowName: string) {
+    setRunError(null);
+    try {
+      const { yaml: yamlText } = await api.getWorkflow(workflowName);
+      const wf = parseYaml(yamlText);
+      const inputs = wf.inputs ?? {};
+
+      if (Object.keys(inputs).length === 0) {
+        // No inputs — launch directly.
+        const runId = crypto.randomUUID();
+        navigate(`/studio/cockpit/${runId}`, {
+          state: { workflowYaml: yamlText, workflowName, inputs: {} },
+        });
+      } else {
+        // Open the inputs dialog.
+        setDialog({ workflowName, workflowYaml: yamlText, inputs });
+      }
+    } catch (e: any) {
+      setRunError(String(e.message ?? e));
+    }
   }
 
-  if (workflows === null) {
-    return (
-      <div className="p-8">
-        <Spinner label="Loading workflows…" />
-      </div>
-    );
-  }
+  if (error) return <div className="p-8 text-bad">Failed to load workflows: {error}</div>;
+  if (workflows === null) return <div className="p-8"><Spinner label="Loading workflows…" /></div>;
 
   const current = workflows.find(w => w.name === selected) ?? null;
 
   return (
     <div className="h-full flex">
-      {/* Left: list */}
       <aside className="w-80 border-r border-slate-200 bg-white overflow-y-auto">
         <div className="p-4 border-b border-slate-200 flex items-center justify-between">
           <h2 className="font-medium">Workflows</h2>
@@ -48,9 +62,6 @@ export function Library() {
           </button>
         </div>
         <ul>
-          {workflows.length === 0 && (
-            <li className="p-4 text-ink-500 text-sm">No workflows yet. Click "+ New" to create one.</li>
-          )}
           {workflows.map(w => (
             <li key={w.name}>
               <button
@@ -70,7 +81,6 @@ export function Library() {
         </ul>
       </aside>
 
-      {/* Right: detail */}
       <section className="flex-1 p-8">
         {current === null ? (
           <div className="text-ink-500">Select a workflow to see its summary.</div>
@@ -87,15 +97,25 @@ export function Library() {
                 Edit in Builder
               </button>
               <button
-                onClick={() => alert('Run wired in 9B.3')}
+                onClick={() => onRun(current.name)}
                 className="px-4 py-2 rounded-md border border-slate-300 hover:bg-slate-50"
               >
                 Run
               </button>
             </div>
+            {runError && <div className="mt-3 text-sm text-bad">Run failed to start: {runError}</div>}
           </div>
         )}
       </section>
+
+      {dialog && (
+        <RunDialog
+          workflowName={dialog.workflowName}
+          workflowYaml={dialog.workflowYaml}
+          inputs={dialog.inputs}
+          onClose={() => setDialog(null)}
+        />
+      )}
     </div>
   );
 }

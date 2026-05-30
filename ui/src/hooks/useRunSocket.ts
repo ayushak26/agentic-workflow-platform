@@ -1,51 +1,40 @@
-import { useEffect, useRef, useState } from 'react';
-import { api, wsUrl } from '../api/client';
-import type { RunEvent, RunSnapshot } from '../api/types';
+import { useEffect, useState } from 'react';
+import { wsUrl } from '../api/client';
+import type { RunEvent } from '../api/types';
 
-// Single source of truth: snapshot from REST + delta from WebSocket.
-// On reconnect: refetch snapshot, then reattach socket. Never replay events.
 export function useRunSocket(runId: string | null) {
-  const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [events, setEvents] = useState<RunEvent[]>([]);
-  const wsRef = useRef<WebSocket | null>(null);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!runId) return;
-    let cancelled = false;
+    setEvents([]);
+    setOpen(false);
+    setError(null);
 
-    (async () => {
-      const snap = await api.runSnapshot(runId);
+    let terminal = false;    // saw run_completed / run_failed
+    let cancelled = false;   // this socket was cleaned up (StrictMode or unmount)
+
+    const ws = new WebSocket(wsUrl(runId));
+    ws.onopen = () => { if (!cancelled) setOpen(true); };
+    ws.onmessage = (m) => {
       if (cancelled) return;
-      setSnapshot(snap);
-
-      const ws = new WebSocket(wsUrl(runId));
-      wsRef.current = ws;
-      ws.onmessage = (m) => {
-        const evt = JSON.parse(m.data) as RunEvent;
-        setEvents((prev) => [...prev, evt]);
-        setSnapshot((prev) => prev ? applyEvent(prev, evt) : prev);
-      };
-      ws.onerror = (e) => console.warn('ws error', e);
-    })();
+      const evt = JSON.parse(m.data) as RunEvent;
+      setEvents((prev) => [...prev, evt]);
+      if (evt.type === 'run_completed' || evt.type === 'run_failed') terminal = true;
+    };
+    ws.onerror = () => {
+      // Ignore errors from a cancelled socket or after the run already finished.
+      if (!cancelled && !terminal) setError('WebSocket error');
+    };
+    ws.onclose = () => { if (!cancelled) setOpen(false); };
 
     return () => {
       cancelled = true;
-      wsRef.current?.close();
+      ws.close();
     };
   }, [runId]);
 
-  return { snapshot, events };
-}
-
-function applyEvent(snap: RunSnapshot, e: RunEvent): RunSnapshot {
-  switch (e.type) {
-    case 'node_started':   return mut(snap, e.node_id, 'active');
-    case 'node_completed': return mut(snap, e.node_id, 'done');
-    case 'node_paused':    return mut({ ...snap, status: 'paused' }, e.node_id, 'paused');
-    case 'run_completed':  return { ...snap, status: 'completed' };
-    case 'run_failed':     return { ...snap, status: 'failed' };
-  }
-}
-function mut(s: RunSnapshot, id: string, st: RunSnapshot['node_states'][string]): RunSnapshot {
-  return { ...s, node_states: { ...s.node_states, [id]: st } };
+  return { events, open, error };
 }

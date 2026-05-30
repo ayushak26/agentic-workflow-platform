@@ -21,9 +21,10 @@ async def run_workflow(
     inputs: dict[str, Any],
     session_id: str | None = None,
     services: dict[str, Any] | None = None,
+    run_id: str | None = None,    # <-- new
 ) -> dict[str, Any]:
     graph = compile_workflow(spec, services=services)
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4()) 
     effective_session = session_id or str(uuid.uuid4())
 
     merged_inputs: dict[str, Any] = dict(inputs)

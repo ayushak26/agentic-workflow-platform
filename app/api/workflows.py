@@ -24,6 +24,7 @@ class RunRequest(BaseModel):
     workflow_yaml: str
     inputs: dict = {}
     session_id: str | None = None
+    run_id: str | None = None
 
 
 @router.post("/workflows/run")
@@ -33,10 +34,19 @@ async def run(req: RunRequest, request: Request):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
 
-    # Pull the services bag built in main.py's lifespan
     services = getattr(request.app.state, "services", {})
-    result = await run_workflow(spec, req.inputs, req.session_id, services=services)
-    return result
+    try:
+        return await run_workflow(
+            spec, req.inputs, req.session_id, services=services, run_id=req.run_id
+        )
+    except Exception as e:
+        # The workflow failed at runtime. run_workflow already published a
+        # run_failed event to the bus, so the Cockpit WS already shows the failure.
+        # We return a clean 200 here so the POST doesn't bubble to an unhandled 500,
+        # which Starlette generates OUTSIDE the CORS middleware — that 500 would lack
+        # Access-Control-Allow-Origin and the browser would report "Failed to fetch",
+        # masking the real error.
+        return {"status": "failed", "run_id": req.run_id, "error": str(e)}
 
 
 class ResumeRequest(BaseModel):

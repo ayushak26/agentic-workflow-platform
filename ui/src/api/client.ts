@@ -27,11 +27,11 @@ export const api = {
     }).then(j<{ ok: true; name: string }>),
 
   // ---- execution
-  runWorkflow: (workflow_yaml: string, inputs: Record<string, unknown>, session_id?: string) =>
+  runWorkflow: (workflow_yaml: string, inputs: Record<string, unknown>, session_id?: string, run_id?: string) =>
     fetch(`${API}/workflows/run`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ workflow_yaml, inputs, session_id }),
+      body: JSON.stringify({ workflow_yaml, inputs, session_id, run_id }),
     }).then(j<{ run_id: string; status: string; state?: unknown }>),
 
   resumeWorkflow: (run_id: string, decision: Record<string, unknown>) =>

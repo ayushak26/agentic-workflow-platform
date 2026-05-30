@@ -1,23 +1,24 @@
-name: "Proposal Generation"
-description: "Project Alex flagship workflow — RFP to approved proposal PDF."
-version: "1.0"
-
+name: Proposal Generation
+description: Project Alex flagship workflow — RFP to approved proposal PDF.
+version: '1.0'
 inputs:
   rfp_text:
     type: text
-    description: "Full text of the RFP document."
+    description: Full text of the RFP document.
   client_name:
     type: text
-    description: "Name of the client (used in proposal cover and headers)."
+    description: Name of the client (used in proposal cover and headers).
+  client_context:
+    type: text  
+    description: Description of the client
   proposal_title:
     type: text
-    description: "Title for the proposal cover."
-
+    description: Title for the proposal cover.
 nodes:
   - id: rfp_intel
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Read this RFP and extract structured intelligence.
 
@@ -29,11 +30,10 @@ nodes:
         required_capabilities: list
         evaluation_criteria: list
         timeline_constraints: str
-
   - id: context_synthesis
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Synthesize the RFP intelligence into a focused project context.
 
@@ -44,41 +44,45 @@ nodes:
       output_schema:
         engagement_summary: str
         success_metrics: list
-
   - id: approve_requirements
     type: HumanInLoopAgent
     config:
-      question: "Review the RFP intelligence — proceed to retrieval?"
+      question: Review the RFP intelligence — proceed to retrieval?
       context_fields:
         - rfp_intel.parsed.industry
         - rfp_intel.parsed.client_pain_points
         - rfp_intel.parsed.required_capabilities
         - context_synthesis.parsed.engagement_summary
-      allowed_actions: ["approve", "reject", "edit"]
-
+      allowed_actions:
+        - approve
+        - reject
+        - edit
   - id: knowledge_retrieval
     type: RAGAgent
     config:
-      model: "claude-sonnet-4-5"
-      query: "Case studies and methodology for {{rfp_intel.parsed.industry}} engagements"
+      model: claude-sonnet-4-5
+      query: Case studies and methodology for {{rfp_intel.parsed.industry}} engagements
       filters:
-        industry: "{{rfp_intel.parsed.industry}}"
-        collection_ids: ["proudfoot_case_studies", "proudfoot_methodology"]
+        industry: '{{rfp_intel.parsed.industry}}'
+        collection_ids:
+          - proudfoot_case_studies
+          - proudfoot_methodology
       top_n_final: 10
-
   - id: approve_retrievals
     type: HumanInLoopAgent
     config:
-      question: "Review the retrieved sources — proceed to drafting?"
+      question: Review the retrieved sources — proceed to drafting?
       context_fields:
         - knowledge_retrieval.citations
         - knowledge_retrieval.answer
-      allowed_actions: ["approve", "reject", "edit"]
-
+      allowed_actions:
+        - approve
+        - reject
+        - edit
   - id: draft_understanding
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Draft the "Project Understanding and Objectives" section for {{inputs.client_name}}.
 
@@ -90,11 +94,11 @@ nodes:
         {{knowledge_retrieval.answer}}
 
         Write 400-600 words. Cite sources using [N] format where N matches the source label.
-
+      temperature: 0.7
   - id: draft_approach
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Draft the "Approach and Methodology" section.
 
@@ -105,11 +109,10 @@ nodes:
         {{knowledge_retrieval.answer}}
 
         Write 500-800 words. Cite sources using [N] format.
-
   - id: draft_experience
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Draft the "Relevant Experience and Case Studies" section.
 
@@ -119,11 +122,10 @@ nodes:
         {{knowledge_retrieval.answer}}
 
         Write 400-600 words. Cite each case study using [N] format.
-
   - id: draft_team
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Draft the "Team Structure and Qualifications" section for a Proudfoot engagement.
 
@@ -131,11 +133,10 @@ nodes:
 
         Write 300-400 words. Use the standard Proudfoot consulting team structure
         (Partner, Engagement Manager, Senior Consultants, Analysts).
-
   - id: draft_commercials
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Draft the "Commercial Terms and Timeline" section.
 
@@ -144,23 +145,24 @@ nodes:
 
         Write 300-500 words. Use placeholder commercial figures
         (mark them as illustrative).
-
   - id: approve_drafts
     type: HumanInLoopAgent
     config:
-      question: "Review all five section drafts — approve, reject, or edit?"
+      question: Review all five section drafts — approve, reject, or edit?
       context_fields:
         - draft_understanding.raw
         - draft_approach.raw
         - draft_experience.raw
         - draft_team.raw
         - draft_commercials.raw
-      allowed_actions: ["approve", "reject", "edit"]
-
+      allowed_actions:
+        - approve
+        - reject
+        - edit
   - id: compile_and_qa
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         QA-pass each section: fix tone inconsistencies, remove duplicate phrasing,
         ensure logical flow, preserve all citations.
@@ -185,20 +187,18 @@ nodes:
         relevant_experience: str
         team_structure: str
         commercial_terms: str
-
   - id: generate_pdf
     type: PDFProposalRenderer
     config:
       sections:
-        "Project Understanding and Objectives": "{{compile_and_qa.parsed.project_understanding}}"
-        "Approach and Methodology":              "{{compile_and_qa.parsed.approach_and_methodology}}"
-        "Relevant Experience and Case Studies":  "{{compile_and_qa.parsed.relevant_experience}}"
-        "Team Structure and Qualifications":     "{{compile_and_qa.parsed.team_structure}}"
-        "Commercial Terms and Timeline":         "{{compile_and_qa.parsed.commercial_terms}}"
-      template: "corporate"
-      proposal_title: "{{inputs.proposal_title}}"
-      client_name: "{{inputs.client_name}}"
-
+        Project Understanding and Objectives: '{{compile_and_qa.parsed.project_understanding}}'
+        Approach and Methodology: '{{compile_and_qa.parsed.approach_and_methodology}}'
+        Relevant Experience and Case Studies: '{{compile_and_qa.parsed.relevant_experience}}'
+        Team Structure and Qualifications: '{{compile_and_qa.parsed.team_structure}}'
+        Commercial Terms and Timeline: '{{compile_and_qa.parsed.commercial_terms}}'
+      template: corporate
+      proposal_title: '{{inputs.proposal_title}}'
+      client_name: '{{inputs.client_name}}'
 edges:
   - from: rfp_intel
     to: context_synthesis
@@ -208,12 +208,13 @@ edges:
     to: knowledge_retrieval
   - from: knowledge_retrieval
     to: approve_retrievals
-
-  # Fan-out: approve_retrievals → 5 drafters in parallel
   - from: approve_retrievals
-    to: [draft_understanding, draft_approach, draft_experience, draft_team, draft_commercials]
-
-  # Fan-in: all 5 drafters → approve_drafts
+    to:
+      - draft_understanding
+      - draft_approach
+      - draft_experience
+      - draft_team
+      - draft_commercials
   - from: draft_understanding
     to: approve_drafts
   - from: draft_approach
@@ -224,7 +225,6 @@ edges:
     to: approve_drafts
   - from: draft_commercials
     to: approve_drafts
-
   - from: approve_drafts
     to: compile_and_qa
   - from: compile_and_qa
