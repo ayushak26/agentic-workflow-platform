@@ -24,6 +24,11 @@ nodes:
           condition: rfp_intel.parsed.industry == 'finance'
         - name: other
           default: true
+  - id: handle_finance
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: 'Summarize these finance-sector requirements: {{rfp_intel.parsed.requirements}}'
   - id: handle_other
     type: TransformAgent
     config:
@@ -31,27 +36,25 @@ nodes:
       prompt_template: >-
         Summarize the requirements for industry {{rfp_intel.parsed.industry}}:
         {{rfp_intel.parsed.requirements}}
-      temperature: 0.7
-  - id: router_1
-    type: RouterAgent
+  - id: confirm
+    type: HumanInLoopAgent
     config:
-      mode: rule
-      rules: []
-      model: null
-      prompt: null
-      context: null
-  - id: transform_1
-    type: TransformAgent
-    config:
-      model: claude-sonnet-4-5
-      prompt_template: ''
-      system_prompt: null
-      temperature: 0.2
-      max_retries: 1
+      question: Review the summary — approve to finish, or reject.
+      context_fields:
+        - handle_finance.raw
+        - handle_other.raw
+      allowed_actions:
+        - approve
+        - reject
 edges:
   - from: rfp_intel
     to: industry_router
   - from: industry_router
-    to: router_1
-  - from: router_1
-    to: handle_other
+    condition: route
+    branches:
+      finance: handle_finance
+      other: handle_other
+  - from: handle_finance
+    to: confirm
+  - from: handle_other
+    to: confirm

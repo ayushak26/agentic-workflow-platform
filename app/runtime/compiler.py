@@ -101,20 +101,19 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) ->
     for edge in edges:
         sources.add(edge.from_)
         if edge.condition and edge.branches:
-            # Conditional router edge (RouterAgent writes 'route' into its output)
+            # Conditional router edge. RouterAgent writes the matched rule name into
+            # 'route'. Return that NAME; path_map (branches) maps name -> target node.
             def _router(state: dict, _edge=edge) -> str:
                 decision = state["node_outputs"][_edge.from_].get("route")
-                target = _edge.branches.get(decision)
-                if target is None:
+                if decision not in _edge.branches:
                     raise ValueError(
-                        f"Router {_edge.from_} returned unknown route {decision!r}"
+                        f"Router {_edge.from_} returned unknown route {decision!r}; "
+                        f"expected one of {list(_edge.branches)}"
                     )
-                return target
-            graph.add_conditional_edges(edge.from_, _router, edge.branches)
+                return decision     # ← the route NAME, not the resolved node id
+            graph.add_conditional_edges(edge.from_, _router, edge.branches)  # path_map = {finance:..., other:...}
 
         elif edge.from_ in hitl_ids:
-            # Human-in-loop node: 'reject' halts the workflow (→ END);
-            # 'approve'/'edit' proceed to the declared target(s).
             targets = edge.to if isinstance(edge.to, list) else [edge.to]
 
             def _hitl_router(state: dict, _edge=edge):
@@ -125,7 +124,6 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) ->
                 )
                 if decision == "reject":
                     return END
-                # approve / edit → proceed (list fans out, string routes singly)
                 return _edge.to if isinstance(_edge.to, list) else _edge.to
 
             graph.add_conditional_edges(edge.from_, _hitl_router, [*targets, END])
@@ -136,7 +134,6 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) ->
         elif edge.to:
             graph.add_edge(edge.from_, edge.to)
     return sources
-
 
 def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     graph = StateGraph(WorkflowState)

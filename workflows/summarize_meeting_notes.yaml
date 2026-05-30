@@ -1,16 +1,14 @@
-name: "Summarize Meeting Notes"
-description: "Take raw meeting notes, produce a structured digest."
-version: "1.0"
-
+name: Summarize Meeting Notes
+description: Take raw meeting notes, produce a structured digest.
+version: '1.0'
 inputs:
   notes:
     type: text
-
 nodes:
   - id: summarize
     type: TransformAgent
     config:
-      model: "claude-sonnet-4-5"
+      model: claude-sonnet-4-5
       prompt_template: |
         Summarize these meeting notes into a structured digest.
 
@@ -21,5 +19,4 @@ nodes:
         key_decisions: list
         action_items: list
         followups: list
-
 edges: []
