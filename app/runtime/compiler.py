@@ -18,31 +18,80 @@ from app.nodes.registry import NodeRegistry
 from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
 from .templating import resolve
+from .events import RunEvent, RunEventBus
+from .node_events import sanitize_preview, is_graph_interrupt
 
 
-def _make_runtime_fn(instance):
+def _make_runtime_fn(instance, bus: RunEventBus | None):
     """Wrap a NodeType instance so it conforms to LangGraph's
-    'state -> partial state' contract."""
+    'state -> partial state' contract.
+
+    Phase 9 (Option A) addition: if a bus is wired in, emit lifecycle events
+    around the node's run() call. node_id attribution is baked in at compile
+    time, so every event names the node it came from — the win over Option B's
+    name-filtered event stream.
+    """
+    node_id = instance.node_id
+    type_name = instance.type_name
+
     async def runtime_fn(state: dict) -> dict:
+        run_id = state.get("inputs", {}).get("SYSTEM.run_id")
         started = time.time()
-        # Resolve templates in this node's config against current state
-        resolved = resolve(instance.config.model_dump(), state)
-        # Execute the node
-        output = await instance.run(state, resolved)
-        # Validate against the declared output_schema (defensive)
-        instance.output_schema(**output)
-        # Return partial state — LangGraph applies reducers automatically
+
+        # node_started before template resolution: failures in resolve() still
+        # get attributed to this node, not lost.
+        if bus and run_id:
+            await bus.publish(RunEvent(
+                type="node_started",
+                run_id=run_id,
+                node_id=node_id,
+            ))
+
+        try:
+            resolved = resolve(instance.config.model_dump(), state)
+            output = await instance.run(state, resolved)
+            instance.output_schema(**output)
+        except BaseException as e:
+            if bus and run_id:
+                if is_graph_interrupt(e):
+                    # HITL pause — published mid-flight, then re-raised so LangGraph
+                    # handles the actual pause-and-checkpoint mechanics.
+                    await bus.publish(RunEvent(
+                        type="node_paused",
+                        run_id=run_id,
+                        node_id=node_id,
+                        context={"interrupt": sanitize_preview(getattr(e, "args", None))},
+                    ))
+                else:
+                    # Per-node failure attribution — Phase 10's Prometheus
+                    # counters can key off this directly.
+                    await bus.publish(RunEvent(
+                        type="run_failed",
+                        run_id=run_id,
+                        node_id=node_id,
+                        error=str(e)[:240],
+                    ))
+            raise
+
+        if bus and run_id:
+            await bus.publish(RunEvent(
+                type="node_completed",
+                run_id=run_id,
+                node_id=node_id,
+                output_preview=sanitize_preview(output),
+            ))
+
         return {
-            "node_outputs": {instance.node_id: output},
+            "node_outputs": {node_id: output},
             "audit_log": [{
-                "node_id": instance.node_id,
-                "type_name": instance.type_name,
+                "node_id": node_id,
+                "type_name": type_name,
                 "started_at": started,
                 "duration_s": time.time() - started,
                 "output_keys": list(output.keys()),
             }],
         }
-    runtime_fn.__name__ = f"node_{instance.node_id}"
+    runtime_fn.__name__ = f"node_{node_id}"
     return runtime_fn
 
 
@@ -75,29 +124,26 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec]) -> set[str]:
 
 def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     graph = StateGraph(WorkflowState)
-    services = services or {}  
+    services = services or {}
+    bus: RunEventBus | None = services.get("event_bus")          # <-- new line
 
-    # 1. Instantiate nodes (this validates every node's config against its schema)
+    # 1. Instantiate nodes (unchanged)
     instances = {}
     for node_spec in spec.nodes:
         node_class = NodeRegistry.get(node_spec.type)
         instances[node_spec.id] = node_class(node_spec.id, node_spec.config, services=services)
 
-    # 2. Add each node as a runtime function
+    # 2. Add each node as a runtime function — now bus-aware
     for node_id, instance in instances.items():
-        graph.add_node(node_id, _make_runtime_fn(instance))
+        graph.add_node(node_id, _make_runtime_fn(instance, bus))  # <-- pass bus
 
-    # 3. Wire edges
+    # 3-5: unchanged
     sources = _wire_edges(graph, spec.edges)
-
-    # 4. Entry and exit
     entry = spec.entry or spec.nodes[0].id
     graph.add_edge(START, entry)
-
     if spec.exit:
         exits = [spec.exit] if isinstance(spec.exit, str) else spec.exit
     else:
-        # Terminal nodes = nodes that are never an edge source
         all_ids = {n.id for n in spec.nodes}
         exits = list(all_ids - sources)
     for exit_id in exits:
