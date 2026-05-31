@@ -48,15 +48,18 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         llm = services.get("llm")
         if llm is not None and hasattr(llm, "with_context"):
             node_services = {
-                **services,
-                "llm": llm.with_context(
-                    run_id=run_id or "unknown",
-                    session_id=session_id,
-                    node_id=node_id,
-                    ledger=services.get("cost_ledger"),
-                ),
-            }
-            instance.services = node_services
+            **services,
+            "llm": llm.with_context(
+                run_id=run_id or "unknown",
+                session_id=session_id,
+                node_id=node_id,
+                ledger=services.get("cost_ledger"),
+            ),
+        }
+        else:
+            node_services = services  # no gateway — use services as-is
+
+        instance.services = node_services
 
         if bus and run_id:
             await bus.publish(RunEvent(
