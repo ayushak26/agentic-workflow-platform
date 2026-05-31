@@ -15,6 +15,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 
 from app.nodes.registry import NodeRegistry
+from app.observability import metrics
 from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
 from .templating import resolve
@@ -48,14 +49,13 @@ def _make_runtime_fn(instance, bus: RunEventBus | None):
             ))
 
         try:
-            resolved = resolve(instance.config.model_dump(), state)
-            output = await instance.run(state, resolved)
-            instance.output_schema(**output)
+            with metrics.track_node(type_name):          # <-- Phase 10A
+                resolved = resolve(instance.config.model_dump(), state)
+                output = await instance.run(state, resolved)
+                instance.output_schema(**output)
         except BaseException as e:
             if bus and run_id:
                 if is_graph_interrupt(e):
-                    # HITL pause — published mid-flight, then re-raised so LangGraph
-                    # handles the actual pause-and-checkpoint mechanics.
                     await bus.publish(RunEvent(
                         type="node_paused",
                         run_id=run_id,
@@ -63,8 +63,6 @@ def _make_runtime_fn(instance, bus: RunEventBus | None):
                         context={"interrupt": sanitize_preview(getattr(e, "args", None))},
                     ))
                 else:
-                    # Per-node failure attribution — Phase 10's Prometheus
-                    # counters can key off this directly.
                     await bus.publish(RunEvent(
                         type="run_failed",
                         run_id=run_id,

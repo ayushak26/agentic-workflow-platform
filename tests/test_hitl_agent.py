@@ -62,7 +62,7 @@ async def test_hitl_resume_with_reject_carries_reason():
         paused["run_id"],
         decision={"decision": "reject", "reason": "Tone is off"},
     )
-    assert resumed["status"] == "completed"
+    assert resumed["status"] == "rejected"
     out = resumed["state"]["node_outputs"]["approval"]
     assert out["decision"] == "reject"
     assert out["reason"] == "Tone is off"

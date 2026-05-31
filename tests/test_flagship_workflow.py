@@ -17,7 +17,11 @@ RFP_TEXT = (Path(__file__).parent / "fixtures" / "sample_rfp.txt").read_text()
 
 
 # ---------- Stubs ----------------------------------------------------------
-
+class _StubCompletion:
+    """Mimics the gateway's LLMResponse: has a .text attribute."""
+    def __init__(self, text: str):
+        self.text = text
+        
 class StubLLM:
     """Scripted LLM. Matches by the first words of each prompt — unambiguous,
     because every prompt template starts with a distinctive opening line.
@@ -64,7 +68,43 @@ class StubLLM:
             if stripped.startswith(marker):
                 return response
         return "STUB FALLBACK"
-
+    
+    async def complete(self, *, model, system=None, user=None,
+                       temperature=0.0, max_tokens=1024, **_):
+        """Plain-text completion. RAGAgent uses this and reads resp.text, so we
+        return a small object with a .text attribute, not a bare string.
+        Matches on user first, then system (the RAG generation_prompt marker
+        lives in system, not user)."""
+        self.calls.append({"method": "complete", "model": model})
+        for field in (user, system):
+            if not field:
+                continue
+            stripped = field.lstrip()
+            for marker, response in self._routes:
+                if stripped.startswith(marker):
+                    return _StubCompletion(response)
+        return _StubCompletion("STUB FALLBACK")
+    
+    async def complete_structured(
+        self, *, model, system, user,
+        response_model, temperature=0.0, max_tokens=1024, **_,
+    ):
+        """Schema path. Matches the same way chat() does — by prompt opening —
+        then validates the queued JSON string into the node's response_model.
+        The schema-bearing routes (rfp_intel, context_synthesis, compile_and_qa)
+        already queue json.dumps(...) payloads, so they parse cleanly."""
+        self.calls.append({
+            "method": "complete_structured",
+            "model": model,
+            "response_model": response_model.__name__,
+        })
+        stripped = (user or "").lstrip()
+        for marker, response in self._routes:
+            if stripped.startswith(marker):
+                return response_model.model_validate_json(response)
+        # No match: return an empty instance so the failure is a validation
+        # error you can read, not a silent KeyError three nodes downstream.
+        return response_model.model_validate_json("{}")
 
 class StubRetriever:
     """Returns a fixed RetrievalResult with two stubbed chunks."""

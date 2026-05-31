@@ -12,6 +12,9 @@ from app.api.workflows import router as workflows_router
 
 log = get_logger(__name__)
 
+async def health() -> dict[str, str]:
+    """Liveness probe — process is up and serving. No dependency checks."""
+    return {"status": "ok"}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -110,4 +113,9 @@ app.add_middleware(
 )
 
 app.include_router(workflows_router)
+app.include_router(workflows_router)
 
+@app.get("/health")
+async def health() -> dict[str, str]:
+    """Liveness probe — process is up and serving. No dependency checks."""
+    return {"status": "ok"}
