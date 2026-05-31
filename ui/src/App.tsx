@@ -1,20 +1,35 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ModeShell } from './components/ModeShell';
-import { StudioRoot } from './modes/studio/StudioRoot';
-import { EvalRoot } from './modes/eval/EvalRoot';
-import { OperatorRoot } from './modes/operator/OperatorRoot';
+import { useState } from "react";
+import "./styles/globals.css";
+import { Sidebar } from "./components/layout/Sidebar";
+import { Topbar }  from "./components/layout/Topbar";
+import { LoginPage } from "./components/auth/LoginPage";
+
+type Mode = "studio" | "eval" | "operator";
 
 export default function App() {
+  const [token, setToken]       = useState<string | null>(null);
+  const [username, setUsername] = useState("");
+  const [mode, setMode]         = useState<Mode>("studio");
+  const [runCost, setRunCost]   = useState(0);
+
+  if (!token) {
+    return (
+      <LoginPage onLogin={(t, u) => { setToken(t); setUsername(u); }} />
+    );
+  }
+
   return (
-    <BrowserRouter>
-      <ModeShell>
-        <Routes>
-          <Route path="/" element={<Navigate to="/studio" replace />} />
-          <Route path="/studio/*" element={<StudioRoot />} />
-          <Route path="/eval/*"   element={<EvalRoot />} />
-          <Route path="/operator/*" element={<OperatorRoot />} />
-        </Routes>
-      </ModeShell>
-    </BrowserRouter>
+    <div style={{ display: "flex" }}>
+      <Sidebar mode={mode} onModeChange={setMode} username={username} />
+      <div style={{ marginLeft: "var(--sidebar-width)", flex: 1, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+        <Topbar mode={mode} runCostUsd={runCost} />
+        <main style={{ flex: 1, padding: 24 }}>
+          {/* Phase 9 Studio / Eval / Operator views mount here */}
+          <p style={{ color: "var(--eur-text-secondary)" }}>
+            {mode} mode — Eurskem AI platform
+          </p>
+        </main>
+      </div>
+    </div>
   );
 }

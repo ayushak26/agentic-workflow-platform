@@ -1,19 +1,55 @@
 # Cloud Migration Map
 
-The local Docker Compose stack maps cleanly to AWS, Azure, and GCP managed services. This document explains the mapping for each component, the cost model, the migration path, and the interview questions likely to come up per cloud.
+## Philosophy
 
-Filled out fully in Phase 11. The interactive UI version ships in the Operator Console.
+Every component in Docker Compose maps to a managed cloud service.
+The code does not change. The Docker image is the unit of deployment.
 
-## Component mapping
+## Component Mapping
 
-| Compose service | AWS                            | Azure                            | GCP                               |
-|-----------------|--------------------------------|----------------------------------|-----------------------------------|
-| app             | ECS Fargate task               | Container Apps revision          | Cloud Run service                 |
-| mongo           | DocumentDB / Atlas             | Cosmos DB (Mongo API)            | Atlas on GCP                      |
-| redis           | ElastiCache                    | Azure Cache for Redis            | Memorystore                       |
-| weaviate        | Weaviate Cloud or self-hosted  | Weaviate Cloud or AKS            | Weaviate Cloud or GKE             |
-| minio           | S3 (drop-in)                   | Blob Storage (S3 gateway)        | GCS (S3 interop)                  |
-| prometheus      | AMP (Managed Prometheus)       | Azure Monitor Managed Prometheus | Managed Service for Prometheus    |
-| grafana         | Amazon Managed Grafana         | Azure Managed Grafana            | Self-hosted on GKE                |
+| Local (Docker Compose)  | AWS                          | Azure                        | GCP                          |
+|-------------------------|------------------------------|------------------------------|------------------------------|
+| FastAPI container       | ECS Fargate                  | Azure Container Apps         | Cloud Run                    |
+| MongoDB                 | DocumentDB or Atlas          | Cosmos DB (Mongo API)        | Atlas on GCP                 |
+| Weaviate                | Weaviate Cloud / EC2         | Weaviate Cloud / ACI         | Weaviate Cloud / GKE         |
+| MinIO                   | S3 (zero code change)        | Azure Blob Storage           | GCS                          |
+| Redis                   | ElastiCache (Redis)          | Azure Cache for Redis        | Memorystore                  |
+| Prometheus              | CloudWatch + remote write    | Azure Monitor                | Cloud Monitoring             |
+| Grafana                 | Managed Grafana              | Azure Managed Grafana        | Cloud Monitoring dashboards  |
 
-Default cloud target documented as AWS ECS Fargate. Azure and GCP are documented for portability and interview defense.
+## Why Each Choice
+
+**ECS Fargate vs Container Apps vs Cloud Run**: All are serverless container platforms.
+Cloud Run is cheapest for bursty workloads (pay-per-request). Container Apps is the
+best fit if you're already Azure AD / Microsoft 365 (which Eurskem is). ECS Fargate
+integrates best with AWS-native services (IAM, Secrets Manager, ALB).
+
+**DocumentDB vs Cosmos DB**: DocumentDB is MongoDB-wire-compatible, easiest migration.
+Cosmos DB adds global distribution but requires verifying API compatibility.
+
+**MinIO → S3**: Zero code change. MinIO uses the S3 protocol. The only change is
+pointing `S3_ENDPOINT_URL` at `https://s3.amazonaws.com`.
+
+**Redis → ElastiCache**: Drop-in. Same redis-py client. Add TLS and AUTH token from
+Secrets Manager.
+
+## Migration Path (Local → Cloud, 3 Steps)
+
+1. Push Docker images to ECR / ACR / Artifact Registry.
+2. Replace Docker Compose service URLs with managed service endpoints in `.env`.
+3. Add IAM roles / Managed Identity so containers authenticate to managed services without credentials in code.
+
+No code changes. Config change only.
+
+## Interview Questions Per Component
+
+### FastAPI → ECS Fargate
+- Why Fargate over EC2? No instance management, pay per task-second, auto-scaling via Application Auto Scaling.
+- How does your container get secrets? IAM role → Secrets Manager → injected as env vars at task start.
+
+### Weaviate → Weaviate Cloud
+- Why not just use Pinecone or OpenSearch? Weaviate was chosen because it supports hybrid BM25+vector in one query without a second service.
+- What changes at scale? Single-node Weaviate → Weaviate cluster with replication factor 2.
+
+### MongoDB → DocumentDB
+- Wire-compatible means my code doesn't change. The risk is that DocumentDB doesn't implement 100% of the MongoDB API — check aggregation pipeline operators before migration.

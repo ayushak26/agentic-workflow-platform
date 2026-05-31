@@ -7,6 +7,11 @@ Responsibilities:
 3. Lay out edges: simple, fan-out, and conditional (router) edges.
 4. Wire START and END.
 5. Return a compiled graph with a checkpointer attached.
+
+Cost tracking (scope changes):
+_make_runtime_fn now receives the services dict and binds a context-aware
+gateway clone inside runtime_fn at call time — not at compile time, because
+run_id doesn't exist until the workflow is invoked.
 """
 from __future__ import annotations
 import time
@@ -23,24 +28,36 @@ from .events import RunEvent, RunEventBus
 from .node_events import sanitize_preview, is_graph_interrupt
 
 
-def _make_runtime_fn(instance, bus: RunEventBus | None):
+def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
     """Wrap a NodeType instance so it conforms to LangGraph's
     'state -> partial state' contract.
 
-    Phase 9 (Option A) addition: if a bus is wired in, emit lifecycle events
-    around the node's run() call. node_id attribution is baked in at compile
-    time, so every event names the node it came from — the win over Option B's
-    name-filtered event stream.
+    Cost tracking: gateway context is bound at call time inside runtime_fn.
+    with_context() returns a shallow clone of the singleton — parallel
+    branches each get isolated context, no locking needed.
     """
     node_id = instance.node_id
     type_name = instance.type_name
 
     async def runtime_fn(state: dict) -> dict:
         run_id = state.get("inputs", {}).get("SYSTEM.run_id")
+        session_id = state.get("session_id", "unknown")
         started = time.time()
 
-        # node_started before template resolution: failures in resolve() still
-        # get attributed to this node, not lost.
+        # Bind cost-tracking context for this specific node call.
+        llm = services.get("llm")
+        if llm is not None and hasattr(llm, "with_context"):
+            node_services = {
+                **services,
+                "llm": llm.with_context(
+                    run_id=run_id or "unknown",
+                    session_id=session_id,
+                    node_id=node_id,
+                    ledger=services.get("cost_ledger"),
+                ),
+            }
+            instance.services = node_services
+
         if bus and run_id:
             await bus.publish(RunEvent(
                 type="node_started",
@@ -49,7 +66,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None):
             ))
 
         try:
-            with metrics.track_node(type_name):          # <-- Phase 10A
+            with metrics.track_node(type_name):
                 resolved = resolve(instance.config.model_dump(), state)
                 output = await instance.run(state, resolved)
                 instance.output_schema(**output)
@@ -89,18 +106,19 @@ def _make_runtime_fn(instance, bus: RunEventBus | None):
                 "output_keys": list(output.keys()),
             }],
         }
+
     runtime_fn.__name__ = f"node_{node_id}"
     return runtime_fn
 
 
-def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) -> set[str]:
-    """Add edges, return the set of 'source' node ids (used to compute terminals)."""
+def _wire_edges(
+    graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]
+) -> set[str]:
+    """Add edges, return the set of source node ids (used to compute terminals)."""
     sources: set[str] = set()
     for edge in edges:
         sources.add(edge.from_)
         if edge.condition and edge.branches:
-            # Conditional router edge. RouterAgent writes the matched rule name into
-            # 'route'. Return that NAME; path_map (branches) maps name -> target node.
             def _router(state: dict, _edge=edge) -> str:
                 decision = state["node_outputs"][_edge.from_].get("route")
                 if decision not in _edge.branches:
@@ -108,8 +126,9 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) ->
                         f"Router {_edge.from_} returned unknown route {decision!r}; "
                         f"expected one of {list(_edge.branches)}"
                     )
-                return decision     # ← the route NAME, not the resolved node id
-            graph.add_conditional_edges(edge.from_, _router, edge.branches)  # path_map = {finance:..., other:...}
+                return decision
+
+            graph.add_conditional_edges(edge.from_, _router, edge.branches)
 
         elif edge.from_ in hitl_ids:
             targets = edge.to if isinstance(edge.to, list) else [edge.to]
@@ -131,36 +150,45 @@ def _wire_edges(graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]) ->
                 graph.add_edge(edge.from_, target)
         elif edge.to:
             graph.add_edge(edge.from_, edge.to)
+
     return sources
+
 
 def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     graph = StateGraph(WorkflowState)
     services = services or {}
-    bus: RunEventBus | None = services.get("event_bus")          # <-- new line
+    bus: RunEventBus | None = services.get("event_bus")
 
-    # 1. Instantiate nodes (unchanged)
+    # 1. Instantiate nodes — config schemas validated here at compile time.
     instances = {}
     for node_spec in spec.nodes:
         node_class = NodeRegistry.get(node_spec.type)
-        instances[node_spec.id] = node_class(node_spec.id, node_spec.config, services=services)
+        instances[node_spec.id] = node_class(
+            node_spec.id, node_spec.config, services=services
+        )
 
-    # which nodes are human-in-loop? their edges route reject → END
-    hitl_ids = {nid for nid, inst in instances.items()
-                if inst.type_name == "HumanInLoopAgent"}
+    # Which nodes are human-in-loop? Their edges route reject → END.
+    hitl_ids = {
+        nid for nid, inst in instances.items()
+        if inst.type_name == "HumanInLoopAgent"
+    }
 
-    # 2. Add each node as a runtime function — now bus-aware
+    # 2. Add each node as a runtime function — bus-aware and cost-aware.
     for node_id, instance in instances.items():
-        graph.add_node(node_id, _make_runtime_fn(instance, bus))
+        graph.add_node(node_id, _make_runtime_fn(instance, bus, services))
 
-    # 3-5
-    sources = _wire_edges(graph, spec.edges, hitl_ids) 
+    # 3-5. Wire edges, entry, and exits.
+    sources = _wire_edges(graph, spec.edges, hitl_ids)
+
     entry = spec.entry or spec.nodes[0].id
     graph.add_edge(START, entry)
+
     if spec.exit:
         exits = [spec.exit] if isinstance(spec.exit, str) else spec.exit
     else:
         all_ids = {n.id for n in spec.nodes}
         exits = list(all_ids - sources)
+
     for exit_id in exits:
         graph.add_edge(exit_id, END)
 

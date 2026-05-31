@@ -24,7 +24,7 @@ async def test_powerpoint_produces_pptx_with_one_slide_per_section():
                 "Pricing": "$$$",
             },
             "proposal_title": "Demo",
-            "client_name": "Proudfoot",
+            "client_name": "Eurskem",
         },
         services={"object_store": store},
     )

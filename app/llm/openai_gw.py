@@ -1,7 +1,7 @@
 """OpenAI implementation of LLMGateway.
 
 Live provider for this build. Anthropic is the architectural default
-(per the Optimoz proposal) but is currently a documented stub; OpenAI
+(per the Eurskem proposal) but is currently a documented stub; OpenAI
 serves all routed requests via the fallback map in registry.py.
 
 GPT-5 family quirks absorbed in this file (so callers don't have to know):

@@ -5,12 +5,13 @@ import pytest
 import pytest_asyncio
 
 from app.db.mongo import MongoClient, build_manifest
+from app.config import settings    
 
 
 @pytest_asyncio.fixture
 async def mongo():
     """Fresh client per test. Wipes the manifests collection before each test."""
-    client = MongoClient()
+    client = MongoClient(settings.mongo_uri)
     await client.ensure_indexes()
     await client.manifests.delete_many({})  # clean slate
     yield client

@@ -24,7 +24,7 @@ async def test_pdf_renderer_produces_pdf_bytes():
             },
             "template": "corporate",
             "proposal_title": "AI Workflow Platform Proposal",
-            "client_name": "Proudfoot",
+            "client_name": "Eurskem",
         },
         services={"object_store": store},
     )

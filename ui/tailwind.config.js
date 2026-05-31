@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Slate + indigo, modeled on Optimoz's clean monochrome look.
+        // Slate + indigo, modeled on Eurskem's clean monochrome look.
         // Avoid AI-gradient-mesh aesthetic on purpose.
         ink: { 900: '#0f172a', 700: '#334155', 500: '#64748b', 300: '#cbd5e1' },
         accent: { 600: '#4f46e5', 500: '#6366f1' },

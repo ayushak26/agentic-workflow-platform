@@ -1,62 +1,34 @@
 services:
   app:
-    build:
-      context: .
-      args:
-        INSTALL_DEV: "1"
-    container_name: awp-app
+    build: .
     ports:
       - "8000:8000"
     env_file: .env
     depends_on:
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      weaviate:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+      - mongo
+      - weaviate
+      - minio
+      - redis
     volumes:
-      - ./app:/code/app
-      - ./workflows:/code/workflows
-      - ./tests:/code/tests
-      - ./samples:/code/samples
-      - ./scripts:/code/scripts
+      - ./app:/app/app
+      - ./workflows:/app/workflows
     networks:
-      - awp
+      - eurskem-net
 
   mongo:
-    image: mongo:7
-    container_name: awp-mongo
+    image: mongo:7.0
     ports:
       - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: eurskem
+      MONGO_INITDB_ROOT_PASSWORD: eurschempass
     volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      - mongo-data:/data/db
     networks:
-      - awp
-
-  redis:
-    image: redis:7-alpine
-    container_name: awp-redis
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    networks:
-      - awp
+      - eurskem-net
 
   weaviate:
-    image: cr.weaviate.io/semitechnologies/weaviate:1.27.0
-    container_name: awp-weaviate
+    image: semitechnologies/weaviate:1.27.0
     ports:
       - "8080:8080"
       - "50051:50051"
@@ -68,60 +40,55 @@ services:
       ENABLE_MODULES: ""
       CLUSTER_HOSTNAME: node1
     volumes:
-      - weaviate_data:/var/lib/weaviate
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/v1/.well-known/ready"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
+      - weaviate-data:/var/lib/weaviate
     networks:
-      - awp
+      - eurskem-net
 
   minio:
     image: minio/minio:latest
-    container_name: awp-minio
-    command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_ROOT_USER: eurskemadmin
+      MINIO_ROOT_PASSWORD: eurskempassword
+    command: server /data --console-address ":9001"
     volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+      - minio-data:/data
     networks:
-      - awp
+      - eurskem-net
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - eurskem-net
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: awp-prometheus
     ports:
       - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
     networks:
-      - awp
-    profiles:
-      - observability
+      - eurskem-net
 
   grafana:
     image: grafana/grafana:latest
-    container_name: awp-grafana
     ports:
-      - "3000:3000"
+      - "3001:3000"
+    environment:
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
     networks:
-      - awp
-    profiles:
-      - observability
+      - eurskem-net
 
 volumes:
-  mongo_data:
-  weaviate_data:
-  minio_data:
+  mongo-data:
+  weaviate-data:
+  minio-data:
 
 networks:
-  awp:
+  eurskem-net:
     driver: bridge

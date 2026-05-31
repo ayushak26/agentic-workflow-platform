@@ -44,7 +44,7 @@ Reference: Mastering API Architecture, Introduction (C4 diagrams, ADRs).
 **Architectural default: Anthropic Claude.** Flagship workflow YAML
 (`workflows/proposal_generation.yaml`) and all node-level model
 configurations commit to `claude-sonnet-4-5` and `claude-haiku-4-5` per
-the Optimoz proposal.
+the Eurskem proposal.
 
 **Build state: OpenAI is the live provider.** Anthropic is a documented
 stub in `app/llm/anthropic_gw.py`. Activating Claude live is a single

@@ -122,7 +122,7 @@ class StubRetriever:
             ),
             RetrievedChunk(
                 chunk_id="meth-007", doc_id="meth-007",
-                doc_title="Proudfoot Process Re-engineering Method",
+                doc_title="Eurskem Process Re-engineering Method",
                 doc_type="methodology",
                 text="5-phase methodology: discover, design, pilot, scale, sustain.",
                 metadata={}, hybrid_score=0.88,

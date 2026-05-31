@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 import yaml
 from pathlib import Path
@@ -11,14 +11,26 @@ from app.nodes.registry import NodeRegistry
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
+from app.security.dependencies import require_permission, require_consultant, require_admin
 
 router = APIRouter(prefix="/api", tags=["workflows"])
 
 
+@router.get("/")
+async def list_workflows():
+    return {"workflows": []}
+
 @router.get("/node-types")
-def list_node_types():
+def list_node_types(payload: dict = Depends(require_admin)):
     """The Workflow Builder UI calls this to populate the palette and forms."""
     return NodeRegistry.manifest()
+
+@router.get("/node-types/{node_type}/models")
+async def allowed_models(node_type: str):
+    """Returns the default allowed model list for a node type."""
+    from app.llm.registry import _PREFIX_ROUTES, _FALLBACK_MODEL
+    all_models = list(_PREFIX_ROUTES.keys()) + list(_FALLBACK_MODEL.values())
+    return {"node_type": node_type, "allowed_models": sorted(set(all_models))}
 
 
 class RunRequest(BaseModel):
@@ -27,9 +39,8 @@ class RunRequest(BaseModel):
     session_id: str | None = None
     run_id: str | None = None
 
-
 @router.post("/workflows/run")
-async def run(req: RunRequest, request: Request):
+async def run(req: RunRequest, request: Request, payload: dict = Depends(require_consultant)):
     try:
         spec = load_workflow_from_string(req.workflow_yaml)
     except Exception as e:

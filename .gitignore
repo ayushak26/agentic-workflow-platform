@@ -40,3 +40,5 @@ ui/.vite/
 data/
 *.logsamples/
 samples/
+.env.local
+.env

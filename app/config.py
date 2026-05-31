@@ -1,40 +1,35 @@
-"""Typed application settings, loaded from .env and OS environment.
-
-Convention: Python attributes are lowercase (PEP 8). Env vars in .env are
-UPPER_SNAKE. Pydantic-settings matches case-insensitively, so
-OPENAI_API_KEY in .env populates settings.openai_api_key in code.
-"""
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
+    env_file=( ".env",".env.local"),
+    extra="ignore",
+)
+    secret_key: str = "insecure-dev-secret-change-me"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+    environment: str = "development"
 
-    # Core app
-    app_env: str = "local"
-    log_level: str = "INFO"
+    mongo_uri: str = "mongodb://alex:alexpass@localhost:27017"
+    mongo_db: str = "alexos"
 
-    # LLM provider keys
-    openai_api_key: str
-    anthropic_api_key: str = ""   # uncomment when Claude goes live
+    weaviate_host: str = "localhost"
+    weaviate_port: int = 8080
 
-    # Retrieval — defaults flipped to GPT while OpenAI is the live provider.
-    # YAML workflows targeting claude-* will route to the Anthropic stub.
-    retrieval_reranker_model: str = "gpt-5-mini"
-    retrieval_compressor_model: str = "gpt-5-mini"
-    weaviate_collection: str = "DocumentChunk"
-
-    # Infrastructure endpoints
-    mongo_url: str = "mongodb://mongo:27017"
-    redis_url: str = "redis://redis:6379/0"
-    weaviate_url: str = "http://weaviate:8080"
     minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
+    minio_access_key: str = "alexadmin"
+    minio_secret_key: str = "alexpassword"
+    minio_bucket: str = "alexos-docs"
+
+    redis_url: str = "redis://localhost:6379/0"
+
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+
+    dev_bypass_enabled: bool = True
+    dev_bypass_username: str = "ayush"
+    dev_bypass_password: str = "dev123"
 
 
 settings = Settings()

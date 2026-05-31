@@ -34,6 +34,18 @@ async def run_workflow(
     run_id = run_id or str(uuid.uuid4())
     workflow_name = spec.name
     effective_session = session_id or str(uuid.uuid4())
+    llm_gateway = (services or {}).get("llm")
+    llm_gateway = (services or {}).get("llm")
+    if llm_gateway is not None and hasattr(llm_gateway, "with_context"):
+        services = {
+            **services,
+            "llm": llm_gateway.with_context(
+                run_id=run_id,
+                session_id=effective_session,
+                node_id="executor",
+                ledger=(services or {}).get("cost_ledger"),
+        ),
+    }
 
     merged_inputs: dict[str, Any] = dict(inputs)
     merged_inputs["SYSTEM.run_id"] = run_id

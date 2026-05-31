@@ -1,27 +1,21 @@
 FROM python:3.11-slim
 
-# Build-time flag: include dev tooling (pytest, ruff, mypy)?
-# Default 0 = lean production image
-# docker-compose.yml sets this to 1 for the dev container
-ARG INSTALL_DEV=0
+WORKDIR /app
 
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libffi-dev \
+    libcairo2 \
+    libgdk-pixbuf2.0-0 \
+    libxml2 \
+    libxslt1.1 \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /code
+COPY pyproject.toml .
+RUN pip install --upgrade pip && pip install -e .
 
-# Install Python deps. Conditional on INSTALL_DEV.
-COPY pyproject.toml ./
-RUN if [ "$INSTALL_DEV" = "1" ]; then \
-        pip install --no-cache-dir -e ".[dev]"; \
-    else \
-        pip install --no-cache-dir -e .; \
-    fi
+COPY . .
 
-COPY app ./app
-COPY workflows ./workflows
-
-EXPOSE 8000
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -10,7 +10,7 @@ What a real rewrite would do:
   - Expand acronyms ("TPS Bible" stays, but "FY24 CapEx" becomes
     "fiscal year 2024 capital expenditure").
 
-The Optimoz proposal Q2 step 1 ("Query Understanding") commits to this
+The Eurskem proposal Q2 step 1 ("Query Understanding") commits to this
 capability. For Phase 3 the stub is fine — retrieval works end-to-end and
 the LLM call cost is saved until rewriting demonstrably improves recall.
 """

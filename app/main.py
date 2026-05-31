@@ -1,121 +1,146 @@
-from contextlib import asynccontextmanager
-from typing import AsyncIterator
+"""FastAPI application entry point for Eurskem AI — Agentic Workflow Platform.
 
+Lifespan responsibilities:
+- Build all service clients once at startup (Mongo, Weaviate, MinIO, Redis).
+- Wire cost ledger, LLM gateway, and event bus into the shared services dict.
+- Graceful shutdown closes all connections.
+
+Services dict keys (consumed by routes and the runtime executor):
+  mongo          — PyMongo MongoClient
+  db             — PyMongo Database (alexos)
+  cost_ledger    — CostLedger instance
+  weaviate_client — Weaviate client
+  object_store   — MinIO client
+  redis          — aioredis client
+  llm            — RegistryLLMGateway singleton
+  event_bus      — RunEventBus for WebSocket live streaming
+"""
+from contextlib import asynccontextmanager
+
+import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import make_asgi_app
 
 from app.config import settings
-from app.observability.logging import get_logger
-from app.storage.minio_client import get_object_store
+from app.observability.logging import configure_logging, get_logger
+from app.observability.cost_ledger import CostLedger
+from app.llm.registry import get_llm_gateway
 from app.runtime.events import RunEventBus
+
+from app.api import health
+from app.api.auth import router as auth_router
 from app.api.workflows import router as workflows_router
+from app.api.cost import router as cost_router
 
-log = get_logger(__name__)
+configure_logging(settings.environment)
+logger = get_logger(__name__)
 
-async def health() -> dict[str, str]:
-    """Liveness probe — process is up and serving. No dependency checks."""
-    return {"status": "ok"}
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup builds the long-lived services that nodes consume via DI.
-    Shutdown tears them down cleanly."""
-    log.info("app.startup", env=settings.app_env, log_level=settings.log_level)
+async def lifespan(app: FastAPI):
+    logger.info("eurskem_ai.startup", environment=settings.environment)
 
-    # 1. Core clients — best-effort. If a service is down, log and continue.
-    # Same pattern as MCP below. The platform stays partially functional:
-    # RAG workflows fail at run time with a clear error; non-RAG workflows
-    # (Literal+Echo, Transform-only, etc.) run normally.
-    from app.llm import get_llm_gateway
-    from app.ingestion.embedder import get_embedder
-    from app.retrieval.weaviate_client import get_weaviate_client
+    services: dict = {}
 
-    llm = get_llm_gateway()
-    embedder = get_embedder()
-    weaviate_wrapper = None
-    weaviate_client = None
+    # ── MongoDB ────────────────────────────────────────────────────────────────
     try:
-        weaviate_wrapper = get_weaviate_client()
-        weaviate_client = weaviate_wrapper.connect()
-        log.info("weaviate.connected")
-    except Exception as e:
-        log.warning(
-            "weaviate.startup_failed",
-            error=str(e),
-            error_type=type(e).__name__,
-            hint="run `docker compose up -d weaviate` for RAG workflows",
+        from pymongo import MongoClient
+        mongo_client = MongoClient(
+            settings.mongo_uri, serverSelectionTimeoutMS=3000
         )
+        mongo_client.server_info()
+        db = mongo_client[settings.mongo_db]
+        services["mongo"] = mongo_client
+        services["db"] = db
+        services["cost_ledger"] = CostLedger(db)
+        logger.info("mongo.connected")
+    except Exception as exc:
+        logger.warning("mongo.unavailable", error=str(exc))
+        services["cost_ledger"] = CostLedger(None)
 
-    # 2. Retriever — closure remains, but checks for missing client at call time
-    from app.retrieval.retriever import retrieve
-
-    async def retriever_service(q):
-        if weaviate_client is None:
-            raise RuntimeError(
-            "Weaviate is not connected. Start it with `docker compose up -d weaviate` "
-            "and restart the server."
-            )
-        return await retrieve(
-        q, weaviate_client=weaviate_client, llm=llm, embedder=embedder,
-    )
-
-    # 3. MCP client — launch the subprocess. Best-effort: if MCP fails to
-    # start, log and keep going. Only MCPAgent workflows will fail; the
-    # rest of the platform still works.
-    mcp_client = None
+    # ── Weaviate ───────────────────────────────────────────────────────────────
     try:
-        from app.mcp.client import launch_mcp_session
-        mcp_client = await launch_mcp_session()
-    except Exception as e:
-        log.warning("mcp.client.startup_failed", error=str(e), error_type=type(e).__name__)
+        import weaviate
+        weaviate_client = weaviate.connect_to_local(
+            host=settings.weaviate_host,
+            port=settings.weaviate_port,
+        )
+        services["weaviate_client"] = weaviate_client
+        logger.info("weaviate.connected")
+    except Exception as exc:
+        logger.warning("weaviate.unavailable", error=str(exc))
 
-    object_store = get_object_store()
-    # 4. Bind everything to app.state so workflows.py can read it
-    app.state.services = {
-        "llm": llm,
-        "embedder": embedder,
-        "weaviate_client": weaviate_client,
-        "retriever": retriever_service,
-        "mcp_client": mcp_client,
-        "object_store": object_store, 
-        "event_bus": RunEventBus(),
-    }
-
+    # ── MinIO ──────────────────────────────────────────────────────────────────
     try:
-        yield
-    finally:
-        log.info("app.shutdown")
-        if mcp_client is not None:
-            try:
-                await mcp_client.stop()
-            except Exception as e:
-                log.warning("mcp.client.shutdown_failed", error=str(e))
-        if weaviate_wrapper is not None:
-            try:
-                weaviate_wrapper.close()
-            except Exception as e:
-                log.warning("weaviate.shutdown_failed", error=str(e))
+        from minio import Minio
+        minio_client = Minio(
+            settings.minio_endpoint,
+            access_key=settings.minio_access_key,
+            secret_key=settings.minio_secret_key,
+            secure=False,
+        )
+        services["object_store"] = minio_client
+        logger.info("minio.connected")
+    except Exception as exc:
+        logger.warning("minio.unavailable", error=str(exc))
+
+    # ── Redis ──────────────────────────────────────────────────────────────────
+    try:
+        redis_client = await aioredis.from_url(settings.redis_url)
+        await redis_client.ping()
+        services["redis"] = redis_client
+        logger.info("redis.connected")
+    except Exception as exc:
+        logger.warning("redis.unavailable", error=str(exc))
+
+    # ── LLM gateway ────────────────────────────────────────────────────────────
+    # Singleton — shared across all requests. Nodes call with_context() to get
+    # a cost-tracking clone bound to their run_id/session_id/node_id.
+    services["llm"] = get_llm_gateway()
+    logger.info("llm_gateway.ready")
+
+    # ── Event bus ─────────────────────────────────────────────────────────────
+    # In-process pub/sub for WebSocket live run streaming.
+    services["event_bus"] = RunEventBus()
+    logger.info("event_bus.ready")
+
+    app.state.services = services
+    yield
+
+    # ── Shutdown ───────────────────────────────────────────────────────────────
+    logger.info("eurskem_ai.shutdown")
+    if "mongo" in services:
+        services["mongo"].close()
+    if "weaviate_client" in services:
+        services["weaviate_client"].close()
+    if "redis" in services:
+        await services["redis"].aclose()
 
 
 app = FastAPI(
-    title="Agentic Workflow Platform",
+    title="Eurskem AI — Agentic Workflow Platform",
+    description="Built by Rukainnovation for Eurskem",
     version="0.1.0",
-    description="Optimoz-style platform for composable AI workflows.",
     lifespan=lifespan,
 )
 
+# ── CORS ───────────────────────────────────────────────────────────────────────
+# Dev: allow the Vite dev server. Tighten to eurskem domain in production.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,    # MUST be False when origins=["*"] — CORS spec rule
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(workflows_router)
-app.include_router(workflows_router)
+# ── Prometheus ─────────────────────────────────────────────────────────────────
+metrics_app = make_asgi_app()
+app.mount("/metrics", metrics_app)
 
-@app.get("/health")
-async def health() -> dict[str, str]:
-    """Liveness probe — process is up and serving. No dependency checks."""
-    return {"status": "ok"}
+# ── Routers ────────────────────────────────────────────────────────────────────
+app.include_router(health.router)
+app.include_router(auth_router)
+app.include_router(cost_router)
+app.include_router(workflows_router)

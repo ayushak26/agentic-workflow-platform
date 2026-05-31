@@ -122,11 +122,11 @@ nodes:
     config:
       model: claude-sonnet-4-5
       prompt_template: |
-        Draft the "Team Structure and Qualifications" section for a Proudfoot engagement.
+        Draft the "Team Structure and Qualifications" section for a Eurskem engagement.
 
         Engagement scope: {{context_synthesis.parsed.engagement_summary}}
 
-        Write 300-400 words. Use the standard Proudfoot consulting team structure
+        Write 300-400 words. Use the standard Eurskem consulting team structure
         (Partner, Engagement Manager, Senior Consultants, Analysts).
   - id: draft_commercials
     type: TransformAgent

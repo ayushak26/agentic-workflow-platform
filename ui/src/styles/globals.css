@@ -1,0 +1,58 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  /* Eurskem AI brand */
+  --eur-navy:        #0D1B2A;
+  --eur-navy-mid:    #1A2E45;
+  --eur-navy-light:  #243B55;
+  --eur-gold:        #C8A96E;
+  --eur-gold-light:  #DFC28F;
+  --eur-gold-pale:   #F5EDD9;
+
+  /* Surfaces */
+  --eur-surface:     #F4F6F9;
+  --eur-white:       #FFFFFF;
+  --eur-border:      rgba(13, 27, 42, 0.10);
+  --eur-border-mid:  rgba(13, 27, 42, 0.18);
+
+  /* Text */
+  --eur-text-primary:   #0D1B2A;
+  --eur-text-secondary: #4A5D72;
+  --eur-text-muted:     #8A9BB0;
+
+  /* Semantic */
+  --eur-green:  #0D9E75;
+  --eur-red:    #D94F4F;
+  --eur-amber:  #D4860A;
+  --eur-blue:   #1A6FDB;
+
+  /* Node type colours */
+  --node-transform: #EEF2FF;
+  --node-transform-border: #A5B4FC;
+  --node-transform-text: #3730A3;
+  --node-rag:       #F0FDF4;
+  --node-rag-border: #86EFAC;
+  --node-rag-text:  #166534;
+  --node-hitl:      #FFF7ED;
+  --node-hitl-border: #FCA5A5;
+  --node-hitl-text: #9A3412;
+  --node-parallel:  #FDF4FF;
+  --node-parallel-border: #D8B4FE;
+  --node-parallel-text: #6B21A8;
+  --node-pdf:       #EFF6FF;
+  --node-pdf-border: #93C5FD;
+  --node-pdf-text:  #1E40AF;
+
+  --sidebar-width: 232px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'DM Sans', system-ui, sans-serif;
+  background: var(--eur-surface);
+  color: var(--eur-text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}

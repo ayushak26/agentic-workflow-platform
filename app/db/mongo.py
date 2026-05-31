@@ -26,6 +26,7 @@ log = get_logger(__name__)
 
 DB_NAME = "agentic_platform"
 MANIFESTS_COLLECTION = "manifests"
+SCORECARDS_COLLECTION = "scorecards"
 
 
 class MongoClient:
@@ -36,7 +37,7 @@ class MongoClient:
     """
 
     def __init__(self, url: str | None = None):
-        self._url = url or settings.mongo_url
+        self._url = url or settings.mongo_uri
         self._client: AsyncIOMotorClient | None = None
 
     def _ensure_client(self) -> AsyncIOMotorClient:
@@ -56,15 +57,25 @@ class MongoClient:
             self._client = None
             log.info("mongo.closed")
 
+    @property
+    def scorecards(self) -> AsyncIOMotorCollection:
+        """The eval scorecards collection, opened lazily."""
+        return self._ensure_client()[DB_NAME][SCORECARDS_COLLECTION]        
+
     # ---- Index management ---------------------------------------------------
 
     async def ensure_indexes(self) -> None:
         """Create the indexes the pipeline relies on. Idempotent."""
         col = self.manifests
+        sc = self.scorecards
         await col.create_index([("ingested_at", DESCENDING)])
         await col.create_index([("status", ASCENDING)])
         await col.create_index([("metadata.industry", ASCENDING)])
         await col.create_index([("metadata.doc_type", ASCENDING)])
+        await sc.create_index([("created_at", DESCENDING)])
+        await sc.create_index([("workflow_name", ASCENDING),
+                               ("judge_model", ASCENDING),
+                               ("judge_prompt_version", ASCENDING)])
         log.debug("mongo.indexes_ensured")
 
     # ---- CRUD ---------------------------------------------------------------
@@ -122,6 +133,39 @@ class MongoClient:
             log.info("mongo.manifest_deleted", manifest_id=manifest_id)
         return bool(result.deleted_count)
 
+
+    # ---- Scorecards ---------------------------------------------------------
+
+    async def save_scorecard(self, scorecard: dict[str, Any]) -> str:
+        """Insert one eval scorecard. Returns the inserted id as a string.
+        Append-only: every run is a new document, so history is the full record."""
+        result = await self.scorecards.insert_one(scorecard)
+        log.info(
+            "mongo.scorecard_saved",
+            workflow=scorecard.get("workflow_name"),
+            judge_model=scorecard.get("judge_model"),
+            judge_version=scorecard.get("judge_prompt_version"),
+            overall=scorecard.get("overall_mean"),
+        )
+        return str(result.inserted_id)
+
+    async def list_scorecards(
+        self, workflow_name: str | None = None, limit: int = 20
+    ) -> list[dict[str, Any]]:
+        """List scorecards newest-first, optionally for one workflow.
+        _id is an ObjectId (not JSON-serializable) so we stringify it."""
+        query: dict[str, Any] = {}
+        if workflow_name:
+            query["workflow_name"] = workflow_name
+        cursor = (
+            self.scorecards.find(query)
+            .sort("created_at", DESCENDING)
+            .limit(limit)
+        )
+        cards = await cursor.to_list(length=limit)
+        for c in cards:
+            c["_id"] = str(c["_id"])   # ObjectId -> str for JSON response
+        return cards
 
 # ---------- Manifest builder helper -------------------------------------------
 

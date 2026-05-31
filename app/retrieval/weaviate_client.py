@@ -55,7 +55,7 @@ class WeaviateClient:
     """
 
     def __init__(self, url: str | None = None):
-        self._url = url or settings.weaviate_url
+        self._url = url or f"http://{settings.weaviate_host}:{settings.weaviate_port}"
         self._client: weaviate.WeaviateClient | None = None
 
     def connect(self) -> weaviate.WeaviateClient:

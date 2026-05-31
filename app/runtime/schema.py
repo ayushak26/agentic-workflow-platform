@@ -8,10 +8,18 @@ class WorkflowInputSpec(BaseModel):
     description: str | None = None
 
 
+# existing NodeSpec — add these two fields
 class NodeSpec(BaseModel):
     id: str
-    type: str                  # NodeRegistry key
-    config: dict[str, Any] = Field(default_factory=dict)
+    type: str
+    config: dict = {}
+    allowed_models: list[str] = [          # NEW — list shown in Builder dropdown
+        "claude-sonnet-4-5",
+        "claude-haiku-4-5",
+        "gpt-5",
+        "gpt-5-mini",
+    ]
+    selected_model: str | None = None
 
 class StaticVariable(BaseModel):
     name: str
