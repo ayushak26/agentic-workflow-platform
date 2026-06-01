@@ -6,6 +6,24 @@ const API = `${BASE}/api`;
 // ---- auth token storage (in-memory; survives the SPA session) ----
 let _token: string | null = null;
 
+export type CriterionScore = { criterion: string; score: number; reasoning: string };
+export type ExampleResult = {
+  example_id: string;
+  question: string;
+  generated_answer: string;
+  scores: CriterionScore[];
+};
+export type Scorecard = {
+  workflow_name: string;
+  judge_model: string;
+  judge_prompt_version: string;
+  n_examples: number;
+  per_criterion_mean: Record<string, number>;
+  overall_mean: number;
+  results: ExampleResult[];
+  created_at: string;
+};
+
 export async function login(username: string, password: string): Promise<{ username: string }> {
   const body = new URLSearchParams({ username, password });
   const r = await fetch(`${BASE}/auth/token`, {
@@ -66,6 +84,31 @@ export const api = {
   costForRun: (run_id: string) =>
     fetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
+  goldenSet: (name: string) =>
+    fetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
+      .then(j<{ name: string; n: number; examples: { id: string; question: string; context: string; reference: string }[] }>),
+
+  runEval: (golden_set: string, judge_model: string) =>
+    fetch(`${API}/eval/run`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ golden_set, judge_model }),
+    }).then(j<Scorecard>),
+
+  evalHistory: (limit = 20) =>
+    fetch(`${API}/eval/history?limit=${limit}`, { headers: authHeaders() })
+      .then(j<{ scorecards: Scorecard[] }>),
+
+  scoreOutput: (body: { answer: string; sources: string; question?: string; reference?: string; judge_model?: string }) =>
+    fetch(`${API}/eval/score-output`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{
+      scores: { criterion: string; score: number; reasoning: string }[];
+      judge_model: string;
+      judge_prompt_version: string;
+    }>),
 
   fileUrl(key: string, download = false): string {
     const params = new URLSearchParams({ key });

@@ -39,7 +39,7 @@ _FALLBACK_MODEL: dict[str, str] = {
 }
 
 # Gateway classes that are stubbed (not live).
-_STUB_GATEWAYS: set[type[LLMGateway]] = {AnthropicGateway}
+_STUB_GATEWAYS: set[type[LLMGateway]] = set()
 
 _INSTANCES: dict[type[LLMGateway], LLMGateway] = {}
 
@@ -92,7 +92,7 @@ def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
     if gw_cls is OpenAIGateway:
         return OpenAIGateway(api_key=settings.openai_api_key)
     if gw_cls is AnthropicGateway:
-        return AnthropicGateway()
+        return AnthropicGateway(api_key=settings.anthropic_api_key)
     raise ValueError(f"Don't know how to construct {gw_cls.__name__}")
 
 

@@ -11,27 +11,94 @@ behind the LLMGateway abstraction.
 """
 from __future__ import annotations
 
+import json
 from typing import Type, TypeVar
+
+from anthropic import AsyncAnthropic
 from pydantic import BaseModel
 
 from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
+from app.llm.openai_gw import StructuredResult   # reuse the carrier so cost recording works
 
 T = TypeVar("T", bound=BaseModel)
 
 
 class AnthropicGateway(LLMGateway):
-    async def complete(self, **kwargs) -> LLMResponse:
-        raise NotImplementedError(
-            "AnthropicGateway is a documented stub. Provision "
-            "ANTHROPIC_API_KEY and restore the AsyncAnthropic "
-            "implementation to make live."
+    """Live Anthropic Claude gateway. One AsyncAnthropic client per instance."""
+
+    def __init__(self, api_key: str):
+        self._client = AsyncAnthropic(api_key=api_key)
+
+    async def complete(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+    ) -> LLMResponse:
+        resp = await self._client.messages.create(
+            model=model,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        text = "".join(b.text for b in resp.content if b.type == "text")
+        return LLMResponse(
+            text=text,
+            model=resp.model,
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+            stop_reason=resp.stop_reason,
         )
 
-    async def complete_structured(self, **kwargs) -> T:
-        raise NotImplementedError(
-            "AnthropicGateway stub — see anthropic_gw.py docstring."
+    async def complete_structured(
+        self,
+        *,
+        model: str,
+        system: str,
+        user: str,
+        response_model: Type[T],
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+    ) -> StructuredResult:
+        # Anthropic has no .parse() shortcut. Force structured output by
+        # exposing a single tool whose input_schema is the Pydantic schema,
+        # and requiring the model to call it. The tool input IS our JSON.
+        schema = response_model.model_json_schema()
+        tool_name = "emit_" + response_model.__name__.lower()
+        resp = await self._client.messages.create(
+            model=model,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=[{
+                "name": tool_name,
+                "description": f"Emit a well-formed {response_model.__name__}.",
+                "input_schema": schema,
+            }],
+            tool_choice={"type": "tool", "name": tool_name},
         )
-    
+        tool_block = next(
+            (b for b in resp.content if b.type == "tool_use" and b.name == tool_name),
+            None,
+        )
+        if tool_block is None:
+            raise RuntimeError(
+                f"AnthropicGateway: structured call did not return tool_use for "
+                f"{response_model.__name__}. stop_reason={resp.stop_reason!r}"
+            )
+        parsed = response_model.model_validate(tool_block.input)
+        return StructuredResult(
+            parsed=parsed,
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
+            model=resp.model,
+        )
+
     async def chat_with_tools(
         self,
         *,

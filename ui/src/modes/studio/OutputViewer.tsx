@@ -4,7 +4,11 @@ import { api } from '../../api/client';
 
 export function OutputViewer({ state, workflowName }: { state: any; workflowName?: string }) {
     const navigate = useNavigate();
-    const [tab, setTab] = useState<'sources' | 'audit'>('sources');
+    const [tab, setTab] = useState<'sources' | 'audit' | 'score'>('sources');
+    const [reference, setReference] = useState('');
+    const [scores, setScores] = useState<{ criterion: string; score: number; reasoning: string }[] | null>(null);
+    const [scoring, setScoring] = useState(false);
+    const [scoreErr, setScoreErr] = useState<string | null>(null);
 
     const nodeOutputs = state?.node_outputs ?? {};
     const pdf = nodeOutputs.generate_pdf;
@@ -12,13 +16,32 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
     const citations = nodeOutputs.knowledge_retrieval?.citations ?? [];
     const auditLog: any[] = state?.audit_log ?? [];
 
-    // Diagnostic — remove once confirmed working.
-    console.log('[OutputViewer] audit_log length:', auditLog.length,
-        'node_outputs keys:', Object.keys(nodeOutputs),
-        'state keys:', Object.keys(state ?? {}));
+    const answerText: string =
+        nodeOutputs.compile_and_qa?.raw ??
+        nodeOutputs.knowledge_retrieval?.answer ??
+        Object.values(nodeOutputs).map((o: any) => o?.raw).filter(Boolean).join('\n\n') ??
+        '';
+    const sourcesText: string = citations
+        .map((c: any) => `[${c.label}] ${c.source_doc}: ${c.snippet}`)
+        .join('\n');
 
-    // Fallback: if the audit_log channel is somehow empty, derive a timeline from
-    // node_outputs so the tab is never blank when the run clearly executed.
+    async function runScoring() {
+        setScoring(true); setScoreErr(null); setScores(null);
+        try {
+            const res = await api.scoreOutput({
+                answer: answerText,
+                sources: sourcesText,
+                question: `Proposal for ${workflowName ?? 'workflow'}`,
+                reference: reference.trim() || undefined,
+            });
+            setScores(res.scores);
+        } catch (e) {
+            setScoreErr(String(e));
+        } finally {
+            setScoring(false);
+        }
+    }
+
     const auditEntries = auditLog.length > 0
         ? auditLog
         : Object.keys(nodeOutputs).map((nid) => ({ node_id: nid, type_name: '(derived from node_outputs)' }));
@@ -28,6 +51,45 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
             : d === 'edit' ? 'bg-accent-600 text-white'
                 : 'bg-ok text-white';
 
+    // Reusable Score panel — used in both the PDF and no-PDF layouts.
+    const scorePanel = (
+        <div className="p-4 space-y-3">
+            <div className="text-xs text-ink-500">
+                The judge scores this output against its sources. Paste an ideal proposal
+                below to score <strong>completeness</strong> against it (optional, never
+                stored). Without it, faithfulness and citation accuracy still apply.
+            </div>
+            <textarea
+                value={reference}
+                onChange={e => setReference(e.target.value)}
+                placeholder="Optional: paste an ideal proposal as the completeness reference…"
+                className="w-full h-24 border border-slate-300 rounded-md p-2 text-xs"
+            />
+            <button onClick={runScoring} disabled={scoring || !answerText}
+                className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm disabled:opacity-50">
+                {scoring ? 'Scoring…' : 'Score this output'}
+            </button>
+            {!answerText && (
+                <div className="text-xs text-ink-400">No output text found to score.</div>
+            )}
+            {scoreErr && <div className="text-xs text-red-600">{scoreErr}</div>}
+            {scores && (
+                <ul className="space-y-2 text-xs mt-2">
+                    {scores.map(s => (
+                        <li key={s.criterion} className="border border-slate-200 rounded-md p-2">
+                            <div className="flex justify-between">
+                                <span className="capitalize font-medium">{s.criterion.replace('_', ' ')}</span>
+                                <span className="font-semibold">{s.score}/5</span>
+                            </div>
+                            <div className="text-ink-500 mt-1">{s.reasoning}</div>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+
+    // ── No-PDF layout (e.g. rag_test, document_qa) ──────────────────────────
     if (!minioKey) {
         const entries = Object.entries(nodeOutputs);
         return (
@@ -77,31 +139,69 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                         )}
                     </div>
 
-                    <aside className="w-72 border-l border-slate-200 bg-white overflow-y-auto p-4">
-                        <div className="text-sm font-medium mb-2">Audit log ({auditEntries.length})</div>
-                        {auditEntries.length === 0 ? (
-                            <div className="text-xs text-ink-500">No audit entries.</div>
-                        ) : (
-                            <ul className="space-y-1.5 text-xs">
-                                {auditEntries.map((e: any, i: number) => (
-                                    <li key={i} className="border border-slate-200 rounded-md p-2">
-                                        <div className="flex items-center justify-between">
-                                            <span className="font-mono font-medium">{e.node_id}</span>
-                                            {typeof e.duration_s === 'number' && (
-                                                <span className="text-ink-400">{e.duration_s.toFixed(2)}s</span>
-                                            )}
-                                        </div>
-                                        <div className="text-ink-500">{e.type_name}</div>
-                                    </li>
-                                ))}
-                            </ul>
+                    <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto">
+                        <div className="flex border-b border-slate-200">
+                            <button onClick={() => setTab('sources')}
+                                className={`flex-1 px-3 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                                Sources ({citations.length})
+                            </button>
+                            <button onClick={() => setTab('audit')}
+                                className={`flex-1 px-3 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                                Audit ({auditEntries.length})
+                            </button>
+                            <button onClick={() => setTab('score')}
+                                className={`flex-1 px-3 py-2 text-sm ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                                Score
+                            </button>
+                        </div>
+
+                        {tab === 'sources' && (
+                            <div className="p-4">
+                                {citations.length === 0 ? (
+                                    <div className="text-sm text-ink-500">No citations recorded.</div>
+                                ) : (
+                                    <ul className="space-y-2 text-xs">
+                                        {citations.map((c: any) => (
+                                            <li key={c.label} className="border border-slate-200 rounded-md p-2">
+                                                <div className="font-medium">[{c.label}] {c.source_doc}</div>
+                                                <div className="text-ink-500 mt-1">{c.snippet}</div>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
                         )}
+
+                        {tab === 'audit' && (
+                            <div className="p-4">
+                                {auditEntries.length === 0 ? (
+                                    <div className="text-xs text-ink-500">No audit entries.</div>
+                                ) : (
+                                    <ul className="space-y-1.5 text-xs">
+                                        {auditEntries.map((e: any, i: number) => (
+                                            <li key={i} className="border border-slate-200 rounded-md p-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="font-mono font-medium">{e.node_id}</span>
+                                                    {typeof e.duration_s === 'number' && (
+                                                        <span className="text-ink-400">{e.duration_s.toFixed(2)}s</span>
+                                                    )}
+                                                </div>
+                                                <div className="text-ink-500">{e.type_name}</div>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        )}
+
+                        {tab === 'score' && scorePanel}
                     </aside>
                 </div>
             </div>
         );
     }
 
+    // ── PDF layout (flagship proposal_generation) ───────────────────────────
     const viewUrl = api.fileUrl(minioKey);
     const downloadUrl = api.fileUrl(minioKey, true);
 
@@ -140,16 +240,20 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                 <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto">
                     <div className="flex border-b border-slate-200">
                         <button onClick={() => setTab('sources')}
-                            className={`flex-1 px-4 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                            className={`flex-1 px-3 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                             Sources ({citations.length})
                         </button>
                         <button onClick={() => setTab('audit')}
-                            className={`flex-1 px-4 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                            Audit log ({auditEntries.length})
+                            className={`flex-1 px-3 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                            Audit ({auditEntries.length})
+                        </button>
+                        <button onClick={() => setTab('score')}
+                            className={`flex-1 px-3 py-2 text-sm ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                            Score
                         </button>
                     </div>
 
-                    {tab === 'sources' ? (
+                    {tab === 'sources' && (
                         <div className="p-4">
                             {citations.length === 0 ? (
                                 <div className="text-sm text-ink-500">No citations recorded.</div>
@@ -164,7 +268,9 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                                 </ul>
                             )}
                         </div>
-                    ) : (
+                    )}
+
+                    {tab === 'audit' && (
                         <div className="p-4">
                             {auditEntries.length === 0 ? (
                                 <div className="text-sm text-ink-500">No audit entries.</div>
@@ -172,7 +278,7 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                                 <ul className="space-y-1.5 text-xs">
                                     {auditEntries.map((e: any, i: number) => {
                                         const out = nodeOutputs[e.node_id] ?? {};
-                                        const decision = out.decision;            // present on HITL nodes
+                                        const decision = out.decision;
                                         return (
                                             <li key={i} className="border border-slate-200 rounded-md p-2">
                                                 <div className="flex items-center justify-between">
@@ -205,6 +311,8 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                             )}
                         </div>
                     )}
+
+                    {tab === 'score' && scorePanel}
                 </aside>
             </div>
         </div>

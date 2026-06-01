@@ -24,7 +24,7 @@ from app.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-DB_NAME = "agentic_platform"
+DB_NAME = "eurskem_ai"
 MANIFESTS_COLLECTION = "manifests"
 SCORECARDS_COLLECTION = "scorecards"
 

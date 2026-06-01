@@ -32,6 +32,7 @@ from app.api import health
 from app.api.auth import router as auth_router
 from app.api.workflows import router as workflows_router
 from app.api.cost import router as cost_router
+from app.api.eval import router as eval_router
 
 from functools import partial
 
@@ -47,14 +48,20 @@ async def lifespan(app: FastAPI):
 
     # ── MongoDB ────────────────────────────────────────────────────────────────
     try:
-        from pymongo import MongoClient
-        mongo_client = MongoClient(
+        from pymongo import MongoClient as PyMongoClient
+        mongo_client = PyMongoClient(
             settings.mongo_uri, serverSelectionTimeoutMS=3000
         )
-        mongo_client.server_info()
+        mongo_client.server_info()          # fail fast if Mongo is down
         db = mongo_client[settings.mongo_db]
-        services["mongo"] = mongo_client
-        services["db"] = db
+
+        # Async motor wrapper — eval + ingestion call its typed CRUD methods
+        # (save_scorecard, list_scorecards, manifests). Distinct from the raw
+        # pymongo Database below, which the (sync) CostLedger needs.
+        from app.db.mongo import MongoClient as AsyncMongo
+        services["mongo"] = AsyncMongo(settings.mongo_uri)
+
+        services["db"] = db                 # raw pymongo Database for CostLedger
         services["cost_ledger"] = CostLedger(db)
         logger.info("mongo.connected")
     except Exception as exc:
@@ -169,3 +176,4 @@ app.include_router(health.router)
 app.include_router(auth_router)
 app.include_router(cost_router)
 app.include_router(workflows_router)
+app.include_router(eval_router)

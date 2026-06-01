@@ -9,16 +9,48 @@ from pydantic import BaseModel
 
 from app.evaluation import LLMJudge, load_golden_set, run_eval
 from app.evaluation.golden_set import GoldenExample
+from app.evaluation.judge import JUDGE_PROMPT_VERSION
 
 router = APIRouter(prefix="/api/eval", tags=["eval"])
 
 GOLDEN_DIR = Path("eval/golden_set")
-
+REFERENCE_PDF = Path("samples/FARMLOOPS_proposal.pdf")
 
 class RunEvalRequest(BaseModel):
     golden_set: str = "document_qa"   # filename stem under eval/golden_set/
     judge_model: str = "claude-sonnet-4-5"
+    
+class ScoreOutputRequest(BaseModel):
+    answer: str
+    sources: str = ""
+    question: str = ""
+    reference: str = ""          # optional ideal answer; used in-memory, never stored
+    judge_model: str = "gpt-5"
 
+def _load_reference() -> str:
+    """Extract text from the stored reference proposal (gitignored, private).
+    Reuses the ingestion PDF extractor so behavior matches how we read RFPs."""
+    if not REFERENCE_PDF.exists():
+        return ""
+    from app.ingestion.extractor import PdfExtractor
+    return PdfExtractor().extract(REFERENCE_PDF).full_text
+
+@router.post("/score-output")
+async def score_output(req: ScoreOutputRequest, request: Request) -> dict[str, Any]:
+    services = request.app.state.services
+    reference = req.reference or _load_reference()
+    judge = LLMJudge(services["llm"], model=req.judge_model)
+    scores = await judge.score_all(
+        question=req.question or "Evaluate this proposal against its sources.",
+        answer=req.answer,
+        context=req.sources,
+        reference=reference,
+    )
+    return {
+        "scores": [s.model_dump() for s in scores],
+        "judge_model": req.judge_model,
+        "judge_prompt_version": JUDGE_PROMPT_VERSION,
+    }
 
 @router.get("/golden-set")
 async def list_golden_set(name: str = "document_qa") -> dict[str, Any]:
