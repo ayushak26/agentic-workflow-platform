@@ -186,9 +186,10 @@ class RegistryLLMGateway(LLMGateway):
     async def complete_structured(self, *, model: str, **kwargs):
         gateway, resolved = get_gateway(model)
         resp = await gateway.complete_structured(model=resolved, **kwargs)
-        # Structured returns a bare pydantic model — no usage tokens attached.
-        metrics.LLM_CALLS.labels(model=resolved, status="success").inc()
-        return resp
+        # resp is a StructuredResult: carries parsed model + token usage.
+        _record_usage(model, resolved, resp)
+        self._record_cost(model, resolved, resp)
+        return resp.parsed
 
     async def chat_with_tools(self, *, model: str, **kwargs):
         gateway, resolved = get_gateway(model)

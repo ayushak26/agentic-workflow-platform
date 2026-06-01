@@ -1,0 +1,16 @@
+name: RAG Test
+description: Single RAGAgent node for isolated testing.
+version: '1.0'
+inputs:
+  question:
+    type: text
+nodes:
+  - id: answer
+    type: RAGAgent
+    config:
+      model: claude-sonnet-4-5
+      query: "{{inputs.question}}"
+      filters:
+        industry: finance
+      top_n_final: 5
+edges: []

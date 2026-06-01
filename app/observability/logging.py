@@ -1,5 +1,5 @@
 import structlog
-import logging
+import sys,logging
 
 
 def configure_logging(environment: str = "development") -> None:
@@ -30,13 +30,12 @@ def configure_logging(environment: str = "development") -> None:
         foreign_pre_chain=shared_processors,
     )
 
-    handler = logging.StreamHandler()
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
 
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(logging.INFO)
-
 
 def get_logger(name: str = __name__):
     return structlog.get_logger(name)

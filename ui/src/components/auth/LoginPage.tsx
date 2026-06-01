@@ -1,7 +1,8 @@
 import { useState, type FC } from "react";
+import { login } from "../../api/client";   // <-- add this import
 
 interface Props {
-  onLogin: (token: string, username: string) => void;
+  onLogin: (username: string) => void;       // <-- token no longer needed here
 }
 
 export const LoginPage: FC<Props> = ({ onLogin }) => {
@@ -13,19 +14,15 @@ export const LoginPage: FC<Props> = ({ onLogin }) => {
   const handleLogin = async () => {
     setLoading(true); setError("");
     try {
-      const form = new FormData();
-      form.append("username", username);
-      form.append("password", password);
-      const res = await fetch("http://localhost:8000/auth/token", { method: "POST", body: form });
-      if (!res.ok) { setError("Invalid credentials"); return; }
-      const data = await res.json();
-      onLogin(data.access_token, data.username);
+      const result = await login(username, password);   // <-- sets _token in client.ts
+      onLogin(result.username);
     } catch {
-      setError("Cannot reach server");
+      setError("Invalid credentials or cannot reach server");
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div style={{

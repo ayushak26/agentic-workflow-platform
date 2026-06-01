@@ -33,6 +33,8 @@ from app.api.auth import router as auth_router
 from app.api.workflows import router as workflows_router
 from app.api.cost import router as cost_router
 
+from functools import partial
+
 configure_logging(settings.environment)
 logger = get_logger(__name__)
 
@@ -71,19 +73,13 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("weaviate.unavailable", error=str(exc))
 
-    # ── MinIO ──────────────────────────────────────────────────────────────────
+    # ── Object store (S3-compatible, boto3-backed) ─────────────────────────────
     try:
-        from minio import Minio
-        minio_client = Minio(
-            settings.minio_endpoint,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=False,
-        )
-        services["object_store"] = minio_client
-        logger.info("minio.connected")
+        from app.storage.minio_client import get_object_store
+        services["object_store"] = get_object_store()
+        logger.info("object_store.ready")
     except Exception as exc:
-        logger.warning("minio.unavailable", error=str(exc))
+        logger.warning("object_store.unavailable", error=str(exc))
 
     # ── Redis ──────────────────────────────────────────────────────────────────
     try:
@@ -99,6 +95,33 @@ async def lifespan(app: FastAPI):
     # a cost-tracking clone bound to their run_id/session_id/node_id.
     services["llm"] = get_llm_gateway()
     logger.info("llm_gateway.ready")
+
+    # ── MCP client ───────────────────────────────────────────────────────────
+    # Launches the MCP server as a stdio subprocess and keeps one session open
+    # for the app's lifetime. The MCPAgent node calls list_tools()/call_tool().
+    try:
+        from app.mcp.client import launch_mcp_session
+        services["mcp_client"] = await launch_mcp_session()
+        logger.info("mcp_client.ready")
+    except Exception as exc:
+        logger.warning("mcp_client.unavailable", error=str(exc))
+
+    if "weaviate_client" in services:
+        from app.retrieval import retrieve
+        from app.ingestion.embedder import get_embedder
+        _embedder = get_embedder()
+        services["embedder"] = _embedder
+        _wv = services["weaviate_client"]
+        _llm = services["llm"]
+        services["retriever"] = lambda q, llm=None: retrieve(
+        q,
+        weaviate_client=_wv,
+        llm=llm or _llm,        # caller can pass a context-bound gateway
+        embedder=_embedder,
+        )
+        logger.info("retriever.ready")
+    else:
+        logger.warning("retriever.unavailable", reason="weaviate not connected")
 
     # ── Event bus ─────────────────────────────────────────────────────────────
     # In-process pub/sub for WebSocket live run streaming.
@@ -116,6 +139,8 @@ async def lifespan(app: FastAPI):
         services["weaviate_client"].close()
     if "redis" in services:
         await services["redis"].aclose()
+    if "mcp_client" in services:
+        await services["mcp_client"].stop()    
 
 
 app = FastAPI(

@@ -32,7 +32,7 @@ export function Library() {
       if (Object.keys(inputs).length === 0) {
         // No inputs — launch directly.
         const runId = crypto.randomUUID();
-        navigate(`/studio/cockpit/${runId}`, {
+        navigate(`/cockpit/${runId}`, {
           state: { workflowYaml: yamlText, workflowName, inputs: {} },
         });
       } else {
@@ -55,7 +55,7 @@ export function Library() {
         <div className="p-4 border-b border-slate-200 flex items-center justify-between">
           <h2 className="font-medium">Workflows</h2>
           <button
-            onClick={() => navigate('/studio/builder')}
+            onClick={() => navigate('/builder')}
             className="text-sm px-3 py-1 rounded-md bg-accent-600 text-white hover:bg-accent-500"
           >
             + New
@@ -91,7 +91,7 @@ export function Library() {
             <div className="mt-2 text-sm text-ink-500">{current.node_count} nodes</div>
             <div className="mt-8 flex gap-3">
               <button
-                onClick={() => navigate(`/studio/builder/${current.name}`)}
+                onClick={() => navigate(`/builder/${current.name}`)}
                 className="px-4 py-2 rounded-md bg-accent-600 text-white hover:bg-accent-500"
               >
                 Edit in Builder

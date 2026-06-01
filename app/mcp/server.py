@@ -9,6 +9,13 @@ Tools:
   - validate_citation: LLM-as-judge scoring whether a chunk supports a claim
 """
 from __future__ import annotations
+import sys, logging
+logging.basicConfig(stream=sys.stderr, force=True)
+
+# Route structlog through stdlib → stderr handler. Without this, structlog's
+# default PrintLogger writes to stdout and corrupts the MCP JSON-RPC stream.
+from app.observability.logging import configure_logging
+configure_logging()
 
 import asyncio
 import json

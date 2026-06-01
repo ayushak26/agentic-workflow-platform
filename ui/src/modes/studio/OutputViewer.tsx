@@ -39,7 +39,7 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                             {entries.length} node{entries.length === 1 ? '' : 's'} executed · no PDF output
                         </div>
                     </div>
-                    <button onClick={() => navigate('/studio/library')}
+                    <button onClick={() => navigate('/library')}
                         className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
                         Back to Library
                     </button>
@@ -123,7 +123,7 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                         Open in new tab
                     </a>
                     <button
-                        onClick={() => navigate('/studio/library')}
+                        onClick={() => navigate('/library')}
                         className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
                     >
                         Back

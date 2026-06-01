@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 # ---- Enums --------------------------------------------------------------
 
 DocType = Literal[
+    "rfp",
     "proposal",
     "case_study",
     "methodology",

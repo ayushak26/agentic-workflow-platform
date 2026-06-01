@@ -15,6 +15,7 @@ import { HITLPanel } from './HITLPanel';
 import { OutputViewer } from './OutputViewer';
 import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } from './yaml-bridge';
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
+import { useSetRunCost } from "../../RunCostContext";
 
 type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
 const nodeTypes = { workflow: CockpitNode };
@@ -68,6 +69,7 @@ export function Cockpit() {
   // NOT the WebSocket — so approvals work even if the socket drops mid-run.
   const [gate, setGate] = useState<Gate | null>(null);
   const [finished, setFinished] = useState<Finished | null>(null);
+  const setRunCost = useSetRunCost();
 
   const { events, open: wsOpen, error: wsError } = useRunSocket(runId ?? null);
 
@@ -101,9 +103,20 @@ export function Cockpit() {
     } else if (res.status === 'failed') {
       setGate(null);
       setFinished({ status: 'failed', error: res.error });
+    } else if (res.status === 'completed') {
+      setFinished({ status: 'completed', state: res.state });
     }
+    
   }
-
+  // Fetch run cost whenever the run reaches a completed state, regardless of
+// which path (HTTP resume vs WS) marked it finished.
+useEffect(() => {
+  if (finished?.status === 'completed' && runId) {
+    api.costForRun(runId)
+      .then(c => setRunCost(c.total_usd))
+      .catch(e => console.error('cost fetch failed', e));
+  }
+}, [finished, runId]);
   // After WS opens, trigger the run exactly once. The run response seeds the first gate.
   useEffect(() => {
     if (!wsOpen || runTriggered || !navState.workflowYaml || !runId) return;
@@ -153,7 +166,7 @@ export function Cockpit() {
           (Phase 11 will add a snapshot endpoint that lets you reattach).
         </div>
         <button
-          onClick={() => navigate('/studio/library')}
+          onClick={() => navigate('/library')}
           className="mt-4 px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
         >
           Back to Library

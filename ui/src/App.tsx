@@ -1,21 +1,23 @@
 import { useState } from "react";
 import "./styles/globals.css";
 import { Sidebar } from "./components/layout/Sidebar";
-import { Topbar }  from "./components/layout/Topbar";
+import { Topbar } from "./components/layout/Topbar";
 import { LoginPage } from "./components/auth/LoginPage";
+import { StudioRoot } from "./modes/studio/StudioRoot";
+import { EvalRoot } from "./modes/eval/EvalRoot";
+import { OperatorRoot } from "./modes/operator/OperatorRoot";
+import { RunCostContext } from "./RunCostContext";
 
 type Mode = "studio" | "eval" | "operator";
 
 export default function App() {
-  const [token, setToken]       = useState<string | null>(null);
   const [username, setUsername] = useState("");
-  const [mode, setMode]         = useState<Mode>("studio");
-  const [runCost, setRunCost]   = useState(0);
+  const [mode, setMode] = useState<Mode>("studio");
+  const [runCost, setRunCost] = useState(0);
+  const [loggedIn, setLoggedIn] = useState(false);
 
-  if (!token) {
-    return (
-      <LoginPage onLogin={(t, u) => { setToken(t); setUsername(u); }} />
-    );
+  if (!loggedIn) {
+    return <LoginPage onLogin={(u) => { setLoggedIn(true); setUsername(u); }} />;
   }
 
   return (
@@ -23,12 +25,13 @@ export default function App() {
       <Sidebar mode={mode} onModeChange={setMode} username={username} />
       <div style={{ marginLeft: "var(--sidebar-width)", flex: 1, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         <Topbar mode={mode} runCostUsd={runCost} />
-        <main style={{ flex: 1, padding: 24 }}>
-          {/* Phase 9 Studio / Eval / Operator views mount here */}
-          <p style={{ color: "var(--eur-text-secondary)" }}>
-            {mode} mode — Eurskem AI platform
-          </p>
-        </main>
+        <RunCostContext.Provider value={setRunCost}>
+          <main style={{ flex: 1, padding: 24 }}>
+            {mode === "studio" && <StudioRoot />}
+            {mode === "eval" && <EvalRoot />}
+            {mode === "operator" && <OperatorRoot />}
+          </main>
+        </RunCostContext.Provider>
       </div>
     </div>
   );

@@ -25,6 +25,18 @@ from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
 T = TypeVar("T", bound=BaseModel)
 
 log = structlog.get_logger(__name__)
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass
+class StructuredResult:
+    """Carries a parsed Pydantic model plus token usage, so the registry
+    wrapper can record cost. The wrapper unwraps `.parsed` before returning
+    to the caller, who still receives a bare model."""
+    parsed: Any
+    input_tokens: int
+    output_tokens: int
+    model: str
 
 
 # GPT-5 family quirks ---------------------------------------------------
@@ -122,7 +134,13 @@ class OpenAIGateway(LLMGateway):
                 f"OpenAIGateway: structured parse failed for "
                 f"{response_model.__name__}. refusal={refusal!r}"
             )
-        return parsed
+        return StructuredResult(
+            parsed=parsed,
+            input_tokens=resp.usage.prompt_tokens,
+            output_tokens=resp.usage.completion_tokens,
+            model=resp.model,
+        )
+
     
     async def chat_with_tools(
         self,
@@ -176,13 +194,17 @@ class OpenAIGateway(LLMGateway):
             for t in tools
         ]
 
-        response = await self._client.chat.completions.create(
-            model=model,
-            messages=openai_messages,
-            tools=openai_tools,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        call_kwargs: dict = {
+            "model": model,
+            "messages": openai_messages,
+            "tools": openai_tools,
+            "max_completion_tokens": _completion_tokens_for(model, max_tokens),
+        }
+        if _supports_custom_temperature(model):
+            call_kwargs["temperature"] = temperature
+
+        response = await self._client.chat.completions.create(**call_kwargs)
+
 
         choice = response.choices[0]
         message = choice.message

@@ -11,16 +11,19 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60
     environment: str = "development"
 
-    mongo_uri: str = "mongodb://alex:alexpass@localhost:27017"
-    mongo_db: str = "alexos"
+    mongo_uri: str = "mongodb://eurskem:eurschempass@localhost:27017"
+    mongo_db: str = "eurskem_ai"
+
+    retrieval_reranker_model: str = "claude-sonnet-4-5"
+    retrieval_compressor_model: str = "claude-sonnet-4-5"
 
     weaviate_host: str = "localhost"
     weaviate_port: int = 8080
 
     minio_endpoint: str = "localhost:9000"
-    minio_access_key: str = "alexadmin"
-    minio_secret_key: str = "alexpassword"
-    minio_bucket: str = "alexos-docs"
+    minio_access_key: str = "eurskemadmin"
+    minio_secret_key: str = "eurskempassword"
+    minio_bucket: str = "eurskem-ai-docs"
 
     redis_url: str = "redis://localhost:6379/0"
 

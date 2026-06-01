@@ -20,7 +20,7 @@ export function RunDialog({
 
   function launch() {
     const runId = crypto.randomUUID();
-    navigate(`/studio/cockpit/${runId}`, {
+    navigate(`/cockpit/${runId}`, {
       state: { workflowYaml, workflowName, inputs: values },
     });
   }

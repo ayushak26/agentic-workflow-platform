@@ -79,7 +79,7 @@ class RAGAgent(NodeType):
         )
 
         # 2. Retrieve
-        result = await retriever(q)
+        result = await retriever(q, llm=llm)
         if not result.chunks:
             return {
                 "answer": "No sources matched the query.",

@@ -19,6 +19,7 @@ from app.llm import LLMGateway
 from app.retrieval.compressor import compress_chunks
 from app.retrieval.hybrid_search import hybrid_search
 from app.retrieval.models import RetrievalQuery, RetrievalResult, RetrievedChunk
+from app.retrieval.weaviate_client import COLLECTION_NAME
 from app.retrieval.query_understanding import rewrite_query
 from app.ingestion.embedder import Embedder
 from app.retrieval.reranker import rerank
@@ -70,8 +71,8 @@ async def retrieve(
     # ---- Stage 2 — hybrid search with metadata pre-filter ------------
     candidates, t = await hybrid_search(
         client=weaviate_client,
+        collection_name=COLLECTION_NAME,
         embedder=embedder,
-        collection_name=settings.weaviate_collection,
         query=effective_query,
         filters=q.filters,
         top_k=q.top_k_candidates,
