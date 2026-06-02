@@ -40,6 +40,32 @@ PER_FILE_METADATA: dict[str, dict] = {
         "outcome": "failed",
         "session_id": "default",
     },
+    "wp-15-general-annexes_horizon-2026-2027_en.pdf": {
+        "industry": "circular_bioeconomy",
+        "doc_type": "general_annexes",
+        "framework": "horizon_europe",
+        "collection_id": "cbe_ju_ia02_annexes",
+        "call_id": "HORIZON-JU-CBE-2026-IA-02",
+        "session_id": "default",
+    },
+    "wp-4-health_horizon-2026-2027_en.pdf": {
+        "industry": "health",
+        "doc_type": "work_programme",
+        "framework": "horizon_europe",
+        "session_id": "default",
+    },
+    "wp-2-marie-sklodowska-curie-actions_horizon-2026-2027_en.pdf": {
+        "industry": "research_innovation",
+        "doc_type": "work_programme",
+        "framework": "horizon_europe",
+        "session_id": "default",
+    },
+    "wp-8-climate-energy-and-mobility_horizon-2026-2027_en.pdf": {
+        "industry": "climate_energy_mobility",
+        "doc_type": "work_programme",
+        "framework": "horizon_europe",
+        "session_id": "default",
+    },
 }
 
 

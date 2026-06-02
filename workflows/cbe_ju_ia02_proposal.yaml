@@ -1,0 +1,332 @@
+name: "CBE JU IA-02 Proposal Generation"
+description: >
+  Generates a Horizon Europe Part B proposal for CBE JU topic
+  HORIZON-JU-CBE-2026-IA-02 (Bio-based additives as alternatives to unlock and
+  increase recyclability and/or biodegradability). Fan-out over the three
+  official Part B sections (Excellence / Impact / Implementation), grounded by
+  RAG retrieval over the ingested CBE JU AWP topic text + General Annexes,
+  shaped by a structural template distilled from an example Part B (FARMLOOPS),
+  and informed by a web state-of-the-art scan. Produces a FULL illustrative
+  draft: every section written out at length, with project-specific facts the
+  applicant has not yet decided marked [TO CONFIRM]. Fully automated.
+version: "1.2"
+
+# ---------------------------------------------------------------------------
+# Inputs
+#   concept_note: applicant's project specifics. MAY be sparse/empty; drafters
+#     then write illustrative prose and mark unknowns [TO CONFIRM].
+#   annexes_collection_id: Weaviate collection with the ingested AWP + General
+#     Annexes. RAG filters to this only.
+#   template_file: example Part B PDF (FARMLOOPS). Structural skeleton only.
+# ---------------------------------------------------------------------------
+inputs:
+  concept_note: text
+  annexes_collection_id: text
+  template_file: file
+
+nodes:
+
+  # 0a. Extract the example proposal's full text (document order, not RAG). ---
+  - id: farmloops_extract
+    type: PDFToolNode
+    config:
+      variant: extract_text
+      source: "{{inputs.template_file}}"
+
+  # 0b. Distill it into a reusable structural skeleton (no content carried). --
+  - id: template_spec
+    type: TransformAgent
+    config:
+      model: claude-opus-4-8
+      prompt_template: |
+        Below is the extracted text of a Horizon Europe Part B proposal used
+        purely as a STRUCTURAL reference. Ignore its subject matter, claims,
+        partners and quality entirely.
+
+        Extract ONLY its reusable structural skeleton:
+        - section and sub-section headings, in order
+        - a one-line note on what each section contains
+        - approximate page weight per section
+        Carry over NO content, claims, partners, figures or wording.
+
+        Source Part B text:
+        ---
+        {{farmloops_extract.text}}
+        ---
+      output_schema:
+        section_outline: list
+        notes_per_section: str
+
+  # 0c. Web state-of-the-art scan (MCP Agent -> search_web tool). -------------
+  #     LLM-driven tool selection over the MCP server. Returns ranked web
+  #     passages (title/url/snippet/score) used as BACKGROUND only. NOTE:
+  #     until WEB_SEARCH_BACKEND is set, this returns labelled [STUB RESULT]
+  #     rows, not live data.
+  - id: sota_scan
+    type: MCPAgent
+    config:
+      model: claude-opus-4-8
+      allowed_tools: ["search_web"]
+      objective: >
+        Gather recent state-of-the-art context for bio-based additives that
+        unlock or increase recyclability and/or biodegradability of plastics
+        and packaging: current additive chemistries, feedstocks, recycling
+        compatibility, biodegradation standards, EU circular-economy and SSbD
+        policy direction, and competing or prior approaches. Return a concise
+        briefing of findings WITH source URLs. Mark anything uncertain.
+      output_schema:
+        sota_briefing: str
+        sources: list
+
+  # 1. Parse the call into a structured requirement set. ----------------------
+  - id: call_intel
+    type: TransformAgent
+    config:
+      model: claude-opus-4-8
+      prompt_template: |
+        You are a Horizon Europe proposal analyst. Read the CBE JU topic
+        HORIZON-JU-CBE-2026-IA-02 ("Bio-based additives as alternatives to
+        unlock and increase recyclability and/or biodegradability"), an
+        Innovation Action.
+
+        Applicant concept note (MAY be sparse or empty):
+        ---
+        {{inputs.concept_note}}
+        ---
+
+        Extract a structured requirement set the proposal MUST satisfy. IA =>
+        expected TRL 6-7 at project end. Hard constraints for this topic:
+        multi-actor approach (waste management, product manufacturers, brand
+        owners, consumers, from early stages); demonstrate at least TRL 6
+        compatibility/processability of the bio-based additive; validate the
+        chosen circular end-of-life route (mechanical, chemical, organic or
+        enzymatic recycling, and/or biodegradation in soil/water per
+        EU/international standards); prevent release of harmful chemicals across
+        the life cycle; Safe and Sustainable by Design (SSbD).
+        Where the concept note does not specify something, still list the
+        requirement and note it as applicant-to-decide.
+      output_schema:
+        topic_id: str
+        action_type: str
+        target_trl: str
+        mandatory_requirements: list
+        eol_route_in_scope: list
+        multi_actor_roles: list
+        ssbd_obligations: list
+        expected_impacts: list
+
+  # 2. Retrieve binding rules from the ingested Annexes. ---------------------
+  - id: rules_retrieval
+    type: RAGAgent
+    config:
+      model: claude-opus-4-8
+      filters:
+        collection_id: "{{inputs.annexes_collection_id}}"
+      top_k: 12
+      query: >
+        Part B page limit and structure, evaluation criteria (excellence,
+        impact, implementation), TRL definitions, eligibility and consortium
+        composition, ethics and security, gender equality plan, open science,
+        budget categories and funding rate for Innovation Actions in CBE JU /
+        Horizon Europe General Annexes.
+
+  # --- Shared drafting contract injected into each drafter prompt -----------
+  # FULL illustrative draft mode: write every sub-section out at length. Do NOT
+  # leave sections thin. Where a project-specific fact is not given in the
+  # concept note, write a realistic ILLUSTRATIVE version and tag the specific
+  # fact [TO CONFIRM: ...] so the applicant can see exactly what to replace.
+  # Never present an invented consortium, partner, or budget figure as real:
+  # tag consortium/partner/budget specifics [TO CONFIRM]. Use the web SOTA
+  # briefing for background and to argue beyond state of the art; cite a source
+  # URL when you rely on it, and do not state web findings as project facts.
+
+  - id: draft_excellence
+    type: TransformAgent
+    config:
+      model: claude-opus-4-8
+      prompt_template: |
+        Draft Section 1 (EXCELLENCE) of a Horizon Europe Part B for CBE JU
+        topic {{call_intel.topic_id}} (Innovation Action). Write the FULL
+        section at length, target ~15 pages of substantive prose.
+
+        Structural template (skeleton only, no source content reused):
+        {{template_spec.section_outline}}
+        Concept note (may be sparse): {{inputs.concept_note}}
+        Structured requirements: {{call_intel}}
+        Binding rules retrieved: {{rules_retrieval}}
+        Web state-of-the-art briefing (BACKGROUND only, cite URLs when used):
+        {{sota_scan.sota_briefing}}
+
+        Cover in full:
+        1.1 Objectives and ambition - the bio-based additive(s), target
+            material/product, the circularity bottleneck, measurable objectives,
+            and ambition beyond the state of the art (use the SOTA briefing).
+        1.2 Methodology - technical approach, additive chemistry and feedstock,
+            processability, EoL route validation plan, SSbD assessment, risk
+            methodology, interdisciplinary and multi-actor approach, gender
+            dimension where relevant.
+
+        DRAFT MODE: write realistic, detailed illustrative prose throughout. Do
+        not leave any sub-section thin. Tag every project-specific fact not
+        given in the concept note as [TO CONFIRM: ...]. Cite a source URL when
+        you rely on a web finding; never present web background as a project
+        fact. Output Markdown with proper sub-headings.
+      output_schema:
+        section_title: str
+        markdown: str
+        page_estimate: int
+        to_confirm: list
+
+  - id: draft_impact
+    type: TransformAgent
+    config:
+      model: claude-opus-4-8
+      prompt_template: |
+        Draft Section 2 (IMPACT) of the Part B for CBE JU topic
+        {{call_intel.topic_id}}. Write the FULL section, target ~12 pages.
+
+        Structural template (skeleton only): {{template_spec.section_outline}}
+        Concept note (may be sparse): {{inputs.concept_note}}
+        Structured requirements: {{call_intel}}
+        Expected impacts: {{call_intel.expected_impacts}}
+        Binding rules retrieved: {{rules_retrieval}}
+        Web state-of-the-art / market briefing (BACKGROUND only):
+        {{sota_scan.sota_briefing}}
+
+        Cover in full:
+        2.1 Pathways towards impact - link results to the call's expected
+            outcomes and to circular bioeconomy / SSbD policy goals.
+        2.2 Measures to maximise impact - dissemination, exploitation,
+            communication, IP strategy, market acceptance via the multi-actor
+            approach.
+        2.3 Summary impact canvas (scale, significance, timeframe, KPIs).
+
+        DRAFT MODE: full illustrative prose. Tag project-specific metrics and
+        claims not given as [TO CONFIRM: ...]. Cite URLs for web-sourced market
+        or policy context. Output Markdown.
+      output_schema:
+        section_title: str
+        markdown: str
+        page_estimate: int
+        to_confirm: list
+
+  - id: draft_implementation
+    type: TransformAgent
+    config:
+      model: claude-opus-4-8
+      prompt_template: |
+        Draft Section 3 (IMPLEMENTATION) of the Part B for CBE JU topic
+        {{call_intel.topic_id}}. Write the FULL section, target ~10 pages.
+
+        Structural template (skeleton only): {{template_spec.section_outline}}
+        Concept note (may be sparse): {{inputs.concept_note}}
+        Structured requirements: {{call_intel}}
+        Multi-actor roles required: {{call_intel.multi_actor_roles}}
+        Binding rules retrieved: {{rules_retrieval}}
+        Web background (BACKGROUND only, rarely needed here):
+        {{sota_scan.sota_briefing}}
+
+        Cover in full:
+        3.1 Work plan and resources - work package structure, deliverables,
+            milestones, PERT/Gantt narrative, effort table, resource
+            justification for an IA.
+        3.2 Consortium - partner ROLES covering the mandatory multi-actor set
+            (waste management, manufacturer, brand owner, consumer), with
+            complementarity and TRL-6 demonstration capacity.
+
+        DRAFT MODE: write full illustrative work packages and an illustrative
+        consortium structure described by ROLE. CRITICAL: the applicant has not
+        chosen partners or budget yet - tag every specific partner name, budget
+        figure and date as [TO CONFIRM: ...]. Describe what each role must do;
+        do NOT invent named organisations as if real. Represent tables as
+        Markdown tables. Output Markdown.
+      output_schema:
+        section_title: str
+        markdown: str
+        page_estimate: int
+        to_confirm: list
+
+  # 4. Fan-in: compile, QA, assemble. ----------------------------------------
+  - id: compile_and_qa
+    type: TransformAgent
+    config:
+      model: claude-opus-4-8
+      prompt_template: |
+        Assemble a single Horizon Europe Part B from the three sections.
+        Order: Excellence, Impact, Implementation.
+
+        Excellence:     {{draft_excellence.markdown}}
+        Impact:         {{draft_impact.markdown}}
+        Implementation: {{draft_implementation.markdown}}
+        Binding rules:  {{rules_retrieval}}
+
+        QA pass:
+        - Confirm the draft addresses every mandatory requirement and expected
+          impact; list any gaps.
+        - Check the page budget (~45 pages); flag over/under-length sections.
+        - Collate ALL [TO CONFIRM: ...] tags into one checklist - this is the
+          list of project-specific decisions the applicant must make and fill
+          in (additive specifics, KPIs, partners, budget, dates).
+        - Verify multi-actor approach, TRL 6+ demonstration, EoL validation and
+          SSbD framing are each present; flag if missing.
+        Output the full assembled Markdown, then a "## To-Confirm Checklist"
+        with the tagged items, then "## Compliance Gaps".
+      output_schema:
+        full_markdown: str
+        to_confirm_checklist: list
+        compliance_gaps: list
+        total_page_estimate: int
+
+  # 5. Render the styled PDF. ------------------------------------------------
+  - id: generate_pdf
+    type: PDFToolNode
+    config:
+      variant: render_styled_pdf
+      css_template: eu_horizon
+      title: "CBE JU IA-02 - Bio-based Additives Proposal (Part B) - DRAFT"
+      source: "{{compile_and_qa.full_markdown}}"
+
+# ---------------------------------------------------------------------------
+# Edges
+#   farmloops_extract -> template_spec --+
+#   call_intel -> rules_retrieval -------+--> [3 drafters] -> compile -> pdf
+#   sota_scan --------------------------/
+#   (drafters wait on template_spec, rules_retrieval AND sota_scan)
+# ---------------------------------------------------------------------------
+edges:
+  - from: farmloops_extract
+    to: template_spec
+
+  - from: call_intel
+    to: rules_retrieval
+
+  - from: template_spec
+    to: draft_excellence
+  - from: rules_retrieval
+    to: draft_excellence
+  - from: sota_scan
+    to: draft_excellence
+
+  - from: template_spec
+    to: draft_impact
+  - from: rules_retrieval
+    to: draft_impact
+  - from: sota_scan
+    to: draft_impact
+
+  - from: template_spec
+    to: draft_implementation
+  - from: rules_retrieval
+    to: draft_implementation
+  - from: sota_scan
+    to: draft_implementation
+
+  - from: draft_excellence
+    to: compile_and_qa
+  - from: draft_impact
+    to: compile_and_qa
+  - from: draft_implementation
+    to: compile_and_qa
+
+  - from: compile_and_qa
+    to: generate_pdf

@@ -100,6 +100,24 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["chunk_id", "claim", "session_id"],
             },
         ),
+        types.Tool(
+            name="search_web",
+            description=(
+                "Search the public web and return ranked passages (title, url, "
+                "snippet, score) in the same shape as document retrieval. Use when "
+                "current external information is needed that is not in the ingested "
+                "corpus."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                "session_id": {"type": "string"},
+                "query": {"type": "string"},
+                "top_k": {"type": "integer", "default": 8},
+            },
+        "required": ["session_id", "query"],   # session_id mandatory
+    },
+),
     ]
 
 
@@ -110,7 +128,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     # Validate the tool name BEFORE initializing services. This means the
     # unknown-tool path doesn't pay Weaviate's connection cost, and tests
     # for this path run without Docker.
-    known_tools = {"search_documents", "get_document_chunks", "validate_citation"}
+    known_tools = {"search_documents", "get_document_chunks", "validate_citation", "search_web"}
     if name not in known_tools:
         raise ValueError(f"Unknown tool: {name}")
 
@@ -194,6 +212,24 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         except json.JSONDecodeError:
             parsed = {"score": 0.0, "reason": "judge output was not JSON"}
         return [types.TextContent(type="text", text=json.dumps(parsed))]
+    
+    if name == "search_web":
+    # session_id is required by schema; the MCP Agent stamps it from state,
+    # so the LLM can't spoof the session boundary. We don't filter web
+    # results by session (they're public), but we still demand the arg so
+    # every tool call is attributable in the audit log — same contract as
+    # the document tools.
+        session_id = arguments["session_id"]
+        query = arguments["query"]
+        top_k = arguments.get("top_k", 8)
+        from app.tools.web_io import search_web
+        results = search_web(query, top_k)
+        log.info("mcp.search_web", session_id=session_id, query=query,
+             n=len(results))
+        import json
+        return [types.TextContent(type="text", text=json.dumps(results))]
+
+
 
     raise ValueError(f"Unknown tool: {name}")
 

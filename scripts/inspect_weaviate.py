@@ -7,12 +7,13 @@ there, so we look first.
 """
 import weaviate
 from app.config import settings
+from app.retrieval.weaviate_client import COLLECTION_NAME
 
 
 def main():
-    client = weaviate.connect_to_local(host="weaviate", port=8080)
+    client = weaviate.connect_to_local(host="localhost", port=8080)
     try:
-        coll = client.collections.get(settings.weaviate_collection)
+        coll = client.collections.get(COLLECTION_NAME)
 
         # Schema — what properties exist?
         config = coll.config.get()
