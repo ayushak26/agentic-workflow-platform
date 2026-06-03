@@ -83,7 +83,7 @@ async def rerank(
     candidates: list[RetrievedChunk],
     top_n: int,
     llm: LLMGateway,
-    model: str = "claude-sonnet-4-5",
+    model: str = "gpt-5",
 ) -> tuple[list[RetrievedChunk], float]:
     """Score all candidates in one LLM call, return top_n sorted by score.
 

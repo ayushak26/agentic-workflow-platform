@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 EventType = Literal[
@@ -31,7 +31,7 @@ class RunEvent:
     def to_json(self) -> dict[str, Any]:
         d = asdict(self)
         if not d["ts"]:
-            d["ts"] = datetime.utcnow().isoformat() + "Z"
+            d["ts"] = datetime.now(timezone.utc).isoformat()
         return {k: v for k, v in d.items() if v is not None}
 
 

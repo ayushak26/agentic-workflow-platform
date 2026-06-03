@@ -4,79 +4,47 @@ description: >
   HORIZON-JU-CBE-2026-IA-02 (Bio-based additives as alternatives to unlock and
   increase recyclability and/or biodegradability). Fan-out over the three
   official Part B sections (Excellence / Impact / Implementation), grounded by
-  RAG retrieval over the ingested CBE JU AWP topic text + General Annexes,
-  shaped by a structural template distilled from an example Part B (FARMLOOPS),
-  and informed by a web state-of-the-art scan. Produces a FULL illustrative
-  draft: every section written out at length, with project-specific facts the
-  applicant has not yet decided marked [TO CONFIRM]. Fully automated.
-version: "1.2"
+  RAG retrieval over the ingested CBE JU AWP topic text + General Annexes, and
+  informed by a web state-of-the-art scan. Produces a FULL illustrative draft:
+  every section written at length, project-specific facts marked [TO CONFIRM].
+  Fully automated, no human-in-loop gates. Template chain removed for this run.
+version: "1.3"
 
-# ---------------------------------------------------------------------------
-# Inputs
-#   concept_note: applicant's project specifics. MAY be sparse/empty; drafters
-#     then write illustrative prose and mark unknowns [TO CONFIRM].
-#   annexes_collection_id: Weaviate collection with the ingested AWP + General
-#     Annexes. RAG filters to this only.
-#   template_file: example Part B PDF (FARMLOOPS). Structural skeleton only.
-# ---------------------------------------------------------------------------
+# Explicit entry point. The compiler defaults to nodes[0]; sota_scan is listed
+# first, so without this it would wrongly become the entry and call_intel would
+# never run. Pin call_intel as the single root.
+entry: call_intel
+
 inputs:
-  concept_note: text
-  annexes_collection_id: text
-  template_file: file
+  concept_note:
+    type: text
+    description: Applicant's project specifics. May be sparse or empty; drafters then write illustrative prose and mark unknowns [TO CONFIRM].
+  annexes_collection_id:
+    type: text
+    description: Weaviate collection_id holding the ingested CBE JU AWP topic text + Horizon Europe General Annexes. RAG filters to this only.
 
 nodes:
 
-  # 0a. Extract the example proposal's full text (document order, not RAG). ---
-  - id: farmloops_extract
-    type: PDFToolNode
-    config:
-      variant: extract_text
-      source: "{{inputs.template_file}}"
-
-  # 0b. Distill it into a reusable structural skeleton (no content carried). --
-  - id: template_spec
-    type: TransformAgent
-    config:
-      model: claude-opus-4-8
-      prompt_template: |
-        Below is the extracted text of a Horizon Europe Part B proposal used
-        purely as a STRUCTURAL reference. Ignore its subject matter, claims,
-        partners and quality entirely.
-
-        Extract ONLY its reusable structural skeleton:
-        - section and sub-section headings, in order
-        - a one-line note on what each section contains
-        - approximate page weight per section
-        Carry over NO content, claims, partners, figures or wording.
-
-        Source Part B text:
-        ---
-        {{farmloops_extract.text}}
-        ---
-      output_schema:
-        section_outline: list
-        notes_per_section: str
-
-  # 0c. Web state-of-the-art scan (MCP Agent -> search_web tool). -------------
-  #     LLM-driven tool selection over the MCP server. Returns ranked web
-  #     passages (title/url/snippet/score) used as BACKGROUND only. NOTE:
-  #     until WEB_SEARCH_BACKEND is set, this returns labelled [STUB RESULT]
-  #     rows, not live data.
+  # 0. Web state-of-the-art scan (MCP Agent over the MCP server). ------------
+  #    The agent sees ALL server tools and chooses; system_prompt steers it to
+  #    search_web. Output is fixed by the node: .answer holds the briefing.
+  #    Until WEB_SEARCH_BACKEND is set, search_web returns [STUB RESULT] rows.
   - id: sota_scan
     type: MCPAgent
     config:
       model: claude-opus-4-8
-      allowed_tools: ["search_web"]
+      max_iterations: 5
+      system_prompt: >
+        You are a research agent. Use the search_web tool to gather recent
+        state-of-the-art evidence. Prefer search_web over the document tools
+        for this task. Return a concise briefing and include the source URLs
+        you relied on. Mark anything uncertain.
       objective: >
         Gather recent state-of-the-art context for bio-based additives that
         unlock or increase recyclability and/or biodegradability of plastics
         and packaging: current additive chemistries, feedstocks, recycling
         compatibility, biodegradation standards, EU circular-economy and SSbD
-        policy direction, and competing or prior approaches. Return a concise
-        briefing of findings WITH source URLs. Mark anything uncertain.
-      output_schema:
-        sota_briefing: str
-        sources: list
+        policy direction, and competing or prior approaches.
 
   # 1. Parse the call into a structured requirement set. ----------------------
   - id: call_intel
@@ -130,32 +98,21 @@ nodes:
         budget categories and funding rate for Innovation Actions in CBE JU /
         Horizon Europe General Annexes.
 
-  # --- Shared drafting contract injected into each drafter prompt -----------
-  # FULL illustrative draft mode: write every sub-section out at length. Do NOT
-  # leave sections thin. Where a project-specific fact is not given in the
-  # concept note, write a realistic ILLUSTRATIVE version and tag the specific
-  # fact [TO CONFIRM: ...] so the applicant can see exactly what to replace.
-  # Never present an invented consortium, partner, or budget figure as real:
-  # tag consortium/partner/budget specifics [TO CONFIRM]. Use the web SOTA
-  # briefing for background and to argue beyond state of the art; cite a source
-  # URL when you rely on it, and do not state web findings as project facts.
-
+  # 3a-c. Three Part B section drafters, fan-out in parallel. -----------------
   - id: draft_excellence
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
         Draft Section 1 (EXCELLENCE) of a Horizon Europe Part B for CBE JU
-        topic {{call_intel.topic_id}} (Innovation Action). Write the FULL
+        topic {{call_intel.parsed.topic_id}} (Innovation Action). Write the FULL
         section at length, target ~15 pages of substantive prose.
 
-        Structural template (skeleton only, no source content reused):
-        {{template_spec.section_outline}}
         Concept note (may be sparse): {{inputs.concept_note}}
-        Structured requirements: {{call_intel}}
-        Binding rules retrieved: {{rules_retrieval}}
+        Structured requirements: {{call_intel.parsed}}
+        Binding rules retrieved: {{rules_retrieval.answer}}
         Web state-of-the-art briefing (BACKGROUND only, cite URLs when used):
-        {{sota_scan.sota_briefing}}
+        {{sota_scan.answer}}
 
         Cover in full:
         1.1 Objectives and ambition - the bio-based additive(s), target
@@ -183,15 +140,14 @@ nodes:
       model: claude-opus-4-8
       prompt_template: |
         Draft Section 2 (IMPACT) of the Part B for CBE JU topic
-        {{call_intel.topic_id}}. Write the FULL section, target ~12 pages.
+        {{call_intel.parsed.topic_id}}. Write the FULL section, target ~12 pages.
 
-        Structural template (skeleton only): {{template_spec.section_outline}}
         Concept note (may be sparse): {{inputs.concept_note}}
-        Structured requirements: {{call_intel}}
-        Expected impacts: {{call_intel.expected_impacts}}
-        Binding rules retrieved: {{rules_retrieval}}
+        Structured requirements: {{call_intel.parsed}}
+        Expected impacts: {{call_intel.parsed.expected_impacts}}
+        Binding rules retrieved: {{rules_retrieval.answer}}
         Web state-of-the-art / market briefing (BACKGROUND only):
-        {{sota_scan.sota_briefing}}
+        {{sota_scan.answer}}
 
         Cover in full:
         2.1 Pathways towards impact - link results to the call's expected
@@ -216,15 +172,12 @@ nodes:
       model: claude-opus-4-8
       prompt_template: |
         Draft Section 3 (IMPLEMENTATION) of the Part B for CBE JU topic
-        {{call_intel.topic_id}}. Write the FULL section, target ~10 pages.
+        {{call_intel.parsed.topic_id}}. Write the FULL section, target ~10 pages.
 
-        Structural template (skeleton only): {{template_spec.section_outline}}
         Concept note (may be sparse): {{inputs.concept_note}}
-        Structured requirements: {{call_intel}}
-        Multi-actor roles required: {{call_intel.multi_actor_roles}}
-        Binding rules retrieved: {{rules_retrieval}}
-        Web background (BACKGROUND only, rarely needed here):
-        {{sota_scan.sota_briefing}}
+        Structured requirements: {{call_intel.parsed}}
+        Multi-actor roles required: {{call_intel.parsed.multi_actor_roles}}
+        Binding rules retrieved: {{rules_retrieval.answer}}
 
         Cover in full:
         3.1 Work plan and resources - work package structure, deliverables,
@@ -246,79 +199,77 @@ nodes:
         page_estimate: int
         to_confirm: list
 
-  # 4. Fan-in: compile, QA, assemble. ----------------------------------------
+  # 4. Fan-in: compile + QA, emit per-section parsed output. ------------------
   - id: compile_and_qa
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        Assemble a single Horizon Europe Part B from the three sections.
-        Order: Excellence, Impact, Implementation.
+        You are doing a QA pass over a Horizon Europe Part B whose three
+        sections have already been drafted. DO NOT reproduce the sections -
+        they flow to the renderer directly. Produce ONLY a submission-readiness
+        assessment.
 
-        Excellence:     {{draft_excellence.markdown}}
-        Impact:         {{draft_impact.markdown}}
-        Implementation: {{draft_implementation.markdown}}
-        Binding rules:  {{rules_retrieval}}
+        Excellence:     {{draft_excellence.parsed.markdown}}
+        Impact:         {{draft_impact.parsed.markdown}}
+        Implementation: {{draft_implementation.parsed.markdown}}
+        Binding rules:  {{rules_retrieval.answer}}
 
-        QA pass:
-        - Confirm the draft addresses every mandatory requirement and expected
-          impact; list any gaps.
-        - Check the page budget (~45 pages); flag over/under-length sections.
-        - Collate ALL [TO CONFIRM: ...] tags into one checklist - this is the
-          list of project-specific decisions the applicant must make and fill
-          in (additive specifics, KPIs, partners, budget, dates).
-        - Verify multi-actor approach, TRL 6+ demonstration, EoL validation and
-          SSbD framing are each present; flag if missing.
-        Output the full assembled Markdown, then a "## To-Confirm Checklist"
-        with the tagged items, then "## Compliance Gaps".
+        Produce a single Markdown "readiness" assessment covering:
+        - Coverage: does the draft address every mandatory requirement and
+          expected impact? List any gaps.
+        - Page budget: ~45 pages total; flag any over/under-length section.
+        - To-Confirm Checklist: collate ALL [TO CONFIRM: ...] tags into one
+          list - the project-specific decisions the applicant must fill
+          (additive specifics, KPIs, partners, budget, dates).
+        - Compliance: confirm multi-actor approach, TRL 6+ demonstration, EoL
+          validation and SSbD framing are each present; flag if missing.
+
+        Return ONLY the readiness field. Keep it concise - it is an assessment,
+        not a copy of the proposal.
       output_schema:
-        full_markdown: str
-        to_confirm_checklist: list
-        compliance_gaps: list
-        total_page_estimate: int
+        readiness: str
 
   # 5. Render the styled PDF. ------------------------------------------------
+  #    Section bodies flow straight from the drafters (they already produced
+  #    the finalised markdown); compile_and_qa supplies only the readiness
+  #    assessment. This avoids one giant call re-emitting ~40 pages.
   - id: generate_pdf
-    type: PDFToolNode
+    type: PDFProposalRenderer
     config:
-      variant: render_styled_pdf
-      css_template: eu_horizon
-      title: "CBE JU IA-02 - Bio-based Additives Proposal (Part B) - DRAFT"
-      source: "{{compile_and_qa.full_markdown}}"
+      sections:
+        "1. Excellence": "{{draft_excellence.parsed.markdown}}"
+        "2. Impact": "{{draft_impact.parsed.markdown}}"
+        "3. Implementation": "{{draft_implementation.parsed.markdown}}"
+        "Submission Readiness": "{{compile_and_qa.parsed.readiness}}"
+      template: corporate
+      proposal_title: "CBE JU IA-02 - Bio-based Additives Proposal (Part B) - DRAFT"
+      client_name: "CBE JU / Horizon Europe"
 
 # ---------------------------------------------------------------------------
 # Edges
-#   farmloops_extract -> template_spec --+
-#   call_intel -> rules_retrieval -------+--> [3 drafters] -> compile -> pdf
-#   sota_scan --------------------------/
-#   (drafters wait on template_spec, rules_retrieval AND sota_scan)
+#   call_intel -> rules_retrieval ---+
+#   sota_scan -----------------------+--> [3 drafters] -> compile -> pdf
+#   call_intel is the SINGLE root (compiler wires START to one entry).
+#   Both rules_retrieval and sota_scan descend from it, then fan into drafters.
 # ---------------------------------------------------------------------------
 edges:
-  - from: farmloops_extract
-    to: template_spec
-
   - from: call_intel
     to: rules_retrieval
+  - from: call_intel
+    to: sota_scan
 
-  - from: template_spec
-    to: draft_excellence
   - from: rules_retrieval
     to: draft_excellence
   - from: sota_scan
     to: draft_excellence
 
-  - from: template_spec
-    to: draft_impact
   - from: rules_retrieval
     to: draft_impact
   - from: sota_scan
     to: draft_impact
 
-  - from: template_spec
-    to: draft_implementation
   - from: rules_retrieval
-    to: draft_implementation
-  - from: sota_scan
     to: draft_implementation
 
   - from: draft_excellence

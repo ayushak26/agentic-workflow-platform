@@ -20,6 +20,8 @@ DocType = Literal[
     "methodology",
     "playbook",
     "report",
+    "general_annexes",
+    "annual_work_programme"
 ]
 
 

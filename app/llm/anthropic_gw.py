@@ -1,13 +1,14 @@
-"""Anthropic Claude gateway — stub.
+"""Anthropic Claude gateway.
 
-Default provider per the locked architecture; not currently implemented
-live. The flagship workflow YAML targets Claude (claude-sonnet-4-5) and
-will run against this gateway once an API key is provisioned.
+Default provider per the locked architecture. The flagship workflow YAML
+targets Claude; this gateway runs against the Anthropic API once
+ANTHROPIC_API_KEY is provisioned. The gateway swap is behind the LLMGateway
+abstraction, so no node code changes when switching providers.
 
-To make this live: install `anthropic`, restore the AsyncAnthropic-based
-implementation (tool-use for complete_structured), and add
-ANTHROPIC_API_KEY to .env. No node code changes — the gateway swap is
-behind the LLMGateway abstraction.
+Temperature note: newer reasoning models (e.g. claude-opus-4-8) reject the
+`temperature` parameter. We gate it the same way the OpenAI gateway does —
+only send `temperature` when the model accepts it. Add models that reject it
+to _NO_TEMPERATURE.
 """
 from __future__ import annotations
 
@@ -21,6 +22,14 @@ from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
 from app.llm.openai_gw import StructuredResult   # reuse the carrier so cost recording works
 
 T = TypeVar("T", bound=BaseModel)
+
+# Models that reject the `temperature` parameter (newer reasoning models).
+_NO_TEMPERATURE = {"claude-opus-4-8"}
+
+
+def _supports_temperature(model: str) -> bool:
+    """Return True if the model accepts a non-default temperature."""
+    return model not in _NO_TEMPERATURE
 
 
 class AnthropicGateway(LLMGateway):
@@ -38,13 +47,16 @@ class AnthropicGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 1024,
     ) -> LLMResponse:
-        resp = await self._client.messages.create(
-            model=model,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs = {
+            "model": model,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+            "max_tokens": max_tokens,
+        }
+        if _supports_temperature(model):
+            kwargs["temperature"] = temperature
+
+        resp = await self._client.messages.create(**kwargs)
         text = "".join(b.text for b in resp.content if b.type == "text")
         return LLMResponse(
             text=text,
@@ -69,19 +81,23 @@ class AnthropicGateway(LLMGateway):
         # and requiring the model to call it. The tool input IS our JSON.
         schema = response_model.model_json_schema()
         tool_name = "emit_" + response_model.__name__.lower()
-        resp = await self._client.messages.create(
-            model=model,
-            system=system,
-            messages=[{"role": "user", "content": user}],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=[{
+
+        kwargs = {
+            "model": model,
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+            "max_tokens": max_tokens,
+            "tools": [{
                 "name": tool_name,
                 "description": f"Emit a well-formed {response_model.__name__}.",
                 "input_schema": schema,
             }],
-            tool_choice={"type": "tool", "name": tool_name},
-        )
+            "tool_choice": {"type": "tool", "name": tool_name},
+        }
+        if _supports_temperature(model):
+            kwargs["temperature"] = temperature
+
+        resp = await self._client.messages.create(**kwargs)
         tool_block = next(
             (b for b in resp.content if b.type == "tool_use" and b.name == tool_name),
             None,
@@ -109,7 +125,7 @@ class AnthropicGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> LLMToolUseResponse:
-        # Translate neutral messages → Anthropic content-block format
+        # Translate neutral messages -> Anthropic content-block format
         anthropic_messages: list[dict] = []
         for m in messages:
             role = m["role"]
@@ -147,14 +163,17 @@ class AnthropicGateway(LLMGateway):
             for t in tools
         ]
 
-        response = await self._client.messages.create(
-            model=model,
-            system=system,
-            messages=anthropic_messages,
-            tools=anthropic_tools,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        kwargs = {
+            "model": model,
+            "system": system,
+            "messages": anthropic_messages,
+            "tools": anthropic_tools,
+            "max_tokens": max_tokens,
+        }
+        if _supports_temperature(model):
+            kwargs["temperature"] = temperature
+
+        response = await self._client.messages.create(**kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []

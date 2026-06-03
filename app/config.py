@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     retrieval_reranker_model: str = "claude-sonnet-4-5"
     retrieval_compressor_model: str = "claude-sonnet-4-5"
 
-    weaviate_host: str = "localhost"
+    weaviate_host: str = "weaviate"
     weaviate_port: int = 8080
 
     minio_endpoint: str = "localhost:9000"

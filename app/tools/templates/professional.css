@@ -1,8 +1,169 @@
-@page { size: Letter; margin: 1.5cm; @bottom-center { content: "— " counter(page) " —"; } }
-body { font-family: "Liberation Serif", Georgia, serif; color: #222; }
-.cover h1 { font-size: 28pt; text-align: center; font-weight: normal; }
-.cover .client { text-align: center; font-style: italic; }
-.proposal-section { page-break-before: always; }
-.proposal-section h2 { font-size: 18pt; font-weight: normal; border-bottom: 1px solid #999; }
-.content { font-size: 11pt; line-height: 1.6; }
-footer { text-align: center; font-style: italic; font-size: 9pt; }
+/* ===========================================================================
+   professional.css — EU Horizon Europe Work Programme style
+   Modelled on the Horizon Europe Work Programme 2026-2027 (Health) document:
+   A4, Times New Roman, EU blue, running header + "Part / Page X of Y" footer.
+
+   WeasyPrint stylesheet. Pairs with proposal.html.j2. Selectors assume the
+   template emits: h1 (proposal title), h2 (section titles from the sections
+   dict), h3/h4 (sub-headings), p, ul/ol, table. Adjust selector names to your
+   actual proposal.html.j2 if they differ.
+   =========================================================================== */
+
+/* ---- Page geometry: A4 with EU-style running header and footer ---------- */
+@page {
+    size: A4;                 /* 210 x 297 mm, matches the 595x842pt source */
+    margin: 2.5cm 2cm 2.5cm 2cm;
+  
+    @top-center {
+      content: "Horizon Europe — Work Programme 2026–2027";
+      font-family: "Times New Roman", Times, serif;
+      font-size: 9pt;
+      color: #1a1a1a;
+    }
+  
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: "Times New Roman", Times, serif;
+      font-size: 9pt;
+      color: #1a1a1a;
+    }
+  
+    @bottom-left {
+      content: "Bio-based Additives Proposal — Part B";
+      font-family: "Times New Roman", Times, serif;
+      font-size: 9pt;
+      color: #1a1a1a;
+    }
+  }
+  
+  /* First page: no running header (title page convention) */
+  @page :first {
+    @top-center { content: none; }
+  }
+  
+  /* ---- Base typography: Times New Roman, 12pt, like the source ------------ */
+  html, body {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 12pt;
+    line-height: 1.45;
+    color: #000000;
+    text-align: justify;          /* EU WP body is justified */
+    hyphens: auto;
+  }
+  
+  /* ---- EU blue, taken from the document: rgb(0,0,1) ≈ #0000FF -------------
+     The WP uses pure blue for emphasis/links; headings use a slightly deeper
+     institutional blue for readability in long documents. ------------------- */
+  :root {
+    --eu-blue: #003399;     /* EU flag blue, used for headings */
+    --eu-link: #0000FF;     /* pure blue from the source, used for links */
+  }
+  
+  /* ---- Title (h1) --------------------------------------------------------- */
+  h1 {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 22pt;
+    font-weight: bold;
+    color: var(--eu-blue);
+    text-align: center;
+    margin: 0 0 0.3cm 0;
+    page-break-after: avoid;
+  }
+  
+  /* ---- Section headings (h2) — the sections dict keys --------------------- */
+  h2 {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 16pt;
+    font-weight: bold;
+    color: var(--eu-blue);
+    margin: 0.8cm 0 0.3cm 0;
+    padding-bottom: 0.1cm;
+    border-bottom: 1.5pt solid var(--eu-blue);
+    page-break-after: avoid;
+    page-break-before: always;     /* each major section starts a new page */
+  }
+  
+  /* ---- Sub-headings (h3, h4) ---------------------------------------------- */
+  h3 {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 14pt;
+    font-weight: bold;
+    color: #000000;
+    margin: 0.6cm 0 0.2cm 0;
+    page-break-after: avoid;
+  }
+  
+  h4 {
+    font-family: "Times New Roman", Times, serif;
+    font-size: 12pt;
+    font-weight: bold;
+    font-style: italic;
+    color: #000000;
+    margin: 0.4cm 0 0.15cm 0;
+    page-break-after: avoid;
+  }
+  
+  /* ---- Body text ---------------------------------------------------------- */
+  p {
+    margin: 0 0 0.35cm 0;
+    orphans: 2;
+    widows: 2;
+  }
+  
+  /* ---- Links: pure EU blue ------------------------------------------------ */
+  a {
+    color: var(--eu-link);
+    text-decoration: none;
+  }
+  
+  /* ---- Lists -------------------------------------------------------------- */
+  ul, ol {
+    margin: 0 0 0.35cm 0.6cm;
+    padding-left: 0.4cm;
+  }
+  li {
+    margin-bottom: 0.1cm;
+  }
+  
+  /* ---- Tables: EU WP budget-table style (thin rules, bold header) -------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.4cm 0;
+    font-size: 10.5pt;
+    page-break-inside: avoid;
+  }
+  th {
+    background: #e6ecf5;            /* pale EU-blue tint */
+    color: #000000;
+    font-weight: bold;
+    text-align: left;
+    border: 0.5pt solid #003399;
+    padding: 4pt 6pt;
+  }
+  td {
+    border: 0.5pt solid #808080;
+    padding: 4pt 6pt;
+    vertical-align: top;
+  }
+  
+  /* ---- Footnote-style small print (the source uses 6.5–8pt) -------------- */
+  .footnote, small {
+    font-size: 8pt;
+    line-height: 1.2;
+    color: #1a1a1a;
+  }
+  
+  /* ---- [TO CONFIRM] markers: make the placeholders visually obvious ------
+     Not in the source document — added so applicants can spot what still
+     needs filling. Wrap such spans in the template, or style is harmless if
+     the class is never emitted. -------------------------------------------- */
+  .to-confirm {
+    color: #b00000;
+    font-weight: bold;
+    background: #fff3cd;
+  }
+  
+  /* ---- Page-break helpers ------------------------------------------------- */
+  .page-break { page-break-before: always; }
+  .no-break   { page-break-inside: avoid; }
