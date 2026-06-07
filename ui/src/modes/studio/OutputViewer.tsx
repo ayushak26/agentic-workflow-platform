@@ -11,8 +11,28 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
     const [scoreErr, setScoreErr] = useState<string | null>(null);
 
     const nodeOutputs = state?.node_outputs ?? {};
-    const pdf = nodeOutputs.generate_pdf;
-    const minioKey = pdf?.minio_key;
+
+    // Renderer-agnostic: pick whichever document renderer ran. Either node type
+    // (PDFProposalRenderer / DOCXProposalRenderer) writes { minio_key, byte_size,
+    // template_used }, so the viewer only needs the key + the file extension.
+    // We find the producing node by looking for a node output that carries a
+    // minio_key, rather than hard-coding a single node id, so renaming or
+    // swapping the final node never breaks the download again.
+    const RENDERER_IDS = ['generate_docx', 'generate_pdf'];
+    let docNodeId: string | undefined = RENDERER_IDS.find((id) => nodeOutputs[id]?.minio_key);
+    if (!docNodeId) {
+        docNodeId = Object.keys(nodeOutputs).find((id) => nodeOutputs[id]?.minio_key);
+    }
+    const doc = docNodeId ? nodeOutputs[docNodeId] : undefined;
+    const minioKey: string | undefined = doc?.minio_key;
+
+    // Derive the file kind from the key's extension (e.g. proposal.docx -> DOCX).
+    const ext = (minioKey?.split('.').pop() ?? '').toLowerCase();
+    const fileKind = ext ? ext.toUpperCase() : 'FILE';
+    // Only PDFs render inside an <iframe>; .docx cannot preview in-browser, so
+    // for non-PDF documents we show a download card instead of a broken iframe.
+    const canPreviewInline = ext === 'pdf';
+
     const citations = nodeOutputs.knowledge_retrieval?.citations ?? [];
     const auditLog: any[] = state?.audit_log ?? [];
 
@@ -51,7 +71,7 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
             : d === 'edit' ? 'bg-accent-600 text-white'
                 : 'bg-ok text-white';
 
-    // Reusable Score panel — used in both the PDF and no-PDF layouts.
+    // Reusable Score panel — used in both the document and no-document layouts.
     const scorePanel = (
         <div className="p-4 space-y-3">
             <div className="text-xs text-ink-500">
@@ -89,7 +109,88 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
         </div>
     );
 
-    // ── No-PDF layout (e.g. rag_test, document_qa) ──────────────────────────
+    // Shared right-hand panel (sources / audit / score) — identical in both layouts.
+    const sidePanel = (
+        <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto">
+            <div className="flex border-b border-slate-200">
+                <button onClick={() => setTab('sources')}
+                    className={`flex-1 px-3 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    Sources ({citations.length})
+                </button>
+                <button onClick={() => setTab('audit')}
+                    className={`flex-1 px-3 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    Audit ({auditEntries.length})
+                </button>
+                <button onClick={() => setTab('score')}
+                    className={`flex-1 px-3 py-2 text-sm ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    Score
+                </button>
+            </div>
+
+            {tab === 'sources' && (
+                <div className="p-4">
+                    {citations.length === 0 ? (
+                        <div className="text-sm text-ink-500">No citations recorded.</div>
+                    ) : (
+                        <ul className="space-y-2 text-xs">
+                            {citations.map((c: any) => (
+                                <li key={c.label} className="border border-slate-200 rounded-md p-2">
+                                    <div className="font-medium">[{c.label}] {c.source_doc}</div>
+                                    <div className="text-ink-500 mt-1">{c.snippet}</div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {tab === 'audit' && (
+                <div className="p-4">
+                    {auditEntries.length === 0 ? (
+                        <div className="text-xs text-ink-500">No audit entries.</div>
+                    ) : (
+                        <ul className="space-y-1.5 text-xs">
+                            {auditEntries.map((e: any, i: number) => {
+                                const out = nodeOutputs[e.node_id] ?? {};
+                                const decision = out.decision;
+                                return (
+                                    <li key={i} className="border border-slate-200 rounded-md p-2">
+                                        <div className="flex items-center justify-between">
+                                            <span className="font-medium font-mono">{e.node_id}</span>
+                                            {typeof e.duration_s === 'number' && (
+                                                <span className="text-ink-400">{e.duration_s.toFixed(2)}s</span>
+                                            )}
+                                        </div>
+                                        <div className="text-ink-500">{e.type_name}</div>
+                                        {e.started_at && (
+                                            <div className="text-ink-400">
+                                                {new Date(e.started_at).toLocaleTimeString()}
+                                            </div>
+                                        )}
+                                        {decision && (
+                                            <div className="mt-1">
+                                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${decisionBadge(decision)}`}>
+                                                    {decision}
+                                                </span>
+                                                {out.reason ? <span className="text-ink-500 ml-1">{out.reason}</span> : null}
+                                            </div>
+                                        )}
+                                        {Array.isArray(e.output_keys) && e.output_keys.length > 0 && (
+                                            <div className="text-ink-400 mt-1">→ {e.output_keys.join(', ')}</div>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {tab === 'score' && scorePanel}
+        </aside>
+    );
+
+    // ── No-document layout (e.g. rag_test, document_qa) ─────────────────────
     if (!minioKey) {
         const entries = Object.entries(nodeOutputs);
         return (
@@ -98,7 +199,7 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                     <div>
                         <h2 className="font-semibold">{workflowName ?? 'Workflow'} — completed</h2>
                         <div className="text-xs text-ink-500">
-                            {entries.length} node{entries.length === 1 ? '' : 's'} executed · no PDF output
+                            {entries.length} node{entries.length === 1 ? '' : 's'} executed · no document output
                         </div>
                     </div>
                     <button onClick={() => navigate('/library')}
@@ -138,70 +239,13 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                             })
                         )}
                     </div>
-
-                    <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto">
-                        <div className="flex border-b border-slate-200">
-                            <button onClick={() => setTab('sources')}
-                                className={`flex-1 px-3 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                                Sources ({citations.length})
-                            </button>
-                            <button onClick={() => setTab('audit')}
-                                className={`flex-1 px-3 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                                Audit ({auditEntries.length})
-                            </button>
-                            <button onClick={() => setTab('score')}
-                                className={`flex-1 px-3 py-2 text-sm ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                                Score
-                            </button>
-                        </div>
-
-                        {tab === 'sources' && (
-                            <div className="p-4">
-                                {citations.length === 0 ? (
-                                    <div className="text-sm text-ink-500">No citations recorded.</div>
-                                ) : (
-                                    <ul className="space-y-2 text-xs">
-                                        {citations.map((c: any) => (
-                                            <li key={c.label} className="border border-slate-200 rounded-md p-2">
-                                                <div className="font-medium">[{c.label}] {c.source_doc}</div>
-                                                <div className="text-ink-500 mt-1">{c.snippet}</div>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </div>
-                        )}
-
-                        {tab === 'audit' && (
-                            <div className="p-4">
-                                {auditEntries.length === 0 ? (
-                                    <div className="text-xs text-ink-500">No audit entries.</div>
-                                ) : (
-                                    <ul className="space-y-1.5 text-xs">
-                                        {auditEntries.map((e: any, i: number) => (
-                                            <li key={i} className="border border-slate-200 rounded-md p-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="font-mono font-medium">{e.node_id}</span>
-                                                    {typeof e.duration_s === 'number' && (
-                                                        <span className="text-ink-400">{e.duration_s.toFixed(2)}s</span>
-                                                    )}
-                                                </div>
-                                                <div className="text-ink-500">{e.type_name}</div>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                )}
-                            </div>
-                        )}
-
-                        {tab === 'score' && scorePanel}
-                    </aside>
+                    {sidePanel}
                 </div>
             </div>
         );
     }
 
-    // ── PDF layout (flagship proposal_generation) ───────────────────────────
+    // ── Document layout (flagship proposal_generation, biomass, etc.) ───────
     const viewUrl = api.fileUrl(minioKey);
     const downloadUrl = api.fileUrl(minioKey, true);
 
@@ -211,17 +255,21 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
                 <div>
                     <h2 className="font-semibold">{workflowName ?? 'Proposal'} — completed</h2>
                     <div className="text-xs text-ink-500">
-                        Template: {pdf.template_used} · {(pdf.byte_size / 1024).toFixed(0)} KB
+                        {doc.template_used ? `Template: ${doc.template_used} · ` : ''}
+                        {typeof doc.byte_size === 'number' ? `${(doc.byte_size / 1024).toFixed(0)} KB · ` : ''}
+                        {fileKind}
                     </div>
                 </div>
                 <div className="flex gap-2">
                     <a href={downloadUrl} className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm">
-                        Download PDF
+                        Download {fileKind}
                     </a>
-                    <a href={viewUrl} target="_blank" rel="noreferrer"
-                        className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
-                        Open in new tab
-                    </a>
+                    {canPreviewInline && (
+                        <a href={viewUrl} target="_blank" rel="noreferrer"
+                            className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
+                            Open in new tab
+                        </a>
+                    )}
                     <button
                         onClick={() => navigate('/library')}
                         className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
@@ -233,87 +281,26 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
 
             <div className="flex-1 flex min-h-0">
                 <div className="flex-1 bg-slate-100 p-4">
-                    <iframe title="Proposal" src={viewUrl}
-                        className="w-full h-full bg-white border border-slate-200 rounded-md" />
+                    {canPreviewInline ? (
+                        <iframe title="Proposal" src={viewUrl}
+                            className="w-full h-full bg-white border border-slate-200 rounded-md" />
+                    ) : (
+                        // .docx and other office formats cannot render in an <iframe>;
+                        // offer a download card instead of a blank/broken preview.
+                        <div className="w-full h-full bg-white border border-slate-200 rounded-md flex items-center justify-center">
+                            <div className="text-center space-y-3">
+                                <div className="text-sm text-ink-500">
+                                    {fileKind} documents can&rsquo;t preview in the browser.
+                                </div>
+                                <a href={downloadUrl}
+                                    className="inline-block px-4 py-2 rounded-md bg-accent-600 text-white text-sm">
+                                    Download {fileKind}
+                                </a>
+                            </div>
+                        </div>
+                    )}
                 </div>
-
-                <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto">
-                    <div className="flex border-b border-slate-200">
-                        <button onClick={() => setTab('sources')}
-                            className={`flex-1 px-3 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                            Sources ({citations.length})
-                        </button>
-                        <button onClick={() => setTab('audit')}
-                            className={`flex-1 px-3 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                            Audit ({auditEntries.length})
-                        </button>
-                        <button onClick={() => setTab('score')}
-                            className={`flex-1 px-3 py-2 text-sm ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                            Score
-                        </button>
-                    </div>
-
-                    {tab === 'sources' && (
-                        <div className="p-4">
-                            {citations.length === 0 ? (
-                                <div className="text-sm text-ink-500">No citations recorded.</div>
-                            ) : (
-                                <ul className="space-y-2 text-xs">
-                                    {citations.map((c: any) => (
-                                        <li key={c.label} className="border border-slate-200 rounded-md p-2">
-                                            <div className="font-medium">[{c.label}] {c.source_doc}</div>
-                                            <div className="text-ink-500 mt-1">{c.snippet}</div>
-                                        </li>
-                                    ))}
-                                </ul>
-                            )}
-                        </div>
-                    )}
-
-                    {tab === 'audit' && (
-                        <div className="p-4">
-                            {auditEntries.length === 0 ? (
-                                <div className="text-sm text-ink-500">No audit entries.</div>
-                            ) : (
-                                <ul className="space-y-1.5 text-xs">
-                                    {auditEntries.map((e: any, i: number) => {
-                                        const out = nodeOutputs[e.node_id] ?? {};
-                                        const decision = out.decision;
-                                        return (
-                                            <li key={i} className="border border-slate-200 rounded-md p-2">
-                                                <div className="flex items-center justify-between">
-                                                    <span className="font-medium font-mono">{e.node_id}</span>
-                                                    {typeof e.duration_s === 'number' && (
-                                                        <span className="text-ink-400">{e.duration_s.toFixed(2)}s</span>
-                                                    )}
-                                                </div>
-                                                <div className="text-ink-500">{e.type_name}</div>
-                                                {e.started_at && (
-                                                    <div className="text-ink-400">
-                                                        {new Date(e.started_at).toLocaleTimeString()}
-                                                    </div>
-                                                )}
-                                                {decision && (
-                                                    <div className="mt-1">
-                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] ${decisionBadge(decision)}`}>
-                                                            {decision}
-                                                        </span>
-                                                        {out.reason ? <span className="text-ink-500 ml-1">{out.reason}</span> : null}
-                                                    </div>
-                                                )}
-                                                {Array.isArray(e.output_keys) && e.output_keys.length > 0 && (
-                                                    <div className="text-ink-400 mt-1">→ {e.output_keys.join(', ')}</div>
-                                                )}
-                                            </li>
-                                        );
-                                    })}
-                                </ul>
-                            )}
-                        </div>
-                    )}
-
-                    {tab === 'score' && scorePanel}
-                </aside>
+                {sidePanel}
             </div>
         </div>
     );
