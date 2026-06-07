@@ -36,7 +36,7 @@ class AnthropicGateway(LLMGateway):
     """Live Anthropic Claude gateway. One AsyncAnthropic client per instance."""
 
     def __init__(self, api_key: str):
-        self._client = AsyncAnthropic(api_key=api_key)
+        self._client = AsyncAnthropic(api_key=api_key, timeout=600.0)
 
     async def complete(
         self,

@@ -21,11 +21,14 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from app.nodes.registry import NodeRegistry
 from app.observability import metrics
+from app.observability.logging import get_logger
 from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
 from .templating import resolve
 from .events import RunEvent, RunEventBus
 from .node_events import sanitize_preview, is_graph_interrupt
+
+log = get_logger(__name__)
 
 
 def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
@@ -74,6 +77,17 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 output = await instance.run(state, resolved)
                 instance.output_schema(**output)
         except BaseException as e:
+            # Log to stdout FIRST, before any client emission. A failure that is
+            # only published to the WebSocket bus vanishes the moment the client
+            # disconnects (the run then returns 200 with no server-side trace).
+            # Server-side logging must not depend on a client being connected.
+            # Interrupts are control flow (HITL pause), not errors — info only.
+            if is_graph_interrupt(e):
+                log.info("node_paused", node_id=node_id, type_name=type_name,
+                         run_id=run_id)
+            else:
+                log.error("node_failed", node_id=node_id, type_name=type_name,
+                          run_id=run_id, error=str(e), exc_info=True)
             if bus and run_id:
                 if is_graph_interrupt(e):
                     await bus.publish(RunEvent(
