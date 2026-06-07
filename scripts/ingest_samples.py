@@ -50,19 +50,19 @@ PER_FILE_METADATA: dict[str, dict] = {
     },
     "wp-4-health_horizon-2026-2027_en.pdf": {
         "industry": "health",
-        "doc_type": "work_programme",
+        "doc_type": "annual_work_programme",
         "framework": "horizon_europe",
         "session_id": "default",
     },
     "wp-2-marie-sklodowska-curie-actions_horizon-2026-2027_en.pdf": {
         "industry": "research_innovation",
-        "doc_type": "work_programme",
+        "doc_type": "annual_work_programme",
         "framework": "horizon_europe",
         "session_id": "default",
     },
     "wp-8-climate-energy-and-mobility_horizon-2026-2027_en.pdf": {
         "industry": "climate_energy_mobility",
-        "doc_type": "work_programme",
+        "doc_type": "annual_work_programme",
         "framework": "horizon_europe",
         "session_id": "default",
     },
