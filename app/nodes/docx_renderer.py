@@ -1,70 +1,65 @@
 """
 app/nodes/docx_renderer.py
 
-DOCXProposalRenderer — pre-baked tool-node variant that renders a set of
-Markdown sections into a styled Microsoft Word (.docx) document, stores it in
-object storage (MinIO/S3), and returns the object key.
+DOCX tool node — pre-baked variant:
+  - DOCXProposalRenderer: render sections to a styled .docx
 
-This is the .docx twin of PDFProposalRenderer. Same input contract (a
-{heading: markdown} dict, a title, a client name, a template name), same
-storage discipline (workflow state holds the MinIO key, NOT the file bytes —
-bytes never enter LangGraph state).
+The .docx twin of PDFProposalRenderer. Identical contract and conventions:
+same config (sections / template / proposal_title / client_name), same storage
+discipline (workflow state holds the MinIO key, NOT the bytes), same run
+signature (state, resolved_config) and same object-store API (put_bytes).
 
-Implementation library: python-docx  (same document-generation category as the
-python-pptx / openpyxl / WeasyPrint tools already in the stack — a new VARIANT,
+Implementation library: python-docx — same document-generation category as the
+python-pptx / openpyxl / WeasyPrint tools already in the stack (a new VARIANT,
 not a new tool category).
 
-    pip install python-docx
-
-YAML usage (drop-in replacement for the PDF renderer at the end of a workflow):
+YAML usage (drop-in swap for PDFProposalRenderer at the end of a workflow):
 
     - id: generate_docx
       type: DOCXProposalRenderer
       config:
         sections:
-          "1. Excellence": "{{draft_excellence.parsed.markdown}}"
-          "2. Impact": "{{draft_impact.parsed.markdown}}"
-          "3. Implementation": "{{draft_implementation.parsed.markdown}}"
-          "Annex - Digital Tool Architecture": "{{tool_architecture.parsed.markdown}}"
-          "Submission Readiness": "{{compile_and_qa.parsed.readiness}}"
+          "1. Digital Tool Architecture": "{{tool_architecture.parsed.markdown}}"
+          ...
         template: corporate
-        proposal_title: "CL6 Biomass Monitoring & Digital Tools Proposal (Part B) - DRAFT"
-        client_name: "European Commission / Horizon Europe Cluster 6"
+        proposal_title: "..."
+        client_name: "..."
 
-CRITICAL: remember to add `from app.nodes import docx_renderer` (or the project's
-existing `import *`) in app/nodes/__init__.py so the @NodeRegistry.register
-decorator fires at import time.
+Remember to import this module in app/nodes/__init__.py so the
+@NodeRegistry.register decorator fires at import time.
 """
-
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import uuid
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor, Inches
 
-# >>> VERIFY (1/3): match these imports to your actual base-class module paths.
-# In the existing codebase the base NodeType and the registry live under
-# app/nodes/base.py and app/nodes/registry.py (adjust if yours differ).
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
+from app.observability.logging import get_logger
+
+log = get_logger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# Template presets — the .docx analogue of the three WeasyPrint CSS templates
-# (corporate / professional / warm). Each maps to fonts + an accent colour.
-# Keep the three names identical to the PDF templates so a workflow can swap
-# PDFProposalRenderer <-> DOCXProposalRenderer without changing `template`.
+# Template presets — the .docx analogue of the three WeasyPrint CSS templates.
+# Same three names as the PDF renderer so `template` is interchangeable.
 # --------------------------------------------------------------------------- #
+TemplateName = Literal["corporate", "professional", "warm"]
+
 _TEMPLATES: dict[str, dict[str, Any]] = {
     "corporate": {
         "body_font": "Calibri",
         "heading_font": "Calibri Light",
-        "accent": RGBColor(0x0D, 0x1B, 0x2A),   # navy
+        "accent": RGBColor(0x0D, 0x1B, 0x2A),    # navy
         "accent_2": RGBColor(0xC8, 0xA9, 0x6E),  # gold
         "body_pt": 11,
     },
@@ -86,120 +81,105 @@ _TEMPLATES: dict[str, dict[str, Any]] = {
 _DEFAULT_TEMPLATE = "corporate"
 
 
-@NodeRegistry.register("DOCXProposalRenderer")
+class DOCXRenderInput(BaseModel):
+    pass
+
+
+class DOCXRenderConfig(BaseModel):
+    sections: dict[str, str] = Field(
+        description="Map of section_name -> section_text (Markdown). Templated from upstream nodes."
+    )
+    template: TemplateName = "corporate"
+    proposal_title: str
+    client_name: str
+
+
+class DOCXRenderOutput(BaseModel):
+    minio_key: str
+    byte_size: int
+    template_used: str
+
+
+@NodeRegistry.register
 class DOCXProposalRenderer(NodeType):
-    """Render Markdown sections into a styled .docx and persist it to object storage."""
-    type_name = "DOCXProposalRenderer" 
-    # The Builder UI auto-generates a config form from config_schema; declaring
-    # it richly is what makes this node configurable without code. (Same reason
-    # the other tool nodes declare schemas.)
-    input_schema: dict[str, Any] = {}  # sections come via resolved config, not edges
-    output_schema: dict[str, Any] = {
-        "object_key": "str",   # MinIO/S3 key — this is what flows into state
-        "filename": "str",
-        "byte_size": "int",
-        "section_count": "int",
-    }
-    config_schema: dict[str, Any] = {
-        "sections": {
-            "type": "object",
-            "description": "Ordered mapping of heading -> Markdown body. Rendered top-to-bottom.",
-            "required": True,
-        },
-        "proposal_title": {"type": "string", "required": True},
-        "client_name": {"type": "string", "required": False, "default": ""},
-        "template": {
-            "type": "string",
-            "enum": list(_TEMPLATES.keys()),
-            "default": _DEFAULT_TEMPLATE,
-            "required": False,
-        },
-    }
+    type_name = "DOCXProposalRenderer"
+    description = "Render proposal sections to a styled .docx (corporate, professional, warm)."
+    input_schema = DOCXRenderInput
+    output_schema = DOCXRenderOutput
+    config_schema = DOCXRenderConfig
 
-    # >>> VERIFY (2/3): match this signature to your base NodeType.run(...).
-    # The existing renderer reads already-placeholder-resolved `config`, pulls
-    # `object_store` from the services dict, and uses run/session ids from the
-    # execution context to build the key. If your base passes these differently
-    # (e.g. a single `ctx` object, or `self.services`), adjust the unpacking
-    # below — the body logic does not change.
-    async def run(
-        self,
-        *,
-        config: dict[str, Any],
-        services: dict[str, Any],
-        context: Any,
-    ) -> dict[str, Any]:
-        sections: dict[str, str] = config["sections"]
-        title: str = config["proposal_title"]
-        client: str = config.get("client_name", "")
-        template_name: str = config.get("template", _DEFAULT_TEMPLATE)
-        tpl = _TEMPLATES.get(template_name, _TEMPLATES[_DEFAULT_TEMPLATE])
+    async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        store = self.services["object_store"]
+        cfg = DOCXRenderConfig(**resolved_config)
 
-        # Build the document fully in memory; bytes never touch workflow state.
-        doc = self._build_document(title, client, template_name, sections, tpl)
-        buf = io.BytesIO()
-        doc.save(buf)
-        data = buf.getvalue()
+        # python-docx is sync and CPU-bound — push to a thread, like WeasyPrint.
+        docx_bytes = await asyncio.to_thread(
+            self._render_docx_bytes,
+            cfg.sections,
+            cfg.template,
+            cfg.client_name,
+            cfg.proposal_title,
+        )
 
-        # >>> VERIFY (3/3): match key construction + object_store API to the PDF
-        # renderer. Pattern below mirrors "state holds MinIO keys not bytes":
-        # scope the key under the run so artifacts are isolated per run/session.
-        run_id = getattr(context, "run_id", uuid.uuid4().hex)
-        object_key = f"runs/{run_id}/proposal-{uuid.uuid4().hex[:8]}.docx"
-        object_store = services["object_store"]
-        await object_store.put(
-            key=object_key,
-            data=data,
+        # Upload to MinIO under a workflow-scoped key (mirrors the PDF renderer).
+        run_id = state.get("inputs", {}).get("SYSTEM.run_id", str(uuid.uuid4()))
+        minio_key = f"workflows/{run_id}/proposal.docx"
+        await asyncio.to_thread(
+            store.put_bytes,
+            docx_bytes,
+            minio_key,
             content_type=(
                 "application/vnd.openxmlformats-officedocument."
                 "wordprocessingml.document"
             ),
         )
 
+        log.info("docx.rendered", node_id=self.node_id,
+                 minio_key=minio_key, byte_size=len(docx_bytes),
+                 template=cfg.template)
         return {
-            "object_key": object_key,
-            "filename": f"{_slug(title)}.docx",
-            "byte_size": len(data),
-            "section_count": len(sections),
+            "minio_key": minio_key,
+            "byte_size": len(docx_bytes),
+            "template_used": cfg.template,
         }
 
     # ----------------------------------------------------------------------- #
-    # Document construction
+    # Document construction (sync; called via asyncio.to_thread)
     # ----------------------------------------------------------------------- #
-    def _build_document(
+    def _render_docx_bytes(
         self,
-        title: str,
-        client: str,
-        template_name: str,
         sections: dict[str, str],
-        tpl: dict[str, Any],
-    ) -> "Document":
+        template_name: str,
+        client: str,
+        title: str,
+    ) -> bytes:
+        tpl = _TEMPLATES.get(template_name, _TEMPLATES[_DEFAULT_TEMPLATE])
         doc = Document()
 
-        # A4 (Horizon Europe submissions are A4), 1-inch (2.5cm) margins.
-        section = doc.sections[0]
-        section.page_width = Inches(8.27)
-        section.page_height = Inches(11.69)
+        # A4 (Horizon Europe submissions are A4), 1-inch margins.
+        sec = doc.sections[0]
+        sec.page_width = Inches(8.27)
+        sec.page_height = Inches(11.69)
         for m in ("top_margin", "bottom_margin", "left_margin", "right_margin"):
-            setattr(section, m, Inches(1))
+            setattr(sec, m, Inches(1))
 
-        # Default body style.
         normal = doc.styles["Normal"]
         normal.font.name = tpl["body_font"]
         normal.font.size = Pt(tpl["body_pt"])
 
-        self._add_title_block(doc, title, client, template_name, tpl)
+        self._add_title_block(doc, title, client, tpl)
 
-        # Each section: a top-level heading, then its Markdown body.
         for heading, body in sections.items():
             h = doc.add_heading(heading, level=1)
             self._style_heading(h, tpl, top_level=True)
             self._render_markdown(doc, body or "", tpl)
-            doc.add_paragraph()  # breathing room between sections
+            doc.add_paragraph()
 
-        return doc
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
 
-    def _add_title_block(self, doc, title, client, template_name, tpl) -> None:
+    def _add_title_block(self, doc, title, client, tpl) -> None:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(title)
@@ -215,12 +195,6 @@ class DOCXProposalRenderer(NodeType):
             rc.font.size = Pt(13)
             rc.font.color.rgb = tpl["accent_2"]
 
-        pn = doc.add_paragraph()
-        pn.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        rn = pn.add_run("DRAFT — illustrative; project-specific facts marked [TO CONFIRM]")
-        rn.italic = True
-        rn.font.size = Pt(9)
-
         doc.add_page_break()
 
     def _style_heading(self, paragraph, tpl, top_level: bool) -> None:
@@ -229,15 +203,9 @@ class DOCXProposalRenderer(NodeType):
             run.font.color.rgb = tpl["accent"] if top_level else tpl["accent_2"]
 
     # ----------------------------------------------------------------------- #
-    # Minimal, robust Markdown -> docx renderer.
-    # Supports the subset the LLM drafters actually emit:
-    #   # / ## / ###  headings
-    #   - or *        bullet lists
-    #   1.            numbered lists
-    #   **bold**, *italic*, `code`  inline spans
-    #   | a | b |     pipe tables (with --- separator row)
-    #   blank line    paragraph break
-    # Anything else falls through as a plain paragraph.
+    # Minimal Markdown -> docx renderer. Handles the subset the drafters emit:
+    #   # / ## headings, - / * bullets, 1. numbered, **bold** *italic* `code`,
+    #   | pipe | tables | (with --- separator), blank-line paragraph breaks.
     # ----------------------------------------------------------------------- #
     _BULLET_RE = re.compile(r"^\s*[-*]\s+(.*)$")
     _NUM_RE = re.compile(r"^\s*\d+\.\s+(.*)$")
@@ -246,49 +214,40 @@ class DOCXProposalRenderer(NodeType):
 
     def _render_markdown(self, doc, md: str, tpl) -> None:
         lines = md.replace("\r\n", "\n").split("\n")
-        i = 0
-        n = len(lines)
+        i, n = 0, len(md.replace("\r\n", "\n").split("\n"))
         while i < n:
             line = lines[i]
 
-            # Blank line -> skip (paragraph breaks are implicit between blocks).
             if not line.strip():
                 i += 1
                 continue
 
-            # Heading.
             m = self._H_RE.match(line)
             if m:
-                level = min(len(m.group(1)), 4) + 1  # md # -> docx H2 (title is H1)
+                level = min(len(m.group(1)), 4) + 1
                 h = doc.add_heading(m.group(2).strip(), level=min(level, 4))
                 self._style_heading(h, tpl, top_level=False)
                 i += 1
                 continue
 
-            # Table: a '|' line immediately followed by a --- separator line.
             if "|" in line and i + 1 < n and self._TABLE_SEP_RE.match(lines[i + 1]):
                 i = self._render_table(doc, lines, i, tpl)
                 continue
 
-            # Bullet list block.
             if self._BULLET_RE.match(line):
                 while i < n and self._BULLET_RE.match(lines[i]):
-                    text = self._BULLET_RE.match(lines[i]).group(1)
                     p = doc.add_paragraph(style="List Bullet")
-                    self._add_inline(p, text)
+                    self._add_inline(p, self._BULLET_RE.match(lines[i]).group(1))
                     i += 1
                 continue
 
-            # Numbered list block.
             if self._NUM_RE.match(line):
                 while i < n and self._NUM_RE.match(lines[i]):
-                    text = self._NUM_RE.match(lines[i]).group(1)
                     p = doc.add_paragraph(style="List Number")
-                    self._add_inline(p, text)
+                    self._add_inline(p, self._NUM_RE.match(lines[i]).group(1))
                     i += 1
                 continue
 
-            # Plain paragraph (greedy until blank/heading/list/table boundary).
             buf = [line]
             i += 1
             while i < n and lines[i].strip() and not (
@@ -303,7 +262,6 @@ class DOCXProposalRenderer(NodeType):
             self._add_inline(p, " ".join(s.strip() for s in buf))
 
     def _render_table(self, doc, lines, start, tpl) -> int:
-        """Render a pipe table starting at `start` (header row). Returns next index."""
         def cells(row: str) -> list[str]:
             row = row.strip()
             if row.startswith("|"):
@@ -313,7 +271,7 @@ class DOCXProposalRenderer(NodeType):
             return [c.strip() for c in row.split("|")]
 
         header = cells(lines[start])
-        i = start + 2  # skip header + separator
+        i = start + 2
         body_rows: list[list[str]] = []
         while i < len(lines) and "|" in lines[i] and lines[i].strip():
             body_rows.append(cells(lines[i]))
@@ -328,15 +286,13 @@ class DOCXProposalRenderer(NodeType):
             self._add_inline(hdr[c].paragraphs[0], text, bold=True)
 
         for r in body_rows:
-            cells_out = table.add_row().cells
+            out = table.add_row().cells
             for c in range(cols):
-                text = r[c] if c < len(r) else ""
-                self._add_inline(cells_out[c].paragraphs[0], text)
+                self._add_inline(out[c].paragraphs[0], r[c] if c < len(r) else "")
 
         doc.add_paragraph()
         return i
 
-    # Inline spans: **bold**, *italic*, `code`. Order matters (bold before italic).
     _INLINE_RE = re.compile(r"(\*\*.+?\*\*|\*.+?\*|`.+?`)")
 
     def _add_inline(self, paragraph, text: str, bold: bool = False) -> None:
@@ -344,20 +300,12 @@ class DOCXProposalRenderer(NodeType):
             if not token:
                 continue
             if token.startswith("**") and token.endswith("**"):
-                r = paragraph.add_run(token[2:-2])
-                r.bold = True
+                r = paragraph.add_run(token[2:-2]); r.bold = True
             elif token.startswith("`") and token.endswith("`"):
-                r = paragraph.add_run(token[1:-1])
-                r.font.name = "Consolas"
+                r = paragraph.add_run(token[1:-1]); r.font.name = "Consolas"
             elif token.startswith("*") and token.endswith("*"):
-                r = paragraph.add_run(token[1:-1])
-                r.italic = True
+                r = paragraph.add_run(token[1:-1]); r.italic = True
             else:
                 r = paragraph.add_run(token)
             if bold:
                 r.bold = True
-
-
-def _slug(text: str) -> str:
-    s = re.sub(r"[^A-Za-z0-9]+", "-", text).strip("-").lower()
-    return s[:60] or "proposal"
