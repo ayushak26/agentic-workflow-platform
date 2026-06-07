@@ -9,6 +9,15 @@ Temperature note: newer reasoning models (e.g. claude-opus-4-8) reject the
 `temperature` parameter. We gate it the same way the OpenAI gateway does —
 only send `temperature` when the model accepts it. Add models that reject it
 to _NO_TEMPERATURE.
+
+Streaming note: large non-streamed requests trip the Anthropic SDK's
+long-request pre-flight guard (raised BEFORE the network call, so a higher
+client `timeout` does not help). We therefore issue every request via
+`messages.stream(...)` and assemble the final message with
+`get_final_message()`. The returned Message is identical in shape to the
+non-streamed response, so all downstream extraction (text blocks, tool_use
+blocks, usage) is unchanged. This is the SDK's recommended path for long
+generations.
 """
 from __future__ import annotations
 
@@ -38,6 +47,16 @@ class AnthropicGateway(LLMGateway):
     def __init__(self, api_key: str):
         self._client = AsyncAnthropic(api_key=api_key, timeout=600.0)
 
+    async def _create(self, **kwargs):
+        """Issue a request via streaming and return the assembled Message.
+
+        Streaming avoids the SDK's non-streaming long-request guard, which
+        rejects large-max_tokens calls before they are sent. The final Message
+        has the same shape as messages.create(...) would return.
+        """
+        async with self._client.messages.stream(**kwargs) as stream:
+            return await stream.get_final_message()
+
     async def complete(
         self,
         *,
@@ -56,7 +75,7 @@ class AnthropicGateway(LLMGateway):
         if _supports_temperature(model):
             kwargs["temperature"] = temperature
 
-        resp = await self._client.messages.create(**kwargs)
+        resp = await self._create(**kwargs)
         text = "".join(b.text for b in resp.content if b.type == "text")
         return LLMResponse(
             text=text,
@@ -97,7 +116,7 @@ class AnthropicGateway(LLMGateway):
         if _supports_temperature(model):
             kwargs["temperature"] = temperature
 
-        resp = await self._client.messages.create(**kwargs)
+        resp = await self._create(**kwargs)
         tool_block = next(
             (b for b in resp.content if b.type == "tool_use" and b.name == tool_name),
             None,
@@ -173,7 +192,7 @@ class AnthropicGateway(LLMGateway):
         if _supports_temperature(model):
             kwargs["temperature"] = temperature
 
-        response = await self._client.messages.create(**kwargs)
+        response = await self._create(**kwargs)
 
         text_parts: list[str] = []
         tool_calls: list[ToolCall] = []
