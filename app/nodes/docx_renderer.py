@@ -89,7 +89,7 @@ _DEFAULT_TEMPLATE = "corporate"
 @NodeRegistry.register("DOCXProposalRenderer")
 class DOCXProposalRenderer(NodeType):
     """Render Markdown sections into a styled .docx and persist it to object storage."""
-
+    type_name = "DOCXProposalRenderer" 
     # The Builder UI auto-generates a config form from config_schema; declaring
     # it richly is what makes this node configurable without code. (Same reason
     # the other tool nodes declare schemas.)
