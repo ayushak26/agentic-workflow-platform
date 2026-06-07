@@ -7,3 +7,4 @@ from . import mcp_agent        # noqa: F401
 from . import excel_tool       # noqa: F401   ← add
 from . import powerpoint_tool  # noqa: F401   ← add
 from . import pdf_tool         # noqa: F401   ← add
+from . import docx_renderer
