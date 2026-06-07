@@ -407,21 +407,11 @@ edges:
 
   - from: tool_architecture
     to: draft_data_pipeline
-  - from: rules_retrieval
-    to: draft_data_pipeline
-  - from: sota_scan
-    to: draft_data_pipeline
 
   - from: tool_architecture
     to: draft_models
-  - from: rules_retrieval
-    to: draft_models
-  - from: sota_scan
-    to: draft_models
 
   - from: tool_architecture
-    to: draft_platform
-  - from: rules_retrieval
     to: draft_platform
 
   - from: draft_data_pipeline
