@@ -141,9 +141,10 @@ nodes:
       model: claude-opus-4-8
       prompt_template: |
         Design the BEST-POSSIBLE DIGITAL BIOMASS MONITORING & MODELLING PLATFORM
-        to solve this problem. Write a detailed engineering design
-        (~12 pages). This is the core deliverable: be opinionated and pick the
-        strongest option at each layer, not a survey.
+        to solve this problem. Write a focused engineering design (~4 pages,
+        concise). This is the SPINE the three deep-dives expand, so commit to the
+        strongest option at each layer and keep justifications tight - do not
+        pad. Depth lives in the deep-dive drafters, not here.
 
         Concept note (may be sparse): {{inputs.concept_note}}
         Problem statement: {{call_intel.parsed.problem_statement}}
