@@ -27,6 +27,7 @@ async def run_workflow(
     spec: WorkflowSpec,
     inputs: dict[str, Any],
     session_id: str | None = None,
+    collection_id: str = "default",
     services: dict[str, Any] | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
@@ -34,6 +35,7 @@ async def run_workflow(
     run_id = run_id or str(uuid.uuid4())
     workflow_name = spec.name
     effective_session = session_id or str(uuid.uuid4())
+    effective_collection = collection_id or "default"
     llm_gateway = (services or {}).get("llm")
     llm_gateway = (services or {}).get("llm")
     if llm_gateway is not None and hasattr(llm_gateway, "with_context"):
@@ -51,12 +53,14 @@ async def run_workflow(
     merged_inputs["SYSTEM.run_id"] = run_id
     merged_inputs["SYSTEM.workflow_id"] = spec.name
     merged_inputs["SYSTEM.session_id"] = effective_session
+    merged_inputs["SYSTEM.collection_id"] = effective_collection
 
     initial_state: dict[str, Any] = {
         "inputs": merged_inputs,
         "node_outputs": {},
         "audit_log": [],
         "session_id": effective_session,
+        "collection_id": effective_collection,
         "workflow_id": spec.name,
         "workflow_name": spec.name,
     }

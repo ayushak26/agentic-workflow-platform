@@ -37,6 +37,7 @@ class RunRequest(BaseModel):
     workflow_yaml: str
     inputs: dict = {}
     session_id: str | None = None
+    collection_id: str = "default"
     run_id: str | None = None
 
 @router.post("/workflows/run")
@@ -49,7 +50,7 @@ async def run(req: RunRequest, request: Request, payload: dict = Depends(require
     services = getattr(request.app.state, "services", {})
     try:
         return await run_workflow(
-            spec, req.inputs, req.session_id, services=services, run_id=req.run_id
+            spec, req.inputs, req.session_id,collection_id=req.collection_id,services=services, run_id=req.run_id
         )
     except Exception as e:
         # The workflow failed at runtime. run_workflow already published a

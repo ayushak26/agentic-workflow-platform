@@ -109,7 +109,7 @@ class StubLLM:
 class StubRetriever:
     """Returns a fixed RetrievalResult with two stubbed chunks."""
 
-    async def __call__(self, q):
+    async def __call__(self, q, llm=None):
         # Import here so the module doesn't depend on retrieval imports at load
         from app.retrieval.models import RetrievalResult, RetrievedChunk
         chunks = [

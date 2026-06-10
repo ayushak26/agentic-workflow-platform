@@ -4,7 +4,6 @@ Public API:
     retrieve(query: RetrievalQuery, *, weaviate_client, llm) -> RetrievalResult
 """
 from app.retrieval.models import (
-    DocType,
     RetrievalFilters,
     RetrievalQuery,
     RetrievalResult,
@@ -18,5 +17,4 @@ __all__ = [
     "RetrievalResult",
     "RetrievalFilters",
     "RetrievedChunk",
-    "DocType",
 ]

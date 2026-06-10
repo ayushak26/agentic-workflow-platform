@@ -1,0 +1,10 @@
+collection_id: proposal
+display_name: "Proposal Generation"
+description: "Project Alex flagship — RFP-driven proposal corpus"
+default_industry: consulting
+doc_types:
+  - proposal
+  - case_study
+  - methodology
+  - playbook
+  - report

@@ -63,6 +63,8 @@ nodes:
       model: claude-sonnet-4-5
       query: Case studies and methodology for {{rfp_intel.parsed.industry}} engagements
       top_n_final: 10
+      filters:
+        doc_types: [proposal, case_study]
   - id: approve_retrievals
     type: HumanInLoopAgent
     config:

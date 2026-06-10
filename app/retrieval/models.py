@@ -11,18 +11,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 
-# ---- Enums --------------------------------------------------------------
-
-DocType = Literal[
-    "rfp",
-    "proposal",
-    "case_study",
-    "methodology",
-    "playbook",
-    "report",
-    "general_annexes",
-    "annual_work_programme"
-]
+# ---- Enums -------------------------------------------------------------
 
 
 # ---- Input side ---------------------------------------------------------
@@ -36,8 +25,9 @@ class RetrievalFilters(BaseModel):
     """
 
     session_id: str = Field(..., min_length=1)
+    collection_id: str = Field(..., min_length=1)
     industry: Optional[str] = None
-    doc_types: Optional[list[DocType]] = None
+    doc_types: Optional[list[str]] = None
     collection_ids: Optional[list[str]] = None
     date_after: Optional[date] = None
     date_before: Optional[date] = None
@@ -74,7 +64,7 @@ class RetrievedChunk(BaseModel):
     chunk_id: str
     doc_id: str
     doc_title: str
-    doc_type: DocType
+    doc_type: str
     text: str                              # raw chunk from Weaviate
     metadata: dict                         # industry, doc_date, source_uri, etc.
 

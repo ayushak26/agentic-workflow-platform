@@ -67,7 +67,7 @@ class RAGAgent(NodeType):
 
         # 1. Build the retrieval request. session_id always comes from state —
         #    the workflow can't override its own isolation boundary.
-        filters_payload = {**cfg.filters, "session_id": state["session_id"]}
+        filters_payload = {**cfg.filters, "session_id": state["session_id"], "collection_id": state["collection_id"],}
         q = RetrievalQuery(
             query=cfg.query,
             filters=RetrievalFilters(**filters_payload),

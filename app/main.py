@@ -27,6 +27,7 @@ from app.observability.logging import configure_logging, get_logger
 from app.observability.cost_ledger import CostLedger
 from app.llm.registry import get_llm_gateway
 from app.runtime.events import RunEventBus
+from app.ingestion.collections import CollectionRegistry
 
 from app.api import health
 from app.api.auth import router as auth_router
@@ -60,6 +61,7 @@ async def lifespan(app: FastAPI):
         # pymongo Database below, which the (sync) CostLedger needs.
         from app.db.mongo import MongoClient as AsyncMongo
         services["mongo"] = AsyncMongo(settings.mongo_uri)
+        services["collection_registry"] = CollectionRegistry(services["mongo"])
 
         services["db"] = db                 # raw pymongo Database for CostLedger
         services["cost_ledger"] = CostLedger(db)
@@ -120,11 +122,13 @@ async def lifespan(app: FastAPI):
         services["embedder"] = _embedder
         _wv = services["weaviate_client"]
         _llm = services["llm"]
+        _registry = services["collection_registry"] 
         services["retriever"] = lambda q, llm=None: retrieve(
         q,
         weaviate_client=_wv,
         llm=llm or _llm,        # caller can pass a context-bound gateway
         embedder=_embedder,
+        collection_registry=_registry,
         )
         logger.info("retriever.ready")
     else:

@@ -34,6 +34,7 @@ from app.observability.logging import get_logger
 from app.retrieval.weaviate_client import WeaviateClient, get_weaviate_client
 from app.storage.minio_client import ObjectStore, get_object_store, key_for_path
 from datetime import datetime, timezone
+from app.ingestion.collections import CollectionConfig
 
 log = get_logger(__name__)
 
@@ -64,6 +65,7 @@ async def ingest_file(
     embedder: Embedder | None = None,
     weaviate: WeaviateClient | None = None,
     mongo: MongoClient | None = None,
+    collection_config: CollectionConfig | None = None,
 ) -> IngestionResult:
     """Ingest one document end-to-end. Idempotent.
 
@@ -72,6 +74,10 @@ async def ingest_file(
     and into the manifest as document-level metadata. Defaults to {}.
     """
     metadata = metadata or {}
+    if collection_config is not None:
+        dt = str(metadata.get("doc_type", ""))
+        if dt:
+            collection_config.validate_doc_type(dt)
     object_store = object_store or get_object_store()
     embedder = embedder or get_embedder()
     weaviate = weaviate or get_weaviate_client()

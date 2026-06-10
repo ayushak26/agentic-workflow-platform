@@ -32,7 +32,8 @@ async def retrieve(
     *,
     weaviate_client: weaviate.WeaviateAsyncClient,
     llm: LLMGateway,
-    embedder: Embedder, 
+    embedder: Embedder,
+    collection_registry=None, 
 ) -> RetrievalResult:
     """Run the four-stage retrieval pipeline.
 
@@ -58,6 +59,15 @@ async def retrieve(
                 "rerank": q.rerank,
                 "compress": q.compress},
     )
+
+    # ---- Stage 0 — vocabulary + collection validation (cheapest, runs first) ----
+    # collection_id does double duty: it's AND-ed into the Weaviate filter
+    # (corpus isolation, in hybrid_search) AND the key that loads the controlled
+    # vocabulary here. Validating before Stage 1 means a bad doc_type or an
+    # unregistered collection fails before any LLM/embedding spend.
+    if collection_registry is not None and q.filters.doc_types:
+        cfg = await collection_registry.get(q.filters.collection_id)  # KeyError if unregistered
+        cfg.validate_doc_types(q.filters.doc_types)                    # ValueError
 
     # ---- Stage 1 — query understanding -------------------------------
     rewritten: str | None = None

@@ -1,0 +1,9 @@
+collection_id: default
+display_name: "Default / Uncategorized"
+description: "Dev + smoke-test bucket. A declared collection, not an implicit junk drawer."
+doc_types:
+  - general
+  - report
+  - proposal
+  - case_study
+  - methodology

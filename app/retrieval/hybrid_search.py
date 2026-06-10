@@ -21,7 +21,10 @@ log = structlog.get_logger(__name__)
 def _build_where_filter(f: RetrievalFilters) -> Filter:
     """Translate filters into a Weaviate Filter expression.
     Always pins session_id — this is a security boundary."""
-    clauses = [Filter.by_property("session_id").equal(f.session_id)]
+    clauses = [
+        Filter.by_property("session_id").equal(f.session_id),
+        Filter.by_property("collection_id").equal(f.collection_id),  # ← add: corpus scope
+    ]
     if f.industry:
         clauses.append(Filter.by_property("industry").equal(f.industry))
     if f.doc_types:
@@ -79,7 +82,7 @@ async def hybrid_search(
             chunk_id=str(obj.properties.get("chunk_id", obj.uuid)),
             doc_id=obj.properties.get("source_path", ""),
             doc_title=obj.properties.get("source_path", "").split("/")[-1],
-            doc_type=obj.properties["doc_type"],
+            doc_type=obj.properties.get("doc_type", ""),
             text=obj.properties["text"],
             compressed_text=None,
             metadata={k: v for k, v in obj.properties.items()

@@ -10,7 +10,7 @@ import app.mcp.server as srv
 async def test_list_tools_returns_three_tools():
     tools = await srv.list_tools()
     names = {t.name for t in tools}
-    assert names == {"search_documents", "get_document_chunks", "validate_citation"}
+    assert names == {"search_documents", "get_document_chunks", "validate_citation", "search_web"}
 
 
 async def test_search_documents_requires_session_id():
@@ -22,8 +22,7 @@ async def test_search_documents_requires_session_id():
 async def test_validate_citation_requires_session_id():
     tools = await srv.list_tools()
     judge_tool = next(t for t in tools if t.name == "validate_citation")
-    assert "session_id" in judge_tool.inputSchema["required"]
-
+    assert "session_id" in judge_tool.inputSchema["required"]  
 
 async def test_call_tool_unknown_raises():
     with pytest.raises(ValueError, match="Unknown tool"):

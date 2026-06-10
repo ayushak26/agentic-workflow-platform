@@ -27,6 +27,7 @@ log = get_logger(__name__)
 DB_NAME = "eurskem_ai"
 MANIFESTS_COLLECTION = "manifests"
 SCORECARDS_COLLECTION = "scorecards"
+COLLECTIONS_COLLECTION = "collections"
 
 
 class MongoClient:
@@ -60,7 +61,11 @@ class MongoClient:
     @property
     def scorecards(self) -> AsyncIOMotorCollection:
         """The eval scorecards collection, opened lazily."""
-        return self._ensure_client()[DB_NAME][SCORECARDS_COLLECTION]        
+        return self._ensure_client()[DB_NAME][SCORECARDS_COLLECTION]     
+
+    @property
+    def collections(self):
+        return self._ensure_client()[DB_NAME][COLLECTIONS_COLLECTION]   
 
     # ---- Index management ---------------------------------------------------
 

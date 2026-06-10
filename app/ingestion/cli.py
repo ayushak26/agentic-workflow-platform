@@ -30,18 +30,30 @@ async def _amain(args: argparse.Namespace) -> None:
     path = Path(args.file)
     metadata = _parse_metadata(args.meta)
 
-    result = await ingest_file(path, metadata=metadata)
-
-    summary = {
-        "minio_key": result.minio_key,
-        "chunk_count": result.chunk_count,
-        "status": result.status,
-        "skipped": result.skipped,
-        "chunk_ids_sample": result.chunk_ids[:3],
-    }
-    print(json.dumps(summary, indent=2))
     from app.db.mongo import get_mongo_client
-    await get_mongo_client().close()
+    from app.ingestion.collections import CollectionRegistry
+
+    mongo = get_mongo_client()
+    try:
+        registry = CollectionRegistry(mongo)
+        collection_id = metadata.get("collection_id", "default")
+        try:
+            cfg = await registry.get(collection_id)
+        except KeyError as e:
+            raise SystemExit(f"unregistered collection: {e}")
+
+        result = await ingest_file(path, metadata=metadata, collection_config=cfg)
+
+        summary = {
+            "minio_key": result.minio_key,
+            "chunk_count": result.chunk_count,
+            "status": result.status,
+            "skipped": result.skipped,
+            "chunk_ids_sample": result.chunk_ids[:3],
+        }
+        print(json.dumps(summary, indent=2))
+    finally:
+        await mongo.close() 
 
 
 def main() -> None:

@@ -34,6 +34,12 @@ class WorkflowState(TypedDict, total=False):
     # cache, and Weaviate filter on it. The proposal's 'Pigeon Holes' requirement.
     session_id: str
 
+    # Collection scope — which logical corpus this run reads from. Dual role:
+    # AND-ed into the Weaviate filter (corpus isolation, like session_id) AND
+    # the key that loads the controlled vocabulary for doc_type validation.
+    collection_id: str
+
+
     # Workflow metadata
     workflow_id: str
     workflow_name: str
