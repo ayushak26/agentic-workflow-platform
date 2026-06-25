@@ -1,0 +1,38 @@
+
+Expected Outcome:
+
+Project results are expected to contribute to all the following expected outcomes:  
+
+enhanced understanding of the environmental, social and economic potential of the supply of different biomass types (from local to international perspectives), as well as its sustainability implications, including biodiversity and (air, water and soil) pollution, synergies and tensions;
+enhanced capacity of private and public stakeholders to increase resource efficiency in utilising primary and secondary biomass as well as biomass processing and use, including through digital tools which may involve artificial intelligence and remote sensing, and roadmaps towards sustainable biomass management; without undermining food security;
+enhanced support to businesses and administrations that optimise biomass supply, processing, and use, such that ecosystems and biodiversity are protected and restored, emissions of greenhouse gases and pollutants reduced, and human needs for biomass satisfied in sufficient and fair way.
+Scope:
+
+There is a need to better understand the production and use of biomass, a limited resource, in its various types. Bioeconomy, and biomass as its essential feedstock, provides solutions on various dimensions (environmental, social and economic). However, there are biomass-related challenges to overcome: the EU forest carbon sink is below the target and declining in most countries and the need to restore ecosystems and halt biodiversity loss[1]. This implies that biomass supply is partly unsustainable. Simultaneously, companies see themselves challenged to satisfy the growing demand for biomass in the future. There are solutions to increase the sustainable production, including to reduce pollutants, and adjust the demand: e.g. better valorise unused or under-exploited sustainable biomass and degraded land, apply new breeding techniques and increase resource efficiency through circular design, new business models, consumption, recycling or repair.
+
+There is a need to better understand where biomass valorisation can be improved, to ensure local or regional added value increases and to drive innovative and competitive business solutions. For an optimal biomass production and effective use, matching supply and demand in the local or regional context, a better and more robust understanding of actual biomass flows is a fundamental prerequisite.
+
+Proposals should address all the following activities:
+
+Improve and develop innovative, administration-light biomass monitoring and modelling/assessment methods and digital tools at European level (regional, national, and continental scale) to optimise biomass flows, paying particular attention to areas with untapped (sustainable) biomass resources, in close cooperation with stakeholders.
+Provide an updated estimate of biomass supply and demand today and projected until 2050 at national and EU level, including associated countries, considering the quality of biomass, their potential use, the sustainability and risks (e.g. spread of pathogens) of supplied biomass, as well as potential non-satisfied (non-)industrial demand due to the limitation of availability of sustainable biomass. The 2050 outlook should be accompanied by scenarios on EU’s future bioresources regarding supply and demand.
+Test and demonstrate, in cooperation with stakeholders, the feasibility of biomass reporting in test regions of at least 10 countries across Europe with different potential of biomass supply.
+The European Commission’s Joint Research Centre (JRC) may participate as member of the consortium selected for funding since the monitoring and assessment tools developed may contribute to the EU level assessment of biomass flows of the Knowledge Centre for Bioeconomy.
+
+Proposals are encouraged to consider, where relevant, the data, expertise and services offered by the European research infrastructure in the environment, biological and food domains.
+
+The topic is relevant to the EU policies related to the European Commission’s communication on: Building the future with nature: Boosting Biotechnology and Biomanufacturing in the EU; the Competitiveness Compass and the Clean Industrial Deal; the Vision for Agriculture and Food; the new EU bioeconomy strategy, the Life Sciences Strategy, the EU Biotech Act and the Circular Economy Act.
+
+
+
+1) Documents to be used : 
+
+[1] EEA The European Biomass Puzzle | European Environment Agency's home page / EC LULUCF report / EC JRC The JRC Biomass Mandate | Knowledge for policy.
+
+2) Concept Note 
+
+3) PPT 
+
+4) Template attached.
+
+Focus on 1. Excellence and 2. Objective and Ambition. 

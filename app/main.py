@@ -34,6 +34,7 @@ from app.api.auth import router as auth_router
 from app.api.workflows import router as workflows_router
 from app.api.cost import router as cost_router
 from app.api.eval import router as eval_router
+from app.api.inspect import router as inspect_router
 
 from functools import partial
 
@@ -181,3 +182,4 @@ app.include_router(auth_router)
 app.include_router(cost_router)
 app.include_router(workflows_router)
 app.include_router(eval_router)
+app.include_router(inspect_router)

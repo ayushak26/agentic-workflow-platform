@@ -116,7 +116,7 @@ class AnthropicGateway(LLMGateway):
         if _supports_temperature(model):
             kwargs["temperature"] = temperature
 
-        resp = await self._create(**kwargs)
+        resp = await self._client.messages.create(**kwargs)
         tool_block = next(
             (b for b in resp.content if b.type == "tool_use" and b.name == tool_name),
             None,

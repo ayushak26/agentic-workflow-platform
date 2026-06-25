@@ -36,6 +36,7 @@ _FALLBACK_MODEL: dict[str, str] = {
     "claude-sonnet-4-5": "gpt-5",
     "claude-haiku-4-5":  "gpt-5-mini",
     "claude-opus-4-7":   "gpt-5",
+    "claude-opus-4-8":   "gpt-5",
 }
 
 # Gateway classes that are stubbed (not live).
