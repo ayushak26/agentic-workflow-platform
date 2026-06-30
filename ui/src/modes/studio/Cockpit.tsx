@@ -122,7 +122,7 @@ useEffect(() => {
     if (!wsOpen || runTriggered || !navState.workflowYaml || !runId) return;
     setRunTriggered(true);
     api
-      .runWorkflow(navState.workflowYaml, navState.inputs, 'default', runId)
+      .runWorkflow(navState.workflowYaml, navState.inputs, (navState.inputs.session_id as string) || 'default', runId)
       .then((res) => applyResumeResult(res))
       .catch((e) => setTriggerError(String(e.message ?? e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,73 +1,50 @@
 name: "Biomass Monitoring Proposal — Excellence (tech + non-tech)"
-description: >
-  Generates the opening of a Horizon Europe Part B for the Cluster 6 /
-  bioeconomy biomass-monitoring topic, focused on Section 1 Excellence and
-  its Objectives & Ambition — ~6 pages per variant. The applicant's Concept
-  Note is the workflow INPUT (not ingested). Two drafters run in parallel from
-  the same grounding: a TECHNICAL variant for scientific/evaluator readers and
-  a NON-TECHNICAL variant for executive/lay readers. Grounded against the
-  pre-registered biomass_monitoring corpus via RAG. (MCP/web SOTA scan removed
-  for this run; grounding is RAG + the call text + model knowledge.)
-version: "2.2"
+description: "HE Cluster 6 biomass Part B: Excellence + Objectives & Ambition, technical + non-technical, RAG-grounded. Sequential edges (drafters wait for retrieval)."
+version: "2.3-rag"
 
 entry: call_intel
 
 inputs:
   concept_note:
     type: text
-    description: >
-      The applicant's project specifics (objectives, the digital tool idea,
-      target regions, partners). May be sparse; drafters then write illustrative
-      prose and mark unknowns [TO CONFIRM].
+    description: Applicant project specifics. May be sparse; drafters mark unknowns [TO CONFIRM].
   collection_id:
     type: text
-    description: >
-      Pre-registered corpus scope for retrieval. For this call use
-      "biomass_monitoring" (registered ahead of time via seed_collections.py).
+    description: Pre-registered corpus scope. Use "biomass_monitoring".
   session_id:
     type: text
-    description: Isolation boundary AND-ed into every retrieval and state read.
+    description: Isolation boundary. Use "demo-biomass".
 
 nodes:
-  # 1. Intelligence: structure the Concept Note + call into requirements. -----
   - id: call_intel
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        You are a Horizon Europe proposal strategist. You are given (a) the
-        binding call and (b) the applicant's Concept Note. Extract the spine for
-        a Section 1 "Excellence" draft focused on Objectives & Ambition.
+        You are a Horizon Europe proposal strategist. Given the call and the
+        applicant Concept Note, extract the spine for Section 1 Excellence /
+        Objectives & Ambition.
 
-        CALL (Cluster 6 / bioeconomy biomass monitoring) — required activities:
-        develop innovative, administration-light biomass monitoring and
-        modelling/assessment digital tools at regional/national/continental
-        scale (attention to untapped sustainable biomass); deliver an updated EU
-        biomass supply/demand estimate to 2050 with scenarios; demonstrate
-        biomass reporting across >=10 European countries. Cross-cutting:
-        sustainability, biodiversity, air/water/soil pollution, and the
-        food-security guardrail ("without undermining food security").
+        CALL (Cluster 6 biomass monitoring) required activities: administration-
+        light biomass monitoring & modelling digital tools at regional/national/
+        continental scale; updated EU biomass supply/demand estimate to 2050 with
+        scenarios; biomass reporting across >=10 European countries. Cross-cutting:
+        sustainability, biodiversity, air/water/soil pollution, food-security guardrail.
 
         APPLICANT CONCEPT NOTE:
         {{inputs.concept_note}}
 
         Extract:
-        - objectives: the project's specific objectives, reconciling the Concept
-          Note with the call's required activities. If the Note is sparse, infer
-          reasonable objectives and tag gaps [TO CONFIRM].
-        - ambition: what is novel / beyond state of the art in the proposed
-          approach (the "ambition" the Excellence section must argue).
-        - methodology_spine: the high-level methodology (monitoring + modelling,
-          remote sensing / AI, 2050 scenario approach).
-        - cross_cutting: how sustainability, biodiversity, pollution and the
-          food-security guardrail are addressed.
+        - objectives: specific objectives vs the call; if sparse, infer and tag [TO CONFIRM].
+        - ambition: beyond state of the art.
+        - methodology_spine: monitoring + modelling, remote sensing / AI, 2050 scenarios.
+        - cross_cutting: sustainability, biodiversity, pollution, food-security.
       output_schema:
         objectives: str
         ambition: str
         methodology_spine: str
         cross_cutting: str
 
-  # 2. RAG grounding against the PRE-REGISTERED biomass corpus. ---------------
   - id: rules_retrieval
     type: RAGAgent
     config:
@@ -78,19 +55,16 @@ nodes:
       top_k: 10
       query: >
         EU biomass supply and demand, sustainability and biodiversity tensions,
-        forest carbon sink decline, biomass flows monitoring; HE Part B
-        Excellence section and Objectives & Ambition requirements.
+        forest carbon sink decline, biomass flows monitoring; HE Part B Excellence
+        and Objectives & Ambition requirements.
 
-  # 3a. TECHNICAL drafter — for scientific / evaluator readers. ---------------
   - id: draft_technical
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        Draft the opening of Part B Section 1 "Excellence" plus "Objectives &
-        Ambition" (~6 pages) for a SCIENTIFIC / EVALUATOR audience. Be precise
-        and methodological; reviewers expect rigour, metrics and credible
-        beyond-SOTA claims.
+        Draft Part B Section 1 Excellence + Objectives & Ambition (~6 pages) for a
+        SCIENTIFIC / EVALUATOR audience. Precise, methodological, rigorous.
 
         Objectives: {{call_intel.parsed.objectives}}
         Ambition: {{call_intel.parsed.ambition}}
@@ -98,32 +72,26 @@ nodes:
         Cross-cutting: {{call_intel.parsed.cross_cutting}}
         Grounded EU biomass evidence: {{rules_retrieval.answer}}
 
-        Structure:
         ## 1. Excellence
         ### 1.1 Objectives and Ambition
-        (specific, measurable objectives mapped to the call's required
-        activities; the concrete ambition / beyond-SOTA argument with named
-        methods, datasets and quantified targets)
+        (measurable objectives mapped to required activities; beyond-SOTA argument
+        with named methods, datasets, quantified targets)
         ### 1.2 Methodology (high level)
         (multi-scale monitoring + modelling, remote sensing + AI, 2050 scenario
-        method; how sustainability / biodiversity / pollution and the
-        food-security guardrail are handled methodologically)
+        method; sustainability / biodiversity / pollution / food-security)
 
-        Output GitHub-flavoured markdown with pipe tables for the objectives ->
-        methods -> targets mapping. Tag applicant-specific gaps [TO CONFIRM].
+        GitHub-flavoured markdown, pipe tables for objectives -> methods -> targets.
+        Tag gaps [TO CONFIRM].
       output_schema:
         markdown: str
 
-  # 3b. NON-TECHNICAL drafter — for executive / lay readers. ------------------
   - id: draft_nontechnical
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        Draft the same Section 1 "Excellence" + "Objectives & Ambition"
-        (~6 pages) for a NON-TECHNICAL audience — executives, policy readers,
-        board members. Plain English, no jargon; lead with why it matters,
-        what changes, and the public value. Keep it credible, not dumbed down.
+        Draft the same Section 1 Excellence + Objectives & Ambition (~6 pages) for a
+        NON-TECHNICAL audience — executives, policy, board. Plain English, no jargon.
 
         Objectives: {{call_intel.parsed.objectives}}
         Ambition: {{call_intel.parsed.ambition}}
@@ -131,50 +99,38 @@ nodes:
         Cross-cutting: {{call_intel.parsed.cross_cutting}}
         Grounded EU biomass evidence: {{rules_retrieval.answer}}
 
-        Structure:
         ## 1. Excellence (in plain terms)
         ### 1.1 Objectives and Ambition
-        (what the project will achieve and why it is ambitious, told plainly;
-        translate any technical method into its real-world meaning)
+        (what the project achieves and why it is ambitious, plainly)
         ### 1.2 How we will do it
-        (the approach described for a non-expert; what sustainability,
-        biodiversity and "no harm to food security" mean in practice here)
+        (the approach for a non-expert; what sustainability, biodiversity and
+        "no harm to food security" mean in practice)
 
-        Output GitHub-flavoured markdown. Avoid equations and dense tables;
-        prefer short paragraphs and at most one simple summary table. Tag
-        applicant-specific gaps [TO CONFIRM].
+        GitHub-flavoured markdown. Short paragraphs, at most one simple table.
+        Tag gaps [TO CONFIRM].
       output_schema:
         markdown: str
 
-  # 4. QA verdict only across BOTH variants. ---------------------------------
   - id: compile_and_qa
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        You are the submission reviewer. You receive two ~6-page drafts of the
-        same Excellence + Objectives & Ambition section: one technical, one
-        non-technical. Do NOT reproduce them. Produce a readiness assessment.
+        Submission reviewer. Two ~6-page drafts (technical, non-technical) of the
+        same Excellence + Objectives & Ambition section. Do NOT reproduce them.
+        Produce a readiness assessment.
 
-        Technical draft: {{draft_technical.parsed.markdown}}
-        Non-technical draft: {{draft_nontechnical.parsed.markdown}}
+        Technical: {{draft_technical.parsed.markdown}}
+        Non-technical: {{draft_nontechnical.parsed.markdown}}
 
-        Assess:
-        - Coverage: do both cover Excellence + Objectives & Ambition and tie to
-          the call's required activities (monitoring tools; 2050 estimate;
-          >=10-country demonstration)? List gaps.
-        - Consistency: do the two variants describe the SAME objectives and
-          ambition (no contradictions between the audiences)?
-        - Length: ~6 pages each; flag over/under.
-        - To-Confirm checklist: collate ALL [TO CONFIRM: ...] tags from both.
-        - Compliance: confirm the food-security guardrail and biodiversity/
-          pollution handling appear in both; flag if missing.
+        Assess coverage of required activities; consistency between variants;
+        ~6-page length; collate all [TO CONFIRM] tags; confirm food-security
+        guardrail + biodiversity/pollution in both.
 
         Return ONLY the readiness field. Concise.
       output_schema:
         readiness: str
 
-  # 5. Render BOTH variants into one styled .docx, side by side. --------------
   - id: generate_docx
     type: DOCXProposalRenderer
     config:
@@ -189,10 +145,6 @@ nodes:
 edges:
   - from: call_intel
     to: rules_retrieval
-  - from: call_intel
-    to: draft_technical
-  - from: call_intel
-    to: draft_nontechnical
   - from: rules_retrieval
     to: draft_technical
   - from: rules_retrieval

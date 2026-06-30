@@ -1,425 +1,154 @@
-name: "CL6 Biomass Monitoring - Best-Possible Digital Tool Design"
+name: "Biomass Monitoring Proposal — Excellence (tech + non-tech)"
 description: >
-  Designs the BEST-POSSIBLE digital tool to solve the CL6 (Food, Bioeconomy,
-  Natural Resources) problem of biomass monitoring, modelling and reporting for
-  a sustainable and circular bioeconomy (related to HORIZON-CL6-2027-01-CIRCBIO-08
-  "Improving biomass flows..."). The DIGITAL TOOL is the SOLE subject of this
-  run: an administration-light, EU-scale biomass monitoring/modelling/forecasting
-  platform using AI and remote sensing. A tool_architecture node designs the
-  platform ONCE and commits to the strongest option at each layer; three
-  deep-dive drafters then expand the data/EO pipeline, the AI estimation & 2050
-  modelling, and the platform engineering. STAKEHOLDER, CONSORTIUM and PARTNER
-  content is deliberately OUT OF SCOPE for this run. RAG grounds the draft in the
-  ingested CL6 AWP topic text + Horizon Europe General Annexes; a web scan
-  supplies state-of-the-art on remote sensing, biomass modelling and AI.
-  Produces a FULL, committed design: where specifics are unstated the drafters
-  make and state a concrete best-practice choice rather than leaving gaps.
-  Fully automated, no HITL gates.
-version: "2.0"
+  Two-variant opening of a Horizon Europe Part B for the Cluster 6 biomass-
+  monitoring topic: Section 1 Excellence + Objectives & Ambition, ~6 pages each,
+  technical and non-technical. Concept Note is the workflow INPUT. NO RAG and NO
+  MCP in this version — grounding is the call text (baked into call_intel) plus
+  model knowledge. This is the minimal, cannot-fail-on-retrieval build; add RAG
+  back as a separate step once the biomass corpus is ingested.
+version: "3.0"
 
-# Explicit entry point. The compiler defaults to nodes[0]; sota_scan is listed
-# first, so without this pin it would wrongly become the entry and call_intel
-# would never run. call_intel is the single root.
 entry: call_intel
 
 inputs:
   concept_note:
     type: text
-    description: >
-      Applicant's technical specifics (target regions, candidate data sources,
-      AI/remote-sensing approach, compute). May be sparse or empty; where it is
-      silent the drafters choose and state a concrete best-practice option.
-  annexes_collection_id:
-    type: text
-    description: >
-      Weaviate collection_id holding the ingested CL6 AWP topic text + Horizon
-      Europe General Annexes. RAG filters to this only.
+    description: Applicant's project specifics. May be sparse; drafters write illustrative prose and mark unknowns [TO CONFIRM].
 
 nodes:
-
-  # 0. Web state-of-the-art scan (MCP Agent over the MCP server). ------------
-  #    Steered toward DIGITAL-TOOL evidence: remote sensing for biomass,
-  #    biomass supply/demand modelling, AI/ML estimation, EU data sources.
-  #    NOTE: confirm the MCPAgent output field. This workflow reads
-  #    {{sota_scan.answer}}; if the node emits .result / .text instead, the
-  #    briefing silently lands as empty string in the drafters (no error).
-  - id: sota_scan
-    type: MCPAgent
-    config:
-      model: claude-opus-4-8
-      max_iterations: 6
-      system_prompt: >
-        You are a research agent. Use the search_web tool to gather recent
-        state-of-the-art evidence. Prefer search_web over the document tools
-        for this task. Return a concise briefing and include the source URLs
-        you relied on. Mark anything uncertain.
-      objective: >
-        Gather recent state-of-the-art context for DIGITAL biomass monitoring
-        and modelling at regional/national/continental scale: remote-sensing
-        and Earth-observation methods (Copernicus/Sentinel, LiDAR, SAR) for
-        biomass estimation; AI/ML models for supply-demand forecasting to 2050;
-        existing EU biomass data sources, knowledge centres and gaps; data
-        interoperability and "administration-light" reporting approaches;
-        comparable platforms, and how they handle sustainability, biodiversity
-        and pollution dimensions without undermining food security.
-
-  # 1. Parse the PROBLEM into a structured technical requirement set. ---------
-  #    Tool-focused: extract what the digital tool must DO, not who builds it.
-  #    Deliberately excludes consortium/stakeholder/partner framing for this run.
   - id: call_intel
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        You are a technical analyst scoping a DIGITAL TOOL. Read the CL6 topic
-        on biomass monitoring, modelling and digital tools for a sustainable and
-        circular bioeconomy (related to HORIZON-CL6-2027-01-CIRCBIO-08).
+        You are a Horizon Europe proposal strategist. Given (a) the binding call
+        and (b) the applicant's Concept Note, extract the spine for a Section 1
+        "Excellence" draft focused on Objectives & Ambition.
 
-        Applicant concept note (MAY be sparse or empty):
-        ---
+        CALL (Cluster 6 / bioeconomy biomass monitoring) — required activities:
+        develop innovative, administration-light biomass monitoring and
+        modelling/assessment digital tools at regional/national/continental
+        scale (attention to untapped sustainable biomass); deliver an updated EU
+        biomass supply/demand estimate to 2050 with scenarios; demonstrate
+        biomass reporting across >=10 European countries. Cross-cutting:
+        sustainability, biodiversity, air/water/soil pollution, and the
+        food-security guardrail ("without undermining food security").
+
+        APPLICANT CONCEPT NOTE:
         {{inputs.concept_note}}
-        ---
 
-        Your job is ONLY to define the technical problem and the requirements
-        the BEST-POSSIBLE digital tool must satisfy. Do NOT discuss partners,
-        consortia, stakeholders, roles, or who performs the work.
-
-        Extract the technical problem the tool must solve:
-          1. Monitoring & modelling: innovative, ADMINISTRATION-LIGHT biomass
-             monitoring and modelling/assessment methods at European level
-             (regional, national, continental scale), focused on identifying
-             untapped sustainable biomass.
-          2. Estimation: produce an updated estimate of biomass supply and demand
-             today and projected to 2050 at national and EU level (incl.
-             associated countries), accounting for biomass quality, potential
-             use, sustainability, and risks such as pathogen spread, plus unmet
-             (non-)industrial demand; generate 2050 supply/demand scenarios.
-          3. Reporting feasibility: enable biomass reporting across regions in at
-             least 10 European countries with differing supply potential, treated
-             here as a DATA-COVERAGE and validation target for the tool (not a
-             cooperation activity).
-        Also capture the sustainability dimensions the tool's outputs must
-        quantify (biodiversity; air/water/soil pollution; food-security
-        guardrail) and any interoperability targets (e.g. the Knowledge Centre
-        for Bioeconomy, FAIR/open data).
-
-        Where the concept note does not specify something, still list the
-        requirement and state a concrete recommended default.
+        Extract:
+        - objectives: specific objectives reconciling the Note with the call's
+          required activities. If the Note is sparse, infer reasonable objectives
+          and tag gaps [TO CONFIRM].
+        - ambition: what is novel / beyond state of the art.
+        - methodology_spine: high-level methodology (monitoring + modelling,
+          remote sensing / AI, 2050 scenario approach).
+        - cross_cutting: how sustainability, biodiversity, pollution and the
+          food-security guardrail are addressed.
       output_schema:
-        topic_id: str
-        problem_statement: str
-        digital_tool_requirements: list
-        monitoring_scope: list
-        modelling_scope: list
-        data_coverage_target: str
-        sustainability_dimensions: list
-        interoperability_targets: list
-        non_functional_requirements: list
+        objectives: str
+        ambition: str
+        methodology_spine: str
+        cross_cutting: str
 
-  # 2. Retrieve binding rules from the ingested Annexes. ---------------------
-  - id: rules_retrieval
-    type: RAGAgent
-    config:
-      model: claude-opus-4-8
-      filters:
-        collection_id: "{{inputs.annexes_collection_id}}"
-      top_k: 12
-      query: >
-        Page limit and structure, evaluation criteria, TRL definitions, ethics
-        and security, data management and open science / FAIR data obligations,
-        and budget categories relevant to a digital-tool / data-infrastructure
-        deliverable in Horizon Europe Cluster 6 / General Annexes.
-
-  # 2b. THE DIGITAL TOOL — the whole point of this run. -----------------------
-  #     Designs the BEST-POSSIBLE biomass monitoring/modelling platform and
-  #     JUSTIFIES every major technology choice against named alternatives, then
-  #     commits to the strongest option. Feeds all three tool deep-dives. No
-  #     stakeholder/consortium framing.
-  - id: tool_architecture
+  - id: draft_technical
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        Design the BEST-POSSIBLE DIGITAL BIOMASS MONITORING & MODELLING PLATFORM
-        to solve this problem. Write a focused engineering design (~4 pages,
-        concise). This is the SPINE the three deep-dives expand, so commit to the
-        strongest option at each layer and keep justifications tight - do not
-        pad. Depth lives in the deep-dive drafters, not here.
+        Draft Part B Section 1 "Excellence" + "Objectives & Ambition" (~6 pages)
+        for a SCIENTIFIC / EVALUATOR audience. Precise, methodological, rigorous;
+        credible beyond-SOTA claims.
 
-        Concept note (may be sparse): {{inputs.concept_note}}
-        Problem statement: {{call_intel.parsed.problem_statement}}
-        Tool requirements: {{call_intel.parsed.digital_tool_requirements}}
-        Non-functional requirements: {{call_intel.parsed.non_functional_requirements}}
-        Binding rules retrieved: {{rules_retrieval.answer}}
-        Web state-of-the-art briefing (BACKGROUND only, cite URLs when used):
-        {{sota_scan.answer}}
+        Objectives: {{call_intel.parsed.objectives}}
+        Ambition: {{call_intel.parsed.ambition}}
+        Methodology spine: {{call_intel.parsed.methodology_spine}}
+        Cross-cutting: {{call_intel.parsed.cross_cutting}}
 
-        For EACH layer below: (i) state the requirement, (ii) name 2-3 candidate
-        approaches, (iii) pick ONE as the best with a short, concrete
-        justification (accuracy, scale to continental level, cost,
-        administration-light operation, reproducibility), (iv) note key risks.
-        Do NOT mention partners, consortia, stakeholders or who operates it.
+        Structure:
+        ## 1. Excellence
+        ### 1.1 Objectives and Ambition
+        (measurable objectives mapped to the call's required activities; the
+        beyond-SOTA argument with named methods, datasets, quantified targets)
+        ### 1.2 Methodology (high level)
+        (multi-scale monitoring + modelling, remote sensing + AI, 2050 scenario
+        method; sustainability / biodiversity / pollution / food-security
+        handled methodologically)
 
-        - Data ingestion: Earth observation / remote sensing (e.g.
-          Copernicus/Sentinel-1 SAR, Sentinel-2 optical, spaceborne/airborne
-          LiDAR such as GEDI), plus authoritative statistical and land-use
-          datasets; automated, low-burden pipelines.
-        - Biomass estimation: AI/ML and remote-sensing models that turn raw
-          signals into biomass-type, quality and flow estimates at regional,
-          national and continental scale, with explicit uncertainty
-          quantification. Compare e.g. classical regression / random forests vs
-          gradient boosting vs deep learning (CNN/transformer) on EO data, and
-          justify the choice per data regime.
-        - Modelling / forecasting engine: supply and demand today and to 2050,
-          scenario generation, with sustainability and risk overlays
-          (biodiversity; air/water/soil pollution; pathogen-spread risk;
-          food-security guardrail). Justify the forecasting/scenario method.
-        - Reporting & interoperability: dashboards and open APIs delivering
-          biomass reporting across regions in >=10 countries; FAIR data and
-          interoperability with the Knowledge Centre for Bioeconomy.
-        - Platform qualities: how it scales to continental data volumes, data
-          governance, reproducibility, model validation and drift monitoring,
-          and what keeps it ADMINISTRATION-LIGHT in operation.
-
-        Close with a one-paragraph "recommended best-of-breed stack" summary and
-        a layered text/Markdown architecture diagram.
-
-        Write realistic, detailed engineering prose. Where the concept note is
-        silent on a specific (data source, model family, target region,
-        cloud/compute), CHOOSE the best-practice option and state it as the
-        design decision with a one-line reason - do not leave gaps or flag
-        unknowns. Cite a source URL when you rely on a web finding; never
-        present web background as a project fact. Output Markdown with
-        sub-headings.
+        GitHub-flavoured markdown with pipe tables for objectives -> methods ->
+        targets. Tag applicant-specific gaps [TO CONFIRM].
       output_schema:
-        section_title: str
         markdown: str
-        recommended_stack: str
-        page_estimate: int
 
-  # 3a-c. Three TOOL deep-dive drafters, fan-out in parallel. -----------------
-  #       Each expands one part of tool_architecture into engineering depth.
-  #       No Excellence/Impact/Implementation framing, no consortium.
-  - id: draft_data_pipeline
+  - id: draft_nontechnical
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        Write the DATA & EARTH-OBSERVATION PIPELINE deep-dive for the biomass
-        monitoring tool. Target ~10 pages of concrete engineering detail.
+        Draft the same Section 1 "Excellence" + "Objectives & Ambition"
+        (~6 pages) for a NON-TECHNICAL audience — executives, policy, board.
+        Plain English, no jargon; lead with why it matters and the public value.
+        Credible, not dumbed down.
 
-        Problem statement: {{call_intel.parsed.problem_statement}}
-        Monitoring scope: {{call_intel.parsed.monitoring_scope}}
-        Tool design (expand, do not re-invent): {{tool_architecture.parsed.markdown}}
-        Recommended stack: {{tool_architecture.parsed.recommended_stack}}
-        Binding rules retrieved: {{rules_retrieval.answer}}
-        Web state-of-the-art briefing (BACKGROUND only, cite URLs when used):
-        {{sota_scan.answer}}
+        Objectives: {{call_intel.parsed.objectives}}
+        Ambition: {{call_intel.parsed.ambition}}
+        Methodology spine: {{call_intel.parsed.methodology_spine}}
+        Cross-cutting: {{call_intel.parsed.cross_cutting}}
 
-        Cover, in depth and committing to the best option at each step:
-        - Source selection: which EO products (e.g. Sentinel-1 SAR, Sentinel-2
-          optical, GEDI LiDAR) and authoritative land-use/statistical datasets,
-          and WHY each, per biomass type and per scale.
-        - Ingestion & preprocessing: automated, administration-light pipelines;
-          cloud/edge processing, data harmonisation, gap-filling, cloud-masking,
-          spatial/temporal alignment, and quality control.
-        - Data model & storage: how raw, intermediate and derived layers are
-          organised for continental-scale volumes; FAIR cataloguing.
-        - Validation data: how ground-truth/reference data is sourced and used
-          to train and check estimates (treat the >=10-country coverage as a
-          data target, not a cooperation activity).
+        Structure:
+        ## 1. Excellence (in plain terms)
+        ### 1.1 Objectives and Ambition
+        (what the project achieves and why it is ambitious, told plainly)
+        ### 1.2 How we will do it
+        (the approach for a non-expert; what sustainability, biodiversity and
+        "no harm to food security" mean in practice)
 
-        Write realistic engineering detail. Where a specific is unstated, choose
-        and state the best-practice option as a decision (with a brief reason);
-        do not leave gaps or flag unknowns. Cite URLs for web findings; never
-        present web background as project fact. Output Markdown with
-        sub-headings; use Markdown tables where useful.
+        GitHub-flavoured markdown. Short paragraphs, at most one simple table.
+        Tag gaps [TO CONFIRM].
       output_schema:
-        section_title: str
         markdown: str
-        page_estimate: int
 
-  - id: draft_models
-    type: TransformAgent
-    config:
-      model: claude-opus-4-8
-      prompt_template: |
-        Write the AI ESTIMATION & 2050 MODELLING deep-dive for the biomass tool.
-        Target ~10 pages of concrete modelling detail.
-
-        Problem statement: {{call_intel.parsed.problem_statement}}
-        Modelling scope: {{call_intel.parsed.modelling_scope}}
-        Sustainability dimensions: {{call_intel.parsed.sustainability_dimensions}}
-        Tool design (expand): {{tool_architecture.parsed.markdown}}
-        Recommended stack: {{tool_architecture.parsed.recommended_stack}}
-        Binding rules retrieved: {{rules_retrieval.answer}}
-        Web state-of-the-art briefing (BACKGROUND only): {{sota_scan.answer}}
-
-        Cover, committing to the strongest option:
-        - Biomass estimation models: compare candidate model families (e.g.
-          random forest / gradient boosting vs CNN / transformer on EO data) per
-          data regime; pick the best and justify; specify features, training,
-          and explicit uncertainty quantification.
-        - Supply-demand estimation and 2050 forecasting: method for present-day
-          estimates and for 2050 scenarios (biomass quality, potential use,
-          unmet demand), and how scenarios are generated and bounded.
-        - Sustainability & risk overlays: how biodiversity, air/water/soil
-          pollution, pathogen-spread risk and the food-security guardrail are
-          quantified and surfaced.
-        - MLOps: validation protocol, accuracy KPIs, drift monitoring,
-          reproducibility, and retraining triggers.
-
-        Write realistic modelling detail. Where a specific is unstated, choose
-        and state the best-practice option as a decision (with a brief reason);
-        do not leave gaps or flag unknowns. Cite URLs for web findings. Output
-        Markdown with sub-headings and tables.
-      output_schema:
-        section_title: str
-        markdown: str
-        page_estimate: int
-
-  - id: draft_platform
-    type: TransformAgent
-    config:
-      model: claude-opus-4-8
-      prompt_template: |
-        Write the PLATFORM ENGINEERING & DELIVERY deep-dive for the biomass
-        tool. Target ~8 pages. NO consortium, partners or stakeholder roles -
-        describe the SYSTEM and the BUILD, not who builds it.
-
-        Problem statement: {{call_intel.parsed.problem_statement}}
-        Interoperability targets: {{call_intel.parsed.interoperability_targets}}
-        Non-functional requirements: {{call_intel.parsed.non_functional_requirements}}
-        Data-coverage target: {{call_intel.parsed.data_coverage_target}}
-        Tool design (expand): {{tool_architecture.parsed.markdown}}
-        Recommended stack: {{tool_architecture.parsed.recommended_stack}}
-        Binding rules retrieved: {{rules_retrieval.answer}}
-
-        Cover:
-        - Serving architecture: APIs, dashboards and reporting outputs;
-          scalability to continental data volumes; compute/cost model that keeps
-          operation administration-light.
-        - Interoperability: FAIR data and integration with the Knowledge Centre
-          for Bioeconomy and other EU data infrastructure.
-        - Data governance, security and reproducibility.
-        - Build roadmap: a technical work-package breakdown for the TOOL
-          (ingestion -> estimation -> modelling -> serving -> validation),
-          deliverables and milestones as a Markdown table, and a phased
-          delivery narrative. Express effort by technical workstream, NOT by
-          partner/role.
-
-        Write realistic detail. Where a specific is unstated (cloud/compute,
-        budgets, dates, coverage regions), choose and state a concrete
-        best-practice option as a decision; do not leave gaps or flag unknowns.
-        Output Markdown with sub-headings; represent the work-package plan and
-        milestones as Markdown tables.
-      output_schema:
-        section_title: str
-        markdown: str
-        page_estimate: int
-
-  # 4. Fan-in: QA the TOOL design, emit only a readiness assessment. ----------
   - id: compile_and_qa
     type: TransformAgent
     config:
       model: claude-opus-4-8
       prompt_template: |
-        You are doing a QA pass over a DIGITAL-TOOL design package whose parts
-        have already been drafted. DO NOT reproduce the sections - they flow to
-        the renderer directly. Produce ONLY a readiness assessment.
+        You are the submission reviewer. Two ~6-page drafts of the same
+        Excellence + Objectives & Ambition section: one technical, one
+        non-technical. Do NOT reproduce them. Produce a readiness assessment.
 
-        Tool design:        {{tool_architecture.parsed.markdown}}
-        Data pipeline:      {{draft_data_pipeline.parsed.markdown}}
-        Models & modelling: {{draft_models.parsed.markdown}}
-        Platform & delivery:{{draft_platform.parsed.markdown}}
-        Binding rules:      {{rules_retrieval.answer}}
+        Technical: {{draft_technical.parsed.markdown}}
+        Non-technical: {{draft_nontechnical.parsed.markdown}}
 
-        Produce a single Markdown "readiness" assessment covering:
-        - Coverage: does the package address ALL THREE technical jobs
-          (administration-light monitoring/modelling; supply-demand-to-2050
-          estimate + scenarios; biomass reporting at >=10-country data coverage)?
-          List any gaps.
-        - Best-tool justification: is each major technology choice (EO sources,
-          model family, forecasting method, serving stack) justified against
-          named alternatives and committed to? Flag any hand-waving.
-        - Engineering depth: is uncertainty quantification, validation, drift
-          monitoring, scalability to continental volumes, and FAIR /
-          Knowledge-Centre interoperability each present? Flag weaknesses.
-        - Sustainability outputs: confirm biodiversity, air/water/soil pollution,
-          pathogen-spread risk and the food-security guardrail are quantified.
+        Assess: coverage of the call's required activities (monitoring tools;
+        2050 estimate; >=10-country demonstration); consistency between the two
+        variants; ~6-page length each; collate all [TO CONFIRM] tags; confirm
+        food-security guardrail + biodiversity/pollution appear in both.
 
-        Do NOT assess consortium, partners or stakeholder cooperation - they are
-        out of scope for this run.
-
-        Return ONLY the readiness field. Keep it concise - it is an assessment,
-        not a copy of the design.
+        Return ONLY the readiness field. Concise.
       output_schema:
         readiness: str
 
-  # 5. Render the styled .docx. ----------------------------------------------
-  #    Section bodies flow straight from the drafters and the tool-architecture
-  #    node; compile_and_qa supplies only the readiness assessment. The Digital
-  #    Tool Architecture is rendered as its own annex so the reviewer sees the
-  #    platform design in one place. Word output (not PDF) because Horizon
-  #    Europe applicants edit the draft in their own template before submission;
-  #    DOCXProposalRenderer shares the PDF renderer's input contract, so this is
-  #    a pure node swap. Bytes go to object storage; only the MinIO key returns
-  #    to workflow state.
   - id: generate_docx
     type: DOCXProposalRenderer
     config:
       sections:
-        "1. Digital Tool Architecture": "{{tool_architecture.parsed.markdown}}"
-        "2. Data & Earth-Observation Pipeline": "{{draft_data_pipeline.parsed.markdown}}"
-        "3. AI Estimation & 2050 Modelling": "{{draft_models.parsed.markdown}}"
-        "4. Platform Engineering & Delivery": "{{draft_platform.parsed.markdown}}"
-        "Readiness Assessment": "{{compile_and_qa.parsed.readiness}}"
+        "Technical — Excellence & Objectives": "{{draft_technical.parsed.markdown}}"
+        "Non-Technical — Excellence & Objectives": "{{draft_nontechnical.parsed.markdown}}"
+        "Submission Readiness": "{{compile_and_qa.parsed.readiness}}"
       template: corporate
-      proposal_title: "CL6 Biomass Monitoring - Best-Possible Digital Tool Design"
-      client_name: "European Commission / Horizon Europe Cluster 6"
+      proposal_title: "Biomass Monitoring — Excellence & Objectives (tech + non-tech) — DRAFT"
+      client_name: "Horizon Europe / Cluster 6"
 
-# ---------------------------------------------------------------------------
-# Edges
-#   call_intel is the SINGLE root. It fans to rules_retrieval and sota_scan.
-#   Both feed tool_architecture (the best-possible-tool design). The design
-#   then fans into the three TOOL deep-dives (data pipeline / models /
-#   platform), which fan in to compile, then to the .docx renderer.
-#
-#   call_intel --> rules_retrieval --+
-#   call_intel --> sota_scan --------+--> tool_architecture --+
-#                                                             +--> draft_data_pipeline --+
-#   (rules + sota also feed the deep-dives directly)          +--> draft_models ---------+--> compile --> docx
-#                                                             +--> draft_platform -------+
-#
-#   draft_platform omits the raw sota briefing; its content comes via
-#   tool_architecture. No stakeholder/consortium nodes in this run.
-# ---------------------------------------------------------------------------
 edges:
   - from: call_intel
-    to: rules_retrieval
+    to: draft_technical
   - from: call_intel
-    to: sota_scan
-
-  - from: rules_retrieval
-    to: tool_architecture
-  - from: sota_scan
-    to: tool_architecture
-
-  - from: tool_architecture
-    to: draft_data_pipeline
-
-  - from: tool_architecture
-    to: draft_models
-
-  - from: tool_architecture
-    to: draft_platform
-
-  - from: draft_data_pipeline
+    to: draft_nontechnical
+  - from: draft_technical
     to: compile_and_qa
-  - from: draft_models
+  - from: draft_nontechnical
     to: compile_and_qa
-  - from: draft_platform
-    to: compile_and_qa
-
   - from: compile_and_qa
     to: generate_docx
