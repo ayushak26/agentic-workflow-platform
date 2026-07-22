@@ -1,0 +1,335 @@
+import { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { api } from '../../api/client';
+import type { RunSummary, RunDetail, AuditEvent, EventType } from '../../api/types';
+
+const STATUS_LABEL: Record<string, string> = {
+  completed: 'Completed',
+  rejected: 'Rejected',
+  failed: 'Failed',
+};
+const STATUS_DOT: Record<string, string> = {
+  completed: 'bg-emerald-500',
+  rejected: 'bg-amber-500',
+  failed: 'bg-red-500',
+};
+
+// Node-type colour coding. Each agent type gets a tint + dot + label.
+// Falls back to neutral gray when the type is unknown (e.g. resume-path runs).
+const TYPE_STYLE: Record<string, { dot: string; chip: string; label: string }> = {
+  TransformAgent:    { dot: 'bg-violet-500',  chip: 'bg-violet-50 text-violet-700',   label: 'Transform' },
+  RAGAgent:          { dot: 'bg-teal-500',     chip: 'bg-teal-50 text-teal-700',       label: 'RAG' },
+  MCPAgent:          { dot: 'bg-blue-500',     chip: 'bg-blue-50 text-blue-700',       label: 'MCP' },
+  RouterAgent:       { dot: 'bg-amber-500',    chip: 'bg-amber-50 text-amber-700',     label: 'Router' },
+  HumanInLoopAgent:  { dot: 'bg-pink-500',     chip: 'bg-pink-50 text-pink-700',       label: 'Human' },
+  ExcelToolNode:     { dot: 'bg-green-500',    chip: 'bg-green-50 text-green-700',     label: 'Excel' },
+  PowerPointToolNode:{ dot: 'bg-orange-500',   chip: 'bg-orange-50 text-orange-700',   label: 'PowerPoint' },
+  PDFToolNode:       { dot: 'bg-red-500',      chip: 'bg-red-50 text-red-700',         label: 'PDF' },
+};
+const TYPE_FALLBACK = { dot: 'bg-slate-400', chip: 'bg-slate-100 text-ink-500', label: 'Node' };
+
+function typeStyle(t: string | undefined) {
+  return (t && TYPE_STYLE[t]) || TYPE_FALLBACK;
+}
+
+const EVENT_META: Record<EventType, { label: string; dot: string; human: boolean }> = {
+  node_start: { label: 'Node started', dot: 'bg-slate-400', human: false },
+  node_end: { label: 'Node completed', dot: 'bg-emerald-500', human: false },
+  node_error: { label: 'Node error', dot: 'bg-red-500', human: false },
+  hitl_approve: { label: 'Approved', dot: 'bg-pink-500', human: true },
+  hitl_reject: { label: 'Rejected', dot: 'bg-red-500', human: true },
+  hitl_edit: { label: 'Edited', dot: 'bg-pink-500', human: true },
+};
+
+function clock(v: string | number | null): string {
+  if (v == null) return '—';
+  const d = typeof v === 'number' ? new Date(v * 1000) : new Date(v);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// --- Output rendering -------------------------------------------------------
+function renderValue(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+      try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return value; }
+    }
+    return value;
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+function readableOutput(output: unknown): string {
+  if (output == null) return '—';
+  if (typeof output === 'string') return renderValue(output);
+  if (typeof output === 'object') {
+    const obj = output as Record<string, unknown>;
+    for (const key of ['raw', 'answer', 'text', 'content', 'result', 'summary']) {
+      if (key in obj) return renderValue(obj[key]);
+    }
+    return JSON.stringify(obj, null, 2);
+  }
+  return String(output);
+}
+
+// Detect a downloadable file key inside a node's output.
+// Looks for object-store keys (workflows/...) in *_key / pdf_key / file_key fields
+// or any string value that looks like a workflow-scoped key.
+function fileKey(output: unknown): string | null {
+  if (output == null) return null;
+  if (typeof output === 'string') {
+    return output.startsWith('workflows/') ? output : null;
+  }
+  if (typeof output === 'object') {
+    const obj = output as Record<string, unknown>;
+    for (const key of ['pdf_key', 'file_key', 'output_key', 'key', 'minio_key']) {
+      const v = obj[key];
+      if (typeof v === 'string' && v.startsWith('workflows/')) return v;
+    }
+    // Any value that looks like a workflow key.
+    for (const v of Object.values(obj)) {
+      if (typeof v === 'string' && v.startsWith('workflows/')) return v;
+    }
+  }
+  return null;
+}
+
+function shortValue(v: unknown): string {
+  const s = typeof v === 'string' ? v : JSON.stringify(v);
+  return s.length > 80 ? s.slice(0, 80) + '…' : s;
+}
+
+// --- Node card --------------------------------------------------------------
+function NodeCard({
+  nodeId, typeName, value, open, onToggle,
+}: {
+  nodeId: string;
+  typeName: string | undefined;
+  value: unknown;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const ts = typeStyle(typeName);
+  const key = fileKey(value);
+  return (
+    <div className="border border-slate-200 rounded-lg overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span className={`h-2.5 w-2.5 rounded-full flex-none ${ts.dot}`} />
+          <span className="font-mono text-sm text-ink-900 truncate">{nodeId}</span>
+          <span className={`text-[10px] px-1.5 py-0.5 rounded flex-none ${ts.chip}`}>{ts.label}</span>
+        </div>
+        <div className="flex items-center gap-3 flex-none ml-3">
+          {key && (
+            <a
+              href={api.fileUrl(key, true)}
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs text-accent-600 hover:underline"
+            >
+              Download
+            </a>
+          )}
+          <span className="text-ink-300 text-xs">{open ? 'Hide' : 'View'}</span>
+        </div>
+      </button>
+      {open && (
+        <div className="border-t border-slate-100 bg-slate-50 px-4 py-3">
+          <pre className="text-[12px] leading-relaxed text-ink-700 whitespace-pre-wrap break-words font-mono max-h-96 overflow-y-auto">
+            {readableOutput(value)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function RunHistory() {
+  const { runId } = useParams<{ runId?: string }>();
+  const navigate = useNavigate();
+
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [detail, setDetail] = useState<{ run: RunDetail; audit: AuditEvent[] } | null>(null);
+  const [listErr, setListErr] = useState<string | null>(null);
+  const [detailErr, setDetailErr] = useState<string | null>(null);
+  const [openNode, setOpenNode] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.runHistory().then((d) => setRuns(d.runs)).catch((e) => setListErr(String(e)));
+  }, []);
+
+  useEffect(() => {
+    if (!runId && runs.length > 0) navigate(`/history/${runs[0].run_id}`, { replace: true });
+  }, [runId, runs, navigate]);
+
+  useEffect(() => {
+    if (!runId) return;
+    setDetail(null); setDetailErr(null); setOpenNode(null);
+    api.runDetail(runId).then(setDetail).catch((e) => setDetailErr(String(e)));
+  }, [runId]);
+
+  const outputs = detail ? (detail.run.outputs as Record<string, unknown>) : {};
+  const inputs = detail ? (detail.run.inputs as Record<string, unknown>) : {};
+  const nodeTypes = detail ? (detail.run.node_types ?? {}) : {};
+
+  return (
+    <div className="h-full flex">
+      <aside className="flex-none w-64 border-r border-slate-200 overflow-y-auto bg-white">
+        {listErr && (
+          <div className="m-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            Couldn't load runs. {listErr}
+          </div>
+        )}
+        {!listErr && runs.length === 0 && (
+          <div className="p-6 text-center text-ink-300 text-sm">No runs recorded yet.</div>
+        )}
+        {runs.map((r) => {
+          const on = r.run_id === runId;
+          return (
+            <button
+              key={r.run_id}
+              onClick={() => navigate(`/history/${r.run_id}`)}
+              className={`w-full text-left px-3.5 py-3 border-b border-slate-100 transition-colors ${
+                on ? 'bg-slate-100 border-l-2 border-l-accent-600' : 'border-l-2 border-l-transparent hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm text-ink-900 font-medium truncate">{r.workflow_name}</span>
+                <span className={`h-2 w-2 rounded-full flex-none ${STATUS_DOT[r.status] ?? 'bg-slate-300'}`} />
+              </div>
+              <div className="font-mono text-[11px] text-ink-300 mt-1 truncate">{r.run_id}</div>
+              <div className="text-[11px] text-ink-300 mt-0.5">
+                {clock(r.started_at ?? r.created_at)} · {r.node_count ?? 0} nodes
+              </div>
+            </button>
+          );
+        })}
+      </aside>
+
+      <section className="flex-1 min-w-0 overflow-y-auto p-6">
+        {detailErr && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {detailErr.includes('404') ? 'Run not found.' : `Couldn't load this run. ${detailErr}`}
+          </div>
+        )}
+        {!detail && !detailErr && <div className="text-ink-300 text-sm">Select a run to view its detail.</div>}
+
+        {detail && (
+          <>
+            <div className="flex items-baseline justify-between gap-3 flex-wrap">
+              <div>
+                <div className="text-lg font-medium text-ink-900">{detail.run.workflow_name}</div>
+                <div className="font-mono text-xs text-ink-300 mt-0.5">
+                  {detail.run.run_id} · started {clock(detail.run.started_at ?? detail.run.created_at)}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2.5 my-5">
+              {[
+                { l: 'Status', v: STATUS_LABEL[detail.run.status] ?? detail.run.status },
+                { l: 'Duration', v: detail.run.duration_s != null ? `${detail.run.duration_s.toFixed(1)}s` : '—' },
+                { l: 'Nodes', v: String(detail.run.node_count ?? '—') },
+                { l: 'Events', v: String(detail.audit.length) },
+              ].map((m) => (
+                <div key={m.l} className="bg-slate-50 rounded-lg px-3 py-2.5">
+                  <div className="text-[11px] text-ink-300 mb-1">{m.l}</div>
+                  <div className="text-sm font-medium text-ink-900">{m.v}</div>
+                </div>
+              ))}
+            </div>
+
+            {detail.run.error && (
+              <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 font-mono">
+                {detail.run.error}
+              </div>
+            )}
+
+            <div className="mb-5">
+              <div className="text-xs font-medium text-ink-500 mb-2">Inputs</div>
+              <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
+                {Object.entries(inputs).length === 0 ? (
+                  <div className="px-4 py-2.5 text-xs text-ink-300">—</div>
+                ) : (
+                  Object.entries(inputs).map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-4 px-4 py-2.5">
+                      <span className="text-xs text-ink-500 flex-none">{k}</span>
+                      <span className="font-mono text-[11px] text-ink-700 truncate text-right">{shortValue(v)}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="mb-5">
+              <div className="text-xs font-medium text-ink-500 mb-2">
+                Node outputs <span className="text-ink-300 font-normal">· colour = agent type · click to view</span>
+              </div>
+              <div className="space-y-2">
+                {Object.entries(outputs).length === 0 ? (
+                  <div className="text-xs text-ink-300">No node outputs recorded.</div>
+                ) : (
+                  Object.entries(outputs).map(([nodeId, value]) => (
+                    <NodeCard
+                      key={nodeId}
+                      nodeId={nodeId}
+                      typeName={nodeTypes[nodeId]}
+                      value={value}
+                      open={openNode === nodeId}
+                      onToggle={() => setOpenNode(openNode === nodeId ? null : nodeId)}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div className="text-xs font-medium text-ink-500 mb-2 flex items-center gap-2">
+              Audit trail
+              <span className="text-[11px] text-ink-300 font-normal">· highlighted rows are human decisions</span>
+            </div>
+            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 overflow-hidden">
+              {detail.audit.length === 0 ? (
+                <div className="px-4 py-2.5 text-xs text-ink-300">No events recorded.</div>
+              ) : (
+                detail.audit.map((a, i) => {
+                  const e = EVENT_META[a.event_type];
+                  const node = a.node_id && a.node_id !== 'unknown' ? a.node_id : null;
+                  const reason = (a.payload && (a.payload as Record<string, unknown>).reason) as string | undefined;
+                  return (
+                    <div
+                      key={`${a.node_id}-${a.ts}-${i}`}
+                      className={`grid grid-cols-[64px_170px_1fr] gap-3 items-start px-3 py-2 ${
+                        e.human ? 'border-l-2 border-l-pink-500 bg-pink-50' : 'border-l-2 border-l-transparent'
+                      }`}
+                    >
+                      <span className="font-mono text-[11px] text-ink-300">{clock(a.ts)}</span>
+                      <span className="flex items-center gap-2 text-xs">
+                        <span className={`h-1.5 w-1.5 rounded-full ${e.dot}`} />
+                        <span className={e.human ? 'text-ink-900 font-medium' : 'text-ink-500'}>{e.label}</span>
+                        {node && <span className="font-mono text-[11px] text-ink-300 truncate">{node}</span>}
+                      </span>
+                      <span className="text-[11px]">
+                        <span className={a.actor === 'system' ? 'text-ink-300' : 'text-accent-600 font-medium'}>
+                          {a.actor}
+                        </span>
+                        {reason && <span className="text-ink-300"> — {reason}</span>}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <p className="text-[11px] text-ink-300 mt-6">
+              Audit payloads record shape only — never prompt or proposal content. Records are append-only and scoped to
+              your session.
+            </p>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}

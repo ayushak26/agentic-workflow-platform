@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import Annotated, Any, TypedDict
 from operator import add
 
+from app.proposal_graph.graph import ProposalGraph, merge_graph
+
 
 def merge_node_outputs(
     a: dict[str, Any], b: dict[str, Any]
@@ -39,6 +41,14 @@ class WorkflowState(TypedDict, total=False):
     # the key that loads the controlled vocabulary for doc_type validation.
     collection_id: str
 
+    # Typed Proposal Knowledge Graph — the single source of truth a proposal is
+    # written FROM. Additive: nodes that don't touch it are unaffected (total=False).
+    # Its reducer merges parallel drafter writes field-by-field so two drafters can
+    # fill different fields of the same object without clobbering each other —
+    # the same parallel-branch safety merge_node_outputs gives, but lossless at
+    # the field level (a dict.update-style reducer would let a partial write erase
+    # a fuller one). ConsistencyChecker reads this to gate the render.
+    proposal_graph: Annotated[ProposalGraph, merge_graph]
 
     # Workflow metadata
     workflow_id: str

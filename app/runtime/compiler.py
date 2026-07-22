@@ -12,6 +12,12 @@ Cost tracking (scope changes):
 _make_runtime_fn now receives the services dict and binds a context-aware
 gateway clone inside runtime_fn at call time — not at compile time, because
 run_id doesn't exist until the workflow is invoked.
+
+Audit logging (Phase 11A):
+runtime_fn writes durable, session-scoped audit rows to Mongo via
+services["audit_db"] — separate from the in-state `audit_log` breadcrumb,
+which stays for debugging. node_error is written ONLY on real failures, not
+on HITL interrupts, reusing the existing is_graph_interrupt() split.
 """
 from __future__ import annotations
 import time
@@ -22,6 +28,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from app.nodes.registry import NodeRegistry
 from app.observability import metrics
 from app.observability.logging import get_logger
+from app.security.audit import (
+    write_audit_event, summarize_payload, NODE_START, NODE_END, NODE_ERROR,
+)
 from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
 from .templating import resolve
@@ -47,6 +56,9 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         session_id = state.get("session_id", "unknown")
         started = time.time()
 
+        # Durable audit sink (Mongo handle), threaded via services like cost_ledger.
+        audit = services.get("audit_db")
+
         # Bind cost-tracking context for this specific node call.
         llm = services.get("llm")
         if llm is not None and hasattr(llm, "with_context"):
@@ -70,6 +82,8 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 run_id=run_id,
                 node_id=node_id,
             ))
+        if audit is not None and run_id:
+            await write_audit_event(audit, run_id, session_id, node_id, NODE_START)
 
         try:
             with metrics.track_node(type_name):
@@ -88,6 +102,12 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
             else:
                 log.error("node_failed", node_id=node_id, type_name=type_name,
                           run_id=run_id, error=str(e), exc_info=True)
+                # Audit only real failures — an interrupt is a HITL pause, not an error.
+                if audit is not None and run_id:
+                    await write_audit_event(
+                        audit, run_id, session_id, node_id, NODE_ERROR,
+                        payload={"error": str(e)[:200]},
+                    )
             if bus and run_id:
                 if is_graph_interrupt(e):
                     await bus.publish(RunEvent(
@@ -112,6 +132,11 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 node_id=node_id,
                 output_preview=sanitize_preview(output),
             ))
+        if audit is not None and run_id:
+            await write_audit_event(
+                audit, run_id, session_id, node_id, NODE_END,
+                payload=summarize_payload(output),   # shape only, never content
+            )
 
         return {
             "node_outputs": {node_id: output},

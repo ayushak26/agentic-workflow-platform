@@ -1,4 +1,4 @@
-import type { NodeTypeManifest, WorkflowSummary, RunSnapshot } from './types';
+import type { NodeTypeManifest, WorkflowSummary, RunSnapshot, RunSummary, RunDetail, AuditEvent } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 const API = `${BASE}/api`;
@@ -84,6 +84,13 @@ export const api = {
   costForRun: (run_id: string) =>
     fetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
+  runHistory: () =>
+    fetch(`${API}/runs/mine`, { headers: authHeaders() })
+      .then(j<{ count: number; runs: RunSummary[] }>),
+
+  runDetail: (run_id: string) =>
+    fetch(`${API}/runs/mine/${run_id}`, { headers: authHeaders() })
+      .then(j<{ run: RunDetail; audit: AuditEvent[] }>),
   goldenSet: (name: string) =>
     fetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
       .then(j<{ name: string; n: number; examples: { id: string; question: string; context: string; reference: string }[] }>),

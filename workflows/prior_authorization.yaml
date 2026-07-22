@@ -1,0 +1,167 @@
+name: "Prior Authorization Review"
+description: >-
+  Checks whether patient evidence supports the payer's current policy for a
+  requested service. The AI organises the evidence and drafts; deterministic rules
+  and an authorised clinical reviewer control the actual decision.
+version: "1.0"
+
+inputs:
+  patient_record:
+    type: text
+  requested_service:
+    type: text
+  doctor_responses:
+    type: text
+
+nodes:
+  # 1. Organise the raw patient record into a structured clinical evidence summary.
+  - id: evidence_intel
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Organise the patient record into a structured clinical evidence summary for
+        a prior-authorization review. Do NOT decide medical necessity — only extract
+        and structure evidence.
+
+        REQUESTED SERVICE:
+        {{inputs.requested_service}}
+
+        PATIENT RECORD:
+        {{inputs.patient_record}}
+
+        ADDITIONAL DOCTOR RESPONSES (may be empty):
+        {{inputs.doctor_responses}}
+
+        Extract: diagnosis, procedure code, treatment history, imaging results,
+        laboratory results, medication history, and any contraindication signals.
+        For every clinical fact, record the exact evidence span it came from.
+      output_schema:
+        diagnosis: str
+        procedure_code: str
+        evidence_facts: list
+        contraindication_signals: list
+
+  # 2. Retrieve the applicable payer guideline / clinical policy from the ingested
+  #    policy corpus. This is grounded retrieval — the policy is authoritative,
+  #    not the model's memory of clinical rules.
+  - id: policy_retrieval
+    type: RAGAgent
+    config:
+      model: claude-sonnet-4-5
+      query: >-
+        Prior-authorization clinical policy and medical-necessity criteria for
+        {{inputs.requested_service}}, diagnosis {{evidence_intel.parsed.diagnosis}},
+        procedure code {{evidence_intel.parsed.procedure_code}}: required symptoms,
+        prior conservative treatment, imaging, exclusions, and contraindications.
+      filters:
+        doc_type: clinical_policy
+      top_n_final: 8
+
+  # 3. Map each policy criterion against the available evidence. Three-valued
+  #    status only — never turn "unknown" into a yes/no.
+  - id: criterion_map
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Compare each requirement in the applicable policy against the patient evidence.
+
+        APPLICABLE POLICY:
+        {{policy_retrieval.answer}}
+
+        CLINICAL EVIDENCE:
+        {{evidence_intel.parsed.evidence_facts}}
+
+        CONTRAINDICATION SIGNALS:
+        {{evidence_intel.parsed.contraindication_signals}}
+
+        For each criterion, assign a status of exactly one of: supported,
+        not_supported, unknown. Cite the evidence span for supported/not_supported.
+        List every criterion whose status is "unknown" as missing information.
+        Do not convert an unknown into supported or not_supported.
+      output_schema:
+        criteria: list
+        missing_information: list
+        contraindication_result: str
+
+  # 4. Route on completeness: any missing information → request it from the doctor
+  #    before a reviewer sees the case; otherwise go straight to reviewer.
+  - id: completeness_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: incomplete
+          condition: "criterion_map.parsed.missing_information != []"
+        - name: complete
+          default: true
+
+  # 4a. Missing info → generate targeted questions for the doctor.
+  - id: doctor_questions
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        The following policy criteria could not be resolved from the record:
+        {{criterion_map.parsed.missing_information}}
+
+        Draft one specific, targeted question per missing criterion, asking the
+        doctor for exactly the evidence needed to resolve it (e.g. weeks of
+        conservative treatment completed and the result).
+
+  # 5. Authorised reviewer makes the decision. HITL — the human controls the
+  #    outcome. AI drafted; it does not approve.
+  - id: reviewer_decision
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Review the criterion map and evidence. Approve, reject, request more
+        evidence, or edit the authorization summary before submission.
+      context_fields:
+        - evidence_intel.parsed.diagnosis
+        - criterion_map.parsed.criteria
+        - criterion_map.parsed.missing_information
+        - criterion_map.parsed.contraindication_result
+        - doctor_questions.raw
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
+  # 6. Assemble the final submission package sent to the payer, plus an audit record.
+  - id: submission_package
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Assemble the final prior-authorization submission package for the payer,
+        reflecting the authorised reviewer's decision.
+
+        REVIEWER DECISION:
+        {{reviewer_decision.decision}}
+
+        DIAGNOSIS: {{evidence_intel.parsed.diagnosis}}
+        PROCEDURE CODE: {{evidence_intel.parsed.procedure_code}}
+        CRITERION MAP: {{criterion_map.parsed.criteria}}
+
+        Produce: an authorization summary explaining how the evidence relates to each
+        policy criterion (with citations), the requested service and codes, and an
+        audit record listing the policy version, evidence used, and the human decision.
+
+edges:
+  - from: evidence_intel
+    to: policy_retrieval
+  - from: policy_retrieval
+    to: criterion_map
+  - from: criterion_map
+    to: completeness_router
+  - from: completeness_router
+    condition: route
+    branches:
+      incomplete: doctor_questions
+      complete: reviewer_decision
+  - from: doctor_questions
+    to: reviewer_decision
+  - from: reviewer_decision
+    to: submission_package

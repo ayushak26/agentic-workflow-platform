@@ -11,9 +11,24 @@ from app.nodes.registry import NodeRegistry
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
-from app.security.dependencies import require_permission, require_consultant, require_admin
+from app.security.dependencies import require_permission, require_consultant, require_admin, CurrentUser
+# Phase 11A — run history + audit
+from app.workflow.run_history import upsert_run   # ADJUST path to run_history.py's package
+from app.security.audit import write_audit_event, HITL_EVENT
 
 router = APIRouter(prefix="/api", tags=["workflows"])
+
+
+def _scope(user: CurrentUser, body_session: str | None) -> str:
+    """The value a run is scoped to for storage + retrieval.
+
+    MUST match _scope() in app/api/runs.py, which reads:
+        user.session_id or user.username
+    We allow the request body to override ONLY when it carries a session
+    (real multi-session clients); otherwise fall back to the token identity.
+    If this chain ever diverges from runs.py, history silently shows empty.
+    """
+    return body_session or getattr(user, "session_id", None) or user.username
 
 
 @router.get("/")
@@ -21,7 +36,7 @@ async def list_workflows():
     return {"workflows": []}
 
 @router.get("/node-types")
-def list_node_types(payload: dict = Depends(require_admin)):
+def list_node_types(user: CurrentUser = Depends(require_admin)):
     """The Workflow Builder UI calls this to populate the palette and forms."""
     return NodeRegistry.manifest()
 
@@ -41,16 +56,20 @@ class RunRequest(BaseModel):
     run_id: str | None = None
 
 @router.post("/workflows/run")
-async def run(req: RunRequest, request: Request, payload: dict = Depends(require_consultant)):
+async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(require_consultant)):
     try:
         spec = load_workflow_from_string(req.workflow_yaml)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
 
     services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")   # Phase 11A — Mongo handle for run history + audit
+    session = _scope(user, req.session_id)   # matched to runs.py read scope
+    node_types = {n.id: n.type for n in spec.nodes}   # for UI colour-coding
+
     try:
-        return await run_workflow(
-            spec, req.inputs, req.session_id,collection_id=req.collection_id,services=services, run_id=req.run_id
+        result = await run_workflow(
+            spec, req.inputs, session, collection_id=req.collection_id, services=services, run_id=req.run_id
         )
     except Exception as e:
         # The workflow failed at runtime. run_workflow already published a
@@ -59,25 +78,85 @@ async def run(req: RunRequest, request: Request, payload: dict = Depends(require
         # which Starlette generates OUTSIDE the CORS middleware — that 500 would lack
         # Access-Control-Allow-Origin and the browser would report "Failed to fetch",
         # masking the real error.
+        # Phase 11A — persist a failed run record (history write never breaks the response).
+        if db is not None:
+            await upsert_run(
+                db, req.run_id or "unknown", session,
+                workflow_name=spec.name, status="failed",
+                inputs=req.inputs, error=str(e)[:500],
+                node_types=node_types,
+            )
         return {"status": "failed", "run_id": req.run_id, "error": str(e)}
+
+    # Phase 11A — persist the run record on any terminal status (not on pause).
+    if db is not None and result.get("status") != "paused":
+        state = result.get("state", {})
+        await upsert_run(
+            db, result.get("run_id") or req.run_id or "unknown", session,
+            workflow_name=spec.name,
+            status=result.get("status", "completed"),
+            inputs=req.inputs,
+            outputs=state.get("node_outputs", {}),
+            node_count=len(state.get("node_outputs", {})),
+            node_types=node_types,
+        )
+    return result
 
 
 class ResumeRequest(BaseModel):
     decision: dict[str, Any]
+    session_id: str | None = None   # Phase 11A — Cockpit may send it; else derived from token
 
 
 @router.post("/workflows/{run_id}/resume")
-async def resume(run_id: str, req: ResumeRequest):
-    """Resume doesn't need services — the cached compiled graph in
-    _PAUSED_GRAPHS already has services bound into every node instance."""
+async def resume(
+    run_id: str,
+    req: ResumeRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),   # Phase 11A — resume was UNAUTHENTICATED before
+):
+    """Resume doesn't need services for execution — the cached compiled graph in
+    _PAUSED_GRAPHS already has services bound into every node instance. It does
+    need the services dict for the audit/history Mongo handle, and it now
+    requires auth (a known run_id must not be resumable by an anonymous caller)."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    session = _scope(user, req.session_id)
+    actor = user.username   # real JWT subject (CurrentUser, not a dict)
+
     try:
-        return await resume_workflow(run_id, req.decision)
+        result = await resume_workflow(run_id, req.decision)
     except HITLResumeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         # A node failed after resume. Return clean so the POST doesn't become an
         # unhandled 500 (which Starlette emits outside CORS → "Failed to fetch").
         return {"status": "failed", "run_id": run_id, "error": str(e)}
+
+    # Phase 11A — HITL audit event: the human decision, now that session is in scope.
+    action = req.decision.get("decision")
+    if db is not None and action in HITL_EVENT:
+        await write_audit_event(
+            db, run_id, session,
+            node_id=result.get("node_id") or req.decision.get("node_id") or "unknown",
+            event_type=HITL_EVENT[action],
+            actor=actor,
+            payload={"reason": result.get("reason")} if action == "reject" else {},
+        )
+
+    # Phase 11A — persist run record on terminal resume (not on re-pause).
+    if db is not None and result.get("status") != "paused":
+        state = result.get("state", {})
+        await upsert_run(
+            db, run_id, session,
+            workflow_name=state.get("workflow_name", "unknown"),
+            status=result.get("status", "completed"),
+            inputs=state.get("inputs", {}),
+            outputs=state.get("node_outputs", {}),
+            node_count=len(state.get("node_outputs", {})),
+            error=result.get("reason"),
+        )
+    return result
     
 WORKFLOWS_DIR = Path("workflows")
 
@@ -177,4 +256,4 @@ def get_file(key: str, request: Request, download: bool = False):
     if download:
         filename = key.rsplit("/", 1)[-1]
         headers["Content-Disposition"] = f'attachment; filename="{filename}"'
-    return Response(content=data, media_type=media_type, headers=headers)        
+    return Response(content=data, media_type=media_type, headers=headers)

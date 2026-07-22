@@ -1,3 +1,13 @@
+"""HITL resume path.
+
+Audit logging (Phase 11A) — deliberate design note:
+This function stays a pure orchestration function. It has no session_id and
+no authenticated user in scope, so the HITL audit event (hitl_approve /
+hitl_reject / hitl_edit) is NOT written here. It is written by the API
+handler that calls resume_workflow, where the JWT `sub` (actor) and the
+caller's session_id exist. The handler uses this function's return value —
+status, node_id, reason — to build the audit payload. See app/api/*resume*.
+"""
 from __future__ import annotations
 from typing import Any
 from langgraph.types import Command

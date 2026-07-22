@@ -25,3 +25,46 @@ export type RunSnapshot = {
   status: 'running' | 'paused' | 'completed' | 'failed';
   node_states: Record<string, 'pending' | 'active' | 'done' | 'paused' | 'failed'>;
 };
+
+export type RunStatus = 'completed' | 'rejected' | 'failed';
+ 
+export type EventType =
+  | 'node_start'
+  | 'node_end'
+  | 'node_error'
+  | 'hitl_approve'
+  | 'hitl_reject'
+  | 'hitl_edit';
+ 
+export interface RunSummary {
+  run_id: string;
+  session_id: string;
+  workflow_name: string;
+  status: RunStatus;
+  started_at: number | null;
+  ended_at: number | null;
+  duration_s: number | null;
+  node_count: number | null;
+  error: string | null;
+  created_at: string;
+}
+ 
+export interface RunDetail extends RunSummary {
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+}
+ 
+export interface AuditEvent {
+  run_id: string;
+  session_id: string;
+  node_id: string;
+  event_type: EventType;
+  actor: string;
+  payload: Record<string, unknown>;
+  ts: string;
+}
+export interface RunDetail extends RunSummary {
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  node_types?: Record<string, string>;
+}

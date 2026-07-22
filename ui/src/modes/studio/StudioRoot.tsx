@@ -3,6 +3,7 @@ import { StudioLayout } from './StudioLayout';
 import { Library } from './Library';
 import { Builder } from './Builder';                  
 import { Cockpit } from './Cockpit';
+import { RunHistory } from './RunHistory';
 
 export function StudioRoot() {
   return (
@@ -10,9 +11,11 @@ export function StudioRoot() {
       <Route element={<StudioLayout />}>
         <Route index element={<Navigate to="library" replace />} />
         <Route path="library" element={<Library />} />
-        <Route path="builder/:name" element={<Builder />} />     
-        <Route path="builder" element={<Builder />} />            
+        <Route path="builder/:name" element={<Builder />} />
+        <Route path="builder" element={<Builder />} />
         <Route path="cockpit/:runId" element={<Cockpit />} />
+        <Route path="history" element={<RunHistory />} />
+        <Route path="history/:runId" element={<RunHistory />} />
       </Route>
     </Routes>
   );

@@ -28,6 +28,7 @@ from app.observability.cost_ledger import CostLedger
 from app.llm.registry import get_llm_gateway
 from app.runtime.events import RunEventBus
 from app.ingestion.collections import CollectionRegistry
+from app.workflow.run_history import ensure_indexes as ensure_run_indexes
 
 from app.api import health
 from app.api.auth import router as auth_router
@@ -35,6 +36,10 @@ from app.api.workflows import router as workflows_router
 from app.api.cost import router as cost_router
 from app.api.eval import router as eval_router
 from app.api.inspect import router as inspect_router
+from app.api import audit as audit_api
+from app.api import runs as runs_api
+
+from app.db.mongo import DB_NAME
 
 from functools import partial
 
@@ -63,6 +68,12 @@ async def lifespan(app: FastAPI):
         from app.db.mongo import MongoClient as AsyncMongo
         services["mongo"] = AsyncMongo(settings.mongo_uri)
         services["collection_registry"] = CollectionRegistry(services["mongo"])
+        services["audit_db"] = services["mongo"]._ensure_client()[DB_NAME]
+        try:
+            await ensure_run_indexes(services["audit_db"])
+            logger.info("run_history.indexes_ensured")
+        except Exception as exc:
+            logger.warning("run_history.indexes_failed", error=str(exc))
 
         services["db"] = db                 # raw pymongo Database for CostLedger
         services["cost_ledger"] = CostLedger(db)
@@ -183,3 +194,5 @@ app.include_router(cost_router)
 app.include_router(workflows_router)
 app.include_router(eval_router)
 app.include_router(inspect_router)
+app.include_router(audit_api.router)
+app.include_router(runs_api.router) 

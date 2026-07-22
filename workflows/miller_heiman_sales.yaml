@@ -1,0 +1,162 @@
+name: "Miller Heiman Sales Strategy"
+description: >-
+  Turns scattered sales information (CRM, meeting notes, account history) into a
+  Blue Sheet and Best Action Plan. The AI organises the deal; the salesperson
+  confirms the real buyers before strategy is generated.
+version: "1.0"
+
+inputs:
+  crm_record:
+    type: text
+  meeting_notes:
+    type: text
+  account_history:
+    type: text
+
+nodes:
+  # 1. Organise the raw deal into a clean, structured summary.
+  - id: opportunity_intel
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        You are applying the Miller Heiman methodology.
+        From the sales information below, produce a structured opportunity summary.
+
+        CRM RECORD:
+        {{inputs.crm_record}}
+
+        MEETING NOTES:
+        {{inputs.meeting_notes}}
+
+        ACCOUNT HISTORY:
+        {{inputs.account_history}}
+
+        Identify the Single Sales Objective (what is being sold, value, target close date),
+        and draft the Buying Influence map: the people involved and their likely role
+        (Economic Buyer, User Buyer, Technical Buyer, Coach). Mark any role you cannot
+        fill from the evidence as "unknown".
+      output_schema:
+        single_sales_objective: str
+        buying_influences: list
+        unknown_roles: list
+
+  # 2. Retrieve the methodology's own guidance (buyer modes, red-flag patterns,
+  #    win-result framing) from the ingested Miller Heiman reference corpus.
+  - id: methodology_retrieval
+    type: RAGAgent
+    config:
+      model: claude-sonnet-4-5
+      query: >-
+        Miller Heiman guidance for a {{opportunity_intel.parsed.single_sales_objective}}
+        deal: how to assign buyer modes, frame win-results, and identify red flags and
+        strengths for these buying influences: {{opportunity_intel.parsed.buying_influences}}
+      filters:
+        doc_type: sales_methodology
+      top_n_final: 8
+
+  # 3. Coverage check: have we identified an Economic Buyer? Route accordingly.
+  #    Rule-based — deterministic control flow, no LLM needed to branch.
+  - id: coverage_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: gaps
+          condition: "opportunity_intel.parsed.unknown_roles != []"
+        - name: covered
+          default: true
+
+  # 3a. Coverage gaps → generate discovery questions to fill them.
+  - id: discovery_questions
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Coverage is incomplete. These buying roles are unknown:
+        {{opportunity_intel.parsed.unknown_roles}}
+
+        Buying influences identified so far:
+        {{opportunity_intel.parsed.buying_influences}}
+
+        Draft targeted discovery questions the salesperson should ask to identify
+        the missing decision-makers, and explain why each role matters to the deal.
+
+  # 4. Human gate: AI can SUGGEST buyer roles but cannot know the customer
+  #    organisation with certainty. The salesperson confirms the real buyers.
+  - id: confirm_buyers
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Review the buying-influence map. Confirm the real decision-makers, or edit
+        the roles before the strategy is generated.
+      context_fields:
+        - opportunity_intel.parsed.single_sales_objective
+        - opportunity_intel.parsed.buying_influences
+        - opportunity_intel.parsed.unknown_roles
+        - discovery_questions.raw
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
+  # 5. With confirmed buyers, produce the strategy: buyer modes, win-results,
+  #    red flags, strengths, and the Best Action Plan.
+  - id: deal_strategy
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Using the confirmed buying influences and the Miller Heiman guidance,
+        produce the deal strategy.
+
+        SINGLE SALES OBJECTIVE:
+        {{opportunity_intel.parsed.single_sales_objective}}
+
+        CONFIRMED BUYING INFLUENCES (as approved/edited by the salesperson):
+        {{confirm_buyers.decision}}
+
+        METHODOLOGY GUIDANCE:
+        {{methodology_retrieval.answer}}
+
+        For each buyer, assign a Buyer Mode (Growth / Trouble / Even Keel / Overconfident)
+        and a Win-Result. Then list Red Flags, Strengths, and a prioritised Best Action Plan
+        with owner and target date per action.
+      output_schema:
+        buyer_modes: list
+        win_results: list
+        red_flags: list
+        strengths: list
+        best_action_plan: list
+
+  # 6. Compile the one-page Blue Sheet and executive summary.
+  - id: compile_blue_sheet
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Compile the final Blue Sheet — a one-page opportunity strategy — from:
+
+        OBJECTIVE: {{opportunity_intel.parsed.single_sales_objective}}
+        STRATEGY: {{deal_strategy.raw}}
+
+        Include: Single Sales Objective, Buying Influences, Buyer Modes, Win-Results,
+        Coverage, Red Flags, Strengths, and Best Action Plan. End with a short
+        executive summary for management (deal, risks, next actions).
+
+edges:
+  - from: opportunity_intel
+    to: methodology_retrieval
+  - from: methodology_retrieval
+    to: coverage_router
+  - from: coverage_router
+    condition: route
+    branches:
+      gaps: discovery_questions
+      covered: confirm_buyers
+  - from: discovery_questions
+    to: confirm_buyers
+  - from: confirm_buyers
+    to: deal_strategy
+  - from: deal_strategy
+    to: compile_blue_sheet
