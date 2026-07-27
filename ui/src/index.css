@@ -4,3 +4,23 @@
 
 html, body, #root { height: 100%; }
 body { @apply bg-slate-50 text-ink-900 font-sans; margin: 0; }
+
+.hitl-rich-editor p { margin: 0 0 0.8rem; }
+.hitl-rich-editor h1 { margin: 1.25rem 0 0.65rem; font-size: 1.75rem; font-weight: 650; line-height: 1.25; }
+.hitl-rich-editor h2 { margin: 1.15rem 0 0.55rem; font-size: 1.35rem; font-weight: 650; line-height: 1.3; }
+.hitl-rich-editor h3 { margin: 1rem 0 0.5rem; font-size: 1.1rem; font-weight: 650; }
+.hitl-rich-editor ul { margin: 0.5rem 0 0.9rem 1.5rem; list-style: disc; }
+.hitl-rich-editor ol { margin: 0.5rem 0 0.9rem 1.5rem; list-style: decimal; }
+.hitl-rich-editor blockquote {
+  margin: 0.8rem 0;
+  border-left: 3px solid #94a3b8;
+  padding-left: 1rem;
+  color: #475569;
+}
+.hitl-rich-editor pre,
+.hitl-rich-editor code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.hitl-rich-editor:empty::before {
+  color: #94a3b8;
+  content: 'Start writing…';
+  pointer-events: none;
+}

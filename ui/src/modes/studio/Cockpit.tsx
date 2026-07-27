@@ -20,6 +20,7 @@ import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } 
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 import { useSetRunCost } from "../../RunCostContext";
 import { layoutFlow } from './flow-layout';
+import type { HITLReviewContent } from '../../api/types';
 
 type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
 const nodeTypes = { workflow: CockpitNode };
@@ -38,6 +39,9 @@ type Gate = {
   context: unknown;
   question: string;
   allowedActions: string[];
+  content: HITLReviewContent | null;
+  allowDocumentOverride: boolean;
+  maxEditChars: number;
 };
 
 type Finished = {
@@ -98,6 +102,9 @@ export function Cockpit() {
           context: v.context,
           question: v.question ?? '',
           allowedActions: v.allowed_actions ?? ['approve', 'reject'],
+          content: v.content ?? null,
+          allowDocumentOverride: v.allow_document_override ?? true,
+          maxEditChars: v.max_edit_chars ?? 1_000_000,
         });
       }
     } else if (res.status === 'completed') {
@@ -347,14 +354,22 @@ useEffect(() => {
         </div>
       </div>
 
-      <aside className="w-96 border-l border-slate-200 bg-white overflow-y-auto">
+      <aside
+        className={`border-l border-slate-200 bg-white overflow-y-auto ${
+          showHITL ? 'w-[min(760px,52vw)]' : 'w-96'
+        }`}
+      >
         {showHITL ? (
           <HITLPanel
             key={gate!.nodeId}
             runId={runId}
             pausedNodeId={gate!.nodeId}
+            question={gate!.question}
             context={gate!.context}
             allowedActions={gate!.allowedActions}
+            content={gate!.content}
+            allowDocumentOverride={gate!.allowDocumentOverride}
+            maxEditChars={gate!.maxEditChars}
             onResult={applyResumeResult}
           />
         ) : finished ? (

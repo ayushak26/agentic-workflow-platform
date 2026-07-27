@@ -14,7 +14,7 @@ from fastapi import UploadFile
 from pydantic import ValidationError
 
 from app.config import settings
-from app.ingestion.extractor import supported_extensions
+from app.ingestion.extractor import get_extractor, supported_extensions
 from app.runtime.schema import WorkflowFileRef, WorkflowInputSpec
 
 
@@ -45,6 +45,7 @@ EXTENSION_CATEGORY = {
 
 ALL_WORKFLOW_FILE_EXTENSIONS = tuple(sorted(EXTENSION_CATEGORY))
 _TEXT_PARSEABLE_EXTENSIONS = frozenset(supported_extensions())
+TEXT_EXTRACTABLE_EXTENSIONS = tuple(sorted(_TEXT_PARSEABLE_EXTENSIONS))
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
@@ -238,6 +239,99 @@ async def validate_workflow_inputs(
         )
 
     return normalized
+
+
+async def validate_workflow_file_reference(
+    raw_ref: WorkflowFileRef | dict[str, Any],
+    *,
+    session_id: str,
+    object_store: Any | None,
+    require_parseable_text: bool = False,
+) -> WorkflowFileRef:
+    """Validate one file reference before a download, extraction, or HITL edit."""
+
+    try:
+        ref = WorkflowFileRef.model_validate(raw_ref)
+    except ValidationError as exc:
+        raise WorkflowFileInputError(
+            "Invalid workflow file reference"
+        ) from exc
+    if not session_id:
+        raise WorkflowFileInputError("A session is required for file access")
+    if not ref.minio_key.startswith(workflow_input_prefix(session_id)):
+        raise WorkflowFileInputError("File reference is outside this session")
+    if require_parseable_text and not ref.parseable_text:
+        raise WorkflowFileInputError(
+            f"{ref.name} cannot be converted to editable text"
+        )
+    if object_store is None:
+        raise WorkflowFileInputError("Object storage is unavailable")
+    exists = await asyncio.to_thread(
+        object_store.object_exists,
+        ref.minio_key,
+    )
+    if not exists:
+        raise WorkflowFileInputError(
+            f"Uploaded file {ref.name!r} is no longer available"
+        )
+    return ref
+
+
+async def extract_workflow_file_text(
+    raw_ref: WorkflowFileRef | dict[str, Any],
+    *,
+    session_id: str,
+    object_store: Any | None,
+    max_chars: int = 1_000_000,
+) -> dict[str, Any]:
+    """Extract one scoped upload into plain text for the HITL editor."""
+
+    if max_chars < 1_000 or max_chars > 2_000_000:
+        raise WorkflowFileInputError(
+            "max_chars must be between 1,000 and 2,000,000"
+        )
+    ref = await validate_workflow_file_reference(
+        raw_ref,
+        session_id=session_id,
+        object_store=object_store,
+        require_parseable_text=True,
+    )
+    temporary_path: Path | None = None
+    try:
+        raw = await asyncio.to_thread(
+            object_store.get_bytes,
+            ref.minio_key,
+        )
+        with tempfile.NamedTemporaryFile(
+            prefix="eurskem-hitl-override-",
+            suffix=ref.extension,
+            delete=False,
+        ) as temporary:
+            temporary.write(raw)
+            temporary_path = Path(temporary.name)
+
+        extractor = get_extractor(temporary_path)
+        document = await asyncio.to_thread(
+            extractor.extract,
+            temporary_path,
+        )
+        full_text = document.full_text
+        return {
+            "file": ref.model_dump(),
+            "text": full_text[:max_chars],
+            "total_chars": len(full_text),
+            "extracted_chars": min(len(full_text), max_chars),
+            "truncated": len(full_text) > max_chars,
+        }
+    except WorkflowFileInputError:
+        raise
+    except Exception as exc:
+        raise WorkflowFileInputError(
+            f"Could not extract editable text from {ref.name}: {exc}"
+        ) from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 async def record_uploaded_files(

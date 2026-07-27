@@ -242,6 +242,19 @@ async def resume(
     # Phase 11A — HITL audit event: the human decision, now that session is in scope.
     action = req.decision.get("decision")
     if db is not None and action in HITL_EVENT:
+        audit_payload: dict[str, Any] = {}
+        if action == "reject" and result.get("reason"):
+            audit_payload["reason"] = result.get("reason")
+        if action == "edit":
+            edited = req.decision.get("edited_content") or {}
+            source_document = edited.get("source_document") or {}
+            audit_payload = {
+                "source": edited.get("source", "editor"),
+                "content_chars": len(str(edited.get("text") or "")),
+                "document_name": source_document.get("name"),
+                "document_sha256": source_document.get("sha256"),
+                "content_recorded": False,
+            }
         await write_audit_event(
             db, run_id, session,
             node_id=(
@@ -252,7 +265,7 @@ async def resume(
             ),
             event_type=HITL_EVENT[action],
             actor=actor,
-            payload={"reason": result.get("reason")} if action == "reject" else {},
+            payload=audit_payload,
         )
 
     # Persist both re-pause and terminal resume states.

@@ -1,6 +1,7 @@
 import type {
   AuditEvent,
   ConceptAlternative,
+  ExtractedWorkflowFile,
   HorizonEvaluation,
   NodeTypeManifest,
   ProposalApproval,
@@ -94,6 +95,16 @@ export const api = {
       body: form,
     }).then(j<{ files: WorkflowFileReference[] }>);
   },
+
+  extractWorkflowFile: (
+    file: WorkflowFileReference,
+    max_chars = 1_000_000,
+  ) =>
+    fetch(`${API}/workflow-input-files/extract`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ file, max_chars }),
+    }).then(j<ExtractedWorkflowFile>),
 
   downloadWorkflowFile: async (ref: WorkflowFileReference) => {
     const params = new URLSearchParams({ key: ref.minio_key });

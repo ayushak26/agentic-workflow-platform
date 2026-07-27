@@ -27,6 +27,10 @@ const FALLBACK_CATEGORIES: Record<string, string[]> = {
 const FALLBACK_CAPABILITIES: WorkflowFileCapabilities = {
   categories: FALLBACK_CATEGORIES,
   extensions: Object.values(FALLBACK_CATEGORIES).flat(),
+  extractable_extensions: [
+    '.pdf', '.docx', '.pptx', '.txt', '.md', '.markdown',
+    '.py', '.js', '.ts', '.tsx', '.json', '.yaml', '.yml',
+  ],
   max_file_size_bytes: 50 * 1024 * 1024,
   max_files_per_input: 20,
 };

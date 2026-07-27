@@ -29,8 +29,25 @@ export type WorkflowFileReference = {
 export type WorkflowFileCapabilities = {
   categories: Record<string, string[]>;
   extensions: string[];
+  extractable_extensions: string[];
   max_file_size_bytes: number;
   max_files_per_input: number;
+};
+
+export type HITLReviewContent = {
+  text: string;
+  html?: string | null;
+  source: 'workflow' | 'editor' | 'upload';
+  source_path?: string | null;
+  source_document?: WorkflowFileReference | null;
+};
+
+export type ExtractedWorkflowFile = {
+  file: WorkflowFileReference;
+  text: string;
+  total_chars: number;
+  extracted_chars: number;
+  truncated: boolean;
 };
 
 export type RunEvent =

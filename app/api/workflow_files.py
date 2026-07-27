@@ -14,6 +14,7 @@ from fastapi import (
     status,
 )
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.runtime.schema import FILE_INPUT_CATEGORIES, WorkflowFileRef
@@ -21,7 +22,9 @@ from app.security.dependencies import CurrentUser, require_consultant
 from app.workflow.file_inputs import (
     ALL_WORKFLOW_FILE_EXTENSIONS,
     FILE_CATEGORY_EXTENSIONS,
+    TEXT_EXTRACTABLE_EXTENSIONS,
     WorkflowFileInputError,
+    extract_workflow_file_text,
     record_uploaded_files,
     store_upload,
     workflow_input_prefix,
@@ -49,6 +52,7 @@ async def capabilities(
             for category in FILE_INPUT_CATEGORIES
         },
         "extensions": list(ALL_WORKFLOW_FILE_EXTENSIONS),
+        "extractable_extensions": list(TEXT_EXTRACTABLE_EXTENSIONS),
         "max_file_size_bytes": settings.workflow_file_max_bytes,
         "max_files_per_input": settings.workflow_file_max_files,
     }
@@ -109,6 +113,34 @@ async def upload_workflow_input_files(
         ) from exc
 
     return {"files": [ref.model_dump() for ref in uploaded]}
+
+
+class ExtractWorkflowFileRequest(BaseModel):
+    file: WorkflowFileRef
+    max_chars: int = Field(default=1_000_000, ge=1_000, le=2_000_000)
+
+
+@router.post("/extract")
+async def extract_workflow_input_file(
+    body: ExtractWorkflowFileRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Convert one uploaded document into plain text for the HITL editor."""
+
+    services = getattr(request.app.state, "services", {})
+    try:
+        return await extract_workflow_file_text(
+            body.file,
+            session_id=_scope(user),
+            object_store=services.get("object_store"),
+            max_chars=body.max_chars,
+        )
+    except WorkflowFileInputError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            str(exc),
+        ) from exc
 
 
 @router.get("/content")

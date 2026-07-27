@@ -14,6 +14,7 @@ from app.runtime.loader import load_workflow_from_string
 from app.runtime.schema import WorkflowFileRef, WorkflowInputSpec
 from app.workflow.file_inputs import (
     WorkflowFileInputError,
+    extract_workflow_file_text,
     scope_token,
     store_upload,
     validate_workflow_inputs,
@@ -206,8 +207,50 @@ async def test_workflow_file_loader_keeps_images_as_references():
     assert output["image_files"][0]["minio_key"] == ref.minio_key
 
 
+async def test_hitl_document_override_extracts_scoped_markdown():
+    store = MemoryObjectStore()
+    ref = reference()
+    store.blobs[ref.minio_key] = (
+        b"# Replacement concept\n\nThis document overrides the draft."
+    )
+
+    result = await extract_workflow_file_text(
+        ref,
+        session_id="ayush",
+        object_store=store,
+        max_chars=10_000,
+    )
+
+    assert result["file"]["name"] == "brief.md"
+    assert "Replacement concept" in result["text"]
+    assert result["truncated"] is False
+
+
+async def test_hitl_document_override_rejects_cross_session_reference():
+    store = MemoryObjectStore()
+    ref = reference()
+    store.blobs[ref.minio_key] = b"# Private"
+
+    with pytest.raises(
+        WorkflowFileInputError,
+        match="outside this session",
+    ):
+        await extract_workflow_file_text(
+            ref,
+            session_id="another-user",
+            object_store=store,
+        )
+
+
 def test_file_input_demo_compiles_with_templated_file_references():
     workflow = load_workflow_from_string(
         Path("workflows/file_input_demo.yaml").read_text()
+    )
+    compile_workflow(workflow, services={})
+
+
+def test_hitl_editor_demo_compiles():
+    workflow = load_workflow_from_string(
+        Path("workflows/hitl_editor_demo.yaml").read_text()
     )
     compile_workflow(workflow, services={})

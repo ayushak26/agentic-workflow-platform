@@ -6,6 +6,7 @@ import app.nodes  # noqa: F401
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow, HITLResumeError
 from app.runtime.schema import WorkflowSpec, NodeSpec, EdgeSpec
+from app.nodes.human_in_loop import sanitize_rich_html
 
 
 def _build_hitl_workflow() -> WorkflowSpec:
@@ -39,6 +40,8 @@ async def test_hitl_pauses_with_payload():
     interrupt_str = str(interrupt)
     assert "Approve this draft?" in interrupt_str
     assert "seed.value" in interrupt_str
+    assert "draft v1" in interrupt_str
+    assert "allow_document_override" in interrupt_str
 
 
 async def test_hitl_resume_with_approve():
@@ -78,7 +81,70 @@ async def test_hitl_resume_with_edit_carries_content():
     )
     out = resumed["state"]["node_outputs"]["approval"]
     assert out["decision"] == "edit"
-    assert out["edited_content"] == edited
+    assert out["edited_content"]["text"] == edited["text"]
+    assert out["content"]["text"] == edited["text"]
+
+
+async def test_hitl_edit_replaces_configured_upstream_field_for_downstream_nodes():
+    spec = WorkflowSpec(
+        name="HITL Editable Content",
+        nodes=[
+            NodeSpec(
+                id="seed",
+                type="Literal",
+                config={"value": "draft v1"},
+            ),
+            NodeSpec(
+                id="approval",
+                type="HumanInLoopAgent",
+                config={
+                    "question": "Edit this draft?",
+                    "context_fields": ["seed.value"],
+                    "editable_content_field": "seed.value",
+                    "allowed_actions": ["approve", "reject", "edit"],
+                },
+            ),
+            NodeSpec(
+                id="consumer",
+                type="Echo",
+                config={"template": "{{seed.value}}"},
+            ),
+        ],
+        edges=[
+            EdgeSpec(**{"from": "seed", "to": "approval"}),
+            EdgeSpec(**{"from": "approval", "to": "consumer"}),
+        ],
+    )
+
+    paused = await run_workflow(spec, inputs={})
+    resumed = await resume_workflow(
+        paused["run_id"],
+        decision={
+            "decision": "edit",
+            "edited_content": {
+                "text": "draft v2 from the human editor",
+                "html": (
+                    '<p onclick="attack()">draft v2 from the '
+                    'human editor</p><script>alert(1)</script>'
+                ),
+                "source": "editor",
+                # A forged path must be ignored in favour of node config.
+                "source_path": "inputs.SYSTEM.session_id",
+            },
+        },
+    )
+
+    state = resumed["state"]
+    assert state["node_outputs"]["seed"]["value"] == (
+        "draft v2 from the human editor"
+    )
+    assert state["node_outputs"]["consumer"]["text"] == (
+        "draft v2 from the human editor"
+    )
+    edited = state["node_outputs"]["approval"]["edited_content"]
+    assert edited["source_path"] == "seed.value"
+    assert "onclick" not in edited["html"]
+    assert "<script>" not in edited["html"]
 
 
 async def test_hitl_resume_unknown_run_id_raises():
@@ -104,3 +170,14 @@ async def test_hitl_rejects_disallowed_action():
     paused = await run_workflow(spec, inputs={})
     with pytest.raises(ValueError, match="disallowed decision"):
         await resume_workflow(paused["run_id"], decision={"decision": "edit"})
+
+
+def test_rich_text_sanitizer_keeps_editor_markup_and_removes_active_content():
+    cleaned = sanitize_rich_html(
+        '<h2 class="x">Title</h2><p>Hello <strong>world</strong>'
+        '<img src=x onerror=attack()></p><script>alert(1)</script>'
+    )
+
+    assert cleaned == (
+        "<h2>Title</h2><p>Hello <strong>world</strong></p>alert(1)"
+    )
