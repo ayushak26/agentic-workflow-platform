@@ -1,4 +1,5 @@
 name: "Prior Authorization Review"
+use_case: prior_authorization
 description: >-
   Checks whether patient evidence supports the payer's current policy for a
   requested service. The AI organises the evidence and drafts; deterministic rules

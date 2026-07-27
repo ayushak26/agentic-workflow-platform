@@ -6,7 +6,7 @@ Schema (MongoDB collection: audit_log):
   run_id      str
   session_id  str
   node_id     str
-  event_type  str   # node_start | node_end | node_error | hitl_approve | hitl_reject | hitl_edit
+  event_type  str   # node_start | node_end | node_reused | node_error | hitl_*
   actor       str   # "system" or JWT sub claim
   payload     dict  # inputs/outputs SUMMARY only — never full prompt text (IP protection)
   ts          datetime
@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 # Event type constants — single source of truth, referenced by the hooks.
 NODE_START = "node_start"
 NODE_END = "node_end"
+NODE_REUSED = "node_reused"
 NODE_ERROR = "node_error"
 HITL_APPROVE = "hitl_approve"
 HITL_REJECT = "hitl_reject"

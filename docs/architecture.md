@@ -1,69 +1,164 @@
-# Architecture
+Architecture
 
-The platform is a node-typed AI workflow runtime. YAML workflow definitions are compiled at runtime into LangGraph StateGraphs. Eight node types cover the full agentic surface: RAG, MCP, Human-in-Loop, Router, Transform, plus pre-baked tool nodes for Excel, PowerPoint, and PDF.
+Design goal
 
-The flagship demo workflow is a 9-node proposal-generation workflow that takes an RFP-style document plus client context and produces a styled, cited proposal PDF.
+The repository is a reusable node-typed AI workflow platform. Domain workflowscan introduce their own schemas, rules, evidence models, and evaluations, butthe runtime must stay independent of any single use case.
 
-This document is filled out incrementally across Phases 1 through 11.
+The central boundary is:
 
-## Phase plan
+Layer
 
-1. Repo, Docker Compose, FastAPI skeleton, structlog
-2. Document ingestion pipeline (pdfplumber, openpyxl, chunking, MinIO, Weaviate)
-3. Hybrid RAG retrieval module (metadata pre-filter, BM25 + vector, LLM rerank)
-4. Node framework, NodeRegistry, YAML schema, YAML-to-LangGraph runtime
-5. Core nodes: RAG, Transform, Router, Human-in-Loop
-6. MCP server plus MCP Agent node
-7. Tool nodes: Excel, PowerPoint, PDF
-8. Flagship proposal workflow, HTML-to-PDF, stub workflows
-9. React frontend: Vite + TS + Tailwind, three-mode UI, React Flow Builder, WebSocket Cockpit
-10. Observability (Prometheus + Grafana), LLM-as-a-Judge evaluation
-11. Security, session isolation, isolation verifier, Cloud Migration Map UI, interview prep doc
+Owns
 
-## Node types
+Must not own
 
-| Node               | What it does                                                                   |
-|--------------------|--------------------------------------------------------------------------------|
-| RAG Agent          | Hybrid retrieval (metadata filter, BM25 + vector, LLM rerank), grounded gen   |
-| MCP Agent          | LLM-driven tool selection over an MCP server                                   |
-| Human-in-Loop      | LangGraph interrupt(), Cockpit approval/reject/edit                            |
-| Router             | Rule-based or LLM-judged branching                                             |
-| Transform          | LLM transform: summarize, classify, rewrite, extract                           |
-| Excel Tool         | Pre-baked: extract tables from Excel                                           |
-| PowerPoint Tool    | Pre-baked: generate slides from sections                                       |
-| PDF Tool           | Pre-baked: extract text, render styled proposal PDF                            |
+Platform core
 
-## C4 model
+execution, state channels, model routing, retrieval, tools, security, audit, cost, events
 
-C1 system context, C2 containers, C3 components diagrams: added in Phase 4 when the workflow runtime exists to depict.
+proposal, healthcare, sales, or logistics rules
 
-Reference: Mastering API Architecture, Introduction (C4 diagrams, ADRs).
+Capability nodes
 
-## LLM Providers
+reusable actions such as transform, RAG, tool use, routing, HITL, and document generation
 
-**Architectural default: Anthropic Claude.** Flagship workflow YAML
-(`workflows/proposal_generation.yaml`) and all node-level model
-configurations commit to `claude-sonnet-4-5` and `claude-haiku-4-5` per
-the Eurskem proposal.
+end-to-end business policy
 
-**Build state: OpenAI is the live provider.** Anthropic is a documented
-stub in `app/llm/anthropic_gw.py`. Activating Claude live is a single
-file's worth of work — restore the `AsyncAnthropic` client (the
-implementation is preserved in `docs/anthropic-implementation.md` for
-reference) and add `ANTHROPIC_API_KEY` to `.env`.
+Use-case pack
 
-**Runtime resolution: documented fallback map.** When a workflow YAML
-declares an intended model that routes to a stubbed provider, the gateway
-applies the fallback in `app/llm/registry.py::_FALLBACK_MODEL`. Every
-fallback is logged as `llm.fallback` for observability. This is not just
-dev plumbing — it's a degradation pattern. In prod, if the primary
-provider is unavailable, the same mechanism routes to a secondary
-provider with no workflow changes.
+domain schemas, workflow YAML, prompts, deterministic rules, policies, and eval datasets
 
-| Intended model         | Routes to             | Live? | Fallback        |
-|------------------------|-----------------------|-------|-----------------|
-| claude-sonnet-4-5      | AnthropicGateway      | stub  | gpt-5           |
-| claude-haiku-4-5       | AnthropicGateway      | stub  | gpt-5-mini      |
-| claude-opus-4-7        | AnthropicGateway      | stub  | gpt-5           |
-| gpt-5                  | OpenAIGateway         | live  | —               |
-| gpt-5-mini             | OpenAIGateway         | live  | —               |
+shared infrastructure clients
+
+External adapter
+
+APIs, databases, MCP servers, and model providers
+
+workflow decisions
+
+Runtime
+
+flowchart TD
+    UI["React Builder and Cockpit"] --> API["FastAPI"]
+    API --> C["Workflow compiler"]
+    C --> G["LangGraph execution"]
+    G --> N["Typed capability nodes"]
+    N --> S["Shared services"]
+    G --> D["Namespaced domain state"]
+
+app/runtime/compiler.py converts a validated WorkflowSpec into a LangGraphstate graph. Every node passes through the same runtime boundary, which appliestemplate resolution, per-node model/cost context, events, output validation, andaudit recording.
+
+Stable workflow contract
+
+app/runtime/schema.py defines one canonical WorkflowSpec:
+
+use_case identifies the owning pack;
+
+inputs define caller-supplied data;
+
+static_variables hold workflow-controlled constants;
+
+nodes and edges define execution;
+
+selected_model overrides a node's model only when allowed;
+
+output defines the caller-facing result;
+
+graph references are validated before execution.
+
+Invalid entries, exits, branches, and duplicate node IDs fail at load time.
+
+State boundary
+
+Shared state contains:
+
+inputs and workflow variables;
+
+node outputs;
+
+append-only audit entries;
+
+session and collection identity;
+
+workflow metadata;
+
+domain_state.
+
+domain_state is a map keyed by a stable namespace:
+
+domain_state["eu_proposal"]
+domain_state["sales_strategy"]
+domain_state["prior_authorization"]
+
+Simple domains receive a recursive mapping merge. Complex packs register atyped reducer through DomainStateRegistry. The EU proposal pack registersmerge_graph, preserving its parallel-safe proposal knowledge graph withoutmaking the core import proposal models.
+
+Shared services
+
+app/main.py is the composition root. It builds and shares:
+
+MongoDB for manifests, cost, evaluation, audit, and run history;
+
+Weaviate for hybrid retrieval;
+
+object storage for document bytes and generated artifacts;
+
+Redis for cache and future durable execution;
+
+the model gateway;
+
+MCP client sessions;
+
+the retrieval pipeline;
+
+the event bus.
+
+Nodes receive these services from the runtime. They do not create their ownprovider or database connections.
+
+Included use cases
+
+EU proposals
+
+The advanced pack currently provides:
+
+GraphNormalizer for typed extraction from a concept note;
+
+EvidenceAgent for open scholarly discovery through MCP;
+
+ConsistencyChecker for deterministic submission-readiness rules;
+
+an eu_proposal domain-state namespace.
+
+The target workflow is:
+
+official call + concept note
+  -> requirement coverage
+  -> verified evidence
+  -> concept alternatives
+  -> selected idea
+  -> methodology and impact pathway
+  -> proposal skeleton
+  -> independent evaluator review
+
+Other workflow packs
+
+Project Alex proposal generation, Miller Heiman sales strategy, and priorauthorization already exist as workflow definitions. Their next iterationshould add typed domain state and evaluation suites without changing the core.
+
+Known gaps
+
+Paused workflows use MemorySaver plus an in-process graph cache. A restartloses them.
+
+Domain nodes are still imported from the global node package; explicituse-case manifests and lazy registration are the next boundary improvement.
+
+External-service tests need a dedicated Docker test profile and host-safeconfiguration.
+
+The frontend package lock is not currently reproducible with npm ci.
+
+Service health is best-effort at startup; typed service contracts andreadiness failures are not yet enforced.
+
+Prompt injection, per-data-class model policy, retries, rate limits, andproduction deployment configuration still need hardening.
+
+Reference directions
+
+Awesome AI for Scienceis used as a capability catalogue for evidence and research tooling, not as aruntime replacement.
+
+AI Engineering from Scratchprovides engineering checklists for RAG, evaluation, MCP security,checkpoints, observability, cost, and production operations.

@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import asyncio
 
+from pydantic import BaseModel, Field
+
 from app.evaluation.models import CRITERIA, CriterionScore
 
 # Bump this string whenever any rubric text below changes.
@@ -68,6 +70,17 @@ _RUBRICS: dict[str, str] = {
 }
 
 
+class _JudgeVerdict(BaseModel):
+    """Provider-facing schema for one criterion.
+
+    The criterion label is runtime-owned, so the model only returns the score
+    and reasoning. This prevents the model from mislabelling a valid verdict.
+    """
+
+    score: int = Field(ge=1, le=5)
+    reasoning: str
+
+
 class LLMJudge:
     """Scores an answer on the four RAG criteria via the LLM gateway.
 
@@ -103,18 +116,42 @@ class LLMJudge:
             f"{ref_block}\n\n"
             f"Score ONLY the criterion described above."
         )
-        result = await self.llm.complete_structured(
+        verdict = await self.llm.complete_structured(
             model=self.model,
             system=_JUDGE_SYSTEM,
             user=user,
-            response_model=CriterionScore,
+            response_model=_JudgeVerdict,
             temperature=0.0,
             max_tokens=512,
         )
-        # The model fills score+reasoning; we own the criterion label so it can't
-        # drift or be mislabeled by the model.
-        result.criterion = criterion
-        return result
+        return CriterionScore(
+            criterion=criterion,
+            score=verdict.score,
+            reasoning=verdict.reasoning,
+        )
+
+    async def score_one(
+        self,
+        criterion: str,
+        *,
+        question: str,
+        answer: str,
+        context: str,
+        reference: str = "",
+    ) -> CriterionScore:
+        """Public single-criterion API used by focused evaluation runs."""
+
+        if criterion not in CRITERIA:
+            raise ValueError(
+                f"unknown criterion {criterion!r}; expected one of {CRITERIA}"
+            )
+        return await self._score_one(
+            criterion=criterion,
+            question=question,
+            answer=answer,
+            context=context,
+            reference=reference,
+        )
 
     async def score_all(
         self,

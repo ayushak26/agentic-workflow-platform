@@ -3,12 +3,12 @@ import { useParams } from 'react-router-dom';
 import ReactFlow, {
   Background,
   Controls,
+  MiniMap,
   addEdge,
   useNodesState,
   useEdgesState,
   type Connection,
   type Node as RFNode,
-  type Edge as RFEdge,
   type ReactFlowInstance,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
@@ -28,6 +28,7 @@ import {
   type YamlWorkflow,
 } from './yaml-bridge';
 import { generateDefaults, newNodeId, findManifest } from './builder-helpers';
+import { layoutFlow } from './flow-layout';
 
 const nodeTypes = { workflow: WorkflowNode };
 
@@ -53,7 +54,7 @@ export function Builder() {
     api.getWorkflow(name).then(({ yaml }) => {
       const wf = parseYaml(yaml);
       const { nodes: ns, edges: es } = yamlToReactFlow(wf);
-      setNodes(ns);
+      setNodes(layoutFlow(ns, es));
       setEdges(es);
       const { nodes: _n, edges: _e, ...rest } = wf;
       setMeta(rest);
@@ -162,6 +163,15 @@ export function Builder() {
     }
   }, [meta, name, nodes, edges]);
 
+  const showAllNodes = useCallback(() => {
+    rfInstance?.fitView({ padding: 0.2, duration: 400 });
+  }, [rfInstance]);
+
+  const reorganizeNodes = useCallback(() => {
+    setNodes((current) => layoutFlow(current, edges));
+    requestAnimationFrame(showAllNodes);
+  }, [edges, setNodes, showAllNodes]);
+
   if (!name) {
     return <div className="p-8 text-ink-500">No workflow selected. Pick one from the Library.</div>;
   }
@@ -191,6 +201,7 @@ export function Builder() {
         >
           <Background gap={20} />
           <Controls />
+          <MiniMap pannable zoomable />
         </ReactFlow>
 
         {/* Top-left badge */}
@@ -199,7 +210,7 @@ export function Builder() {
           <div className="text-xs text-ink-500">{nodes.length} nodes</div>
         </div>
 
-        {/* Top-right save */}
+        {/* Top-right canvas actions + save */}
         <div className="absolute top-4 right-4 flex items-center gap-3">
           {saveState === 'saved' && <span className="text-xs text-ok">Saved</span>}
           {saveState === 'error' && (
@@ -207,6 +218,18 @@ export function Builder() {
               Save failed
             </span>
           )}
+          <button
+            onClick={reorganizeNodes}
+            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50"
+          >
+            Reorganize
+          </button>
+          <button
+            onClick={showAllNodes}
+            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50"
+          >
+            Show all nodes
+          </button>
           <button
             onClick={onSave}
             disabled={saveState === 'saving'}

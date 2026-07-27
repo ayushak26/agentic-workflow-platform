@@ -1,6 +1,6 @@
 import type { RunEvent } from '../../api/types';
 
-export type NodeStatus = 'pending' | 'active' | 'done' | 'paused' | 'failed';
+export type NodeStatus = 'pending' | 'active' | 'done' | 'reused' | 'paused' | 'failed';
 export type RunStatus = 'connecting' | 'running' | 'paused' | 'completed' | 'failed';
 
 export type CockpitState = {
@@ -37,6 +37,12 @@ export function deriveCockpitState(
       case 'node_completed':
         if (e.node_id) {
           s.nodeStates[e.node_id] = 'done';
+          s.outputPreviews[e.node_id] = e.output_preview;
+        }
+        break;
+      case 'node_reused':
+        if (e.node_id) {
+          s.nodeStates[e.node_id] = 'reused';
           s.outputPreviews[e.node_id] = e.output_preview;
         }
         break;

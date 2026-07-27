@@ -1,4 +1,5 @@
 name: "AGRO-THRIVE Part B Generation (v2 \u2014 graph-grounded)"
+use_case: eu_proposal
 description: "Generates a Horizon Europe Part B for AGRO-THRIVE (HORIZON-CL6-2026-01-CIRCBIO-09) built\
   \ on the typed Proposal Knowledge Graph. concept_normalize POPULATES the graph with validated objects\
   \ (objectives, WPs, partners, claims); the EvidenceAgent enriches claims with real citations from paper-search-mcp;\
@@ -15,7 +16,7 @@ nodes:
 - id: call_intel
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     output_schema:
       expected_outcomes: list
       scope_requirements: list
@@ -44,7 +45,7 @@ nodes:
 - id: concept_normalize
   type: GraphNormalizer
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
 - id: gather_evidence
   type: EvidenceAgent
   config:
@@ -70,7 +71,7 @@ nodes:
 - id: draft_objectives
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: "Write EXCELLENCE sections 1.1 (Objectives & Ambition) and 1.2 (State of the Art\
       \ & Beyond) of the AGRO-THRIVE RIA Part B. TARGET LENGTH: 6-7 dense A4 pages. Write in full academic\
@@ -87,7 +88,7 @@ nodes:
 - id: draft_methodology
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: "Write EXCELLENCE section 1.3 (Methodology) of the AGRO-THRIVE RIA Part B. TARGET\
       \ LENGTH: 7 dense A4 pages. Full prose.\n\nDEPTH REQUIREMENTS: Present the overall methodological\
@@ -102,7 +103,7 @@ nodes:
 - id: draft_excellence_crosscut
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: "Write EXCELLENCE sections 1.4 (Multi-actor Approach), 1.5 (Gender & SSH integration\
       \ in the research), and 1.6 (Open Science, FAIR data, JRC platform cooperation) of the AGRO-THRIVE\
@@ -119,7 +120,7 @@ nodes:
 - id: draft_impact_pathway
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: "Write IMPACT sections 2.1-2.2 (Impact pathway and expected outcomes) of the AGRO-THRIVE\
       \ RIA Part B. TARGET LENGTH: 5 dense A4 pages. Under 2026-27 rules the CREDIBILITY of the impact\
@@ -135,7 +136,7 @@ nodes:
 - id: draft_impact_dec
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: "Write IMPACT sections 2.3 (Barriers & assumptions) and 2.4 (Dissemination, Exploitation\
       \ & Communication, IP) of the AGRO-THRIVE RIA Part B. TARGET LENGTH: 3 dense A4 pages. Full prose.\n\
@@ -149,7 +150,7 @@ nodes:
 - id: draft_workplan
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: 'Write IMPLEMENTATION section 3.1 (Work plan and work packages) of the AGRO-THRIVE
       RIA Part B. TARGET LENGTH: 7 dense A4 pages. Full prose.
@@ -167,7 +168,7 @@ nodes:
 - id: draft_consortium
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: 'Write IMPLEMENTATION section 3.2 (Consortium as a whole) of the AGRO-THRIVE RIA
       Part B. TARGET LENGTH: 4 dense A4 pages. Full prose.
@@ -185,7 +186,7 @@ nodes:
 - id: draft_resources_risk
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     max_tokens: 32000
     prompt_template: "Write IMPLEMENTATION section 3.3 (Resources) and 3.4 (Risk management) of the AGRO-THRIVE\
       \ RIA Part B. TARGET LENGTH: 3 dense A4 pages. Full prose.\n\nDEPTH REQUIREMENTS: 3.3 \u2014 the\
@@ -196,7 +197,7 @@ nodes:
 - id: draft_cross_cutting
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     output_schema:
       gender: object
       ssh: object
@@ -245,7 +246,7 @@ nodes:
 - id: feasibility_check
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     output_schema:
       critical_gaps: list
       scoring_risks: list
@@ -276,7 +277,7 @@ nodes:
 - id: compile_partb
   type: TransformAgent
   config:
-    model: claude-opus-4-8
+    model: claude-opus-5
     prompt_template: "Assemble the final AGRO-THRIVE Part B from the drafted sections below. Do NOT rewrite\
       \ content or add facts \u2014 assemble, order, and enforce cross-section consistency only. Preserve\
       \ every [INPUT NEEDED: ...] marker verbatim. Produce the full document in order with proper Horizon\

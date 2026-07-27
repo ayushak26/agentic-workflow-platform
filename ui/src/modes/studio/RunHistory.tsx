@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
-import type { RunSummary, RunDetail, AuditEvent, EventType } from '../../api/types';
+import type {
+  AuditEvent,
+  EventType,
+  NodeRun,
+  RunDetail,
+  RunSummary,
+} from '../../api/types';
 
 const STATUS_LABEL: Record<string, string> = {
-  completed: 'Completed',
+  running: 'Running',
+  paused: 'Paused',
+  completed: 'Successful',
   rejected: 'Rejected',
   failed: 'Failed',
 };
 const STATUS_DOT: Record<string, string> = {
+  running: 'bg-blue-500 animate-pulse',
+  paused: 'bg-amber-500',
   completed: 'bg-emerald-500',
   rejected: 'bg-amber-500',
   failed: 'bg-red-500',
@@ -35,6 +45,7 @@ function typeStyle(t: string | undefined) {
 const EVENT_META: Record<EventType, { label: string; dot: string; human: boolean }> = {
   node_start: { label: 'Node started', dot: 'bg-slate-400', human: false },
   node_end: { label: 'Node completed', dot: 'bg-emerald-500', human: false },
+  node_reused: { label: 'Node reused (zero tokens)', dot: 'bg-cyan-500', human: false },
   node_error: { label: 'Node error', dot: 'bg-red-500', human: false },
   hitl_approve: { label: 'Approved', dot: 'bg-pink-500', human: true },
   hitl_reject: { label: 'Rejected', dot: 'bg-red-500', human: true },
@@ -95,23 +106,20 @@ function fileKey(output: unknown): string | null {
   return null;
 }
 
-function shortValue(v: unknown): string {
-  const s = typeof v === 'string' ? v : JSON.stringify(v);
-  return s.length > 80 ? s.slice(0, 80) + '…' : s;
-}
-
 // --- Node card --------------------------------------------------------------
 function NodeCard({
-  nodeId, typeName, value, open, onToggle,
+  nodeId, typeName, value, nodeRun, open, onToggle,
 }: {
   nodeId: string;
   typeName: string | undefined;
   value: unknown;
+  nodeRun?: NodeRun;
   open: boolean;
   onToggle: () => void;
 }) {
   const ts = typeStyle(typeName);
   const key = fileKey(value);
+  const status = nodeRun?.status ?? 'completed';
   return (
     <div className="border border-slate-200 rounded-lg overflow-hidden">
       <button
@@ -122,6 +130,7 @@ function NodeCard({
           <span className={`h-2.5 w-2.5 rounded-full flex-none ${ts.dot}`} />
           <span className="font-mono text-sm text-ink-900 truncate">{nodeId}</span>
           <span className={`text-[10px] px-1.5 py-0.5 rounded flex-none ${ts.chip}`}>{ts.label}</span>
+          <span className="text-[10px] uppercase tracking-wide text-ink-300">{status}</span>
         </div>
         <div className="flex items-center gap-3 flex-none ml-3">
           {key && (
@@ -137,10 +146,28 @@ function NodeCard({
         </div>
       </button>
       {open && (
-        <div className="border-t border-slate-100 bg-slate-50 px-4 py-3">
-          <pre className="text-[12px] leading-relaxed text-ink-700 whitespace-pre-wrap break-words font-mono max-h-96 overflow-y-auto">
-            {readableOutput(value)}
-          </pre>
+        <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 space-y-4">
+          {nodeRun?.error && (
+            <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 font-mono">
+              {nodeRun.error}
+            </div>
+          )}
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-ink-300 mb-1">
+              Node input
+            </div>
+            <pre className="text-[12px] leading-relaxed text-ink-700 whitespace-pre-wrap break-words font-mono max-h-72 overflow-y-auto">
+              {nodeRun ? renderValue(nodeRun.input) : 'Input not recorded for this older run.'}
+            </pre>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-ink-300 mb-1">
+              Node output
+            </div>
+            <pre className="text-[12px] leading-relaxed text-ink-700 whitespace-pre-wrap break-words font-mono max-h-96 overflow-y-auto">
+              {value == null && status === 'running' ? 'Running…' : readableOutput(value)}
+            </pre>
+          </div>
         </div>
       )}
     </div>
@@ -155,10 +182,29 @@ export function RunHistory() {
   const [detail, setDetail] = useState<{ run: RunDetail; audit: AuditEvent[] } | null>(null);
   const [listErr, setListErr] = useState<string | null>(null);
   const [detailErr, setDetailErr] = useState<string | null>(null);
+  const [retryErr, setRetryErr] = useState<string | null>(null);
   const [openNode, setOpenNode] = useState<string | null>(null);
 
   useEffect(() => {
-    api.runHistory().then((d) => setRuns(d.runs)).catch((e) => setListErr(String(e)));
+    let cancelled = false;
+    const load = () => {
+      api.runHistory()
+        .then((data) => {
+          if (!cancelled) {
+            setRuns(data.runs);
+            setListErr(null);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setListErr(String(error));
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -167,13 +213,64 @@ export function RunHistory() {
 
   useEffect(() => {
     if (!runId) return;
-    setDetail(null); setDetailErr(null); setOpenNode(null);
-    api.runDetail(runId).then(setDetail).catch((e) => setDetailErr(String(e)));
+    let cancelled = false;
+    setDetail(null);
+    setDetailErr(null);
+    setRetryErr(null);
+    setOpenNode(null);
+    const load = () => {
+      api.runDetail(runId)
+        .then((data) => {
+          if (!cancelled) {
+            setDetail(data);
+            setDetailErr(null);
+          }
+        })
+        .catch((error) => {
+          if (!cancelled) setDetailErr(String(error));
+        });
+    };
+    load();
+    const timer = window.setInterval(load, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [runId]);
 
   const outputs = detail ? (detail.run.outputs as Record<string, unknown>) : {};
   const inputs = detail ? (detail.run.inputs as Record<string, unknown>) : {};
   const nodeTypes = detail ? (detail.run.node_types ?? {}) : {};
+  const nodeRuns = detail ? (detail.run.node_runs ?? {}) : {};
+  const nodeRunById = Object.fromEntries(
+    Object.values(nodeRuns).map((record) => [record.node_id, record]),
+  ) as Record<string, NodeRun>;
+  const nodeIds = Array.from(
+    new Set([
+      ...Object.keys(nodeRunById),
+      ...Object.keys(outputs),
+    ]),
+  );
+
+  function retryFailedRun() {
+    if (!detail || detail.run.status !== 'failed') return;
+    if (!detail.run.retry_available || !detail.run.workflow_yaml) {
+      setRetryErr(
+        'This run predates retry checkpoints. Run the workflow once after '
+        + 'installing this update; future failures can resume safely.',
+      );
+      return;
+    }
+
+    const retryRunId = crypto.randomUUID();
+    navigate(`/cockpit/${retryRunId}`, {
+      state: {
+        workflowYaml: detail.run.workflow_yaml,
+        workflowName: detail.run.workflow_name,
+        retrySourceRunId: detail.run.run_id,
+      },
+    });
+  }
 
   return (
     <div className="h-full flex">
@@ -202,7 +299,10 @@ export function RunHistory() {
               </div>
               <div className="font-mono text-[11px] text-ink-300 mt-1 truncate">{r.run_id}</div>
               <div className="text-[11px] text-ink-300 mt-0.5">
-                {clock(r.started_at ?? r.created_at)} · {r.node_count ?? 0} nodes
+                {clock(r.started_at ?? r.created_at)} · {r.completed_node_count ?? 0}/{r.node_count ?? 0} nodes
+              </div>
+              <div className="text-[10px] uppercase tracking-wide mt-1 text-ink-500">
+                {STATUS_LABEL[r.status] ?? r.status}
               </div>
             </button>
           );
@@ -225,14 +325,41 @@ export function RunHistory() {
                 <div className="font-mono text-xs text-ink-300 mt-0.5">
                   {detail.run.run_id} · started {clock(detail.run.started_at ?? detail.run.created_at)}
                 </div>
+                {(detail.run.attempt ?? 1) > 1 && (
+                  <div className="text-xs text-cyan-700 mt-1">
+                    Attempt {detail.run.attempt} · retry of{' '}
+                    <button
+                      onClick={() => navigate(`/history/${detail.run.retry_of_run_id}`)}
+                      className="font-mono hover:underline"
+                    >
+                      {detail.run.retry_of_run_id}
+                    </button>
+                  </div>
+                )}
               </div>
+              {detail.run.status === 'failed' && (
+                <button
+                  onClick={retryFailedRun}
+                  className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500"
+                >
+                  Retry from failure
+                </button>
+              )}
             </div>
 
             <div className="grid grid-cols-4 gap-2.5 my-5">
               {[
                 { l: 'Status', v: STATUS_LABEL[detail.run.status] ?? detail.run.status },
                 { l: 'Duration', v: detail.run.duration_s != null ? `${detail.run.duration_s.toFixed(1)}s` : '—' },
-                { l: 'Nodes', v: String(detail.run.node_count ?? '—') },
+                {
+                  l: 'Nodes',
+                  v: `${detail.run.completed_node_count ?? 0}/${detail.run.node_count ?? '—'}`
+                    + (
+                      (detail.run.reused_node_count ?? 0) > 0
+                        ? ` · ${detail.run.reused_node_count} reused`
+                        : ''
+                    ),
+                },
                 { l: 'Events', v: String(detail.audit.length) },
               ].map((m) => (
                 <div key={m.l} className="bg-slate-50 rounded-lg px-3 py-2.5">
@@ -248,6 +375,39 @@ export function RunHistory() {
               </div>
             )}
 
+            {detail.run.status === 'failed' && (
+              <div className="mb-5 rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs text-cyan-800">
+                {detail.run.retry_available ? (
+                  <>
+                    Retry will reuse {detail.run.retryable_node_count ?? 0} completed
+                    {' '}node{detail.run.retryable_node_count === 1 ? '' : 's'} without
+                    calling the LLM provider again. The failed and unfinished nodes
+                    will run normally.
+                  </>
+                ) : (
+                  <>
+                    A reusable checkpoint is not available for this older run.
+                    Future runs created after this update will support token-saving retry.
+                  </>
+                )}
+              </div>
+            )}
+
+            {retryErr && (
+              <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {retryErr}
+              </div>
+            )}
+
+            {detail.run.active_nodes?.length > 0 && (
+              <div className="mb-5 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                Running now:{' '}
+                <span className="font-mono font-medium">
+                  {detail.run.active_nodes.join(', ')}
+                </span>
+              </div>
+            )}
+
             <div className="mb-5">
               <div className="text-xs font-medium text-ink-500 mb-2">Inputs</div>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
@@ -255,9 +415,11 @@ export function RunHistory() {
                   <div className="px-4 py-2.5 text-xs text-ink-300">—</div>
                 ) : (
                   Object.entries(inputs).map(([k, v]) => (
-                    <div key={k} className="flex justify-between gap-4 px-4 py-2.5">
-                      <span className="text-xs text-ink-500 flex-none">{k}</span>
-                      <span className="font-mono text-[11px] text-ink-700 truncate text-right">{shortValue(v)}</span>
+                    <div key={k} className="px-4 py-2.5">
+                      <div className="text-xs text-ink-500 mb-1">{k}</div>
+                      <pre className="font-mono text-[11px] text-ink-700 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+                        {renderValue(v)}
+                      </pre>
                     </div>
                   ))
                 )}
@@ -269,19 +431,25 @@ export function RunHistory() {
                 Node outputs <span className="text-ink-300 font-normal">· colour = agent type · click to view</span>
               </div>
               <div className="space-y-2">
-                {Object.entries(outputs).length === 0 ? (
-                  <div className="text-xs text-ink-300">No node outputs recorded.</div>
+                {nodeIds.length === 0 ? (
+                  <div className="text-xs text-ink-300">
+                    No nodes have started yet.
+                  </div>
                 ) : (
-                  Object.entries(outputs).map(([nodeId, value]) => (
-                    <NodeCard
-                      key={nodeId}
-                      nodeId={nodeId}
-                      typeName={nodeTypes[nodeId]}
-                      value={value}
-                      open={openNode === nodeId}
-                      onToggle={() => setOpenNode(openNode === nodeId ? null : nodeId)}
-                    />
-                  ))
+                  nodeIds.map((nodeId) => {
+                    const nodeRun = nodeRunById[nodeId];
+                    return (
+                      <NodeCard
+                        key={nodeId}
+                        nodeId={nodeId}
+                        typeName={nodeRun?.type_name ?? nodeTypes[nodeId]}
+                        value={nodeRun?.output ?? outputs[nodeId]}
+                        nodeRun={nodeRun}
+                        open={openNode === nodeId}
+                        onToggle={() => setOpenNode(openNode === nodeId ? null : nodeId)}
+                      />
+                    );
+                  })
                 )}
               </div>
             </div>

@@ -73,3 +73,9 @@ class Scorecard(BaseModel):
     # Per-criterion averages across all examples, e.g. {"faithfulness": 4.2, ...}
     criterion_means: dict[str, float]
     overall_mean: float
+
+    @property
+    def per_criterion_mean(self) -> dict[str, float]:
+        """Backward-compatible read alias for earlier API/UI consumers."""
+
+        return self.criterion_means

@@ -1,4 +1,5 @@
 name: "Parallel Demo"
+use_case: generic
 description: "Phase 4 stub workflow — proves fan-out and fan-in work."
 version: "1.0"
 

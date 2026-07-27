@@ -33,11 +33,16 @@ from app.llm.openai_gw import StructuredResult   # reuse the carrier so cost rec
 T = TypeVar("T", bound=BaseModel)
 
 # Models that reject the `temperature` parameter (newer reasoning models).
-_NO_TEMPERATURE = {"claude-opus-4-8"}
+# Models that reject non-default sampling parameters.
+_NO_TEMPERATURE = {
+    "claude-opus-4-8",
+    "claude-opus-5",
+}
 
 
 def _supports_temperature(model: str) -> bool:
-    """Return True if the model accepts a non-default temperature."""
+    """Return True when the model accepts temperature."""
+
     return model not in _NO_TEMPERATURE
 
 

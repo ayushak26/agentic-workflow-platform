@@ -15,7 +15,12 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 EventType = Literal[
-    "node_started", "node_completed", "node_paused", "run_completed", "run_failed"
+    "node_started",
+    "node_completed",
+    "node_reused",
+    "node_paused",
+    "run_completed",
+    "run_failed",
 ]
 
 @dataclass

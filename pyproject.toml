@@ -42,6 +42,12 @@ dependencies = [
     "markdown-it-py",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4,<10",
+    "pytest-asyncio>=1.0,<2",
+]
+
 [tool.hatch.envs.default]
 type = "virtual"
 path = ".venv"

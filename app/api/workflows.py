@@ -1,7 +1,9 @@
+import time
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import yaml
 from pathlib import Path
 from fastapi import WebSocket, WebSocketDisconnect
@@ -12,8 +14,8 @@ from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
 from app.security.dependencies import require_permission, require_consultant, require_admin, CurrentUser
-# Phase 11A — run history + audit
-from app.workflow.run_history import upsert_run   # ADJUST path to run_history.py's package
+# Phase 11A — run history + durable retry checkpoints
+from app.workflow.run_history import initialize_run_checkpoint, upsert_run
 from app.security.audit import write_audit_event, HITL_EVENT
 
 router = APIRouter(prefix="/api", tags=["workflows"])
@@ -24,11 +26,17 @@ def _scope(user: CurrentUser, body_session: str | None) -> str:
 
     MUST match _scope() in app/api/runs.py, which reads:
         user.session_id or user.username
-    We allow the request body to override ONLY when it carries a session
-    (real multi-session clients); otherwise fall back to the token identity.
-    If this chain ever diverges from runs.py, history silently shows empty.
+    A caller may repeat that value in the body, but cannot override the token
+    boundary. Allowing a different body value creates a run the same caller
+    cannot retrieve later and weakens tenant isolation.
     """
-    return body_session or getattr(user, "session_id", None) or user.username
+    token_scope = getattr(user, "session_id", None) or user.username
+    if body_session and body_session != token_scope:
+        raise HTTPException(
+            status_code=400,
+            detail="session_id must match the authenticated session",
+        )
+    return token_scope
 
 
 @router.get("/")
@@ -43,14 +51,17 @@ def list_node_types(user: CurrentUser = Depends(require_admin)):
 @router.get("/node-types/{node_type}/models")
 async def allowed_models(node_type: str):
     """Returns the default allowed model list for a node type."""
-    from app.llm.registry import _PREFIX_ROUTES, _FALLBACK_MODEL
-    all_models = list(_PREFIX_ROUTES.keys()) + list(_FALLBACK_MODEL.values())
-    return {"node_type": node_type, "allowed_models": sorted(set(all_models))}
+    from app.runtime.schema import DEFAULT_LLM_MODELS
+
+    return {
+        "node_type": node_type,
+        "allowed_models": list(DEFAULT_LLM_MODELS),
+    }
 
 
 class RunRequest(BaseModel):
     workflow_yaml: str
-    inputs: dict = {}
+    inputs: dict = Field(default_factory=dict)
     session_id: str | None = None
     collection_id: str = "default"
     run_id: str | None = None
@@ -66,10 +77,43 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
     db = services.get("audit_db")   # Phase 11A — Mongo handle for run history + audit
     session = _scope(user, req.session_id)   # matched to runs.py read scope
     node_types = {n.id: n.type for n in spec.nodes}   # for UI colour-coding
+    run_id = req.run_id or str(uuid.uuid4())
+    started_at = time.time()
+
+    # Create the durable record BEFORE execution. This makes running and paused
+    # workflows visible in Run History and gives node hooks a document to patch.
+    if db is not None:
+        await upsert_run(
+            db,
+            run_id,
+            session,
+            workflow_name=spec.name,
+            status="running",
+            inputs=req.inputs,
+            workflow_yaml=req.workflow_yaml,
+            started_at=started_at,
+            node_count=len(spec.nodes),
+            completed_node_count=0,
+            node_types=node_types,
+            attempt=1,
+        )
+        await initialize_run_checkpoint(
+            db,
+            run_id=run_id,
+            session_id=session,
+            workflow_yaml=req.workflow_yaml,
+            inputs=req.inputs,
+            collection_id=req.collection_id,
+        )
 
     try:
         result = await run_workflow(
-            spec, req.inputs, session, collection_id=req.collection_id, services=services, run_id=req.run_id
+            spec,
+            req.inputs,
+            session,
+            collection_id=req.collection_id,
+            services=services,
+            run_id=run_id,
         )
     except Exception as e:
         # The workflow failed at runtime. run_workflow already published a
@@ -81,24 +125,36 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
         # Phase 11A — persist a failed run record (history write never breaks the response).
         if db is not None:
             await upsert_run(
-                db, req.run_id or "unknown", session,
-                workflow_name=spec.name, status="failed",
-                inputs=req.inputs, error=str(e)[:500],
-                node_types=node_types,
+                db,
+                run_id,
+                session,
+                status="failed",
+                ended_at=time.time(),
+                error=str(e)[:500],
             )
-        return {"status": "failed", "run_id": req.run_id, "error": str(e)}
+        return {"status": "failed", "run_id": run_id, "error": str(e)}
 
-    # Phase 11A — persist the run record on any terminal status (not on pause).
-    if db is not None and result.get("status") != "paused":
+    # Persist pause and terminal states. Node hooks have already written every
+    # completed output, so this final write is a consistent full-state snapshot.
+    if db is not None:
         state = result.get("state", {})
+        run_status = result.get("status", "completed")
         await upsert_run(
-            db, result.get("run_id") or req.run_id or "unknown", session,
-            workflow_name=spec.name,
-            status=result.get("status", "completed"),
-            inputs=req.inputs,
-            outputs=state.get("node_outputs", {}),
-            node_count=len(state.get("node_outputs", {})),
-            node_types=node_types,
+            db,
+            run_id,
+            session,
+            status=run_status,
+            outputs=(
+                state.get("node_outputs", {})
+                if run_status != "paused"
+                else None
+            ),
+            ended_at=(
+                time.time()
+                if run_status in {"completed", "rejected", "failed"}
+                else None
+            ),
+            completed_node_count=len(state.get("node_outputs", {})),
         )
     return result
 
@@ -131,6 +187,15 @@ async def resume(
     except Exception as e:
         # A node failed after resume. Return clean so the POST doesn't become an
         # unhandled 500 (which Starlette emits outside CORS → "Failed to fetch").
+        if db is not None:
+            await upsert_run(
+                db,
+                run_id,
+                session,
+                status="failed",
+                ended_at=time.time(),
+                error=str(e)[:500],
+            )
         return {"status": "failed", "run_id": run_id, "error": str(e)}
 
     # Phase 11A — HITL audit event: the human decision, now that session is in scope.
@@ -144,16 +209,26 @@ async def resume(
             payload={"reason": result.get("reason")} if action == "reject" else {},
         )
 
-    # Phase 11A — persist run record on terminal resume (not on re-pause).
-    if db is not None and result.get("status") != "paused":
+    # Persist both re-pause and terminal resume states.
+    if db is not None:
         state = result.get("state", {})
+        run_status = result.get("status", "completed")
         await upsert_run(
-            db, run_id, session,
-            workflow_name=state.get("workflow_name", "unknown"),
-            status=result.get("status", "completed"),
-            inputs=state.get("inputs", {}),
-            outputs=state.get("node_outputs", {}),
-            node_count=len(state.get("node_outputs", {})),
+            db,
+            run_id,
+            session,
+            status=run_status,
+            outputs=(
+                state.get("node_outputs", {})
+                if run_status != "paused"
+                else None
+            ),
+            ended_at=(
+                time.time()
+                if run_status in {"completed", "rejected", "failed"}
+                else None
+            ),
+            completed_node_count=len(state.get("node_outputs", {})),
             error=result.get("reason"),
         )
     return result
@@ -173,6 +248,8 @@ def list_workflows():
         out.append({
             "name": p.stem,
             "description": data.get("description", ""),
+            "use_case": data.get("use_case", "generic"),
+            "version": data.get("version", "1.0"),
             "node_count": len(data.get("nodes", [])),
         })
     return out

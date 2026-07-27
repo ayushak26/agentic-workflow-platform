@@ -1,5 +1,5 @@
 import json
-from app.evaluation.judge import LLMJudge, _JudgeVerdict
+from app.evaluation.judge import LLMJudge
 from app.evaluation.models import CriterionScore
 
 

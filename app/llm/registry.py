@@ -33,10 +33,11 @@ _PREFIX_ROUTES: list[tuple[str, type[LLMGateway]]] = [
 # Runtime fallback — when an intended model resolves to a stubbed provider,
 # rewrite to the closest live equivalent.
 _FALLBACK_MODEL: dict[str, str] = {
+    "claude-opus-5": "gpt-5.6-sol",
     "claude-sonnet-4-5": "gpt-5",
-    "claude-haiku-4-5":  "gpt-5-mini",
-    "claude-opus-4-7":   "gpt-5",
-    "claude-opus-4-8":   "gpt-5",
+    "claude-haiku-4-5": "gpt-5-mini",
+    "claude-opus-4-7": "gpt-5",
+    "claude-opus-4-8": "gpt-5",
 }
 
 # Gateway classes that are stubbed (not live).

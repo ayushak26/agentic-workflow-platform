@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Annotated, Any, TypedDict
 from operator import add
 
-from app.proposal_graph.graph import ProposalGraph, merge_graph
+from .domain_state import merge_domain_state
 
 
 def merge_node_outputs(
@@ -41,14 +41,14 @@ class WorkflowState(TypedDict, total=False):
     # the key that loads the controlled vocabulary for doc_type validation.
     collection_id: str
 
-    # Typed Proposal Knowledge Graph — the single source of truth a proposal is
-    # written FROM. Additive: nodes that don't touch it are unaffected (total=False).
-    # Its reducer merges parallel drafter writes field-by-field so two drafters can
-    # fill different fields of the same object without clobbering each other —
-    # the same parallel-branch safety merge_node_outputs gives, but lossless at
-    # the field level (a dict.update-style reducer would let a partial write erase
-    # a fuller one). ConsistencyChecker reads this to gate the render.
-    proposal_graph: Annotated[dict, merge_graph]
+    # Workflow-owned constants. They are separate from user inputs so callers
+    # cannot silently override a policy or pack setting.
+    variables: dict[str, Any]
+
+    # Optional use-case packs write typed state under their own namespace.
+    # Examples: domain_state["eu_proposal"], ["prior_authorization"], ["sales"].
+    # The runtime owns only the namespace boundary; each pack owns its reducer.
+    domain_state: Annotated[dict[str, Any], merge_domain_state]
 
     # Workflow metadata
     workflow_id: str

@@ -1,4 +1,5 @@
 name: "Miller Heiman Sales Strategy"
+use_case: sales_strategy
 description: >-
   Turns scattered sales information (CRM, meeting notes, account history) into a
   Blue Sheet and Best Action Plan. The AI organises the deal; the salesperson

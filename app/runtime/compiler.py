@@ -20,6 +20,7 @@ which stays for debugging. node_error is written ONLY on real failures, not
 on HITL interrupts, reusing the existing is_graph_interrupt() split.
 """
 from __future__ import annotations
+from copy import deepcopy
 import time
 from typing import Any
 from langgraph.graph import StateGraph, START, END
@@ -29,7 +30,21 @@ from app.nodes.registry import NodeRegistry
 from app.observability import metrics
 from app.observability.logging import get_logger
 from app.security.audit import (
-    write_audit_event, summarize_payload, NODE_START, NODE_END, NODE_ERROR,
+    write_audit_event,
+    summarize_payload,
+    NODE_START,
+    NODE_END,
+    NODE_REUSED,
+    NODE_ERROR,
+)
+from app.workflow.run_history import (
+    build_node_input,
+    record_checkpoint_node_completed,
+    record_node_completed,
+    record_node_failed,
+    record_node_paused,
+    record_node_reused,
+    record_node_started,
 )
 from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
@@ -58,6 +73,74 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
 
         # Durable audit sink (Mongo handle), threaded via services like cost_ledger.
         audit = services.get("audit_db")
+
+        # A retry replays exact outputs/state deltas from completed nodes. This
+        # branch returns before a provider gateway is bound or called, so reused
+        # LLM nodes consume zero new tokens.
+        reused_results = services.get("reused_node_results") or {}
+        cached_result = reused_results.get(node_id)
+        if cached_result is not None:
+            output = deepcopy(cached_result.get("output") or {})
+            extra_state = deepcopy(cached_result.get("extra_state") or {})
+            instance.output_schema(**output)
+            ended = time.time()
+            source_run_id = str(
+                services.get("retry_source_run_id") or "unknown"
+            )
+
+            if bus and run_id:
+                await bus.publish(
+                    RunEvent(
+                        type="node_reused",
+                        run_id=run_id,
+                        node_id=node_id,
+                        output_preview=sanitize_preview(output),
+                    )
+                )
+            if audit is not None and run_id:
+                await write_audit_event(
+                    audit,
+                    run_id,
+                    session_id,
+                    node_id,
+                    NODE_REUSED,
+                    payload={"source_run_id": source_run_id},
+                )
+                await record_node_reused(
+                    audit,
+                    run_id=run_id,
+                    session_id=session_id,
+                    node_id=node_id,
+                    type_name=type_name,
+                    output=output,
+                    source_run_id=source_run_id,
+                    ended_at=ended,
+                    duration_s=ended - started,
+                )
+                await record_checkpoint_node_completed(
+                    audit,
+                    run_id=run_id,
+                    session_id=session_id,
+                    node_id=node_id,
+                    output=output,
+                    extra_state=extra_state,
+                )
+
+            return {
+                "node_outputs": {node_id: output},
+                "audit_log": [
+                    {
+                        "node_id": node_id,
+                        "type_name": type_name,
+                        "started_at": started,
+                        "duration_s": ended - started,
+                        "output_keys": list(output.keys()),
+                        "reused": True,
+                        "source_run_id": source_run_id,
+                    }
+                ],
+                **extra_state,
+            }
 
         # Bind cost-tracking context for this specific node call.
         llm = services.get("llm")
@@ -88,6 +171,16 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         try:
             with metrics.track_node(type_name):
                 resolved = resolve(instance.config.model_dump(), state)
+                if audit is not None and run_id:
+                    await record_node_started(
+                        audit,
+                        run_id=run_id,
+                        session_id=session_id,
+                        node_id=node_id,
+                        type_name=type_name,
+                        node_input=build_node_input(state, resolved),
+                        started_at=started,
+                    )
                 output = await instance.run(state, resolved)
                 extra_state = output.pop("__state__", {}) if isinstance(output, dict) else {}
                 instance.output_schema(**output)
@@ -100,6 +193,14 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
             if is_graph_interrupt(e):
                 log.info("node_paused", node_id=node_id, type_name=type_name,
                          run_id=run_id)
+                if audit is not None and run_id:
+                    await record_node_paused(
+                        audit,
+                        run_id=run_id,
+                        session_id=session_id,
+                        node_id=node_id,
+                        paused_at=time.time(),
+                    )
             else:
                 log.error("node_failed", node_id=node_id, type_name=type_name,
                           run_id=run_id, error=str(e), exc_info=True)
@@ -108,6 +209,16 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     await write_audit_event(
                         audit, run_id, session_id, node_id, NODE_ERROR,
                         payload={"error": str(e)[:200]},
+                    )
+                    await record_node_failed(
+                        audit,
+                        run_id=run_id,
+                        session_id=session_id,
+                        node_id=node_id,
+                        type_name=type_name,
+                        error=str(e)[:500],
+                        ended_at=time.time(),
+                        duration_s=time.time() - started,
                     )
             if bus and run_id:
                 if is_graph_interrupt(e):
@@ -137,6 +248,23 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
             await write_audit_event(
                 audit, run_id, session_id, node_id, NODE_END,
                 payload=summarize_payload(output),   # shape only, never content
+            )
+            await record_checkpoint_node_completed(
+                audit,
+                run_id=run_id,
+                session_id=session_id,
+                node_id=node_id,
+                output=output,
+                extra_state=extra_state,
+            )
+            await record_node_completed(
+                audit,
+                run_id=run_id,
+                session_id=session_id,
+                node_id=node_id,
+                output=output,
+                ended_at=time.time(),
+                duration_s=time.time() - started,
             )
 
         return {
@@ -230,7 +358,7 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     for node_spec in spec.nodes:
         node_class = NodeRegistry.get(node_spec.type)
         instances[node_spec.id] = node_class(
-            node_spec.id, node_spec.config, services=services
+            node_spec.id, node_spec.effective_config(), services=services
         )
 
     # Which nodes are human-in-loop? Their edges route reject → END.

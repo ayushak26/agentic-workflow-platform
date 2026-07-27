@@ -40,6 +40,10 @@ from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import Authority, Claim, EvidenceSource, Status
+from app.proposal_graph.state import (
+    proposal_graph_from_state,
+    proposal_graph_state_update,
+)
 
 
 class EvidenceAgentOutput(BaseModel):
@@ -170,8 +174,7 @@ class EvidenceAgent(NodeType):
     output_schema = EvidenceAgentOutput
 
     async def run(self, state: dict, config: dict) -> dict:
-        raw = state.get("proposal_graph")
-        graph = raw if isinstance(raw, ProposalGraph) else ProposalGraph(**(raw or {}))
+        graph = proposal_graph_from_state(state)
 
         server = config.get("mcp_server", "paper-search-mcp")
         tool = config.get("tool", "search_papers")
@@ -268,7 +271,7 @@ class EvidenceAgent(NodeType):
             "claims_linked": len(updated_claims),
             "report": report,
             "sources": found_sources,
-            "__state__": {"proposal_graph": graph_delta},
+            "__state__": proposal_graph_state_update(graph_delta),
         }
 
     async def _make_query(self, llm, claim: Claim, model: str | None) -> str:

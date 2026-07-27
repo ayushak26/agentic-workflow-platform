@@ -42,6 +42,7 @@ class StructuredResult:
 # GPT-5 family quirks ---------------------------------------------------
 
 _GPT5_FAMILY_PREFIXES = ("gpt-5",)
+_GPT56_FAMILY_PREFIXES = ("gpt-5.6",)
 
 # Reasoning tokens share max_completion_tokens. A budget of 800 on a
 # small chunk leaves 0 visible output once reasoning is done. Floor
@@ -64,6 +65,18 @@ def _completion_tokens_for(model: str, requested: int) -> int:
         return max(requested, _GPT5_MIN_COMPLETION_TOKENS)
     return requested
 
+def _chat_tool_reasoning_effort(model: str) -> str | None:
+    """Return the safe effort for Chat Completions tool calls.
+
+    GPT-5.6 function tools through Chat Completions require
+    effective reasoning effort 'none'. Reasoning with tools
+    should otherwise use the Responses API.
+    """
+
+    if model.startswith(_GPT56_FAMILY_PREFIXES):
+        return "none"
+
+    return None
 
 # ---------------------------------------------------------------------
 
@@ -198,8 +211,15 @@ class OpenAIGateway(LLMGateway):
             "model": model,
             "messages": openai_messages,
             "tools": openai_tools,
-            "max_completion_tokens": _completion_tokens_for(model, max_tokens),
+            "max_completion_tokens": _completion_tokens_for(
+            model,
+            max_tokens,
+        ),
         }
+        reasoning_effort = _chat_tool_reasoning_effort(model)
+        if reasoning_effort is not None:
+            call_kwargs["reasoning_effort"] = reasoning_effort
+            
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
 

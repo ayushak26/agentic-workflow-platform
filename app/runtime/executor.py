@@ -23,6 +23,30 @@ from .schema import WorkflowSpec
 _PAUSED_GRAPHS: dict[str, Any] = {}
 
 
+def _project_output(
+    spec: WorkflowSpec,
+    state: dict[str, Any],
+    original_inputs: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Build the caller-facing output declared by the workflow contract."""
+
+    if spec.output is None:
+        return None
+
+    projected: dict[str, Any] = {}
+    if spec.output.include_input:
+        projected["input"] = original_inputs
+
+    node_outputs = state.get("node_outputs", {})
+    for item in spec.output.nodes:
+        value = node_outputs.get(item.node_id)
+        if item.flatten and isinstance(value, dict):
+            projected.update(value)
+        else:
+            projected[item.node_id] = value
+    return projected
+
+
 async def run_workflow(
     spec: WorkflowSpec,
     inputs: dict[str, Any],
@@ -30,24 +54,17 @@ async def run_workflow(
     collection_id: str = "default",
     services: dict[str, Any] | None = None,
     run_id: str | None = None,
+    reused_node_results: dict[str, dict[str, Any]] | None = None,
+    retry_source_run_id: str | None = None,
 ) -> dict[str, Any]:
-    graph = compile_workflow(spec, services=services)
     run_id = run_id or str(uuid.uuid4())
     workflow_name = spec.name
     effective_session = session_id or str(uuid.uuid4())
     effective_collection = collection_id or "default"
-    llm_gateway = (services or {}).get("llm")
-    llm_gateway = (services or {}).get("llm")
-    if llm_gateway is not None and hasattr(llm_gateway, "with_context"):
-        services = {
-            **services,
-            "llm": llm_gateway.with_context(
-                run_id=run_id,
-                session_id=effective_session,
-                node_id="executor",
-                ledger=(services or {}).get("cost_ledger"),
-        ),
-    }
+    run_services = dict(services or {})
+    run_services["reused_node_results"] = reused_node_results or {}
+    run_services["retry_source_run_id"] = retry_source_run_id
+    graph = compile_workflow(spec, services=run_services)
 
     merged_inputs: dict[str, Any] = dict(inputs)
     merged_inputs["SYSTEM.run_id"] = run_id
@@ -61,12 +78,17 @@ async def run_workflow(
         "audit_log": [],
         "session_id": effective_session,
         "collection_id": effective_collection,
+        "variables": {
+            variable.name: variable.value
+            for variable in spec.static_variables
+        },
+        "domain_state": {},
         "workflow_id": spec.name,
         "workflow_name": spec.name,
     }
 
     config = {"configurable": {"thread_id": run_id}}
-    bus: RunEventBus | None = (services or {}).get("event_bus")
+    bus: RunEventBus | None = run_services.get("event_bus")
 
     start = _time.perf_counter()
     try:
@@ -92,16 +114,31 @@ async def run_workflow(
         _PAUSED_GRAPHS[run_id] = graph
         # Paused is NOT a terminal state — no WORKFLOW_RUNS increment here.
         # The wrapped node that paused already published node_paused.
-        return {
+        result = {
             "status": "paused",
             "run_id": run_id,
             "interrupt": final_state["__interrupt__"],
             "state": final_state,
         }
+        if retry_source_run_id:
+            result["retry"] = {
+                "source_run_id": retry_source_run_id,
+                "reused_node_count": len(reused_node_results or {}),
+            }
+        return result
 
     # Terminal success outcome.
     metrics.WORKFLOW_RUNS.labels(workflow=workflow_name, status="success").inc()
     if bus is not None:
         await bus.publish(RunEvent(type="run_completed", run_id=run_id))
 
-    return {"status": "completed", "run_id": run_id, "state": final_state}
+    result = {"status": "completed", "run_id": run_id, "state": final_state}
+    if retry_source_run_id:
+        result["retry"] = {
+            "source_run_id": retry_source_run_id,
+            "reused_node_count": len(reused_node_results or {}),
+        }
+    projected = _project_output(spec, final_state, inputs)
+    if projected is not None:
+        result["output"] = projected
+    return result

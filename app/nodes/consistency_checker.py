@@ -32,6 +32,7 @@ from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import Status
+from app.proposal_graph.state import proposal_graph_from_state
 from pydantic import BaseModel, Field
 
 
@@ -135,8 +136,7 @@ class ConsistencyChecker(NodeType):
     output_schema = ConsistencyCheckerOutput
 
     async def run(self, state: dict, config: dict) -> dict:
-        raw = state.get("proposal_graph")
-        graph = raw if isinstance(raw, ProposalGraph) else ProposalGraph(**(raw or {}))
+        graph = proposal_graph_from_state(state)
 
         findings = _check(graph)
         blocking = [f for f in findings if f["blocking"]]

@@ -1,4 +1,10 @@
-import type { NodeTypeManifest, WorkflowSummary, RunSnapshot, RunSummary, RunDetail, AuditEvent } from './types';
+import type {
+  AuditEvent,
+  NodeTypeManifest,
+  RunDetail,
+  RunSummary,
+  WorkflowSummary,
+} from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 const API = `${BASE}/api`;
@@ -91,6 +97,21 @@ export const api = {
   runDetail: (run_id: string) =>
     fetch(`${API}/runs/mine/${run_id}`, { headers: authHeaders() })
       .then(j<{ run: RunDetail; audit: AuditEvent[] }>),
+  retryFailedRun: (source_run_id: string, run_id: string) =>
+    fetch(`${API}/runs/mine/${source_run_id}/retry`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ run_id }),
+    }).then(j<{
+      run_id: string;
+      status: string;
+      state?: unknown;
+      error?: string;
+      retry?: {
+        source_run_id: string;
+        reused_node_count: number;
+      };
+    }>),
   goldenSet: (name: string) =>
     fetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
       .then(j<{ name: string; n: number; examples: { id: string; question: string; context: string; reference: string }[] }>),

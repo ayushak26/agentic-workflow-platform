@@ -1,4 +1,5 @@
 name: Proposal Generation
+use_case: project_alex
 description: Project Alex flagship workflow — RFP to approved proposal PDF.
 version: '1.0'
 inputs:
