@@ -89,6 +89,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
             with metrics.track_node(type_name):
                 resolved = resolve(instance.config.model_dump(), state)
                 output = await instance.run(state, resolved)
+                extra_state = output.pop("__state__", {}) if isinstance(output, dict) else {}
                 instance.output_schema(**output)
         except BaseException as e:
             # Log to stdout FIRST, before any client emission. A failure that is
@@ -147,6 +148,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 "duration_s": time.time() - started,
                 "output_keys": list(output.keys()),
             }],
+             **extra_state, 
         }
 
     runtime_fn.__name__ = f"node_{node_id}"
@@ -156,10 +158,49 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
 def _wire_edges(
     graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]
 ) -> set[str]:
-    """Add edges, return the set of source node ids (used to compute terminals)."""
+    """Add edges, return the set of source node ids (used to compute terminals).
+
+    HITL nodes are wired ONCE each (not once per edge): a HITL node may fan out
+    to multiple parallel targets (e.g. approve -> 5 drafters). We collect every
+    target of each HITL node and register a single conditional router that sends
+    all of them on 'approve'/'edit' and END on 'reject'. Registering per-edge
+    would call add_conditional_edges twice for the same node -> LangGraph raises
+    "Branch with name '_hitl_router' already exists".
+    """
     sources: set[str] = set()
+
+    # 1. Collect all targets for each HITL node (across its multiple edges).
+    hitl_targets: dict[str, list[str]] = {}
+    for edge in edges:
+        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
+            tgts = edge.to if isinstance(edge.to, list) else [edge.to]
+            hitl_targets.setdefault(edge.from_, []).extend(tgts)
+
+    # 2. Register exactly one conditional router per HITL node.
+    for hitl_id, targets in hitl_targets.items():
+        uniq = list(dict.fromkeys(targets))  # dedup, preserve order
+
+        def _hitl_router(state: dict, _targets=uniq, _hid=hitl_id):
+            decision = (
+                state.get("node_outputs", {})
+                .get(_hid, {})
+                .get("decision")
+            )
+            if decision == "reject":
+                return END
+            # approve / edit -> proceed to ALL fan-out targets in parallel
+            return _targets
+
+        graph.add_conditional_edges(hitl_id, _hitl_router, [*uniq, END])
+
+    # 3. Wire everything else edge-by-edge (routers, plain edges, fan-outs).
     for edge in edges:
         sources.add(edge.from_)
+
+        # HITL nodes already fully wired above — skip their plain edges.
+        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
+            continue
+
         if edge.condition and edge.branches:
             def _router(state: dict, _edge=edge) -> str:
                 decision = state["node_outputs"][_edge.from_].get("route")
@@ -169,24 +210,7 @@ def _wire_edges(
                         f"expected one of {list(_edge.branches)}"
                     )
                 return decision
-
             graph.add_conditional_edges(edge.from_, _router, edge.branches)
-
-        elif edge.from_ in hitl_ids:
-            targets = edge.to if isinstance(edge.to, list) else [edge.to]
-
-            def _hitl_router(state: dict, _edge=edge):
-                decision = (
-                    state.get("node_outputs", {})
-                    .get(_edge.from_, {})
-                    .get("decision")
-                )
-                if decision == "reject":
-                    return END
-                return _edge.to if isinstance(_edge.to, list) else _edge.to
-
-            graph.add_conditional_edges(edge.from_, _hitl_router, [*targets, END])
-
         elif isinstance(edge.to, list):
             for target in edge.to:
                 graph.add_edge(edge.from_, target)

@@ -32,6 +32,19 @@ from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import Status
+from pydantic import BaseModel, Field
+
+
+class ConsistencyCheckerOutput(BaseModel):
+    """Validated output for ConsistencyChecker.run() (output_schema ClassVar)."""
+    gate: str = "PASS"
+    findings: list = Field(default_factory=list)
+    report: str = ""
+
+
+class ConsistencyCheckerConfig(BaseModel):
+    """Node config — base.__init__ does config_schema(**raw_config)."""
+    block_on_warn: bool = False
 
 
 # (rule_id, description, blocking?)
@@ -111,15 +124,15 @@ def _check(graph: ProposalGraph) -> list[dict[str, Any]]:
     return findings
 
 
-@NodeRegistry.register("ConsistencyChecker")
+@NodeRegistry.register
 class ConsistencyChecker(NodeType):
     """Deterministic gate. Reads the proposal_graph from state, returns a
     verdict + findings. No model call."""
 
-    # No LLM; declare minimal schemas consistent with your NodeType ABC.
-    input_schema = {"proposal_graph": "object"}
-    output_schema = {"gate": "str", "findings": "list", "report": "str"}
-    config_schema = {"block_on_warn": "bool"}   # optional strictness toggle
+    type_name = "ConsistencyChecker"
+
+    config_schema = ConsistencyCheckerConfig
+    output_schema = ConsistencyCheckerOutput
 
     async def run(self, state: dict, config: dict) -> dict:
         raw = state.get("proposal_graph")
@@ -147,9 +160,7 @@ class ConsistencyChecker(NodeType):
         report = "\n".join(lines)
 
         return {
-            "node_outputs": {self.node_id: {
-                "gate": gate,
-                "findings": findings,
-                "report": report,
-            }},
+            "gate": gate,
+            "findings": findings,
+            "report": report,
         }

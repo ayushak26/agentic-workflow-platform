@@ -80,7 +80,7 @@ def _merge_object(left: BaseModel, right: BaseModel) -> BaseModel:
     return left.__class__(**merged)
 
 
-def merge_graph(left: Any, right: Any) -> ProposalGraph:
+def merge_graph(left: Any, right: Any) -> dict:
     """Reducer for the `proposal_graph` state key. Associative + lossless.
 
     Accepts ProposalGraph or dicts (LangGraph may hand back serialised state),
@@ -98,7 +98,7 @@ def merge_graph(left: Any, right: Any) -> ProposalGraph:
             else:
                 merged[obj_id] = robj
         setattr(out, coll, merged)
-    return out
+    return out.model_dump()
 
 
 def empty_graph() -> ProposalGraph:

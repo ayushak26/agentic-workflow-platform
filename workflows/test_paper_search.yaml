@@ -1,0 +1,63 @@
+name: "Paper Search MCP — Integration Test"
+description: >
+  End-to-end smoke test of the paper-search-mcp discovery path. Seeds a few
+  AGRO-THRIVE-relevant claims into the proposal graph, runs the EvidenceAgent
+  against the second MCP server, then renders what came back so you can eyeball
+  the real DOIs / arXiv ids / citations. Proves the whole Path-A chain works:
+  multi-server MCPClient -> paper-search-mcp subprocess -> EvidenceSource
+  objects linked to claims. No RAG, no proposal drafting — just the evidence
+  discovery loop.
+version: "1.0"
+
+inputs:
+  # A short, concept-note-style text the seeder turns into a couple of claims.
+  # For a bare smoke test you can pass one sentence; the seeder extracts claims.
+  topic_text:
+    type: text
+
+nodes:
+
+  # Seed the graph with claims. Reuses GraphNormalizer: it extracts Claim
+  # objects (among others) from any source text. For a pure test, topic_text
+  # can be 2-3 sentences of state-of-the-art assertions.
+  - id: seed_claims
+    type: GraphNormalizer
+    config:
+      model: claude-sonnet-4-5
+
+  # Discovery: for each state_of_art / problem / impact claim with no evidence,
+  # query paper-search-mcp and attach EvidenceSource objects.
+  - id: gather_evidence
+    type: EvidenceAgent
+    config:
+      mcp_server: "paper-search-mcp"
+      tool: "search_papers"
+      sources: ["arxiv", "openalex", "europe_pmc", "core", "openaire", "zenodo", "hal", "doaj", "pmc"]
+      max_per_claim: 3
+      claim_types: ["state_of_art", "problem", "impact", "method"]
+      model: claude-sonnet-4-5
+
+  # Human-readable dump of what discovery produced, so you can verify the DOIs,
+  # identifiers and citations are real (not model-invented).
+  - id: show_evidence
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: |
+        Summarise the evidence discovery result as a plain table for a human
+        reviewer. For each claim, list the claim text and the sources found
+        (identifier + citation + authority). Flag any claim that found zero
+        sources. Do not add papers or facts — only report what is in the inputs.
+
+        NORMALIZER REPORT: {{seed_claims.report}}
+        EVIDENCE REPORT:   {{gather_evidence.report}}
+        SOURCES ADDED:     {{gather_evidence.sources_added}}
+        CLAIMS LINKED:     {{gather_evidence.claims_linked}}
+        SOURCES FOUND (detailed, one record per paper):
+        {{gather_evidence.sources}}
+
+edges:
+  - from: seed_claims
+    to: gather_evidence
+  - from: gather_evidence
+    to: show_evidence

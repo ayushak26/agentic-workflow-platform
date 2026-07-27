@@ -8,3 +8,6 @@ from . import excel_tool       # noqa: F401   ← add
 from . import powerpoint_tool  # noqa: F401   ← add
 from . import pdf_tool         # noqa: F401   ← add
 from . import docx_renderer
+from . import graph_normalizer   # noqa: F401  (registers "GraphNormalizer")
+from . import evidence_agent      # noqa: F401  (registers "EvidenceAgent")
+from . import consistency_checker # noqa: F401  (registers "ConsistencyChecker")

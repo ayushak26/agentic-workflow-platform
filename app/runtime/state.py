@@ -48,7 +48,7 @@ class WorkflowState(TypedDict, total=False):
     # the same parallel-branch safety merge_node_outputs gives, but lossless at
     # the field level (a dict.update-style reducer would let a partial write erase
     # a fuller one). ConsistencyChecker reads this to gate the render.
-    proposal_graph: Annotated[ProposalGraph, merge_graph]
+    proposal_graph: Annotated[dict, merge_graph]
 
     # Workflow metadata
     workflow_id: str
