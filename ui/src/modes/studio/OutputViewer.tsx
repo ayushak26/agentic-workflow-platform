@@ -1,16 +1,27 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 
-export function OutputViewer({ state, workflowName }: { state: any; workflowName?: string }) {
+export function OutputViewer({
+    state,
+    workflowName,
+}: {
+    runId?: string;
+    state: any;
+    projectedOutput?: Record<string, unknown>;
+    workflowName?: string;
+}) {
     const navigate = useNavigate();
-    const [tab, setTab] = useState<'sources' | 'audit' | 'score'>('sources');
+    const [tab, setTab] = useState<'variables' | 'sources' | 'audit' | 'score'>('variables');
     const [reference, setReference] = useState('');
     const [scores, setScores] = useState<{ criterion: string; score: number; reasoning: string }[] | null>(null);
     const [scoring, setScoring] = useState(false);
     const [scoreErr, setScoreErr] = useState<string | null>(null);
 
     const nodeOutputs = state?.node_outputs ?? {};
+    const workflowInputs = state?.inputs ?? {};
+    const workflowVariables = state?.variables ?? {};
 
     // Renderer-agnostic: pick whichever document renderer ran. Either node type
     // (PDFProposalRenderer / DOCXProposalRenderer) writes { minio_key, byte_size,
@@ -109,23 +120,35 @@ export function OutputViewer({ state, workflowName }: { state: any; workflowName
         </div>
     );
 
-    // Shared right-hand panel (sources / audit / score) — identical in both layouts.
+    // Shared right-hand panel — identical in document and no-document layouts.
     const sidePanel = (
-        <aside className="w-80 border-l border-slate-200 bg-white overflow-y-auto">
+        <aside className="w-96 border-l border-slate-200 bg-white overflow-y-auto">
             <div className="flex border-b border-slate-200">
+                <button onClick={() => setTab('variables')}
+                    className={`flex-1 px-2 py-2 text-xs ${tab === 'variables' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    Variables
+                </button>
                 <button onClick={() => setTab('sources')}
-                    className={`flex-1 px-3 py-2 text-sm ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    className={`flex-1 px-2 py-2 text-xs ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Sources ({citations.length})
                 </button>
                 <button onClick={() => setTab('audit')}
-                    className={`flex-1 px-3 py-2 text-sm ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    className={`flex-1 px-2 py-2 text-xs ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Audit ({auditEntries.length})
                 </button>
                 <button onClick={() => setTab('score')}
-                    className={`flex-1 px-3 py-2 text-sm ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    className={`flex-1 px-2 py-2 text-xs ${tab === 'score' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Score
                 </button>
             </div>
+
+            {tab === 'variables' && (
+                <WorkflowVariablesPanel
+                    inputs={workflowInputs}
+                    variables={workflowVariables}
+                    outputs={nodeOutputs}
+                />
+            )}
 
             {tab === 'sources' && (
                 <div className="p-4">

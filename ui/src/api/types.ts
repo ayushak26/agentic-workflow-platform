@@ -65,6 +65,7 @@ export type WorkflowFileCapabilities = {
 export type HITLReviewContent = {
   text: string;
   html?: string | null;
+  format?: 'text' | 'json';
   source: 'workflow' | 'editor' | 'upload';
   source_path?: string | null;
   source_document?: WorkflowFileReference | null;
@@ -160,6 +161,7 @@ export interface AuditEvent {
 }
 export interface RunDetail extends RunSummary {
   inputs: Record<string, unknown>;
+  variables?: Record<string, unknown>;
   outputs: Record<string, unknown>;
   node_runs: Record<string, NodeRun>;
   node_types?: Record<string, string>;

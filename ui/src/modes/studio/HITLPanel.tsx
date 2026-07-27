@@ -25,6 +25,39 @@ function emptyEditorValue(text = ''): RichEditorValue {
   return { text, html: '' };
 }
 
+function contentAsText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+function initialReviewContent(
+  content: HITLReviewContent | null,
+  context: unknown,
+): HITLReviewContent {
+  if (content && typeof content.text === 'string') return content;
+
+  if (context && typeof context === 'object' && !Array.isArray(context)) {
+    const first = Object.entries(context as Record<string, unknown>)
+      .find(([, value]) => value !== null && value !== undefined);
+    if (first) {
+      const [sourcePath, value] = first;
+      return {
+        text: contentAsText(value),
+        format: typeof value === 'string' ? 'text' : 'json',
+        source: 'workflow',
+        source_path: sourcePath,
+      };
+    }
+  }
+
+  const fallback = context ?? '';
+  return {
+    text: contentAsText(fallback),
+    format: typeof fallback === 'string' ? 'text' : 'json',
+    source: 'workflow',
+  };
+}
+
 function formatBytes(value: number): string {
   if (value < 1024 * 1024) return `${Math.ceil(value / 1024)} KB`;
   return `${(value / (1024 * 1024)).toFixed(0)} MB`;
@@ -60,8 +93,15 @@ export function HITLPanel({
   const [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [capabilities, setCapabilities] = useState(DEFAULT_CAPABILITIES);
+  const initialContent = useMemo(
+    () => initialReviewContent(content, context),
+    [content, context],
+  );
   const [editorValue, setEditorValue] = useState<RichEditorValue>(
-    () => emptyEditorValue(content?.text ?? ''),
+    () => emptyEditorValue(initialContent.text),
+  );
+  const [editorFormat, setEditorFormat] = useState<'text' | 'json'>(
+    initialContent.format ?? 'text',
   );
   const [editorRevision, setEditorRevision] = useState(0);
   const [sourceDocument, setSourceDocument] =
@@ -76,7 +116,7 @@ export function HITLPanel({
 
   const canEdit = allowedActions.includes('edit');
   const canReject = allowedActions.includes('reject');
-  const originalText = content?.text ?? '';
+  const originalText = initialContent.text;
   const dirty = (
     editorValue.text !== originalText
     || sourceDocument !== null
@@ -94,6 +134,16 @@ export function HITLPanel({
       setError(`The edited content exceeds ${maxEditChars.toLocaleString()} characters.`);
       return;
     }
+    if (action === 'edit' && editorFormat === 'json') {
+      try {
+        JSON.parse(editorValue.text);
+      } catch {
+        setError(
+          'This review contains structured JSON. Fix the JSON syntax before continuing.',
+        );
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     try {
@@ -103,6 +153,7 @@ export function HITLPanel({
         payload.edited_content = {
           text: editorValue.text,
           html: editorValue.html,
+          format: editorFormat,
           source: sourceDocument ? 'upload' : 'editor',
           source_document: sourceDocument,
         };
@@ -138,6 +189,7 @@ export function HITLPanel({
 
   function discardChanges() {
     setEditorValue(emptyEditorValue(originalText));
+    setEditorFormat(initialContent.format ?? 'text');
     setSourceDocument(null);
     setOverrideTruncated(false);
     setEditorRevision((value) => value + 1);
@@ -174,7 +226,9 @@ export function HITLPanel({
             <div className="text-xs font-medium text-ink-700">Review content</div>
             <div className="text-[11px] text-ink-300">
               {canEdit
-                ? 'Click anywhere to edit. Formatting is preserved in the human decision.'
+                ? editorFormat === 'json'
+                  ? 'Exact structured content. Keep the JSON valid so downstream fields preserve their types.'
+                  : 'Click anywhere to edit. Formatting is preserved in the human decision.'
                 : 'This gate is configured as read-only.'}
             </div>
           </div>

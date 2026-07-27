@@ -54,7 +54,10 @@ export function RichTextEditor({
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const resetTextRef = useRef(initialText);
-  resetTextRef.current = initialText;
+
+  useEffect(() => {
+    resetTextRef.current = initialText;
+  }, [initialText]);
 
   useEffect(() => {
     if (!editorRef.current) return;

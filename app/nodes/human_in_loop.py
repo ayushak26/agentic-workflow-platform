@@ -61,6 +61,7 @@ class HITLReviewContent(BaseModel):
 
     text: str = Field(max_length=2_000_000)
     html: str | None = Field(default=None, max_length=4_000_000)
+    format: Literal["text", "json"] = "text"
     source: Literal["workflow", "editor", "upload"] = "workflow"
     source_path: str | None = None
     source_document: WorkflowFileRef | None = None
@@ -156,6 +157,11 @@ class HumanInLoopAgent(NodeType):
             # workflow field can be replaced from the paused node's own config.
             source_path = review_content.source_path if review_content else None
             edited_content.source_path = source_path
+            edited_content.format = (
+                review_content.format
+                if review_content is not None
+                else edited_content.format
+            )
             edited_content.html = sanitize_rich_html(edited_content.html)
 
             if edited_content.source_document is not None:
@@ -175,7 +181,7 @@ class HumanInLoopAgent(NodeType):
                 state_patch = _patch_reviewed_content(
                     state,
                     source_path,
-                    edited_content.text,
+                    _edited_value(edited_content),
                 )
 
         output = {
@@ -228,10 +234,32 @@ def _review_content(
             continue
         return HITLReviewContent(
             text=_content_as_text(value),
+            format=_content_format(value),
             source="workflow",
             source_path=path,
         )
+
+    # Older workflows sometimes configure context for a gate without choosing
+    # one editable field. Never show an empty editor in that case: expose the
+    # exact non-null pause context as a JSON review document. Because there is
+    # no authoritative source path, downstream nodes can consume the reviewed
+    # value through {{outputs.<hitl_node>.content.text}}.
+    visible_context = {
+        path: value
+        for path, value in context.items()
+        if value is not None
+    }
+    if visible_context:
+        return HITLReviewContent(
+            text=_content_as_text(visible_context),
+            format="json",
+            source="workflow",
+        )
     return None
+
+
+def _content_format(value: Any) -> Literal["text", "json"]:
+    return "text" if isinstance(value, (str, bytes)) else "json"
 
 
 def _content_as_text(value: Any) -> str:
@@ -242,10 +270,24 @@ def _content_as_text(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, default=str)
 
 
+def _edited_value(content: HITLReviewContent) -> Any:
+    """Restore structured editor content before patching workflow state."""
+
+    if content.format != "json":
+        return content.text
+    try:
+        return json.loads(content.text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "Structured HITL content must remain valid JSON before the "
+            "workflow can continue"
+        ) from exc
+
+
 def _patch_reviewed_content(
     state: dict[str, Any],
     path: str,
-    text: str,
+    value: Any,
 ) -> dict[str, Any]:
     """Replace only the configured editable path for downstream nodes."""
 
@@ -257,7 +299,7 @@ def _patch_reviewed_content(
         if len(parts) < 2 or parts[1].startswith("SYSTEM"):
             raise ValueError("editable_content_field cannot replace system inputs")
         inputs = deepcopy(state.get("inputs") or {})
-        _set_nested(inputs, parts[1:], text)
+        _set_nested(inputs, parts[1:], value)
         return {"inputs": inputs}
 
     node_outputs = state.get("node_outputs") or {}
@@ -272,11 +314,11 @@ def _patch_reviewed_content(
             "editable_content_field must reference a field inside a node output"
         )
     node_value = deepcopy(node_outputs[node_id])
-    _set_nested(node_value, parts[1:], text)
+    _set_nested(node_value, parts[1:], value)
     return {"node_outputs": {node_id: node_value}}
 
 
-def _set_nested(container: Any, parts: list[str], value: str) -> None:
+def _set_nested(container: Any, parts: list[str], value: Any) -> None:
     cursor = container
     for part in parts[:-1]:
         if not isinstance(cursor, dict) or part not in cursor:

@@ -10,9 +10,16 @@ TEMPLATE_RE = re.compile(r"\{\{\s*([\w\.]+)\s*\}\}")
 
 
 def _lookup(path: str, state: dict) -> Any:
-    """Walk a dotted path against a dict. Supports 'inputs.foo' and
-    'node_id.field' — the latter is sugar for 'node_outputs.node_id.field'."""
+    """Walk a dotted path against workflow state.
+
+    Stable public roots are ``inputs``, ``variables`` and ``outputs``.
+    ``outputs`` is a virtual alias for the internal ``node_outputs`` map, so
+    the state is not duplicated. The legacy ``node_id.field`` shorthand stays
+    supported for existing workflows.
+    """
     parts = path.split(".")
+    if parts[0] == "outputs":
+        parts[0] = "node_outputs"
     # Sugar: if the first segment matches a node_outputs key, prepend.
     node_outputs = state.get("node_outputs", {})
     if parts[0] in node_outputs:

@@ -3,7 +3,7 @@ description: >-
   Normalise a Horizon concept, discover and verify evidence, build the
   requirement-coverage matrix, generate three concept alternatives, pause for
   human approvals, and run an independent two-provider Horizon evaluation.
-version: "1.1"
+version: "1.2"
 use_case: eu_proposal
 inputs:
   concept_note:
@@ -68,6 +68,7 @@ nodes:
       context_fields:
         - verify_evidence.findings
         - call_coverage.blocking_requirement_ids
+      editable_content_field: verify_evidence.findings
       allowed_actions: [approve, reject, edit]
   - id: concept_alternatives
     type: ConceptAlternativesAgent
@@ -80,6 +81,7 @@ nodes:
       question: Select and approve one concept posture before drafting?
       context_fields:
         - concept_alternatives.alternatives
+      editable_content_field: concept_alternatives.alternatives
       allowed_actions: [approve, reject, edit]
   - id: load_proposal
     type: WorkflowFileLoader

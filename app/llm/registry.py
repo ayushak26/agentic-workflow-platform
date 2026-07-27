@@ -26,6 +26,7 @@ from app.config import settings
 from app.llm.anthropic_gw import AnthropicGateway
 from app.llm.base import LLMGateway
 from app.llm.openai_gw import OpenAIGateway
+from app.llm.errors import StructuredOutputError
 from app.observability import metrics
 
 log = structlog.get_logger(__name__)
@@ -85,17 +86,22 @@ def _status_code(exc: BaseException) -> int | None:
 
 
 def _is_retryable_error(exc: BaseException) -> bool:
-    """Classify only failures that can plausibly succeed on another attempt."""
+    """Return whether another generation may succeed."""
 
-    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+    if isinstance(exc, StructuredOutputError):
+        return True
+
+    if isinstance(
+        exc,
+        (asyncio.TimeoutError, TimeoutError, ConnectionError),
+    ):
         return True
 
     status = _status_code(exc)
+
     if status is not None:
         return status in {408, 409, 429} or 500 <= status <= 599
 
-    # SDK exception inheritance differs between provider versions. These class
-    # names are deliberately a final compatibility layer, not the first check.
     return type(exc).__name__ in {
         "APIConnectionError",
         "APITimeoutError",
@@ -103,7 +109,6 @@ def _is_retryable_error(exc: BaseException) -> bool:
         "RateLimitError",
         "ServiceUnavailableError",
     }
-
 
 def _retry_after_seconds(exc: BaseException) -> float | None:
     response = getattr(exc, "response", None)

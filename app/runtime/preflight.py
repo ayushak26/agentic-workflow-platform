@@ -808,6 +808,19 @@ def _validate_template_output_path(
                 node_id=current_node.id,
             )
         return
+    if first in {"outputs", "node_outputs"}:
+        if len(parts) < 2:
+            _issue(
+                report,
+                "TEMPLATE_UNKNOWN_NODE",
+                f"Template output reference {reference!r} must include a node id.",
+                path=path,
+                node_id=current_node.id,
+                suggestion="Use {{outputs.<node_id>.<field>}}.",
+            )
+            return
+        parts = parts[1:]
+        first = parts[0]
     if first in {
         "session_id",
         "collection_id",

@@ -15,7 +15,9 @@ export type YamlWorkflow = {
   name: string;
   description?: string;
   version?: string;
+  use_case?: string;
   inputs?: Record<string, WorkflowInputSpec>;   // was Record<string, unknown>
+  static_variables?: Array<{ name: string; type: string; value: unknown }>;
   nodes: Array<{ id: string; type: string; config?: Record<string, unknown> }>;
   edges: Array<{
     from: string;
@@ -23,6 +25,9 @@ export type YamlWorkflow = {
     condition?: string;
     branches?: Record<string, string>;
   }>;
+  entry?: string;
+  exit?: string | string[];
+  output?: Record<string, unknown>;
 };
 
 // Custom data we hang on each React Flow node
@@ -90,12 +95,7 @@ export function yamlToReactFlow(
 
 /** React Flow nodes + edges → YAML workflow (used in 9B.2b for save). */
 export function reactFlowToYaml(
-  meta: {
-    name: string;
-    description?: string;
-    version?: string;
-    inputs?: Record<string, WorkflowInputSpec>;
-  },
+  meta: Omit<YamlWorkflow, 'nodes' | 'edges'>,
   rfNodes: RFNode<WorkflowNodeData>[],
   rfEdges: RFEdge[]
 ): YamlWorkflow {
@@ -118,8 +118,7 @@ export function reactFlowToYaml(
   }));
 
   return {
-    name: meta.name,
-    description: meta.description,
+    ...meta,
     version: meta.version ?? '1.0',
     inputs: meta.inputs ?? {},
     nodes,

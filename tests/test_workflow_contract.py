@@ -48,7 +48,6 @@ output:
 def test_node_defaults_are_not_shared():
     first = NodeSpec(id="a", type="Echo")
     second = NodeSpec(id="b", type="Echo")
-
     first.config["template"] = "changed"
     first.allowed_models.append("local-model")
 
@@ -69,21 +68,12 @@ def test_selected_model_overrides_saved_node_config():
     node = NodeSpec(
         id="writer",
         type="TransformAgent",
-        config={
-            "model": "claude-haiku-4-5",
-        },
-        selected_model="gpt-5.6-sol",
+        config={"model": "claude-haiku-4-5"},
+        selected_model="gpt-5-mini",
     )
 
-    assert (
-        node.effective_config()["model"]
-        == "gpt-5.6-sol"
-    )
-
-    assert (
-        node.config["model"]
-        == "claude-haiku-4-5"
-    )
+    assert node.effective_config()["model"] == "gpt-5-mini"
+    assert node.config["model"] == "claude-haiku-4-5"
 
 
 async def test_variables_and_output_projection_are_runtime_features():
@@ -118,6 +108,32 @@ output:
         "input": {"message": "hello"},
         "text": "grounded-only: hello",
     }
+
+
+async def test_outputs_namespace_is_a_deterministic_node_output_alias():
+    spec = load_workflow_from_string(
+        """
+name: Output Namespace
+nodes:
+  - id: seed
+    type: Literal
+    config:
+      value: exact
+  - id: echo
+    type: Echo
+    config:
+      template: "{{outputs.seed.value}}"
+edges:
+  - from: seed
+    to: echo
+entry: seed
+exit: echo
+"""
+    )
+
+    result = await run_workflow(spec, {})
+
+    assert result["state"]["node_outputs"]["echo"]["text"] == "exact"
 
 
 def test_namespaced_domain_state_uses_registered_reducer():

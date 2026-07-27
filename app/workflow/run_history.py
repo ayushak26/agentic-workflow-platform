@@ -130,6 +130,7 @@ async def upsert_run(
     status: str | None = None,
     node_types: dict[str, str] | None = None,
     inputs: dict[str, Any] | None = None,
+    variables: dict[str, Any] | None = None,
     outputs: dict[str, Any] | None = None,
     workflow_yaml: str | None = None,
     started_at: float | None = None,
@@ -153,6 +154,11 @@ async def upsert_run(
         "status": status,
         "node_types": node_types,
         "inputs": redact_for_history(inputs) if inputs is not None else None,
+        "variables": (
+            redact_for_history(variables)
+            if variables is not None
+            else None
+        ),
         "outputs": redact_for_history(outputs) if outputs is not None else None,
         "workflow_yaml": workflow_yaml,
         "started_at": started_at,

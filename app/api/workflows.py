@@ -2,12 +2,6 @@ import time
 import uuid
 from typing import Any
 
-from app.runtime.preflight import (
-    WorkflowPreflightReport,
-    preflight_workflow_for_run,
-    preflight_workflow_yaml,
-)
-
 from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel, Field
 import yaml
@@ -91,9 +85,8 @@ class ValidateWorkflowRequest(BaseModel):
     inputs: dict[str, Any] | None = None
     check_services: bool = False
 
-def _preflight_http_detail(
-    report: WorkflowPreflightReport,
-) -> dict[str, Any]:
+
+def _preflight_http_detail(report: WorkflowPreflightReport) -> dict[str, Any]:
     return {
         "message": (
             f"Workflow preflight found {len(report.errors)} blocking "
@@ -102,16 +95,16 @@ def _preflight_http_detail(
         "preflight": report.model_dump(mode="json"),
     }
 
+
 @router.post("/workflows/validate")
 async def validate_workflow(
     req: ValidateWorkflowRequest,
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
-    """Validate without executing nodes or consuming tokens."""
+    """Validate a workflow without running a node or consuming LLM tokens."""
 
     services = getattr(request.app.state, "services", {})
-
     if req.check_services:
         report = await preflight_workflow_for_run(
             req.workflow_yaml,
@@ -127,7 +120,6 @@ async def validate_workflow(
             services=services,
             compile_graph=True,
         )
-
     return report.model_dump(mode="json")
 
 
@@ -177,6 +169,10 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
             workflow_name=spec.name,
             status="running",
             inputs=validated_inputs,
+            variables={
+                variable.name: variable.value
+                for variable in spec.static_variables
+            },
             workflow_yaml=req.workflow_yaml,
             started_at=started_at,
             node_count=len(spec.nodes),

@@ -2,7 +2,6 @@
 """Fail fast when the Studio frontend and FastAPI route table disagree."""
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
 
 import app.main
@@ -22,11 +21,16 @@ def registered_routes() -> set[tuple[str, str]]:
     """Return every HTTP method/path pair mounted on the running app object."""
 
     result: set[tuple[str, str]] = set()
-    for route in app.main.app.routes:
-        path = getattr(route, "path", None)
-        methods: Iterable[str] = getattr(route, "methods", ()) or ()
-        if path:
-            result.update((method, path) for method in methods)
+    # Recent FastAPI releases keep included routers as lazy
+    # ``_IncludedRouter`` objects in app.routes instead of flattening every
+    # APIRoute there. OpenAPI is built from the effective route table and is
+    # therefore the stable public source for mounted HTTP operations.
+    for path, operations in app.main.app.openapi().get("paths", {}).items():
+        for method in operations:
+            if method.upper() in {
+                "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"
+            }:
+                result.add((method.upper(), path))
     return result
 
 

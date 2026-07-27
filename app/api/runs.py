@@ -183,6 +183,10 @@ async def retry_failed_run(
         workflow_name=spec.name,
         status="running",
         inputs=raw_inputs,
+        variables={
+            variable.name: variable.value
+            for variable in spec.static_variables
+        },
         workflow_yaml=workflow_yaml,
         started_at=started_at,
         node_count=len(spec.nodes),

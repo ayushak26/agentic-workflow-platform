@@ -21,14 +21,14 @@ generations.
 """
 from __future__ import annotations
 
-import json
 from typing import Type, TypeVar
 
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
-from app.llm.openai_gw import StructuredResult   # reuse the carrier so cost recording works
+from app.llm.errors import StructuredOutputError
+from app.llm.openai_gw import StructuredResult  # shared usage/cost carrier
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -123,17 +123,32 @@ class AnthropicGateway(LLMGateway):
         if _supports_temperature(model):
             kwargs["temperature"] = temperature
 
-        resp = await self._client.messages.create(**kwargs)
+        # Keep structured generations on the same streaming path as text and
+        # tool-chat calls. This avoids Anthropic's long-request pre-flight
+        # guard for schemas/prompts with a large max_tokens value.
+        resp = await self._create(**kwargs)
         tool_block = next(
             (b for b in resp.content if b.type == "tool_use" and b.name == tool_name),
             None,
         )
         if tool_block is None:
-            raise RuntimeError(
-                f"AnthropicGateway: structured call did not return tool_use for "
+            raise StructuredOutputError(
+                "AnthropicGateway did not return the required tool call for "
                 f"{response_model.__name__}. stop_reason={resp.stop_reason!r}"
             )
-        parsed = response_model.model_validate(tool_block.input)
+        try:
+            parsed = response_model.model_validate(tool_block.input)
+        except ValidationError as exc:
+            keys = (
+                sorted(tool_block.input)
+                if isinstance(tool_block.input, dict)
+                else []
+            )
+            raise StructuredOutputError(
+                "AnthropicGateway returned invalid model-generated structured "
+                f"output for {response_model.__name__}; "
+                f"top_level_keys={keys!r}; stop_reason={resp.stop_reason!r}"
+            ) from exc
         return StructuredResult(
             parsed=parsed,
             input_tokens=resp.usage.input_tokens,

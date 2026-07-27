@@ -147,6 +147,60 @@ async def test_hitl_edit_replaces_configured_upstream_field_for_downstream_nodes
     assert "<script>" not in edited["html"]
 
 
+async def test_hitl_prefills_and_preserves_structured_content():
+    spec = WorkflowSpec(
+        name="HITL Structured Content",
+        nodes=[
+            NodeSpec(
+                id="seed",
+                type="Literal",
+                config={"value": [{"id": "A", "score": 1}]},
+            ),
+            NodeSpec(
+                id="approval",
+                type="HumanInLoopAgent",
+                config={
+                    "question": "Review the exact structured output.",
+                    "context_fields": ["seed.value"],
+                    "editable_content_field": "seed.value",
+                    "allowed_actions": ["approve", "edit"],
+                },
+            ),
+        ],
+        edges=[EdgeSpec(**{"from": "seed", "to": "approval"})],
+    )
+
+    paused = await run_workflow(spec, inputs={})
+    interrupt = paused["state"]["__interrupt__"][0]
+    payload = getattr(interrupt, "value", None)
+    if payload is None and isinstance(interrupt, dict):
+        payload = interrupt.get("value", interrupt)
+
+    assert payload["content"]["format"] == "json"
+    assert payload["content"]["source_path"] == "seed.value"
+    assert '"id": "A"' in payload["content"]["text"]
+
+    resumed = await resume_workflow(
+        paused["run_id"],
+        decision={
+            "decision": "edit",
+            "edited_content": {
+                "text": '[{"id": "A", "score": 2}]',
+                "format": "json",
+                "source": "editor",
+            },
+        },
+    )
+
+    assert resumed["state"]["node_outputs"]["seed"]["value"] == [
+        {"id": "A", "score": 2}
+    ]
+    assert (
+        resumed["state"]["node_outputs"]["approval"]["content"]["format"]
+        == "json"
+    )
+
+
 async def test_hitl_resume_unknown_run_id_raises():
     with pytest.raises(HITLResumeError):
         await resume_workflow("nonexistent-run-id", decision={"decision": "approve"})

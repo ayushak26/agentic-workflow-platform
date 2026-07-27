@@ -16,11 +16,12 @@ import { Spinner } from '../../components/Spinner';
 import { CockpitNode } from './CockpitNode';
 import { HITLPanel } from './HITLPanel';
 import { OutputViewer } from './OutputViewer';
+import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } from './yaml-bridge';
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 import { useSetRunCost } from "../../RunCostContext";
 import { layoutFlow } from './flow-layout';
-import type { HITLReviewContent } from '../../api/types';
+import type { HITLReviewContent, RunDetail } from '../../api/types';
 
 type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
 const nodeTypes = { workflow: CockpitNode };
@@ -47,6 +48,7 @@ type Gate = {
 type Finished = {
   status: 'completed' | 'failed' | 'rejected';
   state?: any;
+  output?: Record<string, unknown>;
   error?: string;
   node?: string;
   reason?: string;
@@ -77,6 +79,8 @@ export function Cockpit() {
   const [nodes, setNodes, onNodesChange] = useNodesState<CockpitNodeData>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [followRunning, setFollowRunning] = useState(true);
+  const [sidebarTab, setSidebarTab] = useState<'variables' | 'node'>('variables');
+  const [liveRun, setLiveRun] = useState<RunDetail | null>(null);
 
   // HITL gates and final result are driven off the run/resume HTTP responses,
   // NOT the WebSocket — so approvals work even if the socket drops mid-run.
@@ -95,7 +99,12 @@ export function Cockpit() {
   function applyResumeResult(res: any) {
     if (!res) return;
     if (res.status === 'paused') {
-      const v = res.state?.__interrupt__?.[0]?.value;
+      const interrupt = (
+        res.state?.__interrupt__?.[0]
+        ?? res.interrupt?.[0]
+        ?? null
+      );
+      const v = interrupt?.value ?? interrupt;
       if (v) {
         setGate({
           nodeId: v.node_id,
@@ -109,7 +118,11 @@ export function Cockpit() {
       }
     } else if (res.status === 'completed') {
       setGate(null);
-      setFinished({ status: 'completed', state: res.state });
+      setFinished({
+        status: 'completed',
+        state: res.state,
+        output: res.output,
+      });
     } else if (res.status === 'failed') {
       setGate(null);
       setFinished({ status: 'failed', error: res.error });
@@ -157,6 +170,27 @@ useEffect(() => {
     navState.retrySourceRunId,
     runId,
   ]);
+
+  // Exact inputs and completed outputs are persisted incrementally in run
+  // history. Polling that record powers the Variables panel while the graph is
+  // still executing; WebSocket previews remain intentionally small.
+  useEffect(() => {
+    if (!runId || !runTriggered || finished) return;
+    let cancelled = false;
+    const load = () => {
+      api.runDetail(runId)
+        .then((result) => {
+          if (!cancelled) setLiveRun(result.run);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const timer = window.setInterval(load, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [finished, runId, runTriggered]);
 
   // Derive node colors from WS events (best-effort animation).
   const cockpit = useMemo(() => {
@@ -237,7 +271,14 @@ useEffect(() => {
 
   // ✅ early returns go AFTER all hooks
   if (finished?.status === 'completed') {
-    return <OutputViewer state={finished.state} workflowName={navState.workflowName ?? parsedWf?.name} />;
+    return (
+      <OutputViewer
+        runId={runId}
+        state={finished.state}
+        projectedOutput={finished.output}
+        workflowName={navState.workflowName ?? parsedWf?.name}
+      />
+    );
   }
 
   if (!runId) {
@@ -284,8 +325,14 @@ useEffect(() => {
           onInit={setRfInstance}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          onNodeClick={(_, n) => setSelectedId(n.id)}
-          onPaneClick={() => setSelectedId(null)}
+          onNodeClick={(_, n) => {
+            setSelectedId(n.id);
+            setSidebarTab('node');
+          }}
+          onPaneClick={() => {
+            setSelectedId(null);
+            setSidebarTab('variables');
+          }}
           fitView
           nodesDraggable={false}
           nodesConnectable={false}
@@ -361,7 +408,7 @@ useEffect(() => {
       >
         {showHITL ? (
           <HITLPanel
-            key={gate!.nodeId}
+            key={`${runId}:${gate!.nodeId}`}
             runId={runId}
             pausedNodeId={gate!.nodeId}
             question={gate!.question}
@@ -394,25 +441,69 @@ useEffect(() => {
               </>
             )}
           </div>
-        ) : selectedNode === null ? (
-          <div className="p-6 text-ink-500 text-sm">Click a node to see its output preview.</div>
         ) : (
-          <div className="p-6">
-            <div className="text-xs uppercase tracking-wide text-ink-500">{selectedNode.data.typeName}</div>
-            <div className="font-semibold text-lg mt-1">{selectedNode.data.nodeId}</div>
-            <div className="mt-2 text-xs text-ink-500">Status: {selectedNode.data.status}</div>
+          <div>
+            <div className="sticky top-0 z-10 flex border-b border-slate-200 bg-white">
+              <button
+                type="button"
+                onClick={() => setSidebarTab('variables')}
+                className={`flex-1 px-3 py-2.5 text-xs ${
+                  sidebarTab === 'variables'
+                    ? 'border-b-2 border-accent-600 font-medium text-ink-900'
+                    : 'text-ink-500'
+                }`}
+              >
+                Variables
+              </button>
+              <button
+                type="button"
+                onClick={() => setSidebarTab('node')}
+                className={`flex-1 px-3 py-2.5 text-xs ${
+                  sidebarTab === 'node'
+                    ? 'border-b-2 border-accent-600 font-medium text-ink-900'
+                    : 'text-ink-500'
+                }`}
+              >
+                Selected node
+              </button>
+            </div>
 
-            <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">Output preview</h3>
-            {cockpit.outputPreviews[selectedNode.data.nodeId] ? (
-              <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
-{cockpit.outputPreviews[selectedNode.data.nodeId]}
-              </pre>
+            {sidebarTab === 'variables' ? (
+              <WorkflowVariablesPanel
+                live
+                inputs={liveRun?.inputs ?? navState.inputs ?? {}}
+                variables={
+                  liveRun?.variables
+                  ?? Object.fromEntries(
+                    (parsedWf.static_variables ?? [])
+                      .map((item) => [item.name, item.value]),
+                  )
+                }
+                outputs={liveRun?.outputs ?? {}}
+              />
+            ) : selectedNode === null ? (
+              <div className="p-6 text-ink-500 text-sm">
+                Click a node to see its output preview.
+              </div>
             ) : (
-              <div className="text-sm text-ink-500">
-                {selectedNode.data.status === 'pending' && 'Waiting to start.'}
-                {selectedNode.data.status === 'active' && 'Running…'}
-                {selectedNode.data.status === 'reused' && 'Reused without a provider call.'}
-                {selectedNode.data.status === 'paused' && 'Paused for human approval.'}
+              <div className="p-6">
+                <div className="text-xs uppercase tracking-wide text-ink-500">{selectedNode.data.typeName}</div>
+                <div className="font-semibold text-lg mt-1">{selectedNode.data.nodeId}</div>
+                <div className="mt-2 text-xs text-ink-500">Status: {selectedNode.data.status}</div>
+
+                <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">Output preview</h3>
+                {cockpit.outputPreviews[selectedNode.data.nodeId] ? (
+                  <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
+{cockpit.outputPreviews[selectedNode.data.nodeId]}
+                  </pre>
+                ) : (
+                  <div className="text-sm text-ink-500">
+                    {selectedNode.data.status === 'pending' && 'Waiting to start.'}
+                    {selectedNode.data.status === 'active' && 'Running…'}
+                    {selectedNode.data.status === 'reused' && 'Reused without a provider call.'}
+                    {selectedNode.data.status === 'paused' && 'Paused for human approval.'}
+                  </div>
+                )}
               </div>
             )}
           </div>
