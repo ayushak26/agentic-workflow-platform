@@ -40,6 +40,7 @@ from app.api.inspect import router as inspect_router
 from app.api import audit as audit_api
 from app.api import runs as runs_api
 from app.api import proposals as proposals_api
+from app.api import workflow_files as workflow_files_api
 
 from app.db.mongo import DB_NAME
 
@@ -203,3 +204,4 @@ app.include_router(inspect_router)
 app.include_router(audit_api.router)
 app.include_router(runs_api.router)
 app.include_router(proposals_api.router)
+app.include_router(workflow_files_api.router)

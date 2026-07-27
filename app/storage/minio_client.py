@@ -72,9 +72,9 @@ class ObjectStore:
         endpoint_url: str | None = None,
         access_key: str | None = None,
         secret_key: str | None = None,
-        bucket: str = DEFAULT_BUCKET,
+        bucket: str | None = None,
     ):
-        self.bucket = bucket
+        self.bucket = bucket or settings.minio_bucket
         self.client = boto3.client(
             "s3",
             endpoint_url=endpoint_url or f"http://{settings.minio_endpoint}",

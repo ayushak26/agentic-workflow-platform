@@ -371,6 +371,15 @@ CODE_EXTENSIONS: dict[str, str] = {
     ".swift": "swift",
     ".r": "r",
     ".tf": "terraform",
+    ".tsx": "typescript-react",
+    ".jsx": "javascript-react",
+    ".ipynb": "jupyter-notebook",
+    ".toml": "toml",
+    ".ini": "ini",
+    ".cfg": "configuration",
+    ".properties": "properties",
+    ".vue": "vue",
+    ".svelte": "svelte",
 }
 
 EXTRACTORS_BY_EXT: dict[str, Extractor] = {

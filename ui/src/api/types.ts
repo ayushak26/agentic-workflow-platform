@@ -13,6 +13,26 @@ export type WorkflowSummary = {
   node_count: number;
 };
 
+export type WorkflowFileReference = {
+  kind: 'workflow_file';
+  file_id: string;
+  name: string;
+  extension: string;
+  category: string;
+  content_type: string;
+  size_bytes: number;
+  sha256: string;
+  minio_key: string;
+  parseable_text: boolean;
+};
+
+export type WorkflowFileCapabilities = {
+  categories: Record<string, string[]>;
+  extensions: string[];
+  max_file_size_bytes: number;
+  max_files_per_input: number;
+};
+
 export type RunEvent =
   | { type: 'node_started'; run_id: string; node_id: string; ts: string }
   | { type: 'node_completed'; run_id: string; node_id: string; output_preview: string; ts: string }

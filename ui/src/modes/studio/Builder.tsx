@@ -25,10 +25,12 @@ import {
   yamlToReactFlow,
   reactFlowToYaml,
   type WorkflowNodeData,
+  type WorkflowInputSpec,
   type YamlWorkflow,
 } from './yaml-bridge';
 import { generateDefaults, newNodeId, findManifest } from './builder-helpers';
 import { layoutFlow } from './flow-layout';
+import { WorkflowInputsPanel } from './WorkflowInputsPanel';
 
 const nodeTypes = { workflow: WorkflowNode };
 
@@ -42,6 +44,7 @@ export function Builder() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showInputs, setShowInputs] = useState(false);
 
   // Load node-type manifests once (used by palette + config form).
   useEffect(() => {
@@ -194,7 +197,10 @@ export function Builder() {
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
           onInit={setRfInstance}
-          onNodeClick={(_, n) => setSelectedId(n.id)}
+          onNodeClick={(_, n) => {
+            setSelectedId(n.id);
+            setShowInputs(false);
+          }}
           onPaneClick={() => setSelectedId(null)}
           fitView
           deleteKeyCode={['Backspace', 'Delete']}
@@ -219,6 +225,19 @@ export function Builder() {
             </span>
           )}
           <button
+            onClick={() => {
+              setSelectedId(null);
+              setShowInputs(true);
+            }}
+            className={`px-3 py-2 rounded-md border text-sm ${
+              showInputs
+                ? 'border-accent-600 bg-accent-50 text-accent-600'
+                : 'border-slate-300 bg-white hover:bg-slate-50'
+            }`}
+          >
+            Inputs ({Object.keys(meta.inputs ?? {}).length})
+          </button>
+          <button
             onClick={reorganizeNodes}
             className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50"
           >
@@ -241,12 +260,25 @@ export function Builder() {
       </div>
 
       <aside className="w-96 border-l border-slate-200 bg-white">
-        <ConfigPanel
-          selected={selected}
-          manifests={manifests}
-          onIdChange={onIdChange}
-          onConfigChange={onConfigChange}
-        />
+        {showInputs ? (
+          <WorkflowInputsPanel
+            inputs={meta.inputs ?? {}}
+            onChange={(inputs: Record<string, WorkflowInputSpec>) => {
+              setMeta(current => (
+                current ? { ...current, inputs } : current
+              ));
+              setSaveState('idle');
+            }}
+            onClose={() => setShowInputs(false)}
+          />
+        ) : (
+          <ConfigPanel
+            selected={selected}
+            manifests={manifests}
+            onIdChange={onIdChange}
+            onConfigChange={onConfigChange}
+          />
+        )}
       </aside>
     </div>
   );

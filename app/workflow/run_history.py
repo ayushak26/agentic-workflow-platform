@@ -117,6 +117,9 @@ async def ensure_indexes(db) -> None:
     await db["run_checkpoints"].create_index(
         [("session_id", 1), ("status", 1), ("updated_at", -1)]
     )
+    await db["workflow_input_files"].create_index(
+        [("session_id", 1), ("uploaded_at", -1)]
+    )
 
 
 async def upsert_run(

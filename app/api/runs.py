@@ -16,6 +16,10 @@ from app.workflow.run_history import (
     mark_checkpoint_status,
     upsert_run,
 )
+from app.workflow.file_inputs import (
+    WorkflowFileInputError,
+    validate_workflow_inputs,
+)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -120,6 +124,18 @@ async def retry_failed_run(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             f"The saved workflow can no longer be loaded: {exc}",
+        ) from exc
+    try:
+        raw_inputs = await validate_workflow_inputs(
+            spec.inputs,
+            raw_inputs,
+            session_id=scope,
+            object_store=services.get("object_store"),
+        )
+    except WorkflowFileInputError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Saved file inputs cannot be reused: {exc}",
         ) from exc
 
     retry_run_id = req.run_id or str(uuid.uuid4())

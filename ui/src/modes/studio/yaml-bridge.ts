@@ -3,8 +3,12 @@ import type { Node as RFNode, Edge as RFEdge } from 'reactflow';
 
 // What's in a YAML workflow, parsed shape
 export type WorkflowInputSpec = {
-  type: string;
+  type: 'file' | 'text' | 'json';
   description?: string;
+  required?: boolean;
+  multiple?: boolean;
+  accept?: string[];
+  max_files?: number;
 };
 
 export type YamlWorkflow = {
@@ -86,7 +90,12 @@ export function yamlToReactFlow(
 
 /** React Flow nodes + edges → YAML workflow (used in 9B.2b for save). */
 export function reactFlowToYaml(
-  meta: { name: string; description?: string; version?: string; inputs?: Record<string, unknown> },
+  meta: {
+    name: string;
+    description?: string;
+    version?: string;
+    inputs?: Record<string, WorkflowInputSpec>;
+  },
   rfNodes: RFNode<WorkflowNodeData>[],
   rfEdges: RFEdge[]
 ): YamlWorkflow {
@@ -112,7 +121,7 @@ export function reactFlowToYaml(
     name: meta.name,
     description: meta.description,
     version: meta.version ?? '1.0',
-    inputs: meta.inputs as Record<string, WorkflowInputSpec>,
+    inputs: meta.inputs ?? {},
     nodes,
     edges,
   };

@@ -7,6 +7,7 @@ import type {
   NodeRun,
   RunDetail,
   RunSummary,
+  WorkflowFileReference,
 } from '../../api/types';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -82,6 +83,58 @@ function readableOutput(output: unknown): string {
     return JSON.stringify(obj, null, 2);
   }
   return String(output);
+}
+
+function workflowFileRefs(value: unknown): WorkflowFileReference[] {
+  const candidates = Array.isArray(value) ? value : [value];
+  return candidates.filter((candidate): candidate is WorkflowFileReference => (
+    Boolean(candidate)
+    && typeof candidate === 'object'
+    && (candidate as Record<string, unknown>).kind === 'workflow_file'
+    && typeof (candidate as Record<string, unknown>).minio_key === 'string'
+  ));
+}
+
+function FileInputValue({ value }: { value: unknown }) {
+  const refs = workflowFileRefs(value);
+  if (refs.length === 0) {
+    return (
+      <pre className="font-mono text-[11px] text-ink-700 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
+        {renderValue(value)}
+      </pre>
+    );
+  }
+  return (
+    <div className="space-y-2">
+      {refs.map(ref => (
+        <div
+          key={ref.minio_key}
+          className="flex items-center justify-between rounded-md bg-slate-50 px-3 py-2"
+        >
+          <div className="min-w-0">
+            <div className="truncate text-xs font-medium text-ink-700">
+              {ref.name}
+            </div>
+            <div className="text-[10px] text-ink-500">
+              {ref.category} · {(ref.size_bytes / 1024).toFixed(1)} KB
+              {ref.parseable_text ? ' · text extractable' : ''}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              api.downloadWorkflowFile(ref).catch(error => {
+                window.alert(`Download failed: ${String(error)}`);
+              });
+            }}
+            className="ml-3 text-xs text-accent-600 hover:underline"
+          >
+            Download
+          </button>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 // Detect a downloadable file key inside a node's output.
@@ -425,9 +478,7 @@ export function RunHistory() {
                   Object.entries(inputs).map(([k, v]) => (
                     <div key={k} className="px-4 py-2.5">
                       <div className="text-xs text-ink-500 mb-1">{k}</div>
-                      <pre className="font-mono text-[11px] text-ink-700 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-                        {renderValue(v)}
-                      </pre>
+                      <FileInputValue value={v} />
                     </div>
                   ))
                 )}

@@ -21,6 +21,10 @@ from app.workflow.run_history import (
     upsert_run,
 )
 from app.security.audit import write_audit_event, HITL_EVENT
+from app.workflow.file_inputs import (
+    WorkflowFileInputError,
+    validate_workflow_inputs,
+)
 
 router = APIRouter(prefix="/api", tags=["workflows"])
 
@@ -80,6 +84,15 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
     services = getattr(request.app.state, "services", {})
     db = services.get("audit_db")   # Phase 11A — Mongo handle for run history + audit
     session = _scope(user, req.session_id)   # matched to runs.py read scope
+    try:
+        validated_inputs = await validate_workflow_inputs(
+            spec.inputs,
+            req.inputs,
+            session_id=session,
+            object_store=services.get("object_store"),
+        )
+    except WorkflowFileInputError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     node_types = {n.id: n.type for n in spec.nodes}   # for UI colour-coding
     run_id = req.run_id or str(uuid.uuid4())
     started_at = time.time()
@@ -93,7 +106,7 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
             session,
             workflow_name=spec.name,
             status="running",
-            inputs=req.inputs,
+            inputs=validated_inputs,
             workflow_yaml=req.workflow_yaml,
             started_at=started_at,
             node_count=len(spec.nodes),
@@ -106,14 +119,14 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
             run_id=run_id,
             session_id=session,
             workflow_yaml=req.workflow_yaml,
-            inputs=req.inputs,
+            inputs=validated_inputs,
             collection_id=req.collection_id,
         )
 
     try:
         result = await run_workflow(
             spec,
-            req.inputs,
+            validated_inputs,
             session,
             collection_id=req.collection_id,
             services=services,

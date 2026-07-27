@@ -7,6 +7,8 @@ import type {
   ProposalReview,
   RunDetail,
   RunSummary,
+  WorkflowFileCapabilities,
+  WorkflowFileReference,
   WorkflowSummary,
 } from './types';
 
@@ -77,6 +79,39 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ name, yaml }),
     }).then(j<{ ok: true; name: string }>),
+
+  workflowFileCapabilities: () =>
+    fetch(`${API}/workflow-input-files/capabilities`, {
+      headers: authHeaders(),
+    }).then(j<WorkflowFileCapabilities>),
+
+  uploadWorkflowFiles: (files: File[]) => {
+    const form = new FormData();
+    for (const file of files) form.append('files', file);
+    return fetch(`${API}/workflow-input-files`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: form,
+    }).then(j<{ files: WorkflowFileReference[] }>);
+  },
+
+  downloadWorkflowFile: async (ref: WorkflowFileReference) => {
+    const params = new URLSearchParams({ key: ref.minio_key });
+    const response = await fetch(
+      `${API}/workflow-input-files/content?${params.toString()}`,
+      { headers: authHeaders() },
+    );
+    if (!response.ok) {
+      throw new Error(`${response.status} ${await response.text()}`);
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = ref.name;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
 
   // ---- execution
   runWorkflow: (workflow_yaml: string, inputs: Record<string, unknown>, session_id?: string, run_id?: string) =>

@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     minio_access_key: str = "eurskemadmin"
     minio_secret_key: str = "eurskempassword"
     minio_bucket: str = "eurskem-ai-docs"
+    workflow_file_max_mb: int = 50
+    workflow_file_max_files: int = 20
+
+    @property
+    def workflow_file_max_bytes(self) -> int:
+        return self.workflow_file_max_mb * 1024 * 1024
 
     redis_url: str = "redis://localhost:6379/0"
 

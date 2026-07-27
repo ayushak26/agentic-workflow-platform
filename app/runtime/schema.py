@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -15,13 +15,74 @@ DEFAULT_LLM_MODELS = [
 ]
 
 
+FILE_INPUT_CATEGORIES = [
+    "pdf",
+    "document",
+    "markdown",
+    "presentation",
+    "spreadsheet",
+    "code",
+    "image",
+]
+
+
+class WorkflowFileRef(BaseModel):
+    """Stable object-storage reference passed through workflow state.
+
+    Uploaded bytes never enter LangGraph state, run history, or retry
+    checkpoints. Nodes receive this small reference and fetch the object only
+    when they need it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["workflow_file"] = "workflow_file"
+    file_id: str
+    name: str
+    extension: str
+    category: str
+    content_type: str
+    size_bytes: int = Field(ge=0)
+    sha256: str = Field(min_length=64, max_length=64)
+    minio_key: str
+    parseable_text: bool = False
+
+
 class WorkflowInputSpec(BaseModel):
-    type: str  # "file" | "text" | "json"
+    type: Literal["file", "text", "json"]
     description: str | None = None
+    required: bool = False
+    multiple: bool = False
+    accept: list[str] = Field(
+        default_factory=lambda: list(FILE_INPUT_CATEGORIES)
+    )
+    max_files: int | None = Field(default=None, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_file_options(self) -> "WorkflowInputSpec":
+        if self.type != "file":
+            return self
+        if not self.accept:
+            raise ValueError("file inputs must accept at least one file category")
+        if not self.multiple and self.max_files not in (None, 1):
+            raise ValueError(
+                "max_files must be 1 or omitted when multiple is false"
+            )
+        return self
+
+    def effective_max_files(self, platform_limit: int) -> int:
+        if not self.multiple:
+            return 1
+        return min(self.max_files or platform_limit, platform_limit)
 
 
 class NodeSpec(BaseModel):
-    """One node instance in a workflow."""
+    """One node instance in a workflow.
+
+    `selected_model` is a Builder-level override. The runtime applies it to the
+    node's validated config at compile time, so changing the dropdown changes
+    execution rather than only changing the saved YAML.
+    """
 
     id: str
     type: str
@@ -33,25 +94,16 @@ class NodeSpec(BaseModel):
 
     @model_validator(mode="after")
     def selected_model_must_be_allowed(self) -> "NodeSpec":
-        if (
-            self.selected_model
-            and self.selected_model not in self.allowed_models
-        ):
+        if self.selected_model and self.selected_model not in self.allowed_models:
             raise ValueError(
-                f"selected_model {self.selected_model!r} "
-                "is not in allowed_models"
+                f"selected_model {self.selected_model!r} is not in allowed_models"
             )
-
         return self
 
     def effective_config(self) -> dict[str, Any]:
-        """Apply the model selected through the Builder."""
-
         config = dict(self.config)
-
         if self.selected_model:
             config["model"] = self.selected_model
-
         return config
 
 

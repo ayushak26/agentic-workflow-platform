@@ -15,3 +15,4 @@ from . import call_coverage       # noqa: F401
 from . import concept_alternatives  # noqa: F401
 from . import horizon_evaluation   # noqa: F401
 from . import consistency_checker # noqa: F401  (registers "ConsistencyChecker")
+from . import workflow_file_loader  # noqa: F401
