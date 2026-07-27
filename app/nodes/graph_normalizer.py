@@ -54,6 +54,11 @@ class GraphNormalizerConfig(BaseModel):
     """Node config — base.__init__ does config_schema(**raw_config)."""
     model: str = "claude-sonnet-4-5"
     max_tokens: int = Field(default=16384, ge=1024)
+    # These optional fields let a zero-token WorkflowFileLoader supply the
+    # extracted document text. Workflows that still use plain text inputs keep
+    # working through the fallback in run().
+    concept_note: str | None = None
+    call_facts: str | None = None
 
 
 class GraphExtraction(BaseModel):
@@ -161,16 +166,16 @@ class GraphNormalizer(NodeType):
     async def run(self, state: dict, config: dict) -> dict:
         inputs = state.get("inputs", {})
         # Accept either the proposal-style inputs (concept_note + call_facts) or
-        # the smoke-test input (topic_text). Whichever is present becomes the
-        # concept text the extractor reads; without this, a workflow that names
-        # its input "topic_text" would feed the model an empty document.
+        # zero-token file-loader output supplied through config. Plain-text and
+        # smoke-test workflows remain backward compatible.
         concept_note = (
-            inputs.get("concept_note")
+            config.get("concept_note")
+            or inputs.get("concept_note")
             or inputs.get("topic_text")
             or inputs.get("text")
             or ""
         )
-        call_facts = inputs.get("call_facts", "")
+        call_facts = config.get("call_facts") or inputs.get("call_facts") or ""
 
         prompt = (
             _EXTRACTION_INSTRUCTIONS

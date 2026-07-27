@@ -3,24 +3,50 @@ description: >-
   Normalise a Horizon concept, discover and verify evidence, build the
   requirement-coverage matrix, generate three concept alternatives, pause for
   human approvals, and run an independent two-provider Horizon evaluation.
-version: "1.0"
+version: "1.1"
 use_case: eu_proposal
 inputs:
   concept_note:
-    type: text
-    description: Internal proposal concept note.
+    type: file
+    description: Upload the internal proposal concept note.
+    required: true
+    multiple: true
+    max_files: 10
+    accept: [pdf, document, markdown, presentation, spreadsheet, code]
   call_facts:
-    type: text
-    description: Authoritative call requirements and expected outcomes.
+    type: file
+    description: Upload the authoritative call requirements and expected outcomes.
+    required: true
+    multiple: true
+    max_files: 10
+    accept: [pdf, document, markdown, presentation, spreadsheet]
   proposal_text:
-    type: text
-    description: Part B draft to evaluate after concept approval.
+    type: file
+    description: Upload the Part B draft to evaluate after concept approval.
+    required: true
+    multiple: true
+    max_files: 10
+    accept: [pdf, document, markdown, presentation]
 nodes:
+  - id: load_concept_note
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.concept_note}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+  - id: load_call_facts
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.call_facts}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
   - id: normalise_concept
     type: GraphNormalizer
     config:
       model: claude-opus-5
       max_tokens: 16384
+      concept_note: "{{load_concept_note.text}}"
+      call_facts: "{{load_call_facts.text}}"
   - id: discover_evidence
     type: EvidenceAgent
     config:
@@ -47,7 +73,7 @@ nodes:
     type: ConceptAlternativesAgent
     config:
       model: claude-opus-5
-      concept_note: "{{inputs.concept_note}}"
+      concept_note: "{{load_concept_note.text}}"
   - id: approve_concept
     type: HumanInLoopAgent
     config:
@@ -55,10 +81,16 @@ nodes:
       context_fields:
         - concept_alternatives.alternatives
       allowed_actions: [approve, reject, edit]
+  - id: load_proposal
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.proposal_text}}"
+      max_chars_per_file: 1000000
+      fail_on_unreadable: true
   - id: horizon_evaluation
     type: HorizonEvaluationAgent
     config:
-      proposal_text: "{{inputs.proposal_text}}"
+      proposal_text: "{{load_proposal.text}}"
       generator_model: claude-opus-5
       evaluator_models:
         - claude-sonnet-4-5
@@ -66,6 +98,10 @@ nodes:
       criterion_threshold: 3.0
       total_threshold: 10.0
 edges:
+  - from: load_concept_note
+    to: load_call_facts
+  - from: load_call_facts
+    to: normalise_concept
   - from: normalise_concept
     to: discover_evidence
   - from: discover_evidence
@@ -79,8 +115,10 @@ edges:
   - from: concept_alternatives
     to: approve_concept
   - from: approve_concept
+    to: load_proposal
+  - from: load_proposal
     to: horizon_evaluation
-entry: normalise_concept
+entry: load_concept_note
 exit: horizon_evaluation
 output:
   include_input: false
