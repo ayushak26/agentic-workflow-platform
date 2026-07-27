@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.runtime.executor import run_workflow
 from app.runtime.loader import load_workflow_from_string
+from app.runtime.preflight import preflight_workflow_for_run
 from app.security.dependencies import CurrentUser, require_consultant
 from app.security.audit import read_audit_events
 from app.workflow.run_history import (
@@ -125,6 +126,26 @@ async def retry_failed_run(
             status.HTTP_409_CONFLICT,
             f"The saved workflow can no longer be loaded: {exc}",
         ) from exc
+
+    preflight = await preflight_workflow_for_run(
+        workflow_yaml,
+        provided_inputs=raw_inputs,
+        services=services,
+        probe_services=True,
+        require_run_history=True,
+    )
+    if not preflight.valid:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "message": (
+                    "The saved workflow no longer passes preflight. "
+                    "No retry attempt was created and no tokens were used."
+                ),
+                "preflight": preflight.model_dump(mode="json"),
+            },
+        )
+
     try:
         raw_inputs = await validate_workflow_inputs(
             spec.inputs,

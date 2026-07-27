@@ -13,6 +13,34 @@ export type WorkflowSummary = {
   node_count: number;
 };
 
+export type PreflightSeverity = 'error' | 'warning';
+
+export type PreflightIssue = {
+  code: string;
+  severity: PreflightSeverity;
+  message: string;
+  path?: string | null;
+  node_id?: string | null;
+  suggestion?: string | null;
+};
+
+export type PreflightCheck = {
+  name: string;
+  status: 'passed' | 'failed' | 'warning' | 'skipped';
+  detail: string;
+};
+
+export type WorkflowPreflightReport = {
+  valid: boolean;
+  workflow_name?: string | null;
+  node_count: number;
+  edge_count: number;
+  required_services: string[];
+  checks: PreflightCheck[];
+  issues: PreflightIssue[];
+  tokens_spent: number;
+};
+
 export type WorkflowFileReference = {
   kind: 'workflow_file';
   file_id: string;

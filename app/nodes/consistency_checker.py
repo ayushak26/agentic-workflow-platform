@@ -43,6 +43,10 @@ class ConsistencyCheckerOutput(BaseModel):
     report: str = ""
 
 
+class ConsistencyCheckerInput(BaseModel):
+    pass
+
+
 class ConsistencyCheckerConfig(BaseModel):
     """Node config — base.__init__ does config_schema(**raw_config)."""
     block_on_warn: bool = False
@@ -132,6 +136,7 @@ class ConsistencyChecker(NodeType):
 
     type_name = "ConsistencyChecker"
 
+    input_schema = ConsistencyCheckerInput
     config_schema = ConsistencyCheckerConfig
     output_schema = ConsistencyCheckerOutput
 

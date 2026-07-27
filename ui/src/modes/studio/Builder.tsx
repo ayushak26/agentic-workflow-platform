@@ -15,7 +15,10 @@ import 'reactflow/dist/style.css';
 
 import { api } from '../../api/client';
 import { Spinner } from '../../components/Spinner';
-import type { NodeTypeManifest } from '../../api/types';
+import type {
+  NodeTypeManifest,
+  WorkflowPreflightReport,
+} from '../../api/types';
 import { WorkflowNode } from './WorkflowNode';
 import { NodePalette } from './NodePalette';
 import { ConfigPanel } from './ConfigPanel';
@@ -45,6 +48,8 @@ export function Builder() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [showInputs, setShowInputs] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [preflight, setPreflight] = useState<WorkflowPreflightReport | null>(null);
 
   // Load node-type manifests once (used by palette + config form).
   useEffect(() => {
@@ -67,7 +72,10 @@ export function Builder() {
   // ---- Edit handlers ----
 
   const onConnect = useCallback(
-    (c: Connection) => setEdges(eds => addEdge(c, eds)),
+    (c: Connection) => {
+      setPreflight(null);
+      setEdges(eds => addEdge(c, eds));
+    },
     [setEdges],
   );
 
@@ -94,6 +102,7 @@ export function Builder() {
         position,
         data: { nodeId: id, typeName, config },
       };
+      setPreflight(null);
       setNodes(ns => [...ns, newNode]);
     },
     [rfInstance, manifests, nodes, setNodes],
@@ -114,6 +123,7 @@ export function Builder() {
   const onConfigChange = useCallback(
     (nextConfig: Record<string, unknown>) => {
       if (!selectedId) return;
+      setPreflight(null);
       setNodes(ns =>
         ns.map(n =>
           n.id === selectedId
@@ -128,6 +138,7 @@ export function Builder() {
   const onIdChange = useCallback(
     (nextId: string) => {
       if (!selectedId) return;
+      setPreflight(null);
       setNodes(ns =>
         ns.map(n =>
           n.id === selectedId
@@ -165,6 +176,21 @@ export function Builder() {
       setSaveError(String(e.message ?? e));
     }
   }, [meta, name, nodes, edges]);
+
+  const onValidate = useCallback(async () => {
+    if (!meta) return;
+    setValidating(true);
+    setSaveError(null);
+    try {
+      const workflow = reactFlowToYaml(meta, nodes, edges);
+      const report = await api.validateWorkflow(dumpYaml(workflow));
+      setPreflight(report);
+    } catch (error: any) {
+      setSaveError(String(error.message ?? error));
+    } finally {
+      setValidating(false);
+    }
+  }, [meta, nodes, edges]);
 
   const showAllNodes = useCallback(() => {
     rfInstance?.fitView({ padding: 0.2, duration: 400 });
@@ -250,6 +276,13 @@ export function Builder() {
             Show all nodes
           </button>
           <button
+            onClick={onValidate}
+            disabled={validating}
+            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50 disabled:opacity-50"
+          >
+            {validating ? 'Checking…' : 'Preflight'}
+          </button>
+          <button
             onClick={onSave}
             disabled={saveState === 'saving'}
             className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
@@ -257,6 +290,61 @@ export function Builder() {
             {saveState === 'saving' ? 'Saving…' : 'Save'}
           </button>
         </div>
+
+        {preflight && (
+          <div
+            className={`absolute bottom-4 left-4 z-10 w-[min(620px,70%)] rounded-lg border bg-white p-4 shadow-lg ${
+              preflight.valid ? 'border-emerald-300' : 'border-red-300'
+            }`}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div
+                  className={`text-sm font-semibold ${
+                    preflight.valid ? 'text-emerald-700' : 'text-red-700'
+                  }`}
+                >
+                  {preflight.valid
+                    ? 'Preflight passed'
+                    : `Preflight blocked: ${
+                        preflight.issues.filter(item => item.severity === 'error').length
+                      } error(s)`}
+                </div>
+                <div className="mt-1 text-xs text-ink-500">
+                  {preflight.node_count} nodes · {preflight.edge_count} edges ·{' '}
+                  {preflight.tokens_spent} tokens used
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreflight(null)}
+                className="text-lg leading-none text-ink-500 hover:text-ink-900"
+              >
+                ×
+              </button>
+            </div>
+            {preflight.issues.length > 0 && (
+              <ul className="mt-3 max-h-44 space-y-2 overflow-y-auto text-xs">
+                {preflight.issues.slice(0, 8).map((issue, index) => (
+                  <li
+                    key={`${issue.code}:${issue.path ?? index}`}
+                    className={
+                      issue.severity === 'error'
+                        ? 'text-red-700'
+                        : 'text-amber-700'
+                    }
+                  >
+                    <span className="font-semibold">{issue.code}</span>
+                    {issue.node_id ? ` · ${issue.node_id}` : ''}
+                    {issue.path ? ` · ${issue.path}` : ''}
+                    {`: ${issue.message}`}
+                    {issue.suggestion ? ` ${issue.suggestion}` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
 
       <aside className="w-96 border-l border-slate-200 bg-white">
@@ -267,6 +355,7 @@ export function Builder() {
               setMeta(current => (
                 current ? { ...current, inputs } : current
               ));
+              setPreflight(null);
               setSaveState('idle');
             }}
             onClose={() => setShowInputs(false)}

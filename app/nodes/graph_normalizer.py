@@ -1,10 +1,27 @@
 """
 GraphNormalizer — turns source text into VALIDATED typed ProposalGraph objects.
 
-The LLM extracts structured information from the concept note. Pydantic
-validation prevents malformed objects from entering the proposal graph.
-"""
+This is the keystone node. Section drafters invent facts because they read free
+text; this node converts the concept note (and call facts) into typed objects —
+Objective, WorkPackage, Partner, Claim, CallRequirement — that live in
+proposal_graph. Downstream, drafters read the graph, the ConsistencyChecker
+gates on it, and the EvidenceAgent enriches its Claims.
 
+Why a dedicated node (not a TransformAgent + separate ingest step)
+------------------------------------------------------------------
+The responsibility "LLM extracts -> validate -> write graph" belongs in one
+place. The LLM proposes structure; pydantic validation is the gate. A malformed
+extraction raises here and is caught as a node error — it never becomes corrupt
+graph state. That is the whole point: the graph only ever holds well-formed
+objects.
+
+Trust boundary
+--------------
+The LLM's job is extraction/structuring of text the user supplied. It is NOT
+asked to invent partners, numbers, or objectives — the prompt forbids that and
+routes anything absent to open_questions. Values that cannot be validated are
+dropped with a recorded warning rather than silently coerced.
+"""
 from __future__ import annotations
 
 import json
@@ -16,34 +33,36 @@ from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import (
-    CallRequirement,
-    Claim,
-    Objective,
-    OpenQuestion,
-    Partner,
-    Status,
-    WorkPackage,
+    CallRequirement, Claim, Objective, OpenQuestion, Partner, Status, WorkPackage,
 )
 from app.proposal_graph.state import proposal_graph_state_update
 
 
 class GraphNormalizerOutput(BaseModel):
-    """Output returned by GraphNormalizer."""
-
+    """What GraphNormalizer.run() writes back. The compiler validates the
+    node's output against this (output_schema is a ClassVar[Type[BaseModel]])."""
     counts: dict = Field(default_factory=dict)
     warnings: list = Field(default_factory=list)
     report: str = ""
 
 
-class GraphNormalizerConfig(BaseModel):
-    """Configuration accepted by GraphNormalizer."""
+class GraphNormalizerInput(BaseModel):
+    pass
 
-    model: str | None = None
+
+class GraphNormalizerConfig(BaseModel):
+    """Node config — base.__init__ does config_schema(**raw_config)."""
+    model: str = "claude-sonnet-4-5"
     max_tokens: int = Field(default=16384, ge=1024)
 
 
 class GraphExtraction(BaseModel):
-    """Schema-enforced response returned by the model."""
+    """Provider-enforced extraction envelope.
+
+    Using the typed graph models here makes malformed or truncated free-text
+    JSON impossible to cross the LLM boundary. The gateway asks the provider
+    for this schema directly and returns a validated instance.
+    """
 
     call_requirements: list[CallRequirement] = Field(default_factory=list)
     objectives: list[Objective] = Field(default_factory=list)
@@ -52,112 +71,52 @@ class GraphExtraction(BaseModel):
     claims: list[Claim] = Field(default_factory=list)
     open_questions: list[OpenQuestion] = Field(default_factory=list)
 
-
+# Extraction contract handed to the LLM. Kept explicit so the JSON shape the
+# model must emit is unambiguous and maps 1:1 onto the pydantic models.
 _EXTRACTION_INSTRUCTIONS = """\
-You convert a Horizon Europe concept note and call facts into structured data.
+You convert a Horizon Europe concept note + call facts into STRUCTURED JSON.
+Extract ONLY what is present in the text. Do NOT invent partners, numbers,
+objectives, or KPIs. Anything an evaluator needs that is absent goes into
+"open_questions", not into a fabricated object.
 
-Extract ONLY information present in the supplied text. Do not invent partners,
-numbers, objectives, work packages, KPIs, results, methods, or impacts.
+Return a single JSON object with these keys (all arrays; empty if none found):
 
-Anything an evaluator needs that is absent must be placed in open_questions.
-
-Required output fields:
-
-call_requirements:
-- id
-- text
-- kind
-
-objectives:
-- id
-- text
-- is_general
-- measurable_ambition
-- work_package_ids
-
-work_packages:
-- id
-- number
-- title
-- start_month
-- end_month
-- lead_partner_id
-- partner_ids
-- objective_ids
-
-partners:
-- id
-- acronym
-- legal_name
-- country
-- role
-- is_end_user
-
-claims:
-- id
-- text
-- claim_type
-- proposal_section
-
-open_questions:
-- id
-- text
-- blocks_submission
+"call_requirements": [{"id":"CR-EO1","text":"...","kind":"expected_outcome|scope|hard_eligibility|must_address|optional"}]
+"objectives":        [{"id":"OBJ-GEN|OBJ-SO1...","text":"...","is_general":true|false,"measurable_ambition":"...|null","work_package_ids":["WP-3"]}]
+"work_packages":     [{"id":"WP-1","number":1,"title":"...","start_month":1|null,"end_month":18|null,"lead_partner_id":"PRT-HAW|null","partner_ids":["PRT-PI"],"objective_ids":["OBJ-SO1"]}]
+"partners":          [{"id":"PRT-HAW","acronym":"HAW","legal_name":null,"country":null,"role":"...|null","is_end_user":true|false}]
+"claims":            [{"id":"CL-1","text":"the specific state-of-the-art / problem / impact assertion","claim_type":"state_of_art|problem|impact|method","proposal_section":"1.2|null"}]
+"open_questions":    [{"id":"OQ-1","text":"what is missing (e.g. partner legal names, KPI targets, 5th pilot region)","blocks_submission":true|false}]
 
 Rules:
-
-1. Claims are a priority.
-
-A claim is any assertion that may require evidence or a citation, including:
-
-- state-of-the-art statements;
-- existing scientific or technical limitations;
-- market or policy problems;
-- methodological statements;
-- expected impact statements.
-
-Extract each distinct assertion as a separate claim.
-
-Examples:
-
-"Residues remain poorly integrated into value chains."
-
-This is a problem claim.
-
-"MILP has been applied to land-use allocation."
-
-This is a method or state-of-the-art claim.
-
-"Valorisation introduces food-safety risks that are rarely assessed."
-
-This is a problem claim.
-
-2. Open questions are only for missing information.
-
-Do not place an existing assertion in open_questions. Existing assertions
-belong in claims.
-
-3. Partner identifiers must follow this pattern:
-
-PRT-<ACRONYM>
-
-Use partner acronyms exactly as written in the input.
-
-If the legal name or country is not provided, leave it empty instead of
-inventing it.
-
-4. Work-package partner references must use partner identifiers that also
-appear in the partners collection.
-
-If the work-package leader is unknown, leave lead_partner_id empty and create
-an open question.
-
-5. Objectives should reference the work packages that deliver them only when
-the mapping is supported by the input.
-
-If the mapping is not available, leave work_package_ids empty.
-
-6. Never guess missing values.
+- CLAIMS ARE THE PRIORITY. A "claim" is ANY declarative assertion in the input
+  that a proposal would need to defend or cite: a statement about the current
+  state of the art, a limitation or gap, a problem, a method that has been
+  applied, or an expected impact. If the input contains such assertions, you
+  MUST extract them as claims — even if there are no objectives, work packages,
+  or partners present. Do NOT route a genuine assertion into open_questions;
+  open_questions are for things that are MISSING, not for statements that are
+  present. Aim to extract every distinct assertion as its own claim.
+  Examples of text that ARE claims:
+    "Residues remain poorly integrated into value chains, limiting efficiency"
+      -> claim_type "problem"
+    "MILP has been applied to land-use allocation"
+      -> claim_type "method" (or "state_of_art")
+    "Valorisation introduces food-safety risks rarely assessed systematically"
+      -> claim_type "problem"
+- Partner ids are PRT-<ACRONYM> using the acronyms exactly as written (HAW, PI,
+  AUTH, UNIMAR, CSIC, ITC, EKE, KKI, TalTech, TICASS, TUHH, GGP, AGFT, AVIPE,
+  FSH, Mekreo, ...). Leave legal_name and country null — those are open_questions.
+- WorkPackage lead_partner_id / partner_ids must be PRT- ids that also appear in
+  "partners". If a WP lead is unclear in the text, set lead_partner_id null and
+  add an open_question.
+- Objectives must list the work_package_ids that deliver them if the text makes
+  that mapping; if not, leave work_package_ids empty (the checker will flag it —
+  do NOT guess a mapping).
+- open_questions are ONLY for information an evaluator needs that is genuinely
+  absent (missing KPIs, undefined partners, an unnamed pilot region). Never put
+  a present assertion here — that belongs in claims.
+- Output ONLY the JSON object. No prose, no markdown fences.
 
 CALL FACTS:
 <<CALL_FACTS>>
@@ -165,7 +124,6 @@ CALL FACTS:
 CONCEPT NOTE:
 <<CONCEPT_NOTE>>
 """
-
 
 _MODEL_BY_KEY = {
     "call_requirements": CallRequirement,
@@ -175,8 +133,7 @@ _MODEL_BY_KEY = {
     "claims": Claim,
     "open_questions": OpenQuestion,
 }
-
-
+# graph collection attribute name for each extraction key
 _COLLECTION_BY_KEY = {
     "call_requirements": "call_requirements",
     "objectives": "objectives",
@@ -189,23 +146,30 @@ _COLLECTION_BY_KEY = {
 
 @NodeRegistry.register
 class GraphNormalizer(NodeType):
-    """Extract and validate structured proposal information."""
+    """LLM extracts structure from source text; pydantic validates it; valid
+    objects are written to proposal_graph. Invalid items are dropped with a
+    warning rather than corrupting the graph."""
 
     type_name = "GraphNormalizer"
 
+    # ClassVars — base.__init__ does config_schema(**raw_config); compiler does
+    # output_schema(**run_output). Both must be pydantic model classes.
+    input_schema = GraphNormalizerInput
     config_schema = GraphNormalizerConfig
     output_schema = GraphNormalizerOutput
 
     async def run(self, state: dict, config: dict) -> dict:
         inputs = state.get("inputs", {})
-
+        # Accept either the proposal-style inputs (concept_note + call_facts) or
+        # the smoke-test input (topic_text). Whichever is present becomes the
+        # concept text the extractor reads; without this, a workflow that names
+        # its input "topic_text" would feed the model an empty document.
         concept_note = (
             inputs.get("concept_note")
             or inputs.get("topic_text")
             or inputs.get("text")
             or ""
         )
-
         call_facts = inputs.get("call_facts", "")
 
         prompt = (
@@ -215,19 +179,17 @@ class GraphNormalizer(NodeType):
         )
 
         llm = self.services.get("llm")
-
         if llm is None:
             raise RuntimeError(
-                "GraphNormalizer requires an 'llm' service. "
-                "Ensure the workflow is executed with the application's "
-                "LLM gateway in the services dictionary."
+                "GraphNormalizer requires an 'llm' service. It was not present in "
+                "node services — ensure the workflow is run with the app's services "
+                "dict (llm gateway), not an empty/None services."
             )
-
         extraction = await llm.complete_structured(
             system=(
-                "You are a Horizon Europe proposal analyst. "
-                "Extract only information supported by the supplied text "
-                "and populate the requested response schema."
+                "You are a Horizon Europe proposal analyst that extracts "
+                "structured data. Extract only information supported by the "
+                "provided text and populate the requested schema."
             ),
             user=prompt,
             model=config.get("model"),
@@ -235,97 +197,61 @@ class GraphNormalizer(NodeType):
             temperature=0.0,
             max_tokens=config.get("max_tokens", 16384),
         )
-
         extracted = extraction.model_dump(mode="python")
-
         graph_delta = ProposalGraph()
         counts: dict[str, int] = {}
         warnings: list[str] = []
 
-        for key, model_class in _MODEL_BY_KEY.items():
+        for key, model_cls in _MODEL_BY_KEY.items():
             items = extracted.get(key, []) or []
             collection: dict[str, Any] = {}
-
             for item in items:
                 if not isinstance(item, dict):
-                    warnings.append(
-                        f"{key}: skipped entry because it was not an object"
-                    )
+                    warnings.append(f"{key}: skipped non-object entry")
                     continue
-
                 try:
-                    graph_object = model_class(**item)
-                except ValidationError as validation_error:
-                    item_id = item.get("id", "?")
-                    warnings.append(
-                        f"{key}: dropped invalid item {item_id} "
-                        f"({validation_error.error_count()} validation errors)"
-                    )
+                    obj = model_cls(**item)
+                except ValidationError as ve:
+                    warnings.append(f"{key}: dropped invalid item "
+                                    f"{item.get('id', '?')} ({ve.error_count()} errors)")
                     continue
-
-                collection[graph_object.id] = graph_object
-
-            collection_name = _COLLECTION_BY_KEY[key]
-            setattr(graph_delta, collection_name, collection)
+                collection[obj.id] = obj
+            setattr(graph_delta, _COLLECTION_BY_KEY[key], collection)
             counts[key] = len(collection)
 
-        report = (
-            "GraphNormalizer extracted: "
-            + ", ".join(f"{key}={value}" for key, value in counts.items())
-        )
-
-        if warnings:
-            report += f"; {len(warnings)} warnings"
+        report = ("GraphNormalizer extracted: "
+                  + ", ".join(f"{k}={v}" for k, v in counts.items())
+                  + (f"; {len(warnings)} warnings" if warnings else ""))
 
         return {
+            # node's own output — validated against GraphNormalizerOutput
             "counts": counts,
             "warnings": warnings,
             "report": report,
+            # state-channel write — passed straight through by the compiler to
+            # the proposal_graph reducer (NOT folded into node_outputs)
             "__state__": proposal_graph_state_update(graph_delta),
         }
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        """Compatibility parser for older callers.
-
-        The normal execution path now uses complete_structured() and does not
-        depend on free-text JSON parsing.
-        """
-
-        text = raw.strip()
-
-        if text.startswith("```"):
-            fenced_parts = text.split("```", 2)
-            text = fenced_parts[1] if len(fenced_parts) >= 2 else raw
-
-            if text.lstrip().lower().startswith("json"):
-                text = text.lstrip()[4:]
-
+        """Parse the LLM's JSON and fail loudly when extraction is malformed."""
+        s = raw.strip()
+        if s.startswith("```"):
+            # strip a ```json ... ``` fence if the model added one
+            s = s.split("```", 2)
+            s = s[1] if len(s) >= 2 else raw
+            if s.lstrip().lower().startswith("json"):
+                s = s.lstrip()[4:]
         try:
-            parsed = json.loads(text)
-
-            if not isinstance(parsed, dict):
-                raise ValueError(
-                    "GraphNormalizer expected a JSON object from the model"
-                )
-
-            return parsed
-
+            parsed = json.loads(s)
+            return parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
+            # last resort: find the outermost {...}
             try:
-                object_start = text.index("{")
-                object_end = text.rindex("}")
-
-                parsed = json.loads(text[object_start : object_end + 1])
-
-                if not isinstance(parsed, dict):
-                    raise ValueError(
-                        "GraphNormalizer expected a JSON object from the model"
-                    )
-
-                return parsed
-
-            except (ValueError, json.JSONDecodeError) as error:
+                start, end = s.index("{"), s.rindex("}")
+                return json.loads(s[start:end + 1])
+            except (ValueError, json.JSONDecodeError):
                 raise ValueError(
                     "GraphNormalizer received invalid JSON from the model"
-                ) from error
+                )

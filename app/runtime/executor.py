@@ -18,6 +18,7 @@ from app.observability import metrics
 
 from .compiler import compile_workflow
 from .events import RunEvent, RunEventBus
+from .preflight import preflight_workflow_spec, require_preflight
 from .schema import WorkflowSpec
 
 _PAUSED_GRAPHS: dict[str, Any] = {}
@@ -66,6 +67,18 @@ async def run_workflow(
     hitl_resume_decisions: dict[str, dict[str, Any]] | None = None,
     resume_replay: bool = False,
 ) -> dict[str, Any]:
+    # Final in-process safety net. API routes perform a stricter service probe
+    # before creating history/checkpoints; this structural pass protects direct
+    # callers, durable HITL replay, scripts, and tests as well.
+    require_preflight(
+        preflight_workflow_spec(
+            spec,
+            provided_inputs=inputs,
+            services=services,
+            compile_graph=False,
+        )
+    )
+
     run_id = run_id or str(uuid.uuid4())
     workflow_name = spec.name
     effective_session = session_id or str(uuid.uuid4())

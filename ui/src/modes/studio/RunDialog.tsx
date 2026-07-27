@@ -266,6 +266,23 @@ export function RunDialog({
     setUploading(true);
     setLaunchError(null);
     try {
+      const preflight = await api.validateWorkflow(workflowYaml);
+      if (!preflight.valid) {
+        const errors = preflight.issues
+          .filter(issue => issue.severity === 'error')
+          .slice(0, 6)
+          .map(issue => (
+            `${issue.code}${issue.node_id ? ` (${issue.node_id})` : ''}: ${
+              issue.message
+            }`
+          ));
+        setLaunchError(
+          `Workflow blocked before upload/run. ${errors.join(' · ')}`,
+        );
+        setUploading(false);
+        return;
+      }
+
       for (const key of keys) {
         const spec = inputs[key];
         if (spec.type !== 'file') continue;

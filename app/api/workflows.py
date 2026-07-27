@@ -13,6 +13,11 @@ from app.nodes.registry import NodeRegistry
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
+from app.runtime.preflight import (
+    WorkflowPreflightReport,
+    preflight_workflow_for_run,
+    preflight_workflow_yaml,
+)
 from app.security.dependencies import require_permission, require_consultant, require_admin, CurrentUser
 # Phase 11A — run history + durable retry checkpoints
 from app.workflow.run_history import (
@@ -74,14 +79,71 @@ class RunRequest(BaseModel):
     collection_id: str = "default"
     run_id: str | None = None
 
+
+class ValidateWorkflowRequest(BaseModel):
+    workflow_yaml: str
+    inputs: dict[str, Any] | None = None
+    check_services: bool = False
+
+
+def _preflight_http_detail(report: WorkflowPreflightReport) -> dict[str, Any]:
+    return {
+        "message": (
+            f"Workflow preflight found {len(report.errors)} blocking "
+            "error(s). No nodes or LLMs were run."
+        ),
+        "preflight": report.model_dump(mode="json"),
+    }
+
+
+@router.post("/workflows/validate")
+async def validate_workflow(
+    req: ValidateWorkflowRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Validate a workflow without running a node or consuming LLM tokens."""
+
+    services = getattr(request.app.state, "services", {})
+    if req.check_services:
+        report = await preflight_workflow_for_run(
+            req.workflow_yaml,
+            provided_inputs=req.inputs or {},
+            services=services,
+            probe_services=True,
+            require_run_history=True,
+        )
+    else:
+        report = preflight_workflow_yaml(
+            req.workflow_yaml,
+            provided_inputs=req.inputs,
+            services=services,
+            compile_graph=True,
+        )
+    return report.model_dump(mode="json")
+
+
 @router.post("/workflows/run")
 async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(require_consultant)):
+    services = getattr(request.app.state, "services", {})
+    preflight = await preflight_workflow_for_run(
+        req.workflow_yaml,
+        provided_inputs=req.inputs,
+        services=services,
+        probe_services=True,
+        require_run_history=True,
+    )
+    if not preflight.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=_preflight_http_detail(preflight),
+        )
+
     try:
         spec = load_workflow_from_string(req.workflow_yaml)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
 
-    services = getattr(request.app.state, "services", {})
     db = services.get("audit_db")   # Phase 11A — Mongo handle for run history + audit
     session = _scope(user, req.session_id)   # matched to runs.py read scope
     try:
@@ -342,11 +404,12 @@ class SaveWorkflowRequest(BaseModel):
 def save_workflow(req: SaveWorkflowRequest):
     """Builder calls this on Save. Validates the YAML parses to a WorkflowSpec
     before writing — bad input never lands on disk."""
-    try:
-        # Reuse the loader we wrote in Phase 4 — it parses + validates.
-        load_workflow_from_string(req.yaml)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"invalid workflow spec: {e}")
+    report = preflight_workflow_yaml(req.yaml, compile_graph=True)
+    if not report.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=_preflight_http_detail(report),
+        )
 
     # Defensive name check — no path traversal, no shell-unsafe chars.
     if not req.name.replace("_", "").replace("-", "").isalnum():

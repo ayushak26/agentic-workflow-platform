@@ -28,6 +28,7 @@ from app.workflow.run_history import (
 class FakeDB:
     def __init__(self):
         self.collections: dict[str, AsyncMock] = {}
+        self.command = AsyncMock(return_value={"ok": 1})
 
     def __getitem__(self, name: str) -> AsyncMock:
         if name not in self.collections:
@@ -339,7 +340,12 @@ exit: first
     }
     request = SimpleNamespace(
         app=SimpleNamespace(
-            state=SimpleNamespace(services={"audit_db": db})
+            state=SimpleNamespace(
+                services={
+                    "audit_db": db,
+                    "event_bus": RunEventBus(),
+                }
+            )
         )
     )
     user = CurrentUser(

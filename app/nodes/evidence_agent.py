@@ -57,6 +57,10 @@ class EvidenceAgentOutput(BaseModel):
     sources: list = Field(default_factory=list)
 
 
+class EvidenceAgentInput(BaseModel):
+    pass
+
+
 class EvidenceAgentConfig(BaseModel):
     """Node config — base.__init__ does config_schema(**raw_config)."""
     mcp_server: str = "paper-search-mcp"
@@ -176,6 +180,7 @@ class EvidenceAgent(NodeType):
 
     type_name = "EvidenceAgent"
 
+    input_schema = EvidenceAgentInput
     config_schema = EvidenceAgentConfig
     output_schema = EvidenceAgentOutput
 

@@ -10,6 +10,7 @@ import type {
   RunSummary,
   WorkflowFileCapabilities,
   WorkflowFileReference,
+  WorkflowPreflightReport,
   WorkflowSummary,
 } from './types';
 
@@ -59,7 +60,38 @@ function authHeaders(extra: Record<string, string> = {}): Record<string, string>
 }
 
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) {
+    const text = await r.text();
+    try {
+      const payload = JSON.parse(text);
+      const detail = payload?.detail ?? payload;
+      const report = detail?.preflight as WorkflowPreflightReport | undefined;
+      if (report) {
+        const errors = report.issues
+          .filter(issue => issue.severity === 'error')
+          .slice(0, 5)
+          .map(issue => `${issue.code}: ${issue.message}`)
+          .join(' · ');
+        throw new Error(
+          `${detail.message ?? 'Workflow preflight failed'}${
+            errors ? ` ${errors}` : ''
+          }`,
+        );
+      }
+      throw new Error(
+        `${r.status} ${
+          typeof detail === 'string'
+            ? detail
+            : (detail?.message ?? JSON.stringify(detail))
+        }`,
+      );
+    } catch (error) {
+      if (error instanceof Error && !error.message.startsWith('Unexpected')) {
+        throw error;
+      }
+      throw new Error(`${r.status} ${text}`);
+    }
+  }
   return r.json() as Promise<T>;
 }
 
@@ -80,6 +112,16 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ name, yaml }),
     }).then(j<{ ok: true; name: string }>),
+  validateWorkflow: (
+    workflow_yaml: string,
+    inputs?: Record<string, unknown>,
+    check_services = false,
+  ) =>
+    fetch(`${API}/workflows/validate`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ workflow_yaml, inputs, check_services }),
+    }).then(j<WorkflowPreflightReport>),
 
   workflowFileCapabilities: () =>
     fetch(`${API}/workflow-input-files/capabilities`, {

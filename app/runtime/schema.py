@@ -185,4 +185,29 @@ class WorkflowSpec(BaseModel):
                     raise ValueError(
                         f"route {route!r} references unknown node {target!r}"
                     )
+
+        variable_names = [variable.name for variable in self.static_variables]
+        if len(variable_names) != len(set(variable_names)):
+            raise ValueError("static variable names must be unique")
+
+        reserved_inputs = [
+            name for name in self.inputs if name.startswith("SYSTEM.")
+        ]
+        if reserved_inputs:
+            raise ValueError(
+                "workflow inputs cannot use reserved SYSTEM.* names: "
+                f"{reserved_inputs}"
+            )
+
+        if self.output is not None:
+            unknown_output_nodes = [
+                item.node_id
+                for item in self.output.nodes
+                if item.node_id not in known
+            ]
+            if unknown_output_nodes:
+                raise ValueError(
+                    "output references unknown nodes: "
+                    f"{unknown_output_nodes}"
+                )
         return self
