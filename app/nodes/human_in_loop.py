@@ -68,11 +68,16 @@ class HumanInLoopAgent(NodeType):
             allowed_actions=cfg.allowed_actions,
         ).model_dump()
 
-        # PAUSE — execution suspends here. State is checkpointed. The caller
-        # (FastAPI route or test) sees an __interrupt__ in the returned state.
-        # When resumed via Command(resume=decision_dict), interrupt() returns
-        # that dict and we continue below.
-        user_decision = interrupt(payload)
+        # A restart-safe resume recompiles the graph and replays completed
+        # nodes from Mongo. When that replay reaches the paused gate, the API-
+        # validated decision is injected here. Normal in-process resumes still
+        # use LangGraph's Command(resume=...) path.
+        durable_decisions = self.services.get("hitl_resume_decisions") or {}
+        if self.node_id in durable_decisions:
+            user_decision = durable_decisions[self.node_id]
+        else:
+            # PAUSE — execution suspends here. The caller sees __interrupt__.
+            user_decision = interrupt(payload)
 
         # Validate the decision shape
         decision = user_decision.get("decision")

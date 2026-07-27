@@ -115,11 +115,17 @@ class RouterAgent(NodeType):
             f"Choose ONE route from: {route_names}\n"
             f"Respond with only the route name, nothing else."
         )
-        raw = await llm.chat(
+        response = await llm.complete(
             model=cfg.model or "claude-sonnet-4-5",
-            messages=[{"role": "user", "content": prompt}],
+            system=(
+                "Route the supplied context to exactly one allowed route. "
+                "Return only the route name."
+            ),
+            user=prompt,
             temperature=0.0,
+            max_tokens=32,
         )
+        raw = response.text
         choice = raw.strip().strip('"').strip("'")
         if choice not in route_names:
             # Fall back to default rule

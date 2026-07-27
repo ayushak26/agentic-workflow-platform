@@ -10,4 +10,8 @@ from . import pdf_tool         # noqa: F401   ← add
 from . import docx_renderer
 from . import graph_normalizer   # noqa: F401  (registers "GraphNormalizer")
 from . import evidence_agent      # noqa: F401  (registers "EvidenceAgent")
+from . import claim_evidence_verifier  # noqa: F401
+from . import call_coverage       # noqa: F401
+from . import concept_alternatives  # noqa: F401
+from . import horizon_evaluation   # noqa: F401
 from . import consistency_checker # noqa: F401  (registers "ConsistencyChecker")

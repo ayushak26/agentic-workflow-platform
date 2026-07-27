@@ -4,6 +4,7 @@ const tabs = [
   { to: 'library', label: 'Library' },
   { to: 'builder', label: 'Builder' },
   { to: 'history', label: 'Run history' },
+  { to: 'proposal-review', label: 'Proposal review' },
 ];
 
 export function StudioLayout() {

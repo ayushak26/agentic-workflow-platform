@@ -25,9 +25,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from .models import (
-    CallRequirement, Claim, ComplianceObject, EvidenceSource, Impact,
-    Innovation, KPI, Objective, OpenQuestion, Outcome, Partner, Result, Risk,
-    Task, WorkPackage,
+    CallRequirement, Claim, ComplianceObject, ConceptAlternative,
+    EvidenceRelation, EvidenceSource, Impact, Innovation, KPI, Objective,
+    OpenQuestion, Outcome, Partner, Result, Risk, Task, WorkPackage,
 )
 
 # type name -> (collection attribute, model class)
@@ -35,6 +35,8 @@ _COLLECTIONS: dict[str, type[BaseModel]] = {
     "call_requirements": CallRequirement,
     "claims": Claim,
     "evidence_sources": EvidenceSource,
+    "claim_evidence": EvidenceRelation,
+    "concept_alternatives": ConceptAlternative,
     "objectives": Objective,
     "innovations": Innovation,
     "results": Result,
@@ -55,6 +57,8 @@ class ProposalGraph(BaseModel):
     call_requirements: dict[str, CallRequirement] = Field(default_factory=dict)
     claims: dict[str, Claim] = Field(default_factory=dict)
     evidence_sources: dict[str, EvidenceSource] = Field(default_factory=dict)
+    claim_evidence: dict[str, EvidenceRelation] = Field(default_factory=dict)
+    concept_alternatives: dict[str, ConceptAlternative] = Field(default_factory=dict)
     objectives: dict[str, Objective] = Field(default_factory=dict)
     innovations: dict[str, Innovation] = Field(default_factory=dict)
     results: dict[str, Result] = Field(default_factory=dict)

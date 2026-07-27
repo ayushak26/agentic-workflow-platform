@@ -14,6 +14,12 @@ Two providers in scope:
 """
 from __future__ import annotations
 
+import asyncio
+import random
+from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
+from typing import Any, Awaitable, Callable
+
 import structlog
 
 from app.config import settings
@@ -33,17 +39,93 @@ _PREFIX_ROUTES: list[tuple[str, type[LLMGateway]]] = [
 # Runtime fallback — when an intended model resolves to a stubbed provider,
 # rewrite to the closest live equivalent.
 _FALLBACK_MODEL: dict[str, str] = {
-    "claude-opus-5": "gpt-5.6-sol",
+    "claude-opus-5":     "gpt-5.6-sol",
     "claude-sonnet-4-5": "gpt-5",
-    "claude-haiku-4-5": "gpt-5-mini",
-    "claude-opus-4-7": "gpt-5",
-    "claude-opus-4-8": "gpt-5",
+    "claude-haiku-4-5":  "gpt-5-mini",
+    "claude-opus-4-7":   "gpt-5",
+    "claude-opus-4-8":   "gpt-5",
 }
 
 # Gateway classes that are stubbed (not live).
 _STUB_GATEWAYS: set[type[LLMGateway]] = set()
 
 _INSTANCES: dict[type[LLMGateway], LLMGateway] = {}
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """One explicit retry policy shared by all LLM providers.
+
+    ``max_attempts`` includes the first request. After transient failures
+    exhaust the primary model, the registry starts a fresh retry sequence on
+    the mapped fallback. Validation/authentication errors fail immediately.
+    """
+
+    max_attempts: int = 3
+    base_delay_seconds: float = 1.0
+    max_delay_seconds: float = 8.0
+    jitter_ratio: float = 0.2
+
+    def __post_init__(self) -> None:
+        if self.max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if self.base_delay_seconds < 0 or self.max_delay_seconds < 0:
+            raise ValueError("retry delays cannot be negative")
+        if not 0 <= self.jitter_ratio <= 1:
+            raise ValueError("jitter_ratio must be between 0 and 1")
+
+
+def _status_code(exc: BaseException) -> int | None:
+    direct = getattr(exc, "status_code", None)
+    if isinstance(direct, int):
+        return direct
+    response = getattr(exc, "response", None)
+    response_status = getattr(response, "status_code", None)
+    return response_status if isinstance(response_status, int) else None
+
+
+def _is_retryable_error(exc: BaseException) -> bool:
+    """Classify only failures that can plausibly succeed on another attempt."""
+
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, ConnectionError)):
+        return True
+
+    status = _status_code(exc)
+    if status is not None:
+        return status in {408, 409, 429} or 500 <= status <= 599
+
+    # SDK exception inheritance differs between provider versions. These class
+    # names are deliberately a final compatibility layer, not the first check.
+    return type(exc).__name__ in {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+        "ServiceUnavailableError",
+    }
+
+
+def _retry_after_seconds(exc: BaseException) -> float | None:
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
+    if not headers:
+        return None
+    value = headers.get("retry-after") or headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(str(value))
+            from datetime import datetime, timezone
+
+            return max(
+                0.0,
+                (retry_at - datetime.now(timezone.utc)).total_seconds(),
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
 
 
 def resolve_model(intended: str) -> str:
@@ -126,12 +208,26 @@ class RegistryLLMGateway(LLMGateway):
     prod when a primary provider is degraded.'
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        retry_policy: RetryPolicy | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        random_value: Callable[[], float] = random.random,
+    ) -> None:
         # Context injected per-run via with_context(). None = no cost tracking.
         self._run_id:     str | None = None
         self._session_id: str | None = None
         self._node_id:    str | None = None
         self._ledger = None  # CostLedger | None
+        self._retry_policy = retry_policy or RetryPolicy(
+            max_attempts=settings.llm_retry_attempts,
+            base_delay_seconds=settings.llm_retry_base_delay_seconds,
+            max_delay_seconds=settings.llm_retry_max_delay_seconds,
+            jitter_ratio=settings.llm_retry_jitter_ratio,
+        )
+        self._sleep = sleep
+        self._random_value = random_value
 
     def with_context(
         self,
@@ -178,24 +274,151 @@ class RegistryLLMGateway(LLMGateway):
         except Exception:
             pass  # cost tracking must never break the actual LLM call
 
+    def _models_for_call(self, intended: str) -> list[str]:
+        """Return primary then fallback, without duplicate static fallback."""
+
+        primary = resolve_model(intended)
+        candidates = [primary]
+        fallback = _FALLBACK_MODEL.get(intended)
+        if fallback and fallback != primary:
+            candidates.append(fallback)
+        return candidates
+
+    def _delay_for(self, attempt: int, exc: BaseException) -> float:
+        policy = self._retry_policy
+        server_delay = _retry_after_seconds(exc)
+        if server_delay is not None:
+            return min(server_delay, policy.max_delay_seconds)
+
+        raw = min(
+            policy.max_delay_seconds,
+            policy.base_delay_seconds * (2 ** max(0, attempt - 1)),
+        )
+        if raw == 0 or policy.jitter_ratio == 0:
+            return raw
+        # Symmetric jitter prevents synchronized parallel drafters from
+        # retrying at exactly the same instant.
+        factor = 1 + policy.jitter_ratio * (
+            (2 * self._random_value()) - 1
+        )
+        return max(0.0, raw * factor)
+
+    async def _call_resilient(
+        self,
+        method_name: str,
+        *,
+        intended: str,
+        kwargs: dict[str, Any],
+    ) -> tuple[Any, str]:
+        candidates = self._models_for_call(intended)
+        last_error: BaseException | None = None
+
+        for model_index, candidate in enumerate(candidates):
+            gateway, resolved = get_gateway(candidate)
+            if model_index:
+                metrics.LLM_FAILOVERS.labels(
+                    from_model=candidates[0],
+                    to_model=resolved,
+                ).inc()
+                log.warning(
+                    "llm.failover",
+                    intended=intended,
+                    from_model=candidates[0],
+                    to_model=resolved,
+                    run_id=self._run_id,
+                    node_id=self._node_id,
+                )
+
+            for attempt in range(1, self._retry_policy.max_attempts + 1):
+                try:
+                    method = getattr(gateway, method_name)
+                    response = await method(model=resolved, **kwargs)
+                    return response, resolved
+                except Exception as exc:
+                    last_error = exc
+                    retryable = _is_retryable_error(exc)
+                    metrics.LLM_CALLS.labels(
+                        model=resolved,
+                        status="error",
+                    ).inc()
+                    exhausted = attempt >= self._retry_policy.max_attempts
+
+                    if not retryable:
+                        log.error(
+                            "llm.non_retryable_error",
+                            intended=intended,
+                            resolved=resolved,
+                            status_code=_status_code(exc),
+                            error_type=type(exc).__name__,
+                            run_id=self._run_id,
+                            node_id=self._node_id,
+                        )
+                        raise
+
+                    if not exhausted:
+                        delay = self._delay_for(attempt, exc)
+                        metrics.LLM_RETRIES.labels(
+                            model=resolved,
+                            reason=type(exc).__name__,
+                        ).inc()
+                        log.warning(
+                            "llm.retry",
+                            intended=intended,
+                            resolved=resolved,
+                            attempt=attempt,
+                            next_attempt=attempt + 1,
+                            delay_seconds=round(delay, 3),
+                            status_code=_status_code(exc),
+                            error_type=type(exc).__name__,
+                            run_id=self._run_id,
+                            node_id=self._node_id,
+                        )
+                        await self._sleep(delay)
+                        continue
+
+                    log.warning(
+                        "llm.provider_exhausted",
+                        intended=intended,
+                        resolved=resolved,
+                        attempts=attempt,
+                        has_fallback=model_index + 1 < len(candidates),
+                        error_type=type(exc).__name__,
+                        run_id=self._run_id,
+                        node_id=self._node_id,
+                    )
+                    break
+
+        assert last_error is not None
+        raise last_error
+
     async def complete(self, *, model: str, **kwargs):
-        gateway, resolved = get_gateway(model)
-        resp = await gateway.complete(model=resolved, **kwargs)
+        resp, resolved = await self._call_resilient(
+            "complete",
+            intended=model,
+            kwargs=kwargs,
+        )
         _record_usage(model, resolved, resp)
         self._record_cost(model, resolved, resp)
         return resp
 
     async def complete_structured(self, *, model: str, **kwargs):
-        gateway, resolved = get_gateway(model)
-        resp = await gateway.complete_structured(model=resolved, **kwargs)
-        # resp is a StructuredResult: carries parsed model + token usage.
+        resp, resolved = await self._call_resilient(
+            "complete_structured",
+            intended=model,
+            kwargs=kwargs,
+        )
+        # Concrete gateways return StructuredResult so cost survives native
+        # structured output. The registry preserves the public bare-model API.
         _record_usage(model, resolved, resp)
         self._record_cost(model, resolved, resp)
         return resp.parsed
 
     async def chat_with_tools(self, *, model: str, **kwargs):
-        gateway, resolved = get_gateway(model)
-        resp = await gateway.chat_with_tools(model=resolved, **kwargs)
+        resp, resolved = await self._call_resilient(
+            "chat_with_tools",
+            intended=model,
+            kwargs=kwargs,
+        )
         _record_usage(model, resolved, resp)
         self._record_cost(model, resolved, resp)
         return resp

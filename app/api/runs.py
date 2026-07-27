@@ -13,6 +13,7 @@ from app.workflow.run_history import (
     get_run,
     initialize_run_checkpoint,
     list_runs,
+    mark_checkpoint_status,
     upsert_run,
 )
 
@@ -185,6 +186,12 @@ async def retry_failed_run(
             ended_at=time.time(),
             error=str(exc)[:500],
         )
+        await mark_checkpoint_status(
+            db,
+            run_id=retry_run_id,
+            session_id=scope,
+            status="failed",
+        )
         return {
             "status": "failed",
             "run_id": retry_run_id,
@@ -213,5 +220,11 @@ async def retry_failed_run(
             else None
         ),
         completed_node_count=len(state.get("node_outputs", {})),
+    )
+    await mark_checkpoint_status(
+        db,
+        run_id=retry_run_id,
+        session_id=scope,
+        status=run_status,
     )
     return result

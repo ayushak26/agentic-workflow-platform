@@ -337,14 +337,22 @@ export function RunHistory() {
                   </div>
                 )}
               </div>
-              {detail.run.status === 'failed' && (
+              <div className="flex gap-2">
                 <button
-                  onClick={retryFailedRun}
-                  className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500"
+                  onClick={() => navigate(`/proposal-review/${detail.run.run_id}`)}
+                  className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
                 >
-                  Retry from failure
+                  Open proposal review
                 </button>
-              )}
+                {detail.run.status === 'failed' && (
+                  <button
+                    onClick={retryFailedRun}
+                    className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500"
+                  >
+                    Retry from failure
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-4 gap-2.5 my-5">

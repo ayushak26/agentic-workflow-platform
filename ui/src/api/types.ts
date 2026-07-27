@@ -102,3 +102,95 @@ export interface RunDetail extends RunSummary {
   retry_available?: boolean;
   retryable_node_count?: number;
 }
+
+export type CoverageStatus = 'ADDRESSED' | 'PARTIAL' | 'MISSING';
+
+export interface CallCoverageRow {
+  requirement_id: string;
+  kind: string;
+  requirement: string;
+  status: CoverageStatus;
+  section?: string | null;
+  mapped_object_ids: string[];
+  evidence_claim_ids: string[];
+  verified_claim_count: number;
+  missing_items: string[];
+  owner_partner_ids: string[];
+  blocking: boolean;
+}
+
+export interface CallCoverageMatrix {
+  rows: CallCoverageRow[];
+  addressed: number;
+  partial: number;
+  missing: number;
+  coverage_percent: number;
+  blocking_requirement_ids: string[];
+  submission_blocked: boolean;
+}
+
+export interface ProposalApproval {
+  approval_id: string;
+  proposal_id: string;
+  stage: string;
+  snapshot_id: string;
+  snapshot_version: number;
+  snapshot_sha256: string;
+  status: 'pending' | 'approved' | 'rejected' | 'changes_requested';
+  selected_concept_id?: string | null;
+  coverage: CallCoverageMatrix;
+  requested_by: string;
+  requested_at: string;
+  decided_by?: string | null;
+  decided_at?: string | null;
+  comment?: string | null;
+}
+
+export interface ConceptAlternative {
+  id: string;
+  posture: 'conservative' | 'balanced' | 'ambitious';
+  title: string;
+  summary: string;
+  scientific_advance: string;
+  scope: string;
+  call_requirement_ids: string[];
+  objective_ids: string[];
+  evidence_claim_ids: string[];
+  required_capabilities: string[];
+  assumptions: string[];
+  key_risks: string[];
+  evidence_weighted_score: number;
+}
+
+export interface ProposalReview {
+  proposal_id: string;
+  run_status: string;
+  graph: Record<string, any>;
+  coverage: CallCoverageMatrix;
+  approvals: ProposalApproval[];
+  source_versions: Record<string, any>[];
+}
+
+export interface HorizonEvaluation {
+  prompt_version: string;
+  generator_model?: string | null;
+  evaluator_models: string[];
+  criteria: {
+    criterion: string;
+    mean_score: number;
+    disagreement: number;
+    judge_results: {
+      evaluator_model: string;
+      score: number;
+      strengths: string[];
+      weaknesses: string[];
+      recommendations: string[];
+      reasoning: string;
+    }[];
+  }[];
+  total_score: number;
+  threshold_passed: boolean;
+  coverage_percent: number;
+  deterministic_blockers: string[];
+  high_disagreement_criteria: string[];
+}

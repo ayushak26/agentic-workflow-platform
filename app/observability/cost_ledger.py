@@ -7,7 +7,6 @@ from app.observability.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Prices are USD per 1,000 tokens.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-5":          (0.005,   0.025),
     "claude-opus-4-8":        (0.005,   0.025),

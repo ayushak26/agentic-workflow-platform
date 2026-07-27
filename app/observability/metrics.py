@@ -72,6 +72,18 @@ LLM_CALLS = Counter(
     labelnames=("model", "status"),  # success | error
 )
 
+LLM_RETRIES = Counter(
+    "awp_llm_retries_total",
+    "Transient LLM calls retried by the provider-neutral resilience policy.",
+    labelnames=("model", "reason"),
+)
+
+LLM_FAILOVERS = Counter(
+    "awp_llm_failovers_total",
+    "LLM calls moved from a primary model to its mapped fallback.",
+    labelnames=("from_model", "to_model"),
+)
+
 
 @contextmanager
 def track_node(node_type: str) -> Iterator[None]:

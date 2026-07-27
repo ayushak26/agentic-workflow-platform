@@ -1,6 +1,10 @@
 import type {
   AuditEvent,
+  ConceptAlternative,
+  HorizonEvaluation,
   NodeTypeManifest,
+  ProposalApproval,
+  ProposalReview,
   RunDetail,
   RunSummary,
   WorkflowSummary,
@@ -112,6 +116,104 @@ export const api = {
         reused_node_count: number;
       };
     }>),
+
+  proposalReview: (run_id: string) =>
+    fetch(`${API}/proposals/runs/${run_id}/review`, {
+      headers: authHeaders(),
+    }).then(j<ProposalReview>),
+
+  registerSourceVersion: (
+    proposal_id: string,
+    source_id: string,
+    body: {
+      content: string;
+      title: string;
+      identifier?: string;
+      authority?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ) =>
+    fetch(
+      `${API}/proposals/${proposal_id}/sources/${source_id}/versions`,
+      {
+        method: 'POST',
+        headers: authHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify(body),
+      },
+    ).then(j<Record<string, unknown>>),
+
+  verifyProposalClaims: (
+    proposal_id: string,
+    graph: Record<string, unknown>,
+    model = 'claude-sonnet-4-5',
+  ) =>
+    fetch(`${API}/proposals/${proposal_id}/verify-claims`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ graph, model }),
+    }).then(j<{
+      graph: Record<string, any>;
+      coverage: ProposalReview['coverage'];
+      findings: Record<string, unknown>[];
+    }>),
+
+  generateConceptAlternatives: (
+    proposal_id: string,
+    graph: Record<string, unknown>,
+    concept_note = '',
+    model = 'claude-opus-5',
+  ) =>
+    fetch(`${API}/proposals/${proposal_id}/concept-alternatives`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ graph, concept_note, model }),
+    }).then(j<{
+      alternatives: ConceptAlternative[];
+      graph: Record<string, any>;
+    }>),
+
+  requestProposalApproval: (
+    proposal_id: string,
+    graph: Record<string, unknown>,
+    stage: string,
+    selected_concept_id?: string,
+  ) =>
+    fetch(`${API}/proposals/${proposal_id}/approvals`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ graph, stage, selected_concept_id }),
+    }).then(j<ProposalApproval>),
+
+  decideProposalApproval: (
+    proposal_id: string,
+    approval_id: string,
+    decision: 'approved' | 'rejected' | 'changes_requested',
+    comment?: string,
+  ) =>
+    fetch(
+      `${API}/proposals/${proposal_id}/approvals/${approval_id}/decision`,
+      {
+        method: 'POST',
+        headers: authHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ decision, comment }),
+      },
+    ).then(j<ProposalApproval>),
+
+  evaluateHorizonProposal: (
+    proposal_id: string,
+    body: {
+      graph: Record<string, unknown>;
+      proposal_text: string;
+      generator_model?: string;
+      evaluator_models?: string[];
+    },
+  ) =>
+    fetch(`${API}/proposals/${proposal_id}/horizon-evaluation`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<HorizonEvaluation>),
+
   goldenSet: (name: string) =>
     fetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
       .then(j<{ name: string; n: number; examples: { id: string; question: string; context: string; reference: string }[] }>),

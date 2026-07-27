@@ -114,6 +114,9 @@ async def ensure_indexes(db) -> None:
     await db["run_checkpoints"].create_index(
         [("session_id", 1), ("updated_at", -1)]
     )
+    await db["run_checkpoints"].create_index(
+        [("session_id", 1), ("status", 1), ("updated_at", -1)]
+    )
 
 
 async def upsert_run(
@@ -469,6 +472,10 @@ async def initialize_run_checkpoint(
         "retry_of_run_id": retry_of_run_id,
         "node_results": {},
         "completed_nodes": [],
+        "status": "running",
+        "paused_node_id": None,
+        "pause_context": None,
+        "approvals": [],
         "created_at": now,
         "updated_at": now,
     }
@@ -509,7 +516,13 @@ async def record_checkpoint_node_completed(
                         "output": output,
                         "extra_state": extra_state,
                     },
+                    "status": "running",
                     "updated_at": datetime.now(timezone.utc),
+                },
+                "$unset": {
+                    "paused_node_id": "",
+                    "pause_context": "",
+                    "paused_at": "",
                 },
                 "$addToSet": {"completed_nodes": node_id},
             },
@@ -521,6 +534,101 @@ async def record_checkpoint_node_completed(
             run_id=run_id,
             node_id=node_id,
         )
+
+
+async def record_checkpoint_paused(
+    db,
+    *,
+    run_id: str,
+    session_id: str,
+    node_id: str,
+    pause_context: Any,
+) -> None:
+    """Persist enough information to resume a HITL run after process restart."""
+
+    _require_session(session_id)
+    try:
+        await db["run_checkpoints"].update_one(
+            {"run_id": run_id, "session_id": session_id},
+            {
+                "$set": {
+                    "status": "paused",
+                    "paused_node_id": node_id,
+                    "pause_context": redact_for_history(pause_context),
+                    "paused_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "run_checkpoint_pause_write_failed",
+            error=str(exc),
+            run_id=run_id,
+            node_id=node_id,
+        )
+
+
+async def record_checkpoint_approval(
+    db,
+    *,
+    run_id: str,
+    session_id: str,
+    node_id: str,
+    decision: dict[str, Any],
+    actor: str,
+) -> None:
+    """Append an immutable human decision before resuming execution."""
+
+    _require_session(session_id)
+    approval = {
+        "node_id": node_id,
+        "decision": redact_for_history(decision),
+        "actor": actor,
+        "decided_at": datetime.now(timezone.utc),
+    }
+    await db["run_checkpoints"].update_one(
+        {
+            "run_id": run_id,
+            "session_id": session_id,
+            "status": "paused",
+            "paused_node_id": node_id,
+        },
+        {
+            "$push": {"approvals": approval},
+            "$set": {
+                "status": "resuming",
+                "updated_at": datetime.now(timezone.utc),
+            },
+        },
+    )
+
+
+async def mark_checkpoint_status(
+    db,
+    *,
+    run_id: str,
+    session_id: str,
+    status: str,
+) -> None:
+    _require_session(session_id)
+    update: dict[str, Any] = {
+        "$set": {
+            "status": status,
+            "updated_at": datetime.now(timezone.utc),
+        }
+    }
+    if status in TERMINAL_STATUSES:
+        update["$set"]["ended_at"] = datetime.now(timezone.utc)
+        update["$unset"] = {
+            "paused_node_id": "",
+            "pause_context": "",
+            "paused_at": "",
+        }
+    await db["run_checkpoints"].update_one(
+        {"run_id": run_id, "session_id": session_id},
+        update,
+    )
 
 
 async def get_retry_checkpoint(
@@ -548,6 +656,21 @@ async def get_retry_checkpoint(
             }
 
     document["reusable_results"] = reusable_results
+    return document
+
+
+async def get_resume_checkpoint(
+    db,
+    session_id: str,
+    run_id: str,
+) -> dict[str, Any] | None:
+    """Return a restart-safe checkpoint only when it is currently paused."""
+
+    document = await get_retry_checkpoint(db, session_id, run_id)
+    if document is None or document.get("status") != "paused":
+        return None
+    if not document.get("paused_node_id"):
+        return None
     return document
 
 

@@ -29,6 +29,7 @@ from app.llm.registry import get_llm_gateway
 from app.runtime.events import RunEventBus
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
+from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 
 from app.api import health
 from app.api.auth import router as auth_router
@@ -38,6 +39,7 @@ from app.api.eval import router as eval_router
 from app.api.inspect import router as inspect_router
 from app.api import audit as audit_api
 from app.api import runs as runs_api
+from app.api import proposals as proposals_api
 
 from app.db.mongo import DB_NAME
 
@@ -71,6 +73,10 @@ async def lifespan(app: FastAPI):
         services["audit_db"] = services["mongo"]._ensure_client()[DB_NAME]
         try:
             await ensure_run_indexes(services["audit_db"])
+            await ProposalWorkspaceStore(
+                services["audit_db"],
+                None,
+            ).ensure_indexes()
             logger.info("run_history.indexes_ensured")
         except Exception as exc:
             logger.warning("run_history.indexes_failed", error=str(exc))
@@ -195,4 +201,5 @@ app.include_router(workflows_router)
 app.include_router(eval_router)
 app.include_router(inspect_router)
 app.include_router(audit_api.router)
-app.include_router(runs_api.router) 
+app.include_router(runs_api.router)
+app.include_router(proposals_api.router)

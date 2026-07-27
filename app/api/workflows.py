@@ -11,11 +11,15 @@ from fastapi.responses import Response
 
 from app.nodes.registry import NodeRegistry
 from app.runtime.executor import run_workflow
-from app.runtime.hitl import resume_workflow, HITLResumeError
+from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
 from app.security.dependencies import require_permission, require_consultant, require_admin, CurrentUser
 # Phase 11A — run history + durable retry checkpoints
-from app.workflow.run_history import initialize_run_checkpoint, upsert_run
+from app.workflow.run_history import (
+    initialize_run_checkpoint,
+    mark_checkpoint_status,
+    upsert_run,
+)
 from app.security.audit import write_audit_event, HITL_EVENT
 
 router = APIRouter(prefix="/api", tags=["workflows"])
@@ -132,6 +136,12 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
                 ended_at=time.time(),
                 error=str(e)[:500],
             )
+            await mark_checkpoint_status(
+                db,
+                run_id=run_id,
+                session_id=session,
+                status="failed",
+            )
         return {"status": "failed", "run_id": run_id, "error": str(e)}
 
     # Persist pause and terminal states. Node hooks have already written every
@@ -155,6 +165,12 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
                 else None
             ),
             completed_node_count=len(state.get("node_outputs", {})),
+        )
+        await mark_checkpoint_status(
+            db,
+            run_id=run_id,
+            session_id=session,
+            status=run_status,
         )
     return result
 
@@ -181,7 +197,13 @@ async def resume(
     actor = user.username   # real JWT subject (CurrentUser, not a dict)
 
     try:
-        result = await resume_workflow(run_id, req.decision)
+        result = await resume_workflow_durable(
+            run_id,
+            req.decision,
+            services=services,
+            session_id=session,
+            actor=actor,
+        )
     except HITLResumeError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -196,6 +218,12 @@ async def resume(
                 ended_at=time.time(),
                 error=str(e)[:500],
             )
+            await mark_checkpoint_status(
+                db,
+                run_id=run_id,
+                session_id=session,
+                status="failed",
+            )
         return {"status": "failed", "run_id": run_id, "error": str(e)}
 
     # Phase 11A — HITL audit event: the human decision, now that session is in scope.
@@ -203,7 +231,12 @@ async def resume(
     if db is not None and action in HITL_EVENT:
         await write_audit_event(
             db, run_id, session,
-            node_id=result.get("node_id") or req.decision.get("node_id") or "unknown",
+            node_id=(
+                result.get("node_id")
+                or result.get("resumed_node_id")
+                or req.decision.get("node_id")
+                or "unknown"
+            ),
             event_type=HITL_EVENT[action],
             actor=actor,
             payload={"reason": result.get("reason")} if action == "reject" else {},
@@ -230,6 +263,12 @@ async def resume(
             ),
             completed_node_count=len(state.get("node_outputs", {})),
             error=result.get("reason"),
+        )
+        await mark_checkpoint_status(
+            db,
+            run_id=run_id,
+            session_id=session,
+            status=run_status,
         )
     return result
     

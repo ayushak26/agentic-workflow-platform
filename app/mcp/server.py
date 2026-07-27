@@ -28,6 +28,8 @@ from mcp.server.stdio import stdio_server
 from app.ingestion.embedder import get_embedder
 from app.llm import get_llm_gateway
 from app.observability.logging import get_logger
+from app.proposal_graph.evidence_verification import verify_claim_against_text
+from app.proposal_graph.models import EvidenceStance
 from app.retrieval.models import RetrievalFilters, RetrievalQuery
 from app.retrieval.retriever import retrieve
 from app.retrieval.weaviate_client import get_weaviate_client
@@ -180,7 +182,9 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         return [types.TextContent(type="text", text=json.dumps({"chunks": results}))]
 
     if name == "validate_citation":
-        # Fetch the chunk, then ask the LLM to score support
+        # Fetch the session-scoped chunk, then run typed semantic verification.
+        # The verifier also checks that its supporting quote exists verbatim in
+        # this exact chunk, so a citation cannot pass on judge prose alone.
         from weaviate.classes.query import Filter
         collection = svc["weaviate"].collections.get("DocumentChunk")
         response = collection.query.fetch_objects(
@@ -195,22 +199,23 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
                 "score": 0.0, "reason": "chunk not found or not in this session"
             }))]
         chunk_text = response.objects[0].properties["text"]
-        judge_prompt = (
-            "Score from 0.0 to 1.0 how strongly the SOURCE supports the CLAIM. "
-            "1.0 = directly stated. 0.5 = implied. 0.0 = unsupported or contradicted. "
-            "Respond with JSON: {\"score\": float, \"reason\": str}\n\n"
-            f"SOURCE: {chunk_text}\n\nCLAIM: {arguments['claim']}"
-        )
-        judge_raw = await svc["llm"].chat(
+        verdict = await verify_claim_against_text(
+            svc["llm"],
+            claim=arguments["claim"],
+            source_text=chunk_text,
             model="claude-sonnet-4-5",
-            messages=[{"role": "user", "content": judge_prompt}],
-            temperature=0.0,
         )
-        # Best-effort JSON parse; the LLM was instructed to return JSON.
-        try:
-            parsed = json.loads(judge_raw)
-        except json.JSONDecodeError:
-            parsed = {"score": 0.0, "reason": "judge output was not JSON"}
+        parsed = {
+            "score": (
+                verdict.confidence
+                if verdict.stance == EvidenceStance.SUPPORTS
+                else 0.0
+            ),
+            "stance": verdict.stance.value,
+            "reason": verdict.reason,
+            "supporting_quote": verdict.supporting_quote,
+            "chunk_id": arguments["chunk_id"],
+        }
         return [types.TextContent(type="text", text=json.dumps(parsed))]
     
     if name == "search_web":
@@ -226,7 +231,6 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         results = search_web(query, top_k)
         log.info("mcp.search_web", session_id=session_id, query=query,
              n=len(results))
-        import json
         return [types.TextContent(type="text", text=json.dumps(results))]
 
 

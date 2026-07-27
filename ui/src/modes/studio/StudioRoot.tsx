@@ -4,6 +4,7 @@ import { Library } from './Library';
 import { Builder } from './Builder';                  
 import { Cockpit } from './Cockpit';
 import { RunHistory } from './RunHistory';
+import { ProposalReview } from './ProposalReview';
 
 export function StudioRoot() {
   return (
@@ -16,6 +17,8 @@ export function StudioRoot() {
         <Route path="cockpit/:runId" element={<Cockpit />} />
         <Route path="history" element={<RunHistory />} />
         <Route path="history/:runId" element={<RunHistory />} />
+        <Route path="proposal-review" element={<ProposalReview />} />
+        <Route path="proposal-review/:runId" element={<ProposalReview />} />
       </Route>
     </Routes>
   );

@@ -65,18 +65,18 @@ def _completion_tokens_for(model: str, requested: int) -> int:
         return max(requested, _GPT5_MIN_COMPLETION_TOKENS)
     return requested
 
+
 def _chat_tool_reasoning_effort(model: str) -> str | None:
-    """Return the safe effort for Chat Completions tool calls.
+    """Return the safe Chat Completions effort for function-tool calls.
 
-    GPT-5.6 function tools through Chat Completions require
-    effective reasoning effort 'none'. Reasoning with tools
-    should otherwise use the Responses API.
+    GPT-5.6 function tools on Chat Completions require effective reasoning
+    effort ``none``. Reasoning plus tools belongs on the Responses API; this
+    gateway keeps its existing Chat Completions contract.
     """
-
     if model.startswith(_GPT56_FAMILY_PREFIXES):
         return "none"
-
     return None
+
 
 # ---------------------------------------------------------------------
 
@@ -85,7 +85,7 @@ class OpenAIGateway(LLMGateway):
     """OpenAI-backed gateway. One AsyncOpenAI client per instance."""
 
     def __init__(self, api_key: str):
-        self._client = AsyncOpenAI(api_key=api_key)
+        self._client = AsyncOpenAI(api_key=api_key, max_retries=0)
 
     async def complete(
         self,
@@ -211,15 +211,11 @@ class OpenAIGateway(LLMGateway):
             "model": model,
             "messages": openai_messages,
             "tools": openai_tools,
-            "max_completion_tokens": _completion_tokens_for(
-            model,
-            max_tokens,
-        ),
+            "max_completion_tokens": _completion_tokens_for(model, max_tokens),
         }
         reasoning_effort = _chat_tool_reasoning_effort(model)
         if reasoning_effort is not None:
             call_kwargs["reasoning_effort"] = reasoning_effort
-            
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
 

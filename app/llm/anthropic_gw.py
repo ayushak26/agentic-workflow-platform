@@ -32,7 +32,6 @@ from app.llm.openai_gw import StructuredResult   # reuse the carrier so cost rec
 
 T = TypeVar("T", bound=BaseModel)
 
-# Models that reject the `temperature` parameter (newer reasoning models).
 # Models that reject non-default sampling parameters.
 _NO_TEMPERATURE = {
     "claude-opus-4-8",
@@ -41,8 +40,7 @@ _NO_TEMPERATURE = {
 
 
 def _supports_temperature(model: str) -> bool:
-    """Return True when the model accepts temperature."""
-
+    """Return True if the model accepts a non-default temperature."""
     return model not in _NO_TEMPERATURE
 
 
@@ -50,7 +48,11 @@ class AnthropicGateway(LLMGateway):
     """Live Anthropic Claude gateway. One AsyncAnthropic client per instance."""
 
     def __init__(self, api_key: str):
-        self._client = AsyncAnthropic(api_key=api_key, timeout=600.0)
+        self._client = AsyncAnthropic(
+            api_key=api_key,
+            timeout=600.0,
+            max_retries=0,
+        )
 
     async def _create(self, **kwargs):
         """Issue a request via streaming and return the assembled Message.

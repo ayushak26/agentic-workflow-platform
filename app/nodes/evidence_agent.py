@@ -159,6 +159,12 @@ def _paper_to_source(paper: dict, source_hint: str | None) -> EvidenceSource:
         identifier=identifier,
         authority=_AUTHORITY_BY_SOURCE.get(src, Authority.UNVERIFIED),
         retrieved_at=date.today().isoformat(),
+        title=str(title),
+        source_type=src or None,
+        # Discovery results normally contain the abstract. It is kept as a
+        # candidate passage for the verifier; full text can later replace it
+        # through source versioning without changing the stable source id.
+        excerpt=str(_first(paper, "abstract", "summary", "snippet") or "") or None,
     )
 
 

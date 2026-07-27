@@ -40,6 +40,7 @@ from app.security.audit import (
 from app.workflow.run_history import (
     build_node_input,
     record_checkpoint_node_completed,
+    record_checkpoint_paused,
     record_node_completed,
     record_node_failed,
     record_node_paused,
@@ -88,7 +89,8 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 services.get("retry_source_run_id") or "unknown"
             )
 
-            if bus and run_id:
+            replay_existing = bool(services.get("resume_replay"))
+            if bus and run_id and not replay_existing:
                 await bus.publish(
                     RunEvent(
                         type="node_reused",
@@ -97,7 +99,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         output_preview=sanitize_preview(output),
                     )
                 )
-            if audit is not None and run_id:
+            if audit is not None and run_id and not replay_existing:
                 await write_audit_event(
                     audit,
                     run_id,
@@ -200,6 +202,17 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         session_id=session_id,
                         node_id=node_id,
                         paused_at=time.time(),
+                    )
+                    await record_checkpoint_paused(
+                        audit,
+                        run_id=run_id,
+                        session_id=session_id,
+                        node_id=node_id,
+                        pause_context={
+                            "interrupt": sanitize_preview(
+                                getattr(e, "args", None)
+                            )
+                        },
                     )
             else:
                 log.error("node_failed", node_id=node_id, type_name=type_name,

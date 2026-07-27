@@ -43,6 +43,18 @@ class Authority(str, Enum):
     UNVERIFIED = "unverified"
 
 
+class EvidenceStance(str, Enum):
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    INSUFFICIENT = "insufficient"
+
+
+class ConceptPosture(str, Enum):
+    CONSERVATIVE = "conservative"
+    BALANCED = "balanced"
+    AMBITIOUS = "ambitious"
+
+
 # ---------------------------------------------------------------------------
 # 1. Call requirement — an atomic thing the call demands the proposal cover.
 # ---------------------------------------------------------------------------
@@ -52,6 +64,10 @@ class CallRequirement(BaseModel):
     kind: str = "must_address"               # hard_eligibility|expected_outcome|
                                              # scope|must_address|optional
     addressed_by_section: Optional[str] = None   # e.g. "1.2", "2.1"
+    addressed_by_ids: list[str] = Field(default_factory=list)
+    evidence_claim_ids: list[str] = Field(default_factory=list)
+    owner_partner_ids: list[str] = Field(default_factory=list)
+    notes: Optional[str] = None
     coverage: Status = Status.MISSING
 
 
@@ -64,6 +80,12 @@ class EvidenceSource(BaseModel):
     identifier: Optional[str] = None         # DOI / arXiv / CORDIS id / URL
     authority: Authority = Authority.UNVERIFIED
     retrieved_at: Optional[str] = None
+    title: Optional[str] = None
+    source_type: Optional[str] = None
+    version_id: Optional[str] = None
+    content_sha256: Optional[str] = None
+    object_key: Optional[str] = None
+    excerpt: Optional[str] = None
 
 
 class Claim(BaseModel):
@@ -72,8 +94,26 @@ class Claim(BaseModel):
     claim_type: str = "state_of_art"         # problem|state_of_art|impact|method
     proposal_section: Optional[str] = None
     evidence_source_ids: list[str] = Field(default_factory=list)
+    evidence_relation_ids: list[str] = Field(default_factory=list)
     locator: Optional[str] = None            # "p.14, sec 3.2"
     verification: Status = Status.MISSING
+
+
+class EvidenceRelation(BaseModel):
+    """Auditable claim -> exact passage -> immutable source-version relation."""
+
+    id: str
+    claim_id: str
+    source_id: str
+    source_version_id: Optional[str] = None
+    passage: str
+    locator: str
+    passage_sha256: str
+    stance: EvidenceStance
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str
+    verifier_model: str
+    verified_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -205,3 +245,22 @@ class OpenQuestion(BaseModel):
     text: str
     blocks_submission: bool = False
     owner: Optional[str] = None              # who must answer it
+
+
+# ---------------------------------------------------------------------------
+# 16. Concept alternative — three explicitly different proposal postures.
+# ---------------------------------------------------------------------------
+class ConceptAlternative(BaseModel):
+    id: str
+    posture: ConceptPosture
+    title: str
+    summary: str
+    scientific_advance: str
+    scope: str
+    call_requirement_ids: list[str] = Field(default_factory=list)
+    objective_ids: list[str] = Field(default_factory=list)
+    evidence_claim_ids: list[str] = Field(default_factory=list)
+    required_capabilities: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    key_risks: list[str] = Field(default_factory=list)
+    evidence_weighted_score: float = Field(default=0.0, ge=0.0, le=100.0)

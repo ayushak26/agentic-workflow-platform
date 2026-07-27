@@ -1,0 +1,93 @@
+name: EU Proposal Evidence Pipeline
+description: >-
+  Normalise a Horizon concept, discover and verify evidence, build the
+  requirement-coverage matrix, generate three concept alternatives, pause for
+  human approvals, and run an independent two-provider Horizon evaluation.
+version: "1.0"
+use_case: eu_proposal
+inputs:
+  concept_note:
+    type: text
+    description: Internal proposal concept note.
+  call_facts:
+    type: text
+    description: Authoritative call requirements and expected outcomes.
+  proposal_text:
+    type: text
+    description: Part B draft to evaluate after concept approval.
+nodes:
+  - id: normalise_concept
+    type: GraphNormalizer
+    config:
+      model: claude-opus-5
+      max_tokens: 16384
+  - id: discover_evidence
+    type: EvidenceAgent
+    config:
+      model: claude-sonnet-4-5
+      max_per_claim: 5
+      claim_types: [state_of_art, problem, impact, method]
+  - id: verify_evidence
+    type: ClaimEvidenceVerifier
+    config:
+      model: claude-sonnet-4-5
+      minimum_support_confidence: 0.72
+  - id: call_coverage
+    type: CallCoverageMatrixAgent
+    config: {}
+  - id: approve_evidence
+    type: HumanInLoopAgent
+    config:
+      question: Approve the verified evidence pack and call-coverage matrix?
+      context_fields:
+        - verify_evidence.findings
+        - call_coverage.blocking_requirement_ids
+      allowed_actions: [approve, reject, edit]
+  - id: concept_alternatives
+    type: ConceptAlternativesAgent
+    config:
+      model: claude-opus-5
+      concept_note: "{{inputs.concept_note}}"
+  - id: approve_concept
+    type: HumanInLoopAgent
+    config:
+      question: Select and approve one concept posture before drafting?
+      context_fields:
+        - concept_alternatives.alternatives
+      allowed_actions: [approve, reject, edit]
+  - id: horizon_evaluation
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{inputs.proposal_text}}"
+      generator_model: claude-opus-5
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 3.0
+      total_threshold: 10.0
+edges:
+  - from: normalise_concept
+    to: discover_evidence
+  - from: discover_evidence
+    to: verify_evidence
+  - from: verify_evidence
+    to: call_coverage
+  - from: call_coverage
+    to: approve_evidence
+  - from: approve_evidence
+    to: concept_alternatives
+  - from: concept_alternatives
+    to: approve_concept
+  - from: approve_concept
+    to: horizon_evaluation
+entry: normalise_concept
+exit: horizon_evaluation
+output:
+  include_input: false
+  nodes:
+    - node_id: call_coverage
+      flatten: false
+    - node_id: concept_alternatives
+      flatten: false
+    - node_id: horizon_evaluation
+      flatten: false

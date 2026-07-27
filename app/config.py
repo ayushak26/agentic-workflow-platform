@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
+    # LLM resilience is owned by the provider-neutral registry. Provider SDK
+    # retries are disabled so one policy controls attempt count, backoff,
+    # failover, metrics, and logs without multiplying hidden SDK retries.
+    llm_retry_attempts: int = 3
+    llm_retry_base_delay_seconds: float = 1.0
+    llm_retry_max_delay_seconds: float = 8.0
+    llm_retry_jitter_ratio: float = 0.2
+
     dev_bypass_enabled: bool = True
     dev_bypass_username: str = "ayush"
     dev_bypass_password: str = "dev123"

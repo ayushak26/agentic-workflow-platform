@@ -23,6 +23,13 @@ from .schema import WorkflowSpec
 _PAUSED_GRAPHS: dict[str, Any] = {}
 
 
+def _find_rejection(state: dict[str, Any]) -> dict[str, Any] | None:
+    for node_id, output in (state.get("node_outputs") or {}).items():
+        if isinstance(output, dict) and output.get("decision") == "reject":
+            return {"node_id": node_id, "reason": output.get("reason")}
+    return None
+
+
 def _project_output(
     spec: WorkflowSpec,
     state: dict[str, Any],
@@ -56,6 +63,8 @@ async def run_workflow(
     run_id: str | None = None,
     reused_node_results: dict[str, dict[str, Any]] | None = None,
     retry_source_run_id: str | None = None,
+    hitl_resume_decisions: dict[str, dict[str, Any]] | None = None,
+    resume_replay: bool = False,
 ) -> dict[str, Any]:
     run_id = run_id or str(uuid.uuid4())
     workflow_name = spec.name
@@ -64,6 +73,8 @@ async def run_workflow(
     run_services = dict(services or {})
     run_services["reused_node_results"] = reused_node_results or {}
     run_services["retry_source_run_id"] = retry_source_run_id
+    run_services["hitl_resume_decisions"] = hitl_resume_decisions or {}
+    run_services["resume_replay"] = resume_replay
     graph = compile_workflow(spec, services=run_services)
 
     merged_inputs: dict[str, Any] = dict(inputs)
@@ -125,6 +136,21 @@ async def run_workflow(
                 "source_run_id": retry_source_run_id,
                 "reused_node_count": len(reused_node_results or {}),
             }
+        return result
+
+    rejection = _find_rejection(final_state)
+    if rejection:
+        metrics.WORKFLOW_RUNS.labels(
+            workflow=workflow_name,
+            status="rejected",
+        ).inc()
+        result = {
+            "status": "rejected",
+            "run_id": run_id,
+            "node_id": rejection["node_id"],
+            "reason": rejection["reason"],
+            "state": final_state,
+        }
         return result
 
     # Terminal success outcome.
