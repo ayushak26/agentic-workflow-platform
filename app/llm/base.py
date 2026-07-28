@@ -6,7 +6,7 @@ modules only ever depend on this base class, never on a concrete provider.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, Type, TypeVar, Any
+from typing import Type, TypeVar, Any
 
 from pydantic import BaseModel
 
@@ -22,8 +22,6 @@ class LLMResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     stop_reason: str | None = None
-    cache_hit: bool = False
-    cache_similarity: float | None = None
 
 
 class ToolCall(BaseModel):
@@ -40,6 +38,9 @@ class LLMToolUseResponse(BaseModel):
     one or more tool calls (text may be None or a brief plan).
     """
     text: str | None
+    # Kimi K3 requires the complete assistant turn, including its preserved
+    # thinking, to be sent back during multi-turn tool use.
+    reasoning_content: str | None = None
     tool_calls: list[ToolCall] = []
     model: str
     input_tokens: int
@@ -64,7 +65,6 @@ class LLMGateway(ABC):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
-        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         """Plain text completion."""
         ...
@@ -87,7 +87,7 @@ class LLMGateway(ABC):
         etc.) — never parse free-text JSON.
         """
         ...
-    
+
     @abstractmethod
     async def chat_with_tools(
         self,
@@ -104,6 +104,7 @@ class LLMGateway(ABC):
         Message format (neutral — implementations translate as needed):
           {"role": "user", "content": str}
           {"role": "assistant", "content": str | None,
+                                "reasoning_content": str | None,
                                 "tool_calls": [{"id", "name", "arguments"}]}
           {"role": "tool", "tool_call_id": str, "content": str}
 

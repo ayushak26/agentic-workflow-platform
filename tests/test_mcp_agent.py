@@ -43,6 +43,7 @@ async def test_mcp_agent_completes_with_final_answer():
         # Iteration 1: LLM asks to search
         LLMToolUseResponse(
             text=None,
+            reasoning_content="Search the tenant-scoped corpus first.",
             tool_calls=[ToolCall(id="tc1", name="search_documents",
                                  arguments={"query": "RFP requirements"})],
             model="gpt-5", input_tokens=10, output_tokens=20,
@@ -74,6 +75,10 @@ async def test_mcp_agent_completes_with_final_answer():
     assert "Found requirements" in result["answer"]
     assert result["iterations_used"] == 2
     assert len(result["tool_calls"]) == 1
+    assert (
+        llm.calls[1]["messages"][1]["reasoning_content"]
+        == "Search the tenant-scoped corpus first."
+    )
     # session_id was injected by the runtime, not by the LLM
     assert mcp.calls[0]["arguments"]["session_id"] == "sess-1"
 

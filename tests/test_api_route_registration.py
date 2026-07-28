@@ -26,3 +26,8 @@ def test_route_contract_contains_preflight_and_file_inputs():
         "GET",
         "/api/workflow-input-files/capabilities",
     ) in REQUIRED_ROUTES
+    assert ("GET", "/api/llm/models") in REQUIRED_ROUTES
+    assert (
+        "POST",
+        "/api/llm/models/{model}/probe",
+    ) in REQUIRED_ROUTES

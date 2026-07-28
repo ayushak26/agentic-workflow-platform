@@ -4,7 +4,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.llm.model_catalog import AUTO_MODEL, DEFAULT_LLM_MODELS
+from app.llm.catalog import MODEL_NAMES
+
+
+DEFAULT_LLM_MODELS = list(MODEL_NAMES)
 
 
 FILE_INPUT_CATEGORIES = [
@@ -68,46 +71,6 @@ class WorkflowInputSpec(BaseModel):
         return min(self.max_files or platform_limit, platform_limit)
 
 
-class ModelRoutingPolicy(BaseModel):
-    """Per-node constraints used only when ``selected_model`` is ``auto``.
-
-    ``quality_scores`` accepts offline evaluation results on a 0..1 scale.
-    When supplied, those observed task scores take precedence over the
-    catalog's generic capability hints.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    accuracy_priority: Literal["maximum", "balanced", "economy"] = "balanced"
-    max_estimated_cost_usd: float | None = Field(default=None, gt=0)
-    prefer_low_latency: bool = False
-    quality_scores: dict[str, float] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_quality_scores(self) -> "ModelRoutingPolicy":
-        invalid_models = [
-            model
-            for model in self.quality_scores
-            if model not in DEFAULT_LLM_MODELS
-        ]
-        if invalid_models:
-            raise ValueError(
-                "quality_scores contains unknown models: "
-                f"{invalid_models}"
-            )
-        invalid_values = {
-            model: score
-            for model, score in self.quality_scores.items()
-            if not 0 <= score <= 1
-        }
-        if invalid_values:
-            raise ValueError(
-                "quality_scores values must be between 0 and 1: "
-                f"{invalid_values}"
-            )
-        return self
-
-
 class NodeSpec(BaseModel):
     """One node instance in a workflow.
 
@@ -123,31 +86,13 @@ class NodeSpec(BaseModel):
         default_factory=lambda: list(DEFAULT_LLM_MODELS)
     )
     selected_model: str | None = None
-    model_routing: ModelRoutingPolicy = Field(
-        default_factory=ModelRoutingPolicy
-    )
 
     @model_validator(mode="after")
     def selected_model_must_be_allowed(self) -> "NodeSpec":
-        if (
-            self.selected_model
-            and self.selected_model != AUTO_MODEL
-            and self.selected_model not in self.allowed_models
-        ):
+        if self.selected_model and self.selected_model not in self.allowed_models:
             raise ValueError(
                 f"selected_model {self.selected_model!r} is not in allowed_models"
             )
-        unknown_allowed = [
-            model
-            for model in self.allowed_models
-            if model not in DEFAULT_LLM_MODELS
-        ]
-        if unknown_allowed:
-            raise ValueError(
-                f"allowed_models contains unknown models: {unknown_allowed}"
-            )
-        if not self.allowed_models:
-            raise ValueError("allowed_models must contain at least one model")
         return self
 
     def effective_config(self) -> dict[str, Any]:

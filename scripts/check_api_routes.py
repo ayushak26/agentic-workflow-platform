@@ -14,6 +14,8 @@ REQUIRED_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/workflow-input-files"),
     ("POST", "/api/workflow-input-files/extract"),
     ("GET", "/api/workflow-input-files/content"),
+    ("GET", "/api/llm/models"),
+    ("POST", "/api/llm/models/{model}/probe"),
 }
 
 

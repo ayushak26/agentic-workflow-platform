@@ -20,6 +20,7 @@ import yaml
 
 import app.nodes as nodes_package
 from app.config import settings
+from app.llm.catalog import local_service_name
 from app.llm.registry import resolve_model
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
@@ -392,6 +393,10 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         and config.get("allow_document_override", True)
     ):
         required.add("object_store")
+    for _, model in _iter_model_values(config):
+        service_name = local_service_name(model)
+        if service_name:
+            required.add(service_name)
     return required
 
 
@@ -1141,6 +1146,30 @@ async def _probe_services(
                 f"Object storage is configured but not reachable: {exc}",
                 path="services.object_store",
                 suggestion="Start MinIO and verify endpoint/credentials.",
+            )
+
+    for service_name in sorted(required):
+        if not service_name.startswith("llm:local-"):
+            continue
+        probe = services.get(service_name)
+        if probe is None or not callable(probe):
+            continue
+        try:
+            await asyncio.wait_for(
+                probe(),
+                timeout=settings.health_probe_timeout_seconds,
+            )
+        except Exception as exc:
+            _issue(
+                report,
+                "LOCAL_MODEL_UNAVAILABLE",
+                f"Local model {service_name.removeprefix('llm:')!r} "
+                f"did not pass its endpoint probe: {type(exc).__name__}.",
+                path=f"services.{service_name}",
+                suggestion=(
+                    "Start the configured vLLM/SGLang endpoint and verify "
+                    "its served model name."
+                ),
             )
 
     audit_db = services.get("audit_db")

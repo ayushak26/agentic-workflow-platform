@@ -202,8 +202,15 @@ async def test_horizon_panel_is_blind_two_provider_and_thresholded():
 
 
 def test_horizon_panel_rejects_same_provider_judges():
-    with pytest.raises(ValueError, match="Anthropic and one OpenAI"):
+    with pytest.raises(ValueError, match="two different providers"):
         validate_independent_models(
             ["claude-sonnet-4-5", "claude-haiku-4-5"],
             "claude-opus-5",
         )
+
+
+def test_horizon_panel_accepts_two_independent_local_providers():
+    validate_independent_models(
+        ["local-kimi-k3", "local-glm-5"],
+        "claude-opus-5",
+    )

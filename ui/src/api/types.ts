@@ -7,6 +7,20 @@ export type NodeTypeManifest = {
   config_schema: Record<string, unknown>;
 };
 
+export type LLMModelInfo = {
+  name: string;
+  display_name: string;
+  provider: string;
+  local: boolean;
+  enabled: boolean;
+  configured: boolean;
+  tool_calling: boolean;
+  structured_output: boolean;
+  reasoning_efforts: string[];
+  platform_modalities: string[];
+  upstream_url?: string | null;
+};
+
 export type WorkflowSummary = {
   name: string;
   description: string;
@@ -101,7 +115,7 @@ export type RunStatus =
   | 'completed'
   | 'rejected'
   | 'failed';
- 
+
 export type EventType =
   | 'node_start'
   | 'node_end'
@@ -110,7 +124,7 @@ export type EventType =
   | 'hitl_approve'
   | 'hitl_reject'
   | 'hitl_edit';
- 
+
 export interface RunSummary {
   run_id: string;
   session_id: string;
@@ -151,7 +165,7 @@ export interface NodeRun {
   duration_s: number | null;
   error: string | null;
 }
- 
+
 export interface AuditEvent {
   run_id: string;
   session_id: string;
@@ -271,4 +285,35 @@ export interface HorizonEvaluation {
   coverage_percent: number;
   deterministic_blockers: string[];
   high_disagreement_criteria: string[];
+}
+
+export interface ProposalRenderRequest {
+  content: string;
+  content_format?: 'markdown' | 'html';
+  metadata?: Record<string, unknown>;
+  citation_registry?: Record<string, unknown>[];
+  evidence_qa?: Record<string, unknown>;
+  evidence_blockers?: string[];
+  include_toc?: boolean;
+  include_bibliography?: boolean;
+  include_evidence_annex?: boolean;
+  page_limit?: number | null;
+  enforce_page_limit?: boolean;
+}
+
+export interface ProposalRenderResult {
+  minio_key: string;
+  pdf_key?: string;
+  docx_key?: string;
+  html_key?: string;
+  source_html_key?: string;
+  byte_size: number;
+  page_count: number;
+  estimated_page_count?: number;
+  page_count_basis?: string;
+  page_limit?: number | null;
+  warnings: string[];
+  submission_ready: boolean;
+  template_used: string;
+  template_version: string;
 }

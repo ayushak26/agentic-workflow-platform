@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.llm.catalog import provider_for_model
 from app.proposal_graph.coverage import build_call_coverage_matrix
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import EvidenceStance
@@ -67,11 +68,10 @@ class HorizonEvaluationReport(BaseModel):
 
 
 def _provider(model: str) -> str:
-    if model.startswith("claude-"):
-        return "anthropic"
-    if model.startswith("gpt-"):
-        return "openai"
-    return model.split("-", 1)[0]
+    try:
+        return provider_for_model(model)
+    except ValueError:
+        return model.split("-", 1)[0]
 
 
 def validate_independent_models(
@@ -82,7 +82,7 @@ def validate_independent_models(
         raise ValueError("exactly two different evaluator models are required")
     if len({_provider(model) for model in evaluator_models}) != 2:
         raise ValueError(
-            "independent evaluation requires one Anthropic and one OpenAI judge"
+            "independent evaluation requires judges from two different providers"
         )
     if generator_model and generator_model in evaluator_models:
         raise ValueError(

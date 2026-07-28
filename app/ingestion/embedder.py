@@ -18,6 +18,7 @@ from tenacity import (
 )
 
 from app.config import settings
+from app.llm.local_openai_gw import normalize_openai_base_url
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -53,19 +54,28 @@ class Embedder:
         config: EmbedderConfig | None = None,
         client: AsyncOpenAI | None = None,
     ):
-        self.config = config or EmbedderConfig()
+        self.config = config or EmbedderConfig(
+            model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+        )
         if client is not None:
             self._client = client
         else:
-            if not settings.openai_api_key:
-                raise RuntimeError(
-                    "OPENAI_API_KEY is not set; embedder cannot create a default client"
-                )
-            self._client = AsyncOpenAI(
-                api_key=settings.openai_api_key,
-                timeout=settings.external_request_timeout_seconds,
-                max_retries=0,
+            base_url = settings.embedding_base_url.strip()
+            api_key = (
+                settings.embedding_api_key.strip()
+                or settings.openai_api_key.strip()
+                or ("local-no-auth" if base_url else "")
             )
+            if not api_key:
+                raise RuntimeError(
+                    "No embedding provider is configured. Set OPENAI_API_KEY "
+                    "or EMBEDDING_BASE_URL for a local compatible endpoint."
+                )
+            kwargs = {"api_key": api_key}
+            if base_url:
+                kwargs["base_url"] = normalize_openai_base_url(base_url)
+            self._client = AsyncOpenAI(**kwargs)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed a list of texts. Returns vectors in the same order.

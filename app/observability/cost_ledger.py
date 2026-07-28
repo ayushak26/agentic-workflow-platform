@@ -3,16 +3,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from app.llm.model_catalog import (
-    MODEL_PRICING as CATALOG_MODEL_PRICING,
-    estimate_model_cost,
-)
 from app.observability.logging import get_logger
 
 logger = get_logger(__name__)
-MODEL_PRICING = {
-    **CATALOG_MODEL_PRICING,
-    "claude-opus-4-8": (0.005, 0.025),
+
+MODEL_PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-5":          (0.005,   0.025),
+    "claude-opus-4-8":        (0.005,   0.025),
+    "claude-sonnet-4-5":      (0.003,   0.015),
+    "claude-haiku-4-5":       (0.00025, 0.00125),
+    "gpt-5.6-sol":            (0.005,   0.030),
+    "gpt-5":                  (0.005,   0.020),
+    "gpt-5-mini":             (0.0005,  0.0015),
+    # API-metered cost is zero for private endpoints. GPU/infrastructure cost
+    # remains an operator metric and must not be presented as free compute.
+    "local-kimi-k3":          (0.0,     0.0),
+    "local-glm-5":            (0.0,     0.0),
     "text-embedding-3-small": (0.00002, 0.0),
 }
 
@@ -27,12 +33,6 @@ class LedgerEntry:
     input_tokens:   int
     output_tokens:  int
     cost_usd:       float
-    selected_model: str | None = None
-    selection_mode: str = "manual"
-    selection_reason: str | None = None
-    task_kind: str | None = None
-    complexity: str | None = None
-    cache_hit:      bool = False
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -42,13 +42,8 @@ class CostLedger:
 
     @staticmethod
     def calculate(model: str, input_tokens: int, output_tokens: int) -> float:
-        if model in MODEL_PRICING:
-            p_in, p_out = MODEL_PRICING[model]
-            return round(
-                (input_tokens * p_in + output_tokens * p_out) / 1000,
-                6,
-            )
-        return estimate_model_cost(model, input_tokens, output_tokens)
+        p_in, p_out = MODEL_PRICING.get(model, (0.005, 0.015))
+        return round((input_tokens * p_in + output_tokens * p_out) / 1000, 6)
 
     def record(self, entry: LedgerEntry) -> None:
         if self._col is not None:
@@ -61,12 +56,6 @@ class CostLedger:
                 "input_tokens":   entry.input_tokens,
                 "output_tokens":  entry.output_tokens,
                 "cost_usd":       entry.cost_usd,
-                "selected_model": entry.selected_model,
-                "selection_mode": entry.selection_mode,
-                "selection_reason": entry.selection_reason,
-                "task_kind": entry.task_kind,
-                "complexity": entry.complexity,
-                "cache_hit":      entry.cache_hit,
                 "ts":             entry.ts,
             })
         logger.info(
@@ -75,21 +64,13 @@ class CostLedger:
             node_id=entry.node_id,
             model=entry.model,
             intended_model=entry.intended_model,
-            selected_model=entry.selected_model,
-            selection_mode=entry.selection_mode,
             cost_usd=entry.cost_usd,
-            cache_hit=entry.cache_hit,
         )
 
-    def run_summary(self, run_id: str, session_id: str) -> dict:
+    def run_summary(self, run_id: str) -> dict:
         if self._col is None:
             return {"run_id": run_id, "total_usd": 0.0, "by_node": []}
-        entries = list(
-            self._col.find(
-                {"run_id": run_id, "session_id": session_id},
-                {"_id": 0},
-            )
-        )
+        entries = list(self._col.find({"run_id": run_id}, {"_id": 0}))
         total = round(sum(e["cost_usd"] for e in entries), 6)
         return {"run_id": run_id, "total_usd": total, "by_node": entries}
 
@@ -99,23 +80,3 @@ class CostLedger:
         entries = list(self._col.find({"session_id": session_id}, {"_id": 0}))
         total = round(sum(e["cost_usd"] for e in entries), 6)
         return {"session_id": session_id, "total_usd": total, "by_run": entries}
-
-    def daily_spend(self, session_id: str | None = None) -> float:
-        """Return UTC-day spend globally or for one authenticated session."""
-
-        if self._col is None:
-            return 0.0
-        now = datetime.now(timezone.utc)
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        match: dict[str, Any] = {"ts": {"$gte": start}}
-        if session_id is not None:
-            match["session_id"] = session_id
-        rows = list(
-            self._col.aggregate(
-                [
-                    {"$match": match},
-                    {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-                ]
-            )
-        )
-        return float(rows[0]["total"]) if rows else 0.0

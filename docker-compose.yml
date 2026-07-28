@@ -26,6 +26,10 @@ services:
     volumes:
       - ./app:/app/app
       - ./workflows:/app/workflows
+    extra_hosts:
+      # Lets the API container reach vLLM/SGLang running on the host on Linux.
+      # Docker Desktop provides the same hostname on macOS and Windows.
+      - "host.docker.internal:host-gateway"
     networks:
       - eurskem-net
 
@@ -106,10 +110,10 @@ services:
 
   redis:
     # redis-stack-server carries the RediSearch engine (FT.*) the LangGraph
-    # Redis checkpointer requires. Plain redis:8.x (incl. -alpine) does NOT
-    # include search — verified: FT._LIST -> unknown command. Do not override
-    # the entrypoint with a bare redis-server command; that bypasses the
-    # managed startup that loads search. Pass args via REDIS_ARGS instead.
+    # Redis checkpointer requires. Plain redis:8.x (incl. -alpine) ships only
+    # vectorset, not search — FT._LIST returns "unknown command". Do NOT
+    # override the entrypoint with a bare redis-server command; that bypasses
+    # the managed startup that loads the modules. Pass args via REDIS_ARGS.
     image: redis/redis-stack-server:latest
     ports:
       - "127.0.0.1:6379:6379"

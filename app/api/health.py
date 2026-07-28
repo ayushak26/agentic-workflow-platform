@@ -113,6 +113,11 @@ async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
         ("redis", _redis_probe(services)),
         ("checkpointer", _checkpointer_probe(services)),
     ]
+    probes.extend(
+        (name, probe)
+        for name, probe in sorted(services.items())
+        if name.startswith("llm:local-") and callable(probe)
+    )
     skill_catalog = services.get("scientific_skill_catalog")
     if settings.scientific_skills_enabled or skill_catalog is not None:
         probes.append(
@@ -152,6 +157,15 @@ async def _health_payload(request: Request) -> tuple[dict[str, Any], bool]:
         if settings.scientific_skills_enabled
         else ()
     )
+    required_local_models = (
+        tuple(
+            name
+            for name in services
+            if name.startswith("llm:local-")
+        )
+        if settings.local_llm_readiness_required
+        else ()
+    )
     # Every enabled MCP process is a required dependency. This prevents an
     # explicitly enabled paper-search server from failing while /ready stays
     # green because an operator forgot to duplicate it in the CSV setting.
@@ -161,6 +175,7 @@ async def _health_payload(request: Request) -> tuple[dict[str, Any], bool]:
                 *settings.required_readiness_services,
                 *configured_mcp,
                 *enabled_research,
+                *required_local_models,
             )
         )
     )

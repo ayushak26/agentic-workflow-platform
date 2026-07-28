@@ -3,8 +3,11 @@ import type {
   ConceptAlternative,
   ExtractedWorkflowFile,
   HorizonEvaluation,
+  LLMModelInfo,
   NodeTypeManifest,
   ProposalApproval,
+  ProposalRenderRequest,
+  ProposalRenderResult,
   ProposalReview,
   RunDetail,
   RunEvent,
@@ -100,6 +103,9 @@ export const api = {
   // ---- node registry
   nodeTypes: () =>
     fetch(`${API}/node-types`, { headers: authHeaders() }).then(j<NodeTypeManifest[]>),
+  llmModels: () =>
+    fetch(`${API}/llm/models`, { headers: authHeaders() })
+      .then(j<{ models: LLMModelInfo[] }>),
 
   // ---- workflow CRUD
   listWorkflows: () =>
@@ -313,6 +319,26 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     }).then(j<HorizonEvaluation>),
+
+  renderProposalPDF: (
+    proposal_id: string,
+    body: ProposalRenderRequest,
+  ) =>
+    fetch(`${API}/proposals/${proposal_id}/render`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<ProposalRenderResult>),
+
+  renderProposalDOCX: (
+    proposal_id: string,
+    body: ProposalRenderRequest & { max_embedded_image_bytes?: number },
+  ) =>
+    fetch(`${API}/proposals/${proposal_id}/render/docx`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<ProposalRenderResult>),
 
   goldenSet: (name: string) =>
     fetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })

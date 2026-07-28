@@ -26,7 +26,7 @@ from prometheus_client import make_asgi_app
 from app.config import settings
 from app.observability.logging import configure_logging, get_logger
 from app.observability.cost_ledger import CostLedger
-from app.llm.registry import get_llm_gateway
+from app.llm.registry import configured_local_model_probes, get_llm_gateway
 from app.runtime.events import RunEventBus
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
@@ -43,6 +43,7 @@ from app.api import runs as runs_api
 from app.api import proposals as proposals_api
 from app.api import research as research_api
 from app.api import workflow_files as workflow_files_api
+from app.api import llm_providers as llm_providers_api
 
 from app.db.mongo import DB_NAME
 
@@ -173,6 +174,7 @@ async def lifespan(app: FastAPI):
     # Singleton — shared across all requests. Nodes call with_context() to get
     # a cost-tracking clone bound to their run_id/session_id/node_id.
     services["llm"] = get_llm_gateway()
+    services.update(configured_local_model_probes())
     logger.info("llm_gateway.ready")
 
     # ── Scientific Agent Skills ──────────────────────────────────────────────
@@ -211,19 +213,26 @@ async def lifespan(app: FastAPI):
     if "weaviate_client" in services:
         from app.retrieval import retrieve
         from app.ingestion.embedder import get_embedder
-        _embedder = get_embedder()
-        services["embedder"] = _embedder
-        _wv = services["weaviate_client"]
-        _llm = services["llm"]
-        _registry = services["collection_registry"] 
-        services["retriever"] = lambda q, llm=None: retrieve(
-        q,
-        weaviate_client=_wv,
-        llm=llm or _llm,        # caller can pass a context-bound gateway
-        embedder=_embedder,
-        collection_registry=_registry,
-        )
-        logger.info("retriever.ready")
+        try:
+            _embedder = get_embedder()
+            services["embedder"] = _embedder
+            _wv = services["weaviate_client"]
+            _llm = services["llm"]
+            _registry = services["collection_registry"]
+            services["retriever"] = lambda q, llm=None: retrieve(
+                q,
+                weaviate_client=_wv,
+                llm=llm or _llm,
+                embedder=_embedder,
+                collection_registry=_registry,
+            )
+            logger.info("retriever.ready")
+        except Exception as exc:
+            logger.warning(
+                "retriever.unavailable",
+                reason="embedding provider not configured",
+                error_type=type(exc).__name__,
+            )
     else:
         logger.warning("retriever.unavailable", reason="weaviate not connected")
 
@@ -301,3 +310,4 @@ app.include_router(runs_api.router)
 app.include_router(proposals_api.router)
 app.include_router(research_api.router)
 app.include_router(workflow_files_api.router)
+app.include_router(llm_providers_api.router)

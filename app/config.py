@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,7 +18,6 @@ class Settings(BaseSettings):
     jwt_issuer: str = "eurskem-ai"
     jwt_audience: str = "eurskem-ai-ui"
     environment: str = "development"
-    auth_mode: Literal["local"] = "local"
     api_docs_enabled: bool = True
     metrics_enabled: bool = True
     cors_allowed_origins: str = (
@@ -41,8 +41,8 @@ class Settings(BaseSettings):
     minio_secret_key: str = "eurskempassword"
     minio_bucket: str = "eurskem-ai-docs"
     workflow_file_max_mb: int = 50
-    workflow_file_max_total_mb: int = 200
     workflow_file_max_files: int = 20
+    workflow_file_max_total_mb: int = 200
     max_request_body_mb: int = 220
 
     @property
@@ -63,6 +63,8 @@ class Settings(BaseSettings):
         "mongo,weaviate,minio,redis,checkpointer,mcp:eurskem"
     )
 
+    # The Docker image installs paper-search-mcp as a pinned Python package.
+    # A source checkout path remains optional for local upstream development.
     paper_search_mcp_enabled: bool = False
     paper_search_mcp_path: str = ""
     paper_search_mcp_command: str = "python"
@@ -70,6 +72,8 @@ class Settings(BaseSettings):
     mcp_startup_timeout_seconds: float = 30.0
     mcp_tool_timeout_seconds: float = 90.0
 
+    # Scientific Agent Skills are instruction assets, not an MCP server. Only
+    # explicitly approved skills can be loaded into workflow prompts.
     scientific_skills_enabled: bool = False
     scientific_skills_path: str = (
         "/opt/scientific-agent-skills/skills"
@@ -80,6 +84,7 @@ class Settings(BaseSettings):
     )
     scientific_skills_max_prompt_chars: int = 30000
 
+    # SSE is the authenticated, one-way run-event transport.
     sse_heartbeat_seconds: float = 15.0
     sse_replay_events_per_run: int = 1000
     sse_replay_run_limit: int = 1000
@@ -87,54 +92,60 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
+    # Every outbound call has a finite deadline.
     external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
     llm_request_timeout_seconds: float = Field(default=120.0, gt=0, le=900)
-    mcp_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 
-    llm_max_input_tokens: int = Field(default=32_000, ge=1_000, le=1_000_000)
-    llm_max_output_tokens: int = Field(default=8_192, ge=128, le=65_536)
-    llm_user_daily_budget_usd: float = Field(default=5.0, gt=0)
-    llm_global_daily_budget_usd: float = Field(default=100.0, gt=0)
-    llm_emergency_model: str = "gpt-5-mini"
-    llm_emergency_max_input_tokens: int = Field(
-        default=2_000,
-        ge=256,
-        le=100_000,
-    )
-
+    # Tenant-scoped semantic cache for deterministic plain-text completions.
     semantic_cache_enabled: bool = False
-    semantic_cache_similarity_threshold: float = Field(
-        default=0.97,
-        ge=0.80,
-        le=1.0,
-    )
+    semantic_cache_similarity_threshold: float = Field(default=0.97, ge=0.80, le=1.0)
     semantic_cache_ttl_seconds: int = Field(default=3_600, ge=60, le=604_800)
-    semantic_cache_max_entries_per_scope: int = Field(
-        default=200,
-        ge=10,
-        le=5_000,
-    )
+    semantic_cache_max_entries_per_scope: int = Field(default=200, ge=10, le=5_000)
 
+    # Guardrails applied before workflow execution and after every node.
     guardrails_enabled: bool = True
     guardrail_pii_mode: Literal["audit", "redact", "block"] = "audit"
-    guardrail_max_text_chars: int = Field(
-        default=2_000_000,
-        ge=1_000,
-        le=10_000_000,
-    )
+    guardrail_max_text_chars: int = Field(default=2_000_000, ge=1_000, le=10_000_000)
 
+    # Redis-backed fixed-window rate limits across Uvicorn workers.
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = Field(default=60, ge=1, le=10_000)
-    rate_limit_auth_requests_per_minute: int = Field(
-        default=10,
-        ge=1,
-        le=1_000,
-    )
+    rate_limit_auth_requests_per_minute: int = Field(default=10, ge=1, le=1_000)
 
+    # Optional OpenTelemetry export.
     otel_enabled: bool = False
     otel_service_name: str = "eurskem-ai"
     otel_exporter_otlp_endpoint: str = ""
 
+    # Private OpenAI-compatible inference endpoints. These URLs are deployment
+    # configuration, never workflow input, which prevents per-run SSRF.
+    local_kimi_enabled: bool = False
+    local_kimi_base_url: str = "http://host.docker.internal:8101/v1"
+    local_kimi_api_key: str = ""
+    local_kimi_served_model: str = "kimi-k3"
+    local_kimi_reasoning_effort: Literal["low", "high", "max"] = "max"
+
+    local_glm_enabled: bool = False
+    local_glm_base_url: str = "http://host.docker.internal:8102/v1"
+    local_glm_api_key: str = ""
+    local_glm_served_model: str = "glm-5"
+    local_glm_reasoning_effort: Literal["high", "max"] = "max"
+    local_glm_enable_thinking: bool = True
+
+    local_llm_timeout_seconds: float = 600.0
+    local_llm_verify_served_model: bool = True
+    local_llm_readiness_required: bool = False
+
+    # A separate OpenAI-compatible embedding server can keep RAG fully local.
+    # Kimi K3 and GLM-5 are generation models, not embedding models.
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+
+    # LLM resilience is owned by the provider-neutral registry. Provider SDK
+    # retries are disabled so one policy controls attempt count, backoff,
+    # failover, metrics, and logs without multiplying hidden SDK retries.
     llm_retry_attempts: int = 3
     llm_retry_base_delay_seconds: float = 1.0
     llm_retry_max_delay_seconds: float = 8.0
@@ -147,6 +158,45 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_security(self) -> "Settings":
         """Refuse to boot production with development security settings."""
+
+        local_problems: list[str] = []
+        for enabled, name, url, served_model in (
+            (
+                self.local_kimi_enabled,
+                "LOCAL_KIMI",
+                self.local_kimi_base_url,
+                self.local_kimi_served_model,
+            ),
+            (
+                self.local_glm_enabled,
+                "LOCAL_GLM",
+                self.local_glm_base_url,
+                self.local_glm_served_model,
+            ),
+        ):
+            if not enabled:
+                continue
+            if not _valid_http_url(url):
+                local_problems.append(
+                    f"{name}_BASE_URL must be an http(s) URL without credentials"
+                )
+            if not served_model.strip():
+                local_problems.append(f"{name}_SERVED_MODEL cannot be empty")
+        if self.local_llm_timeout_seconds <= 0:
+            local_problems.append("LOCAL_LLM_TIMEOUT_SECONDS must be positive")
+        if self.embedding_base_url and not _valid_http_url(
+            self.embedding_base_url
+        ):
+            local_problems.append(
+                "EMBEDDING_BASE_URL must be an http(s) URL without credentials"
+            )
+        if self.embedding_dimensions <= 0:
+            local_problems.append("EMBEDDING_DIMENSIONS must be positive")
+        if local_problems:
+            raise ValueError(
+                "Invalid local model configuration: "
+                + "; ".join(local_problems)
+            )
 
         if self.environment.strip().lower() != "production":
             return self
@@ -168,12 +218,6 @@ class Settings(BaseSettings):
             problems.append("DEV_BYPASS_ENABLED must be false")
         if self.api_docs_enabled:
             problems.append("API_DOCS_ENABLED must be false")
-        if not self.rate_limit_enabled:
-            problems.append("RATE_LIMIT_ENABLED must be true")
-        if not self.guardrails_enabled:
-            problems.append("GUARDRAILS_ENABLED must be true")
-        if not self.semantic_cache_enabled:
-            problems.append("SEMANTIC_CACHE_ENABLED must be true")
         if (
             not self.weaviate_api_key.strip()
             or _is_placeholder(self.weaviate_api_key)
@@ -196,26 +240,6 @@ class Settings(BaseSettings):
             or _is_placeholder(self.redis_url)
         ):
             problems.append("REDIS_URL must include authentication")
-        if not self.openai_api_key.strip() and not self.anthropic_api_key.strip():
-            problems.append(
-                "At least one of OPENAI_API_KEY or ANTHROPIC_API_KEY must be configured"
-            )
-        if self.semantic_cache_enabled and not self.openai_api_key.strip():
-            problems.append(
-                "OPENAI_API_KEY is required when semantic caching is enabled"
-            )
-        if self.otel_enabled and not self.otel_exporter_otlp_endpoint.strip():
-            problems.append(
-                "OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED is true"
-            )
-        if self.workflow_file_max_total_mb < self.workflow_file_max_mb:
-            problems.append(
-                "WORKFLOW_FILE_MAX_TOTAL_MB cannot be less than WORKFLOW_FILE_MAX_MB"
-            )
-        if self.max_request_body_mb < self.workflow_file_max_total_mb:
-            problems.append(
-                "MAX_REQUEST_BODY_MB cannot be less than WORKFLOW_FILE_MAX_TOTAL_MB"
-            )
 
         origins = self.allowed_cors_origins
         if not origins:
@@ -286,6 +310,21 @@ def _redis_url_has_password(url: str) -> bool:
         return bool(urlsplit(url).password)
     except ValueError:
         return False
+
+
+def _valid_http_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
+    )
 
 
 def _is_placeholder(value: str) -> bool:

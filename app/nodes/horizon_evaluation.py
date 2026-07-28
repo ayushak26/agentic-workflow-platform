@@ -31,7 +31,7 @@ class HorizonEvaluationAgent(NodeType):
     type_name = "HorizonEvaluationAgent"
     description = (
         "Score Excellence, Impact, and Implementation with independent "
-        "Anthropic and OpenAI evaluators plus deterministic evidence gates."
+        "cross-provider evaluators plus deterministic evidence gates."
     )
     input_schema = HorizonEvaluationInput
     config_schema = HorizonEvaluationConfig

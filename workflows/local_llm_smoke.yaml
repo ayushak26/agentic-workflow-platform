@@ -1,0 +1,46 @@
+name: local_llm_smoke
+description: Verify Kimi K3 and GLM-5 local routing, structured output, and handoff.
+version: "1.0"
+use_case: platform_validation
+
+inputs:
+  prompt:
+    type: text
+    description: Short test instruction.
+    required: true
+
+nodes:
+  - id: kimi_draft
+    type: TransformAgent
+    config:
+      model: local-kimi-k3
+      system_prompt: >-
+        Respond concisely. State that you are the locally routed Kimi K3
+        workflow step. Do not invent external evidence.
+      prompt_template: "{{inputs.prompt}}"
+      temperature: 0.0
+
+  - id: glm_review
+    type: TransformAgent
+    config:
+      model: local-glm-5
+      system_prompt: >-
+        Review the supplied draft. State that you are the locally routed GLM-5
+        workflow step and identify one strength and one limitation.
+      prompt_template: "{{kimi_draft.raw}}"
+      temperature: 0.0
+
+edges:
+  - from: kimi_draft
+    to: glm_review
+
+entry: kimi_draft
+exit: glm_review
+
+output:
+  include_input: false
+  nodes:
+    - node_id: kimi_draft
+      flatten: false
+    - node_id: glm_review
+      flatten: false
