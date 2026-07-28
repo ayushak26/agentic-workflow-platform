@@ -1,0 +1,122 @@
+name: Live LLM Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider test to run (uses paid API calls)
+        required: true
+        default: openai
+        type: choice
+        options:
+          - openai
+          - anthropic
+          - both
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-llm-tests
+  cancel-in-progress: false
+
+jobs:
+  openai-pipeline:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (inputs.provider == 'openai' || inputs.provider == 'both')
+    environment: live-llm-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: live-test-secret-key-never-use-in-production
+      DEV_BYPASS_ENABLED: "false"
+      MONGO_ROOT_USERNAME: eurskem-live-test
+      MONGO_ROOT_PASSWORD: live-test-mongo-not-a-production-secret
+      MONGO_URI: mongodb://eurskem-live-test:live-test-mongo-not-a-production-secret@localhost:27017/?authSource=admin
+      MONGO_DB: eurskem_ai
+      WEAVIATE_HOST: localhost
+      WEAVIATE_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      WEAVIATE_API_KEY_USER: eurskem-live-test
+      WEAVIATE_API_KEY: live-test-weaviate-not-a-production-secret
+      MINIO_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: eurskem-live-test
+      MINIO_SECRET_KEY: live-test-minio-not-a-production-secret
+      MINIO_BUCKET: eurskem-ai-docs
+      REDIS_PASSWORD: live-test-redis-not-a-production-secret
+      REDIS_URL: redis://:live-test-redis-not-a-production-secret@localhost:6379/0
+      GRAFANA_ADMIN_PASSWORD: live-test-grafana-not-a-production-secret
+      PAPER_SEARCH_MCP_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Start isolated integration services
+        run: docker compose up -d mongo weaviate minio redis
+
+      - name: Wait for service health
+        run: |
+          for attempt in {1..60}; do
+            unhealthy="$(
+              docker compose ps --format json |
+              jq -rs '
+                [
+                  .[]
+                  | if type == "array" then .[] else . end
+                  | select(.Health != "healthy")
+                  | .Service
+                ]
+                | join(",")
+              '
+            )"
+            if [ -z "$unhealthy" ]; then
+              exit 0
+            fi
+            echo "Waiting for: $unhealthy"
+            sleep 2
+          done
+          docker compose ps
+          exit 1
+
+      - name: Install backend without dependency cache
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run the controlled OpenAI integration test
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python -m pytest tests/test_pipeline_integration.py -q
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs mongo weaviate minio redis
+
+  anthropic-smoke:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (inputs.provider == 'anthropic' || inputs.provider == 'both')
+    environment: live-llm-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install backend without dependency cache
+        run: python -m pip install -e ".[dev]"
+
+      - name: Run the controlled Anthropic smoke test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scripts/live_provider_smoke.py --provider anthropic

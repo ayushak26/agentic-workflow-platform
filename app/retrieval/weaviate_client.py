@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import Any
 
 import weaviate
+from weaviate.auth import Auth
 from weaviate.classes.config import Configure, DataType, Property
 from weaviate.collections.classes.data import DataObject
 
@@ -74,10 +75,15 @@ class WeaviateClient:
             http_port=port,
             http_secure=parsed.scheme == "https",
             grpc_host=host,
-            grpc_port=50051,
+            grpc_port=settings.weaviate_grpc_port,
             grpc_secure=False,
+            auth_credentials=(
+                Auth.api_key(settings.weaviate_api_key)
+                if settings.weaviate_api_key
+                else None
+            ),
         )
-        log.info("weaviate.connected", url=self._url)
+        log.info("weaviate.connected", host=host, port=port)
         return self._client
 
     def close(self) -> None:

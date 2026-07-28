@@ -44,7 +44,8 @@ class MongoClient:
     def _ensure_client(self) -> AsyncIOMotorClient:
         if self._client is None:
             self._client = AsyncIOMotorClient(self._url)
-            log.info("mongo.connected", url=self._url)
+            # Never log the URI: it may contain the database password.
+            log.info("mongo.connected")
         return self._client
 
     @property

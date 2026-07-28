@@ -17,10 +17,18 @@ venv/
 env/
 
 # Environment & secrets
-.env
-.env.local
+.env*
+!.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
+credentials/
+service-account*.json
+*-credentials.json
 
 # Editor
 .vscode/
@@ -38,7 +46,5 @@ ui/.vite/
 
 # Local data (volumes mount through Docker)
 data/
-*.logsamples/
+*.log
 samples/
-.env.local
-.env

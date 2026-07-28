@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ENVIRONMENT: test
+      SECRET_KEY: ci-only-secret-key-never-use-in-production
+      DEV_BYPASS_ENABLED: "true"
+      MONGO_ROOT_USERNAME: eurskem-ci
+      MONGO_ROOT_PASSWORD: ci-mongo-only-not-a-production-secret
+      MONGO_URI: mongodb://eurskem-ci:ci-mongo-only-not-a-production-secret@localhost:27017/?authSource=admin
+      MONGO_DB: eurskem_ai
+      WEAVIATE_HOST: localhost
+      WEAVIATE_PORT: "8080"
+      WEAVIATE_GRPC_PORT: "50051"
+      WEAVIATE_API_KEY_USER: eurskem-ci
+      WEAVIATE_API_KEY: ci-weaviate-only-not-a-production-secret
+      MINIO_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: eurskem-ci
+      MINIO_SECRET_KEY: ci-minio-only-not-a-production-secret
+      MINIO_BUCKET: eurskem-ai-docs
+      REDIS_PASSWORD: ci-redis-only-not-a-production-secret
+      REDIS_URL: redis://:ci-redis-only-not-a-production-secret@localhost:6379/0
+      GRAFANA_ADMIN_PASSWORD: ci-grafana-only-not-a-production-secret
+      PAPER_SEARCH_MCP_ENABLED: "false"
+      READINESS_REQUIRED_SERVICES: mongo,weaviate,minio,redis,checkpointer,mcp:eurskem
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Start required services
+        run: docker compose up -d mongo weaviate minio redis
+
+      - name: Wait for service health
+        run: |
+          for attempt in {1..60}; do
+            unhealthy="$(
+              docker compose ps --format json |
+              jq -rs '
+                [
+                  .[]
+                  | if type == "array" then .[] else . end
+                  | select(.Health != "healthy")
+                  | .Service
+                ]
+                | join(",")
+              '
+            )"
+            if [ -z "$unhealthy" ]; then
+              exit 0
+            fi
+            echo "Waiting for: $unhealthy"
+            sleep 2
+          done
+          docker compose ps
+          docker compose logs mongo weaviate minio redis
+          exit 1
+
+      - name: Install backend
+        run: python -m pip install -e ".[dev]"
+
+      - name: Compile Python
+        run: python -m compileall -q app scripts tests
+
+      - name: Run backend tests
+        run: python -m pytest -q
+
+      - name: Preflight all workflows
+        run: python scripts/preflight_workflows.py --warnings-as-errors
+
+      - name: Show service logs on failure
+        if: failure()
+        run: docker compose logs mongo weaviate minio redis
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+      - name: Production build
+        run: npm run build

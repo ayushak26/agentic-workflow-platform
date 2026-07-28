@@ -20,6 +20,7 @@ from contextlib import asynccontextmanager
 import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from prometheus_client import make_asgi_app
 
 from app.config import settings
@@ -87,20 +88,35 @@ async def lifespan(app: FastAPI):
         services["cost_ledger"] = CostLedger(db)
         logger.info("mongo.connected")
     except Exception as exc:
-        logger.warning("mongo.unavailable", error=str(exc))
+        logger.warning(
+            "mongo.unavailable",
+            error_type=type(exc).__name__,
+        )
         services["cost_ledger"] = CostLedger(None)
 
     # ── Weaviate ───────────────────────────────────────────────────────────────
     try:
         import weaviate
+        from weaviate.auth import Auth
+
+        auth_credentials = (
+            Auth.api_key(settings.weaviate_api_key)
+            if settings.weaviate_api_key
+            else None
+        )
         weaviate_client = weaviate.connect_to_local(
             host=settings.weaviate_host,
             port=settings.weaviate_port,
+            grpc_port=settings.weaviate_grpc_port,
+            auth_credentials=auth_credentials,
         )
         services["weaviate_client"] = weaviate_client
         logger.info("weaviate.connected")
     except Exception as exc:
-        logger.warning("weaviate.unavailable", error=str(exc))
+        logger.warning(
+            "weaviate.unavailable",
+            error_type=type(exc).__name__,
+        )
 
     # ── Object store (S3-compatible, boto3-backed) ─────────────────────────────
     try:
@@ -108,7 +124,10 @@ async def lifespan(app: FastAPI):
         services["object_store"] = get_object_store()
         logger.info("object_store.ready")
     except Exception as exc:
-        logger.warning("object_store.unavailable", error=str(exc))
+        logger.warning(
+            "object_store.unavailable",
+            error_type=type(exc).__name__,
+        )
 
     # ── Redis ──────────────────────────────────────────────────────────────────
     try:
@@ -117,7 +136,10 @@ async def lifespan(app: FastAPI):
         services["redis"] = redis_client
         logger.info("redis.connected")
     except Exception as exc:
-        logger.warning("redis.unavailable", error=str(exc))
+        logger.warning(
+            "redis.unavailable",
+            error_type=type(exc).__name__,
+        )
 
     # ── Durable LangGraph checkpointing ──────────────────────────────────────
     # The workflow thread_id is the run_id. Redis persists graph state across
@@ -143,7 +165,7 @@ async def lifespan(app: FastAPI):
                 checkpointer_context = None
             logger.warning(
                 "langgraph_checkpointer.unavailable",
-                error=str(exc),
+                error_type=type(exc).__name__,
             )
 
     # ── LLM gateway ────────────────────────────────────────────────────────────
@@ -160,7 +182,10 @@ async def lifespan(app: FastAPI):
         services["mcp_client"] = await launch_mcp_session()
         logger.info("mcp_client.ready")
     except Exception as exc:
-        logger.warning("mcp_client.unavailable", error=str(exc))
+        logger.warning(
+            "mcp_client.unavailable",
+            error_type=type(exc).__name__,
+        )
 
     if "weaviate_client" in services:
         from app.retrieval import retrieve
@@ -208,21 +233,30 @@ app = FastAPI(
     description="Built by Rukainnovation for Eurskem",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.api_docs_enabled else None,
+    redoc_url="/redoc" if settings.api_docs_enabled else None,
+    openapi_url="/openapi.json" if settings.api_docs_enabled else None,
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-# Dev: allow the Vite dev server. Tighten to eurskem domain in production.
+# Origins and hosts are explicit settings. Settings refuses localhost, wildcard,
+# or test hosts when ENVIRONMENT=production.
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=list(settings.allowed_hosts),
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=list(settings.allowed_cors_origins),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 # ── Prometheus ─────────────────────────────────────────────────────────────────
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
+if settings.metrics_enabled:
+    metrics_app = make_asgi_app()
+    app.mount("/metrics", metrics_app)
 
 # ── Routers ────────────────────────────────────────────────────────────────────
 app.include_router(health.router)

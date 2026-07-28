@@ -1,0 +1,8 @@
+# Require explicit review for changes that can access CI credentials or alter
+# the production security boundary. Enable "Require review from Code Owners"
+# in the main-branch protection rule for this file to take effect.
+/.github/ @ayushak26
+/app/config.py @ayushak26
+/app/security/ @ayushak26
+/docker-compose.yml @ayushak26
+/Dockerfile @ayushak26
