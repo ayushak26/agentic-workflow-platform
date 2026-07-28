@@ -58,6 +58,7 @@ export type WorkflowFileCapabilities = {
   categories: Record<string, string[]>;
   extensions: string[];
   extractable_extensions: string[];
+  reference_only_extensions: string[];
   max_file_size_bytes: number;
   max_files_per_input: number;
 };
@@ -229,13 +230,22 @@ export interface ConceptAlternative {
   evidence_weighted_score: number;
 }
 
+export interface ProposalSourceVersion {
+  version_id: string;
+  source_id: string;
+  version: number;
+  title: string;
+  content_sha256: string;
+  [key: string]: unknown;
+}
+
 export interface ProposalReview {
   proposal_id: string;
   run_status: string;
-  graph: Record<string, any>;
+  graph: Record<string, unknown>;
   coverage: CallCoverageMatrix;
   approvals: ProposalApproval[];
-  source_versions: Record<string, any>[];
+  source_versions: ProposalSourceVersion[];
 }
 
 export interface HorizonEvaluation {

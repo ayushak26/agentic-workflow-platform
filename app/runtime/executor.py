@@ -88,7 +88,11 @@ async def run_workflow(
     run_services["retry_source_run_id"] = retry_source_run_id
     run_services["hitl_resume_decisions"] = hitl_resume_decisions or {}
     run_services["resume_replay"] = resume_replay
-    graph = compile_workflow(spec, services=run_services)
+    graph = compile_workflow(
+        spec,
+        checkpointer=run_services.get("langgraph_checkpointer"),
+        services=run_services,
+    )
 
     merged_inputs: dict[str, Any] = dict(inputs)
     merged_inputs["SYSTEM.run_id"] = run_id

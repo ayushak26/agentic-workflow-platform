@@ -40,7 +40,6 @@ from app.api.inspect import router as inspect_router
 from app.api import audit as audit_api
 from app.api import runs as runs_api
 from app.api import proposals as proposals_api
-from app.api.workflows import router as workflows_router
 from app.api import workflow_files as workflow_files_api
 
 from app.db.mongo import DB_NAME
@@ -56,6 +55,7 @@ async def lifespan(app: FastAPI):
     logger.info("eurskem_ai.startup", environment=settings.environment)
 
     services: dict = {}
+    checkpointer_context = None
 
     # ── MongoDB ────────────────────────────────────────────────────────────────
     try:
@@ -119,6 +119,33 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("redis.unavailable", error=str(exc))
 
+    # ── Durable LangGraph checkpointing ──────────────────────────────────────
+    # The workflow thread_id is the run_id. Redis persists graph state across
+    # FastAPI restarts, while Mongo keeps the operator-facing run/audit record.
+    if "redis" in services:
+        try:
+            from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+
+            checkpointer_context = AsyncRedisSaver.from_conn_string(
+                settings.redis_url
+            )
+            checkpointer = await checkpointer_context.__aenter__()
+            await checkpointer.asetup()
+            services["langgraph_checkpointer"] = checkpointer
+            logger.info("langgraph_checkpointer.ready", backend="redis")
+        except Exception as exc:
+            if checkpointer_context is not None:
+                await checkpointer_context.__aexit__(
+                    type(exc),
+                    exc,
+                    exc.__traceback__,
+                )
+                checkpointer_context = None
+            logger.warning(
+                "langgraph_checkpointer.unavailable",
+                error=str(exc),
+            )
+
     # ── LLM gateway ────────────────────────────────────────────────────────────
     # Singleton — shared across all requests. Nodes call with_context() to get
     # a cost-tracking clone bound to their run_id/session_id/node_id.
@@ -171,7 +198,9 @@ async def lifespan(app: FastAPI):
     if "redis" in services:
         await services["redis"].aclose()
     if "mcp_client" in services:
-        await services["mcp_client"].stop()    
+        await services["mcp_client"].stop()
+    if checkpointer_context is not None:
+        await checkpointer_context.__aexit__(None, None, None)
 
 
 app = FastAPI(
@@ -205,5 +234,4 @@ app.include_router(inspect_router)
 app.include_router(audit_api.router)
 app.include_router(runs_api.router)
 app.include_router(proposals_api.router)
-app.include_router(workflows_router)
 app.include_router(workflow_files_api.router)

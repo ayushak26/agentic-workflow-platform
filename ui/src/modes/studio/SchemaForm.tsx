@@ -1,3 +1,5 @@
+/* JSON Schema is recursive and permits arbitrary extension keywords. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { ChangeEvent } from 'react';
 
 // Treat these field names as multiline regardless of schema (the schema

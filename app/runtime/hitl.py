@@ -11,6 +11,7 @@ status, node_id, reason — to build the audit payload. See app/api/*resume*.
 from __future__ import annotations
 from typing import Any
 from langgraph.types import Command
+from app.runtime.compiler import compile_workflow
 from app.runtime.loader import load_workflow_from_string
 from app.workflow.run_history import (
     get_resume_checkpoint,
@@ -103,6 +104,50 @@ async def resume_workflow_durable(
             )
 
         spec = load_workflow_from_string(checkpoint["workflow_yaml"])
+        persistent_checkpointer = services.get("langgraph_checkpointer")
+        if persistent_checkpointer is not None:
+            # Recompile a fresh graph (the state lives in Redis, not in this
+            # Python process) and resume the exact saved LangGraph thread.
+            graph = compile_workflow(
+                spec,
+                checkpointer=persistent_checkpointer,
+                services=services,
+            )
+            config = {"configurable": {"thread_id": run_id}}
+            final_state = await graph.ainvoke(
+                Command(resume=decision),
+                config=config,
+            )
+            if "__interrupt__" in final_state:
+                _PAUSED_GRAPHS[run_id] = graph
+                return {
+                    "status": "paused",
+                    "run_id": run_id,
+                    "interrupt": final_state["__interrupt__"],
+                    "state": final_state,
+                    "resumed_node_id": checkpoint["paused_node_id"],
+                }
+
+            _PAUSED_GRAPHS.pop(run_id, None)
+            rejection = _find_rejection(final_state)
+            if rejection:
+                return {
+                    "status": "rejected",
+                    "run_id": run_id,
+                    "node_id": rejection["node_id"],
+                    "reason": rejection["reason"],
+                    "state": final_state,
+                    "resumed_node_id": checkpoint["paused_node_id"],
+                }
+            return {
+                "status": "completed",
+                "run_id": run_id,
+                "state": final_state,
+                "resumed_node_id": checkpoint["paused_node_id"],
+            }
+
+        # Backward-compatible fallback for deployments that have Mongo replay
+        # records but have not enabled the Redis LangGraph checkpointer yet.
         result = await run_workflow(
             spec,
             checkpoint.get("inputs") or {},

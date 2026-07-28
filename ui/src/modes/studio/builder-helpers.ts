@@ -1,3 +1,5 @@
+/* JSON Schema values are deliberately open-ended at the Builder boundary. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { NodeTypeManifest } from '../../api/types';
 
 /** Walk a JSON Schema and produce a default value matching it.

@@ -39,8 +39,8 @@ export function Library() {
         // Open the inputs dialog.
         setDialog({ workflowName, workflowYaml: yamlText, inputs });
       }
-    } catch (e: any) {
-      setRunError(String(e.message ?? e));
+    } catch (e: unknown) {
+      setRunError(e instanceof Error ? e.message : String(e));
     }
   }
 

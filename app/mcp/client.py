@@ -24,48 +24,73 @@ from __future__ import annotations
 
 import sys
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, Mapping
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from app.config import Settings, settings
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
 
 DEFAULT_SERVER = "eurskem"
 
-# Launch specs per server. The primary is the in-venv module; the paper-search
-# server runs from a local clone via uv (its own isolated env — its ~20 source
-# connector deps never enter this .venv, which is the whole point of the
-# process boundary).
-SERVERS: dict[str, StdioServerParameters] = {
-    "eurskem": StdioServerParameters(
-        command=sys.executable, args=["-m", "app.mcp.server"]
-    ),
-    # Registered but optional. Path is configurable; adjust to your clone.
-    # If uv or the clone is absent, this server simply fails to start and is
-    # skipped — the primary keeps working.
-    "paper-search-mcp": StdioServerParameters(
-        command="uv",
+def build_server_specs(
+    app_settings: Settings = settings,
+) -> dict[str, StdioServerParameters]:
+    """Build portable MCP launch specs from application configuration."""
+
+    specs = {
+        "eurskem": StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "app.mcp.server"],
+        )
+    }
+    if not app_settings.paper_search_mcp_enabled:
+        return specs
+
+    path = app_settings.resolved_paper_search_mcp_path
+    if path is None:
+        log.warning(
+            "mcp.client.paper_search_disabled",
+            reason="PAPER_SEARCH_MCP_PATH is empty",
+        )
+        return specs
+
+    specs["paper-search-mcp"] = StdioServerParameters(
+        command=app_settings.paper_search_mcp_command,
         args=[
-            "run", "--directory",
-            "/Users/ayushkhandelwal/Documents/paper-search-mcp",
-            "-m", "paper_search_mcp.server",
+            "run",
+            "--directory",
+            str(path),
+            "-m",
+            app_settings.paper_search_mcp_module,
         ],
-    ),
-}
+    )
+    return specs
 
 
 class MCPClient:
     """Multi-server MCP wrapper. call_tool(name, arguments, server=...) routes
     to the named server; omitting `server` uses the primary (back-compat)."""
 
-    def __init__(self, servers: dict[str, StdioServerParameters] | None = None):
-        self._specs = servers if servers is not None else SERVERS
+    def __init__(
+        self,
+        servers: Mapping[str, StdioServerParameters] | None = None,
+    ):
+        self._specs = dict(servers) if servers is not None else build_server_specs()
         self._stack = AsyncExitStack()
         self._sessions: dict[str, ClientSession] = {}
         self._tools_cache: dict[str, list] = {}
+
+    @property
+    def configured_servers(self) -> tuple[str, ...]:
+        return tuple(self._specs)
+
+    @property
+    def running_servers(self) -> tuple[str, ...]:
+        return tuple(self._sessions)
 
     async def start(self, servers: list[str] | None = None) -> None:
         """Launch the requested servers (default: all declared). A server that
@@ -107,6 +132,13 @@ class MCPClient:
             resp = await self._require(server).list_tools()
             self._tools_cache[server] = resp.tools
         return self._tools_cache[server]
+
+    async def probe(self, server: str = DEFAULT_SERVER) -> bool:
+        """Perform a live MCP request instead of trusting a cached session."""
+
+        resp = await self._require(server).list_tools()
+        self._tools_cache[server] = resp.tools
+        return True
 
     async def call_tool(
         self, name: str, arguments: dict, server: str = DEFAULT_SERVER

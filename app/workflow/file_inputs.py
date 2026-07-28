@@ -20,10 +20,10 @@ from app.runtime.schema import WorkflowFileRef, WorkflowInputSpec
 
 FILE_CATEGORY_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "pdf": (".pdf",),
-    "document": (".doc", ".docx", ".odt", ".rtf", ".txt"),
+    "document": (".docx", ".txt"),
     "markdown": (".md", ".markdown"),
-    "presentation": (".ppt", ".pptx", ".odp"),
-    "spreadsheet": (".csv", ".xls", ".xlsx", ".ods"),
+    "presentation": (".pptx",),
+    "spreadsheet": (".xlsx",),
     "code": (
         ".c", ".cfg", ".cpp", ".cs", ".css", ".go", ".h", ".hpp",
         ".html", ".ini", ".ipynb", ".java", ".js", ".json", ".jsx",
@@ -46,6 +46,9 @@ EXTENSION_CATEGORY = {
 ALL_WORKFLOW_FILE_EXTENSIONS = tuple(sorted(EXTENSION_CATEGORY))
 _TEXT_PARSEABLE_EXTENSIONS = frozenset(supported_extensions())
 TEXT_EXTRACTABLE_EXTENSIONS = tuple(sorted(_TEXT_PARSEABLE_EXTENSIONS))
+REFERENCE_ONLY_EXTENSIONS = tuple(
+    sorted(set(FILE_CATEGORY_EXTENSIONS["image"]) - _TEXT_PARSEABLE_EXTENSIONS)
+)
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 

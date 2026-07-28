@@ -14,9 +14,10 @@ const DEFAULT_CAPABILITIES: WorkflowFileCapabilities = {
   categories: {},
   extensions: [],
   extractable_extensions: [
-    '.pdf', '.docx', '.pptx', '.txt', '.md', '.markdown',
+    '.pdf', '.docx', '.pptx', '.xlsx', '.txt', '.md', '.markdown',
     '.py', '.js', '.ts', '.tsx', '.json', '.yaml', '.yml',
   ],
+  reference_only_extensions: [],
   max_file_size_bytes: 50 * 1024 * 1024,
   max_files_per_input: 20,
 };

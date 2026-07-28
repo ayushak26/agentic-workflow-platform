@@ -9,6 +9,8 @@ export function useRunSocket(runId: string | null) {
 
   useEffect(() => {
     if (!runId) return;
+    // Reset state because this effect owns a new external WebSocket lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setEvents([]);
     setOpen(false);
     setError(null);
@@ -23,7 +25,11 @@ export function useRunSocket(runId: string | null) {
     ws.onmessage = (m) => {
       if (cancelled) return;
       const evt = JSON.parse(m.data) as RunEvent;
-      console.log('[WS] event', evt.type, (evt as any).node_id ?? '');
+      console.log(
+        '[WS] event',
+        evt.type,
+        'node_id' in evt ? (evt.node_id ?? '') : '',
+      );
       setEvents((prev) => [...prev, evt]);
       if (evt.type === 'run_completed' || evt.type === 'run_failed') terminal = true;
     };

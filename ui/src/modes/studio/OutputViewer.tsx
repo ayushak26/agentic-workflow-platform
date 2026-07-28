@@ -1,3 +1,5 @@
+/* Node outputs are runtime-defined by independently registered node plugins. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';

@@ -18,7 +18,15 @@ function ScoreBar({ value }: { value: number }) {
 export function EvalRoot() {
   const [setName, setSetName] = useState("document_qa");
   const [judgeModel, setJudgeModel] = useState("claude-sonnet-4-5");
-  const [golden, setGolden] = useState<{ n: number; examples: any[] } | null>(null);
+  const [golden, setGolden] = useState<{
+    n: number;
+    examples: {
+      id: string;
+      question: string;
+      context: string;
+      reference: string;
+    }[];
+  } | null>(null);
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
   const [history, setHistory] = useState<Scorecard[]>([]);
   const [running, setRunning] = useState(false);

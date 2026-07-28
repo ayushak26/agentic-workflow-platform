@@ -14,7 +14,7 @@
 import { useState, useEffect } from "react";
 
 // --- API base + auth. Swap these two if you have shared helpers. ------------
-const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 const token = () => localStorage.getItem("token") ?? "";
 const authHeaders = (): Record<string, string> => {
   const t = token();
@@ -124,15 +124,21 @@ function IngestedView() {
       const r = await fetch(`${API_BASE}/inspect/chunks?${qs}`, { headers: authHeaders() });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
-    } catch (e: any) {
-      setErr(e.message ?? String(e));
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }
 
   // Show the whole corpus on first open, no click required.
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    // Initial data load is the external synchronization owned by this effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void load();
+    // Filters intentionally apply only when the operator clicks Load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div>
@@ -247,8 +253,8 @@ function RetrieveView() {
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
-    } catch (e: any) {
-      setErr(e.message ?? String(e));
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }

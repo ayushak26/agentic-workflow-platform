@@ -267,6 +267,8 @@ export function RunHistory() {
   useEffect(() => {
     if (!runId) return;
     let cancelled = false;
+    // Clear the previous route's detail before synchronizing the new run.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDetail(null);
     setDetailErr(null);
     setRetryErr(null);

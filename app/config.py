@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,6 +34,18 @@ class Settings(BaseSettings):
         return self.workflow_file_max_mb * 1024 * 1024
 
     redis_url: str = "redis://localhost:6379/0"
+    health_probe_timeout_seconds: float = 2.0
+    readiness_required_services: str = (
+        "mongo,weaviate,minio,redis,checkpointer,mcp:eurskem"
+    )
+
+    # Optional external scholarly-search MCP server. Keeping this disabled and
+    # pathless by default makes the application portable; deployments that use
+    # EvidenceAgent enable it explicitly in their environment.
+    paper_search_mcp_enabled: bool = False
+    paper_search_mcp_path: str = ""
+    paper_search_mcp_command: str = "uv"
+    paper_search_mcp_module: str = "paper_search_mcp.server"
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
@@ -47,6 +61,19 @@ class Settings(BaseSettings):
     dev_bypass_enabled: bool = True
     dev_bypass_username: str = "ayush"
     dev_bypass_password: str = "dev123"
+
+    @property
+    def required_readiness_services(self) -> tuple[str, ...]:
+        return tuple(
+            name.strip()
+            for name in self.readiness_required_services.split(",")
+            if name.strip()
+        )
+
+    @property
+    def resolved_paper_search_mcp_path(self) -> Path | None:
+        value = self.paper_search_mcp_path.strip()
+        return Path(value).expanduser() if value else None
 
 
 settings = Settings()

@@ -15,7 +15,15 @@ def client():
 def test_health_returns_ok(client):
     res = client.get("/health")
     assert res.status_code == 200
-    assert res.json()["status"] == "ok"
+    assert res.json()["status"] in {"ok", "degraded"}
+    assert isinstance(res.json()["ready"], bool)
+    assert "mongo" in res.json()["services"]
+
+
+def test_ready_is_registered_and_truthful(client):
+    res = client.get("/ready")
+    assert res.status_code in {200, 503}
+    assert res.json()["ready"] is (res.status_code == 200)
 
 
 def test_login_dev_bypass(client):

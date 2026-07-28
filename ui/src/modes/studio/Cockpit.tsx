@@ -1,3 +1,5 @@
+/* Runtime node payloads are intentionally plugin-defined and heterogeneous. */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import ReactFlow, {
@@ -71,7 +73,9 @@ export function Cockpit() {
       }
   );
 
-  const [parsedWf, setParsedWf] = useState<YamlWorkflow | null>(null);
+  const [parsedWf] = useState<YamlWorkflow | null>(() => (
+    navState.workflowYaml ? parseYaml(navState.workflowYaml) : null
+  ));
   const [runTriggered, setRunTriggered] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -89,11 +93,6 @@ export function Cockpit() {
   const setRunCost = useSetRunCost();
 
   const { events, open: wsOpen, error: wsError } = useRunSocket(runId ?? null);
-
-  // Parse the YAML passed via navigation state.
-  useEffect(() => {
-    if (navState.workflowYaml) setParsedWf(parseYaml(navState.workflowYaml));
-  }, [navState.workflowYaml]);
 
   // Apply a run/resume response: advance to the next gate, or finish.
   function applyResumeResult(res: any) {
@@ -139,10 +138,12 @@ useEffect(() => {
       .then(c => setRunCost(c.total_usd))
       .catch(e => console.error('cost fetch failed', e));
   }
-}, [finished, runId]);
+}, [finished, runId, setRunCost]);
   // After WS opens, trigger the run exactly once. The run response seeds the first gate.
   useEffect(() => {
     if (!wsOpen || runTriggered || !navState.workflowYaml || !runId) return;
+    // This state guards the one external run request owned by this effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setRunTriggered(true);
     const request = navState.retrySourceRunId
       ? api.retryFailedRun(navState.retrySourceRunId, runId)
@@ -161,7 +162,6 @@ useEffect(() => {
         setTriggerError(message);
         setFinished({ status: 'failed', error: message });
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     wsOpen,
     runTriggered,

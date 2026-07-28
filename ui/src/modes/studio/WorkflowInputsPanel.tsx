@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import type { WorkflowInputSpec } from './yaml-bridge';
 
@@ -30,8 +30,6 @@ function InputNameEditor({
   const [draft, setDraft] = useState(name);
   const valid = /^[A-Za-z_][A-Za-z0-9_]*$/.test(draft);
   const duplicate = draft !== name && names.includes(draft);
-
-  useEffect(() => setDraft(name), [name]);
 
   function commit() {
     if (valid && !duplicate) onCommit(draft);

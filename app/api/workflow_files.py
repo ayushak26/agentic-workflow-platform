@@ -22,6 +22,7 @@ from app.security.dependencies import CurrentUser, require_consultant
 from app.workflow.file_inputs import (
     ALL_WORKFLOW_FILE_EXTENSIONS,
     FILE_CATEGORY_EXTENSIONS,
+    REFERENCE_ONLY_EXTENSIONS,
     TEXT_EXTRACTABLE_EXTENSIONS,
     WorkflowFileInputError,
     extract_workflow_file_text,
@@ -53,6 +54,7 @@ async def capabilities(
         },
         "extensions": list(ALL_WORKFLOW_FILE_EXTENSIONS),
         "extractable_extensions": list(TEXT_EXTRACTABLE_EXTENSIONS),
+        "reference_only_extensions": list(REFERENCE_ONLY_EXTENSIONS),
         "max_file_size_bytes": settings.workflow_file_max_bytes,
         "max_files_per_input": settings.workflow_file_max_files,
     }

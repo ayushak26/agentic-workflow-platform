@@ -388,7 +388,6 @@ EXTRACTORS_BY_EXT: dict[str, Extractor] = {
     ".docx": DocxExtractor(),
     # Spreadsheets
     ".xlsx": XlsxExtractor(),
-    ".xls": XlsxExtractor(),
     # Presentations
     ".pptx": PptxExtractor(),
     # Plain text

@@ -89,7 +89,7 @@ async function j<T>(r: Response): Promise<T> {
       if (error instanceof Error && !error.message.startsWith('Unexpected')) {
         throw error;
       }
-      throw new Error(`${r.status} ${text}`);
+      throw new Error(`${r.status} ${text}`, { cause: error });
     }
   }
   return r.json() as Promise<T>;
@@ -240,7 +240,7 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ graph, model }),
     }).then(j<{
-      graph: Record<string, any>;
+      graph: Record<string, unknown>;
       coverage: ProposalReview['coverage'];
       findings: Record<string, unknown>[];
     }>),
@@ -257,7 +257,7 @@ export const api = {
       body: JSON.stringify({ graph, concept_note, model }),
     }).then(j<{
       alternatives: ConceptAlternative[];
-      graph: Record<string, any>;
+      graph: Record<string, unknown>;
     }>),
 
   requestProposalApproval: (

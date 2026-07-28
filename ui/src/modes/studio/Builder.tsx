@@ -64,7 +64,9 @@ export function Builder() {
       const { nodes: ns, edges: es } = yamlToReactFlow(wf);
       setNodes(layoutFlow(ns, es));
       setEdges(es);
-      const { nodes: _n, edges: _e, ...rest } = wf;
+      const { nodes: workflowNodes, edges: workflowEdges, ...rest } = wf;
+      void workflowNodes;
+      void workflowEdges;
       setMeta(rest);
     });
   }, [name, setNodes, setEdges]);
@@ -171,9 +173,9 @@ export function Builder() {
       await api.saveWorkflow(name, text);
       setSaveState('saved');
       setTimeout(() => setSaveState('idle'), 1500);
-    } catch (e: any) {
+    } catch (e: unknown) {
       setSaveState('error');
-      setSaveError(String(e.message ?? e));
+      setSaveError(e instanceof Error ? e.message : String(e));
     }
   }, [meta, name, nodes, edges]);
 
@@ -185,8 +187,8 @@ export function Builder() {
       const workflow = reactFlowToYaml(meta, nodes, edges);
       const report = await api.validateWorkflow(dumpYaml(workflow));
       setPreflight(report);
-    } catch (error: any) {
-      setSaveError(String(error.message ?? error));
+    } catch (error: unknown) {
+      setSaveError(error instanceof Error ? error.message : String(error));
     } finally {
       setValidating(false);
     }

@@ -7,10 +7,10 @@ import type { WorkflowInputSpec } from './yaml-bridge';
 
 const FALLBACK_CATEGORIES: Record<string, string[]> = {
   pdf: ['.pdf'],
-  document: ['.doc', '.docx', '.odt', '.rtf', '.txt'],
+  document: ['.docx', '.txt'],
   markdown: ['.md', '.markdown'],
-  presentation: ['.ppt', '.pptx', '.odp'],
-  spreadsheet: ['.csv', '.xls', '.xlsx', '.ods'],
+  presentation: ['.pptx'],
+  spreadsheet: ['.xlsx'],
   code: [
     '.c', '.cfg', '.cpp', '.cs', '.css', '.go', '.h', '.hpp', '.html',
     '.ini', '.ipynb', '.java', '.js', '.json', '.jsx', '.kt', '.php',
@@ -28,9 +28,10 @@ const FALLBACK_CAPABILITIES: WorkflowFileCapabilities = {
   categories: FALLBACK_CATEGORIES,
   extensions: Object.values(FALLBACK_CATEGORIES).flat(),
   extractable_extensions: [
-    '.pdf', '.docx', '.pptx', '.txt', '.md', '.markdown',
+    '.pdf', '.docx', '.pptx', '.xlsx', '.txt', '.md', '.markdown',
     '.py', '.js', '.ts', '.tsx', '.json', '.yaml', '.yml',
   ],
+  reference_only_extensions: FALLBACK_CATEGORIES.image,
   max_file_size_bytes: 50 * 1024 * 1024,
   max_files_per_input: 20,
 };
@@ -298,8 +299,8 @@ export function RunDialog({
       navigate(`/cockpit/${runId}`, {
         state: { workflowYaml, workflowName, inputs: runInputs },
       });
-    } catch (error: any) {
-      setLaunchError(String(error.message ?? error));
+    } catch (error: unknown) {
+      setLaunchError(error instanceof Error ? error.message : String(error));
       setUploading(false);
     }
   }

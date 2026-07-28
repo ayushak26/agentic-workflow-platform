@@ -128,8 +128,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     extra_state=extra_state,
                 )
 
-            return {
-                "node_outputs": {node_id: output},
+            state_update = {
                 "audit_log": [
                     {
                         "node_id": node_id,
@@ -143,6 +142,10 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 ],
                 **extra_state,
             }
+            patched_outputs = dict(extra_state.get("node_outputs") or {})
+            patched_outputs[node_id] = output
+            state_update["node_outputs"] = patched_outputs
+            return state_update
 
         # Bind cost-tracking context for this specific node call.
         llm = services.get("llm")
@@ -280,8 +283,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 duration_s=time.time() - started,
             )
 
-        return {
-            "node_outputs": {node_id: output},
+        state_update = {
             "audit_log": [{
                 "node_id": node_id,
                 "type_name": type_name,
@@ -289,8 +291,15 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 "duration_s": time.time() - started,
                 "output_keys": list(output.keys()),
             }],
-             **extra_state, 
+            **extra_state,
         }
+        # An HITL edit can patch a previous node through __state__. Preserve
+        # both that patch and this node's own decision/output. If extra_state
+        # overwrites node_outputs, the approval record disappears.
+        patched_outputs = dict(extra_state.get("node_outputs") or {})
+        patched_outputs[node_id] = output
+        state_update["node_outputs"] = patched_outputs
+        return state_update
 
     runtime_fn.__name__ = f"node_{node_id}"
     return runtime_fn
@@ -399,4 +408,6 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     for exit_id in exits:
         graph.add_edge(exit_id, END)
 
+    # Production passes a Redis-backed saver through the service container.
+    # MemorySaver remains an explicit offline/test fallback only.
     return graph.compile(checkpointer=checkpointer or MemorySaver())
