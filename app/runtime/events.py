@@ -18,6 +18,7 @@ EventType = Literal[
     "node_completed",
     "node_reused",
     "node_paused",
+    "model_selected",
     "llm_token",
     "run_completed",
     "run_failed",

@@ -6,6 +6,7 @@ import app.nodes  # noqa: F401
 
 from app.llm.anthropic_gw import _supports_temperature
 from app.llm.openai_gw import _chat_tool_reasoning_effort
+from app.llm.model_catalog import AUTO_MODEL, MODEL_SELECTION_OPTIONS
 from app.llm.registry import _FALLBACK_MODEL
 from app.nodes.registry import NodeRegistry
 from app.observability.cost_ledger import CostLedger
@@ -27,7 +28,11 @@ def test_builder_manifest_exposes_models_as_dropdown():
 
     model_schema = transform["config_schema"]["properties"]["model"]
 
-    assert model_schema["enum"] == DEFAULT_LLM_MODELS
+    assert model_schema["enum"] == MODEL_SELECTION_OPTIONS
+    assert model_schema["enum"][0] == AUTO_MODEL
+    assert model_schema["x-enum-labels"][AUTO_MODEL] == (
+        "Best possible LLM (Auto)"
+    )
 
 
 def test_opus_5_falls_back_to_gpt_5_6_sol():
@@ -81,3 +86,11 @@ def test_agro_thrive_uses_opus_5():
 
     assert selected
     assert set(selected) == {"claude-opus-5"}
+
+    routed = [
+        node
+        for node in spec.nodes
+        if node.config.get("model")
+    ]
+    assert routed
+    assert all(node.selected_model == AUTO_MODEL for node in routed)

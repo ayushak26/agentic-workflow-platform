@@ -102,7 +102,20 @@ export function Builder() {
         id,
         type: 'workflow',
         position,
-        data: { nodeId: id, typeName, config },
+        data: {
+          nodeId: id,
+          typeName,
+          config,
+          ...(config.model === 'auto'
+            ? {
+                selectedModel: 'auto',
+                modelRouting: {
+                  accuracy_priority: 'balanced' as const,
+                  prefer_low_latency: false,
+                },
+              }
+            : {}),
+        },
       };
       setPreflight(null);
       setNodes(ns => [...ns, newNode]);
@@ -136,6 +149,69 @@ export function Builder() {
     },
     [selectedId, setNodes],
   );
+
+  const onModelSettingsChange = useCallback(
+    (
+      selectedModel: string | null,
+      modelRouting: WorkflowNodeData['modelRouting'],
+    ) => {
+      if (!selectedId) return;
+      setPreflight(null);
+      setNodes(ns =>
+        ns.map(n =>
+          n.id === selectedId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  selectedModel,
+                  modelRouting,
+                },
+              }
+            : n,
+        ),
+      );
+    },
+    [selectedId, setNodes],
+  );
+
+  const useBestModelForAll = useCallback(() => {
+    setPreflight(null);
+    setNodes(current =>
+      current.map(node => {
+        const manifest = findManifest(manifests, node.data.typeName);
+        const properties = (
+          manifest?.config_schema as {
+            properties?: Record<string, unknown>;
+          } | undefined
+        )?.properties;
+        if (!properties?.model) return node;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            selectedModel: 'auto',
+            modelRouting: {
+              accuracy_priority:
+                node.data.modelRouting?.accuracy_priority ?? 'balanced',
+              prefer_low_latency:
+                node.data.modelRouting?.prefer_low_latency ?? false,
+              ...(node.data.modelRouting?.max_estimated_cost_usd
+                ? {
+                    max_estimated_cost_usd:
+                      node.data.modelRouting.max_estimated_cost_usd,
+                  }
+                : {}),
+              ...(node.data.modelRouting?.quality_scores
+                ? { quality_scores: node.data.modelRouting.quality_scores }
+                : {}),
+            },
+          },
+        };
+      }),
+    );
+    setSaveState('idle');
+  }, [manifests, setNodes]);
 
   const onIdChange = useCallback(
     (nextId: string) => {
@@ -209,6 +285,10 @@ export function Builder() {
   if (!meta) {
     return <div className="p-8"><Spinner label="Loading workflow…" /></div>;
   }
+  const autoModelCount = nodes.filter(
+    node => node.data.selectedModel === 'auto'
+      || node.data.config.model === 'auto',
+  ).length;
 
   return (
     <div className="h-full flex">
@@ -242,6 +322,12 @@ export function Builder() {
         <div className="absolute top-4 left-4 bg-white/90 backdrop-blur rounded-md px-3 py-2 shadow-sm border border-slate-200">
           <div className="text-sm font-medium">{meta.name}</div>
           <div className="text-xs text-ink-500">{nodes.length} nodes</div>
+          {autoModelCount > 0 && (
+            <div className="text-xs text-accent-600 mt-1">
+              Auto model routing: {autoModelCount} node
+              {autoModelCount === 1 ? '' : 's'}
+            </div>
+          )}
         </div>
 
         {/* Top-right canvas actions + save */}
@@ -252,6 +338,13 @@ export function Builder() {
               Save failed
             </span>
           )}
+          <button
+            onClick={useBestModelForAll}
+            title="Set every LLM-capable node to automatic, task-aware model selection"
+            className="px-3 py-2 rounded-md border border-accent-300 bg-accent-50 text-accent-700 text-sm hover:bg-accent-100"
+          >
+            Best LLM for all
+          </button>
           <button
             onClick={() => {
               setSelectedId(null);
@@ -368,6 +461,7 @@ export function Builder() {
             manifests={manifests}
             onIdChange={onIdChange}
             onConfigChange={onConfigChange}
+            onModelSettingsChange={onModelSettingsChange}
           />
         )}
       </aside>

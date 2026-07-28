@@ -3,9 +3,9 @@ use_case: eu_proposal
 description: "Generates a Horizon Europe Part B for AGRO-THRIVE (HORIZON-CL6-2026-01-CIRCBIO-09) built\
   \ on the typed Proposal Knowledge Graph. concept_normalize POPULATES the graph with validated objects\
   \ (objectives, WPs, partners, claims); the EvidenceAgent enriches claims with real citations from paper-search-mcp;\
-  \ and a deterministic ConsistencyChecker gates the render on structure + compliance. Model policy: Opus\
-  \ 4.8 on reasoning/writing nodes; Sonnet on the mechanical query node (gather_evidence only formulates\
-  \ search strings \u2014 Opus is wasted there); consistency_gate is deterministic (no LLM).\n"
+  \ and a deterministic ConsistencyChecker gates the render on structure + compliance. LLM nodes use\
+  \ automatic prompt-aware routing with per-node quality priorities; consistency_gate is deterministic\
+  \ (no LLM).\n"
 version: '2.0'
 inputs:
   concept_note:
@@ -15,6 +15,9 @@ inputs:
 nodes:
 - id: call_intel
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: balanced
   config:
     model: claude-opus-5
     output_schema:
@@ -44,10 +47,17 @@ nodes:
       '
 - id: concept_normalize
   type: GraphNormalizer
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
 - id: gather_evidence
   type: EvidenceAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: balanced
+    prefer_low_latency: true
   config:
     mcp_server: paper-search-mcp
     tool: search_papers
@@ -70,6 +80,9 @@ nodes:
     model: claude-sonnet-4-5
 - id: draft_objectives
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -87,6 +100,9 @@ nodes:
       EVIDENCE:      {{gather_evidence.report}}\n"
 - id: draft_methodology
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -102,6 +118,9 @@ nodes:
       EVIDENCE:      {{gather_evidence.report}}\n"
 - id: draft_excellence_crosscut
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -119,6 +138,9 @@ nodes:
       \      {{gather_evidence.report}}\n"
 - id: draft_impact_pathway
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -135,6 +157,9 @@ nodes:
       EVIDENCE:      {{gather_evidence.report}}\n"
 - id: draft_impact_dec
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -149,6 +174,9 @@ nodes:
       EVIDENCE:      {{gather_evidence.report}}\n"
 - id: draft_workplan
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -167,6 +195,9 @@ nodes:
       OPEN QUESTIONS: {{concept_normalize.warnings}}'
 - id: draft_consortium
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -185,6 +216,9 @@ nodes:
       OPEN QUESTIONS: {{concept_normalize.warnings}}'
 - id: draft_resources_risk
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     max_tokens: 32000
@@ -196,6 +230,9 @@ nodes:
       \ each with likelihood, impact, and a specific mitigation, as a table.\nGRAPH COUNTS:  {{concept_normalize.counts}}"
 - id: draft_cross_cutting
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     output_schema:
@@ -245,6 +282,9 @@ nodes:
     max_tokens: 32000
 - id: feasibility_check
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     output_schema:
@@ -276,6 +316,9 @@ nodes:
     block_on_warn: false
 - id: compile_partb
   type: TransformAgent
+  selected_model: auto
+  model_routing:
+    accuracy_priority: maximum
   config:
     model: claude-opus-5
     prompt_template: "Assemble the final AGRO-THRIVE Part B from the drafted sections below. Do NOT rewrite\

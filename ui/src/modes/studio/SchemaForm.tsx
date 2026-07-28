@@ -15,10 +15,12 @@ export function SchemaForm({
   schema,
   value,
   onChange,
+  hiddenFields = [],
 }: {
   schema: Schema;
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  hiddenFields?: string[];
 }) {
   if (!schema || schema.type !== 'object' || !schema.properties) {
     return <div className="text-sm text-ink-500">No editable fields.</div>;
@@ -28,7 +30,9 @@ export function SchemaForm({
 
   return (
     <div className="space-y-4">
-      {Object.entries(schema.properties as Record<string, Schema>).map(([name, propSchema]) => (
+      {Object.entries(schema.properties as Record<string, Schema>)
+        .filter(([name]) => !hiddenFields.includes(name))
+        .map(([name, propSchema]) => (
         <FieldRenderer
           key={name}
           name={name}
@@ -86,7 +90,9 @@ function FieldRenderer({
         >
           {isOptional && <option value="">(none)</option>}
           {effective.enum.map((opt: string) => (
-            <option key={opt} value={opt}>{opt}</option>
+            <option key={opt} value={opt}>
+              {effective['x-enum-labels']?.[opt] ?? opt}
+            </option>
           ))}
         </select>
         {effective.description && <Hint text={effective.description} />}

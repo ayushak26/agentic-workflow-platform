@@ -32,6 +32,10 @@ class WorkflowState(TypedDict, total=False):
     # Append-only audit log. 'add' on lists = concatenation.
     audit_log: Annotated[list[dict], add]
 
+    # Provider-neutral model choices emitted by the gateway. This contains no
+    # prompts or generated content and remains safe for operator-visible UI.
+    model_selections: Annotated[list[dict], add]
+
     # Session isolation — every workflow run is keyed by this; retrieval,
     # cache, and Weaviate filter on it. The proposal's 'Pigeon Holes' requirement.
     session_id: str

@@ -23,9 +23,16 @@ import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } 
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 import { useSetRunCost } from "../../RunCostContext";
 import { layoutFlow } from './flow-layout';
-import type { HITLReviewContent, RunDetail } from '../../api/types';
+import type {
+  HITLReviewContent,
+  ModelSelection,
+  RunDetail,
+} from '../../api/types';
 
-type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
+type CockpitNodeData = WorkflowNodeData & {
+  status: NodeStatus;
+  modelSelection?: ModelSelection;
+};
 const nodeTypes = { workflow: CockpitNode };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -221,10 +228,13 @@ useEffect(() => {
         data: {
           ...node.data,
           status: cockpit.nodeStates[node.data.nodeId] ?? 'pending',
+          modelSelection: (
+            cockpit.modelSelections[node.data.nodeId] ?? []
+          ).at(-1),
         },
       })),
     );
-  }, [cockpit.nodeStates, setNodes]);
+  }, [cockpit.modelSelections, cockpit.nodeStates, setNodes]);
 
   const activeNodeId = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -490,6 +500,40 @@ useEffect(() => {
                 <div className="text-xs uppercase tracking-wide text-ink-500">{selectedNode.data.typeName}</div>
                 <div className="font-semibold text-lg mt-1">{selectedNode.data.nodeId}</div>
                 <div className="mt-2 text-xs text-ink-500">Status: {selectedNode.data.status}</div>
+
+                <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">
+                  LLM selection
+                </h3>
+                {selectedNode.data.modelSelection ? (
+                  <div className="rounded-md border border-accent-200 bg-accent-50 p-3 text-xs">
+                    <div className="font-semibold text-accent-800">
+                      {selectedNode.data.modelSelection.actual_model}
+                    </div>
+                    <div className="text-ink-500 mt-1">
+                      Requested: {selectedNode.data.modelSelection.requested_model}
+                      {' · '}
+                      {selectedNode.data.modelSelection.mode}
+                      {' · '}
+                      {selectedNode.data.modelSelection.complexity}
+                      {' '}
+                      {selectedNode.data.modelSelection.task_kind.replace('_', ' ')}
+                    </div>
+                    <div className="text-ink-700 mt-2">
+                      {selectedNode.data.modelSelection.reason}
+                    </div>
+                    <div className="text-ink-500 mt-2">
+                      Estimated maximum call cost: $
+                      {selectedNode.data.modelSelection.estimated_cost_usd.toFixed(6)}
+                      {selectedNode.data.modelSelection.fallback
+                        ? ' · provider fallback'
+                        : ''}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-ink-500">
+                    No LLM provider call recorded for this node yet.
+                  </div>
+                )}
 
                 <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">Output preview</h3>
                 {cockpit.outputPreviews[selectedNode.data.nodeId] ? (

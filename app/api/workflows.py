@@ -72,12 +72,36 @@ async def allowed_models(
     node_type: str,
     _user: CurrentUser = Depends(require_permission("workflow:read")),
 ):
-    """Returns the default allowed model list for a node type."""
-    from app.runtime.schema import DEFAULT_LLM_MODELS
+    """Return picker options and operational traits for model routing."""
+    from app.llm.model_catalog import (
+        AUTO_MODEL,
+        AUTO_MODEL_LABEL,
+        DEFAULT_LLM_MODELS,
+        MODEL_PROFILES,
+    )
+    from app.llm.registry import _provider_is_configured
 
     return {
         "node_type": node_type,
+        "automatic": {
+            "value": AUTO_MODEL,
+            "label": AUTO_MODEL_LABEL,
+            "description": (
+                "Choose deterministically from configured providers using "
+                "prompt complexity, task fit, cost, and optional eval scores."
+            ),
+        },
         "allowed_models": list(DEFAULT_LLM_MODELS),
+        "models": [
+            {
+                "name": profile.name,
+                "provider": profile.provider,
+                "tier": profile.tier,
+                "available": _provider_is_configured(profile.name),
+                "strengths": sorted(profile.strengths),
+            }
+            for profile in MODEL_PROFILES
+        ],
     }
 
 

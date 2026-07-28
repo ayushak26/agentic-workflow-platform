@@ -387,5 +387,19 @@ async def test_plain_llm_tokens_are_published_to_authenticated_run_stream(
     )
 
     assert response.text == "first second"
-    assert [event.token for event in bus.events] == ["first ", "second"]
-    assert all(event.type == "llm_token" for event in bus.events)
+    assert [
+        event.token
+        for event in bus.events
+        if event.type == "llm_token"
+    ] == ["first ", "second"]
+    selection = next(
+        event
+        for event in bus.events
+        if event.type == "model_selected"
+    )
+    assert selection.context["actual_model"] == "claude-sonnet-4-5"
+    assert [event.type for event in bus.events] == [
+        "model_selected",
+        "llm_token",
+        "llm_token",
+    ]

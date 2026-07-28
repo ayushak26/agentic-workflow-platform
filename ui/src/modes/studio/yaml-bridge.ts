@@ -11,6 +11,22 @@ export type WorkflowInputSpec = {
   max_files?: number;
 };
 
+export type ModelRoutingPolicy = {
+  accuracy_priority?: 'maximum' | 'balanced' | 'economy';
+  max_estimated_cost_usd?: number | null;
+  prefer_low_latency?: boolean;
+  quality_scores?: Record<string, number>;
+};
+
+export type YamlWorkflowNode = {
+  id: string;
+  type: string;
+  config?: Record<string, unknown>;
+  allowed_models?: string[];
+  selected_model?: string | null;
+  model_routing?: ModelRoutingPolicy;
+};
+
 export type YamlWorkflow = {
   name: string;
   description?: string;
@@ -18,7 +34,7 @@ export type YamlWorkflow = {
   use_case?: string;
   inputs?: Record<string, WorkflowInputSpec>;   // was Record<string, unknown>
   static_variables?: Array<{ name: string; type: string; value: unknown }>;
-  nodes: Array<{ id: string; type: string; config?: Record<string, unknown> }>;
+  nodes: YamlWorkflowNode[];
   edges: Array<{
     from: string;
     to?: string | string[];
@@ -35,6 +51,9 @@ export type WorkflowNodeData = {
   nodeId: string;        // the YAML node id
   typeName: string;      // the registered type_name
   config: Record<string, unknown>;
+  allowedModels?: string[];
+  selectedModel?: string | null;
+  modelRouting?: ModelRoutingPolicy;
 };
 
 const NODE_X = 320;
@@ -60,6 +79,9 @@ export function yamlToReactFlow(
       nodeId: n.id,
       typeName: n.type,
       config: n.config ?? {},
+      allowedModels: n.allowed_models,
+      selectedModel: n.selected_model,
+      modelRouting: n.model_routing,
     },
   }));
 
@@ -99,10 +121,19 @@ export function reactFlowToYaml(
   rfNodes: RFNode<WorkflowNodeData>[],
   rfEdges: RFEdge[]
 ): YamlWorkflow {
-  const nodes = rfNodes.map(n => ({
+  const nodes: YamlWorkflowNode[] = rfNodes.map(n => ({
     id: n.data.nodeId,
     type: n.data.typeName,
     config: n.data.config,
+    ...(n.data.allowedModels
+      ? { allowed_models: n.data.allowedModels }
+      : {}),
+    ...(n.data.selectedModel
+      ? { selected_model: n.data.selectedModel }
+      : {}),
+    ...(n.data.modelRouting
+      ? { model_routing: n.data.modelRouting }
+      : {}),
   }));
 
   // Group edges by source. Multiple targets become a list.

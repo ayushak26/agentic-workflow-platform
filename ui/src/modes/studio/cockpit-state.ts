@@ -1,4 +1,4 @@
-import type { RunEvent } from '../../api/types';
+import type { ModelSelection, RunEvent } from '../../api/types';
 
 export type NodeStatus = 'pending' | 'active' | 'done' | 'reused' | 'paused' | 'failed';
 export type RunStatus = 'connecting' | 'running' | 'paused' | 'completed' | 'failed';
@@ -7,6 +7,7 @@ export type CockpitState = {
   runStatus: RunStatus;
   nodeStates: Record<string, NodeStatus>;
   outputPreviews: Record<string, string>;
+  modelSelections: Record<string, ModelSelection[]>;
   pausedNode: { id: string; context: unknown } | null;
   errorMessage: string | null;
 };
@@ -18,6 +19,7 @@ export function initialCockpitState(nodeIds: string[], wsOpen: boolean): Cockpit
     runStatus: wsOpen ? 'running' : 'connecting',
     nodeStates,
     outputPreviews: {},
+    modelSelections: {},
     pausedNode: null,
     errorMessage: null,
   };
@@ -52,6 +54,14 @@ export function deriveCockpitState(
           s.pausedNode = { id: e.node_id, context: e.context };
         }
         s.runStatus = 'paused';
+        break;
+      case 'model_selected':
+        if (e.node_id) {
+          s.modelSelections[e.node_id] = [
+            ...(s.modelSelections[e.node_id] ?? []),
+            e.context,
+          ];
+        }
         break;
       case 'llm_token':
         // Token chunks are consumed by streaming clients and do not change

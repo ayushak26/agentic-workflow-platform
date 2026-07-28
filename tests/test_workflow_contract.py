@@ -76,6 +76,22 @@ def test_selected_model_overrides_saved_node_config():
     assert node.config["model"] == "claude-haiku-4-5"
 
 
+def test_automatic_model_selection_is_a_valid_node_override():
+    node = NodeSpec(
+        id="writer",
+        type="TransformAgent",
+        config={"model": "claude-haiku-4-5"},
+        selected_model="auto",
+        model_routing={
+            "accuracy_priority": "maximum",
+            "max_estimated_cost_usd": 0.25,
+        },
+    )
+
+    assert node.effective_config()["model"] == "auto"
+    assert node.model_routing.accuracy_priority == "maximum"
+
+
 async def test_variables_and_output_projection_are_runtime_features():
     spec = load_workflow_from_string(
         """

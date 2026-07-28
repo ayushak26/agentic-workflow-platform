@@ -33,6 +33,12 @@ from app.llm.errors import (
     LLMProviderUnavailableError,
     StructuredOutputError,
 )
+from app.llm.model_catalog import AUTO_MODEL, DEFAULT_LLM_MODELS
+from app.llm.model_router import (
+    ModelRouter,
+    ModelRoutingError,
+    ModelSelection,
+)
 from app.observability import metrics
 
 log = structlog.get_logger(__name__)
@@ -280,6 +286,12 @@ class RegistryLLMGateway(LLMGateway):
         self._ledger = None  # CostLedger | None
         self._semantic_cache = None
         self._event_bus = None
+        self._node_type: str | None = None
+        self._allowed_models = list(DEFAULT_LLM_MODELS)
+        self._routing_policy: dict[str, Any] = {}
+        self._selection_history: list[dict[str, Any]] = []
+        self._call_sequence = 0
+        self._model_router = ModelRouter()
         self._retry_policy = retry_policy or RetryPolicy(
             max_attempts=settings.llm_retry_attempts,
             base_delay_seconds=settings.llm_retry_base_delay_seconds,
@@ -297,6 +309,9 @@ class RegistryLLMGateway(LLMGateway):
         ledger=None,
         semantic_cache=None,
         event_bus=None,
+        node_type: str | None = None,
+        allowed_models: list[str] | None = None,
+        routing_policy: dict[str, Any] | None = None,
     ) -> "RegistryLLMGateway":
         """Return a context-bound copy for per-node cost tracking.
 
@@ -312,9 +327,29 @@ class RegistryLLMGateway(LLMGateway):
         clone._ledger     = ledger
         clone._semantic_cache = semantic_cache
         clone._event_bus = event_bus
+        clone._node_type = node_type
+        clone._allowed_models = list(
+            allowed_models or DEFAULT_LLM_MODELS
+        )
+        clone._routing_policy = dict(routing_policy or {})
+        clone._selection_history = []
+        clone._call_sequence = 0
         return clone
 
-    def _record_cost(self, intended: str, resolved: str, resp) -> None:
+    @property
+    def selection_history(self) -> list[dict[str, Any]]:
+        """Safe copy of model decisions made inside the bound node call."""
+
+        return [dict(item) for item in self._selection_history]
+
+    def _record_cost(
+        self,
+        intended: str,
+        selected: str,
+        resolved: str,
+        resp,
+        decision: ModelSelection,
+    ) -> None:
         """Write a LedgerEntry if we have context + a ledger."""
         if self._ledger is None:
             return
@@ -326,6 +361,7 @@ class RegistryLLMGateway(LLMGateway):
                 node_id=self._node_id or "unknown",
                 model=resolved,
                 intended_model=intended,          # audit: what the YAML asked for
+                selected_model=selected,
                 input_tokens=getattr(resp, "input_tokens",  0) or 0,
                 output_tokens=getattr(resp, "output_tokens", 0) or 0,
                 cost_usd=CostLedger.calculate(
@@ -333,6 +369,10 @@ class RegistryLLMGateway(LLMGateway):
                     getattr(resp, "input_tokens",  0) or 0,
                     getattr(resp, "output_tokens", 0) or 0,
                 ),
+                selection_mode=decision.mode,
+                selection_reason=decision.reason,
+                task_kind=decision.task_kind,
+                complexity=decision.complexity,
                 cache_hit=bool(getattr(resp, "cache_hit", False)),
             )
             self._ledger.record(entry)
@@ -346,7 +386,11 @@ class RegistryLLMGateway(LLMGateway):
         primary = resolve_model(intended)
         candidates = [primary]
         fallback = _FALLBACK_MODEL.get(intended)
-        if fallback and fallback != primary:
+        if (
+            fallback
+            and fallback != primary
+            and fallback in self._allowed_models
+        ):
             candidates.append(fallback)
         available = [
             model
@@ -359,6 +403,42 @@ class RegistryLLMGateway(LLMGateway):
                 "Set the corresponding provider API key."
             )
         return list(dict.fromkeys(available))
+
+    async def _publish_selection(
+        self,
+        decision: ModelSelection,
+        *,
+        actual_model: str,
+        call_id: int,
+        fallback: bool = False,
+        cache_hit: bool = False,
+    ) -> None:
+        """Record and stream one auditable provider choice."""
+
+        selection = decision.to_event(
+            actual_model=actual_model,
+            call_id=call_id,
+            fallback=fallback,
+            cache_hit=cache_hit,
+        )
+        self._selection_history.append(selection)
+        log.info(
+            "llm.model_selected",
+            run_id=self._run_id,
+            node_id=self._node_id,
+            **selection,
+        )
+        if self._event_bus is not None and self._run_id:
+            from app.runtime.events import RunEvent
+
+            await self._event_bus.publish(
+                RunEvent(
+                    type="model_selected",
+                    run_id=self._run_id,
+                    node_id=self._node_id,
+                    context=selection,
+                )
+            )
 
     def _delay_for(self, attempt: int, exc: BaseException) -> float:
         policy = self._retry_policy
@@ -385,15 +465,46 @@ class RegistryLLMGateway(LLMGateway):
         *,
         intended: str,
         kwargs: dict[str, Any],
-    ) -> tuple[Any, str]:
-        intended, kwargs, input_tokens = await self._prepare_call(
+    ) -> tuple[Any, str, ModelSelection]:
+        requested_model = intended
+        intended, kwargs, input_tokens, cost_protection = await self._prepare_call(
             method_name,
             intended,
             kwargs,
         )
-        candidates = self._models_for_call(intended)
+        if intended == AUTO_MODEL:
+            try:
+                decision = self._model_router.select(
+                    method_name=method_name,
+                    kwargs=kwargs,
+                    input_tokens=input_tokens,
+                    allowed_models=self._allowed_models,
+                    is_available=_provider_is_configured,
+                    node_type=self._node_type,
+                    policy=self._routing_policy,
+                )
+            except ModelRoutingError as exc:
+                raise LLMProviderUnavailableError(str(exc)) from exc
+        else:
+            decision = self._model_router.describe_manual(
+                requested_model=requested_model,
+                selected_model=intended,
+                method_name=method_name,
+                kwargs=kwargs,
+                input_tokens=input_tokens,
+                node_type=self._node_type,
+                mode=(
+                    "cost_protection"
+                    if cost_protection
+                    else "manual"
+                ),
+            )
+        selected_model = decision.selected_model
+        candidates = self._models_for_call(selected_model)
         last_error: BaseException | None = None
         cache_lookup = None
+        self._call_sequence += 1
+        call_id = self._call_sequence
 
         if (
             method_name == "complete"
@@ -404,7 +515,7 @@ class RegistryLLMGateway(LLMGateway):
         ):
             cache_lookup = await self._semantic_cache.get(
                 session_id=self._session_id,
-                model=intended,
+                model=selected_model,
                 system=str(kwargs.get("system", "")),
                 user=str(kwargs.get("user", "")),
                 temperature=float(kwargs.get("temperature", 0.0)),
@@ -412,6 +523,15 @@ class RegistryLLMGateway(LLMGateway):
             )
             if cache_lookup.hit and cache_lookup.response:
                 cached = cache_lookup.response
+                cached_model = str(
+                    cached.get("model") or candidates[0]
+                )
+                await self._publish_selection(
+                    decision,
+                    actual_model=cached_model,
+                    call_id=call_id,
+                    cache_hit=True,
+                )
                 if self._event_bus is not None and self._run_id:
                     from app.runtime.events import RunEvent
 
@@ -421,26 +541,36 @@ class RegistryLLMGateway(LLMGateway):
                             run_id=self._run_id,
                             node_id=self._node_id,
                             token=str(cached["text"]),
-                            context={"cache_hit": True},
+                            context={
+                                "cache_hit": True,
+                                "model": cached_model,
+                            },
                         )
                     )
                 return (
                     LLMResponse(
                         text=str(cached["text"]),
-                        model=str(cached.get("model") or candidates[0]),
+                        model=cached_model,
                         input_tokens=0,
                         output_tokens=0,
                         stop_reason=cached.get("stop_reason"),
                         cache_hit=True,
                         cache_similarity=cache_lookup.similarity,
                     ),
-                    str(cached.get("model") or candidates[0]),
+                    cached_model,
+                    decision,
                 )
         elif method_name == "complete":
             metrics.LLM_CACHE.labels(status="bypass").inc()
 
         for model_index, candidate in enumerate(candidates):
             gateway, resolved = get_gateway(candidate)
+            await self._publish_selection(
+                decision,
+                actual_model=resolved,
+                call_id=call_id,
+                fallback=model_index > 0,
+            )
             if model_index:
                 metrics.LLM_FAILOVERS.labels(
                     from_model=candidates[0],
@@ -448,7 +578,8 @@ class RegistryLLMGateway(LLMGateway):
                 ).inc()
                 log.warning(
                     "llm.failover",
-                    intended=intended,
+                    intended=requested_model,
+                    selected=selected_model,
                     from_model=candidates[0],
                     to_model=resolved,
                     run_id=self._run_id,
@@ -507,7 +638,7 @@ class RegistryLLMGateway(LLMGateway):
                     ):
                         await self._semantic_cache.put(
                             session_id=self._session_id,
-                            model=intended,
+                            model=selected_model,
                             system=str(kwargs.get("system", "")),
                             user=str(kwargs.get("user", "")),
                             temperature=float(kwargs.get("temperature", 0.0)),
@@ -519,7 +650,7 @@ class RegistryLLMGateway(LLMGateway):
                             },
                             query_embedding=cache_lookup.query_embedding,
                         )
-                    return response, resolved
+                    return response, resolved, decision
                 except Exception as exc:
                     metrics.LLM_LATENCY.labels(
                         model=resolved,
@@ -536,7 +667,8 @@ class RegistryLLMGateway(LLMGateway):
                     if not retryable:
                         log.error(
                             "llm.non_retryable_error",
-                            intended=intended,
+                            intended=requested_model,
+                            selected=selected_model,
                             resolved=resolved,
                             status_code=_status_code(exc),
                             error_type=type(exc).__name__,
@@ -553,7 +685,8 @@ class RegistryLLMGateway(LLMGateway):
                         ).inc()
                         log.warning(
                             "llm.retry",
-                            intended=intended,
+                            intended=requested_model,
+                            selected=selected_model,
                             resolved=resolved,
                             attempt=attempt,
                             next_attempt=attempt + 1,
@@ -568,7 +701,8 @@ class RegistryLLMGateway(LLMGateway):
 
                     log.warning(
                         "llm.provider_exhausted",
-                        intended=intended,
+                        intended=requested_model,
+                        selected=selected_model,
                         resolved=resolved,
                         attempts=attempt,
                         has_fallback=model_index + 1 < len(candidates),
@@ -586,7 +720,7 @@ class RegistryLLMGateway(LLMGateway):
         method_name: str,
         intended: str,
         kwargs: dict[str, Any],
-    ) -> tuple[str, dict[str, Any], int]:
+    ) -> tuple[str, dict[str, Any], int, bool]:
         prepared = dict(kwargs)
         requested_output = int(prepared.get("max_tokens", 1_024))
         prepared["max_tokens"] = min(
@@ -600,6 +734,7 @@ class RegistryLLMGateway(LLMGateway):
                 f"the configured limit is {settings.llm_max_input_tokens:,}"
             )
 
+        cost_protection = False
         if (
             self._ledger is not None
             and self._session_id
@@ -617,6 +752,7 @@ class RegistryLLMGateway(LLMGateway):
                 or global_spend >= settings.llm_global_daily_budget_usd
             )
             if emergency:
+                cost_protection = True
                 if (
                     global_spend >= settings.llm_global_daily_budget_usd
                     and input_tokens
@@ -639,38 +775,56 @@ class RegistryLLMGateway(LLMGateway):
                     node_id=self._node_id,
                 )
                 intended = settings.llm_emergency_model
-        return intended, prepared, input_tokens
+        return intended, prepared, input_tokens, cost_protection
 
     async def complete(self, *, model: str, **kwargs):
-        resp, resolved = await self._call_resilient(
+        resp, resolved, decision = await self._call_resilient(
             "complete",
             intended=model,
             kwargs=kwargs,
         )
-        _record_usage(model, resolved, resp)
-        self._record_cost(model, resolved, resp)
+        _record_usage(decision.selected_model, resolved, resp)
+        self._record_cost(
+            model,
+            decision.selected_model,
+            resolved,
+            resp,
+            decision,
+        )
         return resp
 
     async def complete_structured(self, *, model: str, **kwargs):
-        resp, resolved = await self._call_resilient(
+        resp, resolved, decision = await self._call_resilient(
             "complete_structured",
             intended=model,
             kwargs=kwargs,
         )
         # Concrete gateways return StructuredResult so cost survives native
         # structured output. The registry preserves the public bare-model API.
-        _record_usage(model, resolved, resp)
-        self._record_cost(model, resolved, resp)
+        _record_usage(decision.selected_model, resolved, resp)
+        self._record_cost(
+            model,
+            decision.selected_model,
+            resolved,
+            resp,
+            decision,
+        )
         return resp.parsed
 
     async def chat_with_tools(self, *, model: str, **kwargs):
-        resp, resolved = await self._call_resilient(
+        resp, resolved, decision = await self._call_resilient(
             "chat_with_tools",
             intended=model,
             kwargs=kwargs,
         )
-        _record_usage(model, resolved, resp)
-        self._record_cost(model, resolved, resp)
+        _record_usage(decision.selected_model, resolved, resp)
+        self._record_cost(
+            model,
+            decision.selected_model,
+            resolved,
+            resp,
+            decision,
+        )
         return resp
 
 

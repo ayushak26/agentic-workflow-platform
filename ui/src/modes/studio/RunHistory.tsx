@@ -173,6 +173,8 @@ function NodeCard({
   const ts = typeStyle(typeName);
   const key = fileKey(value);
   const status = nodeRun?.status ?? 'completed';
+  const modelSelections = nodeRun?.model_selections ?? [];
+  const lastModelSelection = modelSelections.at(-1);
   return (
     <div className="border border-slate-200 rounded-lg overflow-hidden">
       <button
@@ -184,6 +186,11 @@ function NodeCard({
           <span className="font-mono text-sm text-ink-900 truncate">{nodeId}</span>
           <span className={`text-[10px] px-1.5 py-0.5 rounded flex-none ${ts.chip}`}>{ts.label}</span>
           <span className="text-[10px] uppercase tracking-wide text-ink-300">{status}</span>
+          {lastModelSelection && (
+            <span className="text-[10px] rounded bg-accent-50 px-1.5 py-0.5 text-accent-700">
+              {lastModelSelection.actual_model}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 flex-none ml-3">
           {key && (
@@ -206,6 +213,35 @@ function NodeCard({
           {nodeRun?.error && (
             <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 font-mono">
               {nodeRun.error}
+            </div>
+          )}
+          {modelSelections.length > 0 && (
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-ink-300 mb-1">
+                LLM selection
+              </div>
+              <div className="space-y-2">
+                {modelSelections.map((selection, index) => (
+                  <div
+                    key={`${selection.call_id}:${selection.actual_model}:${index}`}
+                    className="rounded border border-accent-200 bg-white p-2 text-xs"
+                  >
+                    <div className="font-semibold text-accent-800">
+                      {selection.actual_model}
+                      {selection.fallback ? ' · fallback' : ''}
+                      {selection.cache_hit ? ' · cache hit' : ''}
+                    </div>
+                    <div className="mt-1 text-ink-500">
+                      Requested {selection.requested_model} · {selection.mode}
+                      {' · '}{selection.complexity}{' '}
+                      {selection.task_kind.replace('_', ' ')}
+                    </div>
+                    <div className="mt-1 text-ink-700">
+                      {selection.reason}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           <div>

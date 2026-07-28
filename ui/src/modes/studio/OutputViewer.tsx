@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import type { ModelSelection } from '../../api/types';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 
 export function OutputViewer({
@@ -15,7 +16,9 @@ export function OutputViewer({
     workflowName?: string;
 }) {
     const navigate = useNavigate();
-    const [tab, setTab] = useState<'variables' | 'sources' | 'audit' | 'score'>('variables');
+    const [tab, setTab] = useState<
+        'variables' | 'models' | 'sources' | 'audit' | 'score'
+    >('variables');
     const [reference, setReference] = useState('');
     const [scores, setScores] = useState<{ criterion: string; score: number; reasoning: string }[] | null>(null);
     const [scoring, setScoring] = useState(false);
@@ -29,6 +32,11 @@ export function OutputViewer({
     const nodeOutputs = state?.node_outputs ?? {};
     const workflowInputs = state?.inputs ?? {};
     const workflowVariables = state?.variables ?? {};
+    const modelSelections = (
+        Array.isArray(state?.model_selections)
+            ? state.model_selections
+            : []
+    ) as ModelSelection[];
 
     // Renderer-agnostic: pick whichever document renderer ran. Either node type
     // (PDFProposalRenderer / DOCXProposalRenderer) writes { minio_key, byte_size,
@@ -161,6 +169,10 @@ export function OutputViewer({
                     className={`flex-1 px-2 py-2 text-xs ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Sources ({citations.length})
                 </button>
+                <button onClick={() => setTab('models')}
+                    className={`flex-1 px-2 py-2 text-xs ${tab === 'models' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
+                    Models ({modelSelections.length})
+                </button>
                 <button onClick={() => setTab('audit')}
                     className={`flex-1 px-2 py-2 text-xs ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Audit ({auditEntries.length})
@@ -189,6 +201,44 @@ export function OutputViewer({
                                 <li key={c.label} className="border border-slate-200 rounded-md p-2">
                                     <div className="font-medium">[{c.label}] {c.source_doc}</div>
                                     <div className="text-ink-500 mt-1">{c.snippet}</div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {tab === 'models' && (
+                <div className="p-4">
+                    {modelSelections.length === 0 ? (
+                        <div className="text-sm text-ink-500">
+                            No LLM provider call was recorded.
+                        </div>
+                    ) : (
+                        <ul className="space-y-2 text-xs">
+                            {modelSelections.map((selection, index) => (
+                                <li
+                                    key={`${selection.call_id}:${selection.actual_model}:${index}`}
+                                    className="rounded-md border border-accent-200 bg-accent-50/40 p-3"
+                                >
+                                    <div className="font-semibold text-accent-800">
+                                        {selection.actual_model}
+                                        {selection.fallback ? ' · fallback' : ''}
+                                        {selection.cache_hit ? ' · cache hit' : ''}
+                                    </div>
+                                    <div className="mt-1 text-ink-500">
+                                        Requested {selection.requested_model}
+                                        {' · '}{selection.mode}
+                                        {' · '}{selection.complexity}{' '}
+                                        {selection.task_kind.replace('_', ' ')}
+                                    </div>
+                                    <div className="mt-2 text-ink-700">
+                                        {selection.reason}
+                                    </div>
+                                    <div className="mt-2 text-ink-500">
+                                        Estimated maximum: $
+                                        {selection.estimated_cost_usd.toFixed(6)}
+                                    </div>
                                 </li>
                             ))}
                         </ul>

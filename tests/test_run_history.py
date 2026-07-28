@@ -108,6 +108,13 @@ async def test_node_completion_persists_output_incrementally():
         session_id="user@example.com",
         node_id="draft.section",
         output={"text": "Draft complete"},
+        model_selections=[
+            {
+                "requested_model": "auto",
+                "selected_model": "claude-opus-5",
+                "actual_model": "claude-opus-5",
+            }
+        ],
         ended_at=13.0,
         duration_s=3.0,
     )
@@ -118,6 +125,13 @@ async def test_node_completion_persists_output_incrementally():
     assert update["$set"][f"outputs.{safe_key}"] == {
         "text": "Draft complete"
     }
+    assert update["$set"][f"node_runs.{safe_key}.model_selections"] == [
+        {
+            "requested_model": "auto",
+            "selected_model": "claude-opus-5",
+            "actual_model": "claude-opus-5",
+        }
+    ]
     assert update["$pull"] == {"active_nodes": "draft.section"}
 
 

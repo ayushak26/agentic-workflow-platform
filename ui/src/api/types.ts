@@ -80,11 +80,29 @@ export type ExtractedWorkflowFile = {
   truncated: boolean;
 };
 
+export type ModelSelection = {
+  call_id: number;
+  requested_model: string;
+  selected_model: string;
+  actual_model: string;
+  mode: 'auto' | 'manual' | 'cost_protection';
+  task_kind: string;
+  complexity: 'simple' | 'moderate' | 'complex';
+  reason: string;
+  estimated_cost_usd: number;
+  candidate_models: string[];
+  accuracy_priority: 'maximum' | 'balanced' | 'economy';
+  score_source: 'policy' | 'evaluation';
+  fallback: boolean;
+  cache_hit: boolean;
+};
+
 export type RunEvent =
   | { type: 'node_started'; run_id: string; node_id: string; ts: string }
   | { type: 'node_completed'; run_id: string; node_id: string; output_preview: string; ts: string }
   | { type: 'node_reused'; run_id: string; node_id: string; output_preview: string; ts: string }
   | { type: 'node_paused';   run_id: string; node_id: string; context: Record<string, unknown>; ts: string }
+  | { type: 'model_selected'; run_id: string; node_id: string; context: ModelSelection; ts: string }
   | { type: 'llm_token'; run_id: string; node_id?: string; token: string; context?: Record<string, unknown>; ts: string }
   | { type: 'run_completed'; run_id: string; ts: string }
   | { type: 'run_failed';    run_id: string; node_id?: string; error: string; ts: string };
@@ -150,6 +168,7 @@ export interface NodeRun {
   ended_at: number | null;
   duration_s: number | null;
   error: string | null;
+  model_selections?: ModelSelection[];
 }
  
 export interface AuditEvent {

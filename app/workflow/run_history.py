@@ -278,6 +278,7 @@ async def record_node_completed(
     session_id: str,
     node_id: str,
     output: dict[str, Any],
+    model_selections: list[dict[str, Any]] | None = None,
     ended_at: float,
     duration_s: float,
 ) -> None:
@@ -294,6 +295,9 @@ async def record_node_completed(
                 "$set": {
                     f"node_runs.{key}.status": "completed",
                     f"node_runs.{key}.output": safe_output,
+                    f"node_runs.{key}.model_selections": (
+                        redact_for_history(model_selections or [])
+                    ),
                     f"node_runs.{key}.ended_at": ended_at,
                     f"node_runs.{key}.duration_s": duration_s,
                     f"outputs.{key}": safe_output,
@@ -419,6 +423,7 @@ async def record_node_failed(
     node_id: str,
     type_name: str,
     error: str,
+    model_selections: list[dict[str, Any]] | None = None,
     ended_at: float,
     duration_s: float,
 ) -> None:
@@ -437,6 +442,9 @@ async def record_node_failed(
                     f"node_runs.{key}.ended_at": ended_at,
                     f"node_runs.{key}.duration_s": duration_s,
                     f"node_runs.{key}.error": error,
+                    f"node_runs.{key}.model_selections": (
+                        redact_for_history(model_selections or [])
+                    ),
                     "status": "failed",
                     "error": error,
                     "failed_node": node_id,

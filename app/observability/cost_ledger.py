@@ -3,18 +3,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from app.llm.model_catalog import (
+    MODEL_PRICING as CATALOG_MODEL_PRICING,
+    estimate_model_cost,
+)
 from app.observability.logging import get_logger
 
 logger = get_logger(__name__)
-
-MODEL_PRICING: dict[str, tuple[float, float]] = {
-    "claude-opus-5":          (0.005,   0.025),
-    "claude-opus-4-8":        (0.005,   0.025),
-    "claude-sonnet-4-5":      (0.003,   0.015),
-    "claude-haiku-4-5":       (0.00025, 0.00125),
-    "gpt-5.6-sol":            (0.005,   0.030),
-    "gpt-5":                  (0.005,   0.020),
-    "gpt-5-mini":             (0.0005,  0.0015),
+MODEL_PRICING = {
+    **CATALOG_MODEL_PRICING,
+    "claude-opus-4-8": (0.005, 0.025),
     "text-embedding-3-small": (0.00002, 0.0),
 }
 
@@ -29,6 +27,11 @@ class LedgerEntry:
     input_tokens:   int
     output_tokens:  int
     cost_usd:       float
+    selected_model: str | None = None
+    selection_mode: str = "manual"
+    selection_reason: str | None = None
+    task_kind: str | None = None
+    complexity: str | None = None
     cache_hit:      bool = False
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -39,8 +42,13 @@ class CostLedger:
 
     @staticmethod
     def calculate(model: str, input_tokens: int, output_tokens: int) -> float:
-        p_in, p_out = MODEL_PRICING.get(model, (0.005, 0.015))
-        return round((input_tokens * p_in + output_tokens * p_out) / 1000, 6)
+        if model in MODEL_PRICING:
+            p_in, p_out = MODEL_PRICING[model]
+            return round(
+                (input_tokens * p_in + output_tokens * p_out) / 1000,
+                6,
+            )
+        return estimate_model_cost(model, input_tokens, output_tokens)
 
     def record(self, entry: LedgerEntry) -> None:
         if self._col is not None:
@@ -53,6 +61,11 @@ class CostLedger:
                 "input_tokens":   entry.input_tokens,
                 "output_tokens":  entry.output_tokens,
                 "cost_usd":       entry.cost_usd,
+                "selected_model": entry.selected_model,
+                "selection_mode": entry.selection_mode,
+                "selection_reason": entry.selection_reason,
+                "task_kind": entry.task_kind,
+                "complexity": entry.complexity,
                 "cache_hit":      entry.cache_hit,
                 "ts":             entry.ts,
             })
@@ -62,6 +75,8 @@ class CostLedger:
             node_id=entry.node_id,
             model=entry.model,
             intended_model=entry.intended_model,
+            selected_model=entry.selected_model,
+            selection_mode=entry.selection_mode,
             cost_usd=entry.cost_usd,
             cache_hit=entry.cache_hit,
         )
