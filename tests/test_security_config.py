@@ -70,7 +70,9 @@ def test_unsafe_production_settings_are_rejected(field, unsafe_value):
         production_settings(**{field: unsafe_value})
 
 
-def test_development_defaults_remain_available_for_local_tests():
+def test_development_defaults_remain_available_for_local_tests(monkeypatch):
+    for var in ("ENVIRONMENT", "DEV_BYPASS_ENABLED", "TRUSTED_HOSTS"):
+        monkeypatch.delenv(var, raising=False)
     settings = Settings(_env_file=None)
 
     assert settings.environment == "development"

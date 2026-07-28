@@ -177,24 +177,22 @@ async def lifespan(app: FastAPI):
     # The workflow thread_id is the run_id. Redis persists graph state across
     # FastAPI restarts, while Mongo keeps the operator-facing run/audit record.
     if "redis" in services:
+        _ctx = None
         try:
             from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
-            checkpointer_context = AsyncRedisSaver.from_conn_string(
-                settings.redis_url
-            )
-            checkpointer = await checkpointer_context.__aenter__()
+            _ctx = AsyncRedisSaver.from_conn_string(settings.redis_url)
+            checkpointer = await _ctx.__aenter__()
             await checkpointer.asetup()
             services["langgraph_checkpointer"] = checkpointer
+            checkpointer_context = _ctx      # only publish a fully-entered ctx
             logger.info("langgraph_checkpointer.ready", backend="redis")
         except Exception as exc:
-            if checkpointer_context is not None:
-                await checkpointer_context.__aexit__(
-                    type(exc),
-                    exc,
-                    exc.__traceback__,
-                )
-                checkpointer_context = None
+            # __aenter__ may have raised part-way through the async generator.
+            # Re-throwing into it via __aexit__ triggers "generator didn't stop
+            # after athrow()" and masks the real error, so we do NOT call
+            # __aexit__ on a context whose enter did not complete cleanly.
+            checkpointer_context = None
             logger.warning(
                 "langgraph_checkpointer.unavailable",
                 error_type=type(exc).__name__,

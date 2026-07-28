@@ -1,0 +1,67 @@
+name: Deploy IONOS Production
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ionos-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Create immutable release archive
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git archive --format=tar.gz --output="/tmp/${RELEASE_SHA}.tar.gz" "${RELEASE_SHA}"
+          cd /tmp
+          sha256sum "${RELEASE_SHA}.tar.gz" > "${RELEASE_SHA}.sha256"
+
+      - name: Configure deployment SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 0700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 0600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/known_hosts
+
+      - name: Transfer and deploy
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+        run: |
+          port="${DEPLOY_PORT:-22}"
+          remote="/opt/eurskem/releases/${RELEASE_SHA}"
+          ssh -p "$port" "${DEPLOY_USER}@${DEPLOY_HOST}" "mkdir -p '$remote'"
+          scp -P "$port" "/tmp/${RELEASE_SHA}.tar.gz" "/tmp/${RELEASE_SHA}.sha256" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:${remote}/"
+          ssh -p "$port" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "cd '$remote' && sha256sum -c '${RELEASE_SHA}.sha256' && tar -xzf '${RELEASE_SHA}.tar.gz' && bash deploy/ionos/deploy_release.sh '$remote' '${RELEASE_SHA}'"
+
+      - name: Verify public production endpoint
+        env:
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+        run: python scripts/smoke_production.py --base-url "$PRODUCTION_URL"

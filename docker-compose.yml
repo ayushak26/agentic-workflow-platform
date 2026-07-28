@@ -114,9 +114,10 @@ services:
       - eurskem-net
 
   redis:
-    # Redis 8 includes the JSON and search modules required by the official
-    # LangGraph Redis checkpointer.
-    image: redis:8.2.0-alpine
+    # Official Debian-based Redis 8 image — bundles the search + JSON
+    # modules the LangGraph Redis checkpointer needs. NOT the -alpine variant,
+    # which omits the modules (FT._LIST -> 'unknown command').
+    image: redis:8.2.0
     ports:
       - "127.0.0.1:6379:6379"
     environment:
