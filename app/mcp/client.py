@@ -22,6 +22,7 @@ Design
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from contextlib import AsyncExitStack
 from typing import Any, Mapping
@@ -80,7 +81,7 @@ class MCPClient:
         servers: Mapping[str, StdioServerParameters] | None = None,
     ):
         self._specs = dict(servers) if servers is not None else build_server_specs()
-        self._stack = AsyncExitStack()
+        self._stacks: dict[str, AsyncExitStack] = {}
         self._sessions: dict[str, ClientSession] = {}
         self._tools_cache: dict[str, list] = {}
 
@@ -101,18 +102,47 @@ class MCPClient:
             if spec is None:
                 log.warning("mcp.client.unknown_server", server=name)
                 continue
+            stack = AsyncExitStack()
             try:
-                read, write = await self._stack.enter_async_context(stdio_client(spec))
-                session = await self._stack.enter_async_context(ClientSession(read, write))
-                await session.initialize()
+                async with asyncio.timeout(settings.mcp_request_timeout_seconds):
+                    read, write = await stack.enter_async_context(
+                        stdio_client(spec)
+                    )
+                    session = await stack.enter_async_context(
+                        ClientSession(read, write)
+                    )
+                    await session.initialize()
+                self._stacks[name] = stack
                 self._sessions[name] = session
                 log.info("mcp.client.started", server=name)
             except Exception as exc:
                 # e.g. paper-search-mcp clone missing — degrade, don't crash.
                 log.warning("mcp.client.start_failed", server=name, error=str(exc))
+                try:
+                    await stack.aclose()
+                except BaseException as cleanup_exc:
+                    log.warning(
+                        "mcp.client.start_cleanup_failed",
+                        server=name,
+                        error_type=type(cleanup_exc).__name__,
+                    )
 
     async def stop(self) -> None:
-        await self._stack.aclose()
+        stacks = list(self._stacks.items())
+        self._stacks.clear()
+        self._sessions.clear()
+        self._tools_cache.clear()
+        for name, stack in reversed(stacks):
+            try:
+                await stack.aclose()
+            except BaseException as exc:
+                # Shutdown remains idempotent even if a subprocess has already
+                # closed one side of the transport.
+                log.warning(
+                    "mcp.client.stop_failed",
+                    server=name,
+                    error_type=type(exc).__name__,
+                )
         log.info("mcp.client.stopped")
 
     def _require(self, server: str) -> ClientSession:
@@ -129,14 +159,16 @@ class MCPClient:
 
     async def list_tools(self, server: str = DEFAULT_SERVER) -> list:
         if server not in self._tools_cache:
-            resp = await self._require(server).list_tools()
+            async with asyncio.timeout(settings.mcp_request_timeout_seconds):
+                resp = await self._require(server).list_tools()
             self._tools_cache[server] = resp.tools
         return self._tools_cache[server]
 
     async def probe(self, server: str = DEFAULT_SERVER) -> bool:
         """Perform a live MCP request instead of trusting a cached session."""
 
-        resp = await self._require(server).list_tools()
+        async with asyncio.timeout(settings.mcp_request_timeout_seconds):
+            resp = await self._require(server).list_tools()
         self._tools_cache[server] = resp.tools
         return True
 
@@ -146,7 +178,8 @@ class MCPClient:
         """Call a tool on `server` (default: primary). Returns the first
         TextContent's text — identical unwrap to the original client, so
         existing callers get byte-identical behaviour."""
-        resp = await self._require(server).call_tool(name, arguments)
+        async with asyncio.timeout(settings.mcp_request_timeout_seconds):
+            resp = await self._require(server).call_tool(name, arguments)
         if resp.content and hasattr(resp.content[0], "text"):
             return resp.content[0].text
         return ""

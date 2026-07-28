@@ -13,7 +13,8 @@ async def run_cost(
     ledger = request.app.state.services.get("cost_ledger")
     if not ledger:
         return {"error": "cost ledger unavailable"}
-    return ledger.run_summary(run_id)
+    session_id = user.session_id or user.username
+    return ledger.run_summary(run_id, session_id)
 
 
 @router.get("/session/{session_id}")
@@ -25,4 +26,12 @@ async def session_cost(
     ledger = request.app.state.services.get("cost_ledger")
     if not ledger:
         return {"error": "cost ledger unavailable"}
+    expected = user.session_id or user.username
+    if session_id != expected:
+        from fastapi import HTTPException, status
+
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Cannot read another session's cost data",
+        )
     return ledger.session_summary(session_id)

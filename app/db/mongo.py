@@ -43,7 +43,13 @@ class MongoClient:
 
     def _ensure_client(self) -> AsyncIOMotorClient:
         if self._client is None:
-            self._client = AsyncIOMotorClient(self._url)
+            timeout_ms = int(settings.external_request_timeout_seconds * 1_000)
+            self._client = AsyncIOMotorClient(
+                self._url,
+                serverSelectionTimeoutMS=timeout_ms,
+                connectTimeoutMS=timeout_ms,
+                socketTimeoutMS=timeout_ms,
+            )
             # Never log the URI: it may contain the database password.
             log.info("mongo.connected")
         return self._client

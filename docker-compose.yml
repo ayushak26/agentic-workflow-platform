@@ -3,7 +3,26 @@ services:
     build: .
     ports:
       - "127.0.0.1:8000:8000"
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SECRET_KEY: ${SECRET_KEY:-local-development-secret-key-32-bytes-only}
+      MONGO_URI: ${MONGO_URI:-mongodb://eurskem-dev:eurskem-dev-password@mongo:27017/?authSource=admin}
+      MONGO_DB: ${MONGO_DB:-eurskem_ai}
+      WEAVIATE_HOST: weaviate
+      WEAVIATE_PORT: 8080
+      WEAVIATE_GRPC_PORT: 50051
+      WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:-eurskem-dev-weaviate-key}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-eurskem-dev}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-eurskem-dev-minio-password}
+      MINIO_BUCKET: ${MINIO_BUCKET:-eurskem-ai-docs}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-eurskem-dev-redis-password}@redis:6379/0
+      DEV_BYPASS_ENABLED: ${DEV_BYPASS_ENABLED:-true}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
     depends_on:
       mongo:
         condition: service_healthy
@@ -24,8 +43,8 @@ services:
     ports:
       - "127.0.0.1:27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-eurskem-dev}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-eurskem-dev-password}
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -49,7 +68,7 @@ services:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
       AUTHENTICATION_APIKEY_ENABLED: "true"
-      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:?Set WEAVIATE_API_KEY in .env}
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:-eurskem-dev-weaviate-key}
       AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_API_KEY_USER:-eurskem-app}
       AUTHORIZATION_ADMINLIST_ENABLED: "true"
       AUTHORIZATION_ADMINLIST_USERS: ${WEAVIATE_API_KEY_USER:-eurskem-app}
@@ -77,8 +96,8 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-eurskem-dev}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-eurskem-dev-minio-password}
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
@@ -101,7 +120,7 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-eurskem-dev-redis-password}
     command:
       [
         "sh",
@@ -138,7 +157,7 @@ services:
     environment:
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-eurskem-dev-grafana-password}
     networks:
       - eurskem-net
 

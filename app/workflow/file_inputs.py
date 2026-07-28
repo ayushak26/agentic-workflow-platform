@@ -109,6 +109,7 @@ async def store_upload(
     *,
     session_id: str,
     object_store: Any,
+    remaining_total_bytes: int | None = None,
 ) -> WorkflowFileRef:
     """Stream one multipart upload to disk, enforce limits, then store it."""
 
@@ -116,6 +117,12 @@ async def store_upload(
     extension = extension_for(filename)
     category = category_for_extension(extension)
     max_bytes = settings.workflow_file_max_bytes
+    effective_max_bytes = min(
+        max_bytes,
+        remaining_total_bytes
+        if remaining_total_bytes is not None
+        else max_bytes,
+    )
     chunk_bytes = 1024 * 1024
     size = 0
     sha = hashlib.sha256()
@@ -133,7 +140,15 @@ async def store_upload(
                 if not chunk:
                     break
                 size += len(chunk)
-                if size > max_bytes:
+                if size > effective_max_bytes:
+                    if (
+                        remaining_total_bytes is not None
+                        and remaining_total_bytes < max_bytes
+                    ):
+                        raise WorkflowFileInputError(
+                            "The upload exceeds the "
+                            f"{settings.workflow_file_max_total_mb} MB total limit"
+                        )
                     raise WorkflowFileInputError(
                         f"{filename} exceeds the "
                         f"{settings.workflow_file_max_mb} MB per-file limit"

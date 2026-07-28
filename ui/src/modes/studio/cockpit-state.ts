@@ -53,6 +53,10 @@ export function deriveCockpitState(
         }
         s.runStatus = 'paused';
         break;
+      case 'llm_token':
+        // Token chunks are consumed by streaming clients and do not change
+        // the workflow graph state.
+        break;
       case 'run_completed':
         s.runStatus = 'completed';
         break;

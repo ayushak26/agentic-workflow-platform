@@ -21,7 +21,7 @@ generations.
 """
 from __future__ import annotations
 
-from typing import Type, TypeVar
+from typing import Awaitable, Callable, Type, TypeVar
 
 from anthropic import AsyncAnthropic
 from pydantic import BaseModel, ValidationError
@@ -29,6 +29,7 @@ from pydantic import BaseModel, ValidationError
 from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
 from app.llm.errors import StructuredOutputError
 from app.llm.openai_gw import StructuredResult  # shared usage/cost carrier
+from app.config import settings
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -50,11 +51,16 @@ class AnthropicGateway(LLMGateway):
     def __init__(self, api_key: str):
         self._client = AsyncAnthropic(
             api_key=api_key,
-            timeout=600.0,
+            timeout=settings.llm_request_timeout_seconds,
             max_retries=0,
         )
 
-    async def _create(self, **kwargs):
+    async def _create(
+        self,
+        *,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
+        **kwargs,
+    ):
         """Issue a request via streaming and return the assembled Message.
 
         Streaming avoids the SDK's non-streaming long-request guard, which
@@ -62,6 +68,9 @@ class AnthropicGateway(LLMGateway):
         has the same shape as messages.create(...) would return.
         """
         async with self._client.messages.stream(**kwargs) as stream:
+            if on_token is not None:
+                async for text in stream.text_stream:
+                    await on_token(text)
             return await stream.get_final_message()
 
     async def complete(
@@ -72,6 +81,7 @@ class AnthropicGateway(LLMGateway):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         kwargs = {
             "model": model,
@@ -82,7 +92,7 @@ class AnthropicGateway(LLMGateway):
         if _supports_temperature(model):
             kwargs["temperature"] = temperature
 
-        resp = await self._create(**kwargs)
+        resp = await self._create(on_token=on_token, **kwargs)
         text = "".join(b.text for b in resp.content if b.type == "text")
         return LLMResponse(
             text=text,

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { wsUrl } from '../api/client';
+import { api, wsUrl } from '../api/client';
 import type { RunEvent } from '../api/types';
 
 export function useRunSocket(runId: string | null) {
@@ -18,31 +18,40 @@ export function useRunSocket(runId: string | null) {
     let terminal = false;
     let cancelled = false;
 
-    console.log('[WS] opening for', runId);
-    const ws = new WebSocket(wsUrl(runId));
-
-    ws.onopen = () => { if (!cancelled) { console.log('[WS] open'); setOpen(true); } };
-    ws.onmessage = (m) => {
-      if (cancelled) return;
-      const evt = JSON.parse(m.data) as RunEvent;
-      console.log(
-        '[WS] event',
-        evt.type,
-        'node_id' in evt ? (evt.node_id ?? '') : '',
-      );
-      setEvents((prev) => [...prev, evt]);
-      if (evt.type === 'run_completed' || evt.type === 'run_failed') terminal = true;
-    };
-    ws.onerror = () => { if (!cancelled && !terminal) setError('WebSocket error'); };
-    ws.onclose = (e) => {
-      console.log('[WS] closed', { code: e.code, reason: e.reason, cancelled, terminal });
-      if (!cancelled) setOpen(false);
-    };
+    let ws: WebSocket | null = null;
+    void api.websocketTicket(runId)
+      .then(({ ticket }) => {
+        if (cancelled) return;
+        ws = new WebSocket(wsUrl(runId, ticket));
+        ws.onopen = () => { if (!cancelled) setOpen(true); };
+        ws.onmessage = (message) => {
+          if (cancelled) return;
+          const evt = JSON.parse(message.data) as RunEvent;
+          setEvents((prev) => [...prev, evt]);
+          if (evt.type === 'run_completed' || evt.type === 'run_failed') {
+            terminal = true;
+          }
+        };
+        ws.onerror = () => {
+          if (!cancelled && !terminal) setError('WebSocket error');
+        };
+        ws.onclose = () => {
+          if (!cancelled) setOpen(false);
+        };
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) {
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : 'Could not authorize live events',
+          );
+        }
+      });
 
     return () => {
-      console.log('[WS] cleanup → cancelled=true for', runId);
       cancelled = true;
-      ws.close();
+      ws?.close();
     };
   }, [runId]);
 

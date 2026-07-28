@@ -102,7 +102,7 @@ Weaviate for hybrid retrieval;
 
 object storage for document bytes and generated artifacts;
 
-Redis for cache and future durable execution;
+Redis for semantic cache, rate limiting, event fan-out, and durable execution;
 
 the model gateway;
 
@@ -143,19 +143,28 @@ Other workflow packs
 
 Project Alex proposal generation, Miller Heiman sales strategy, and priorauthorization already exist as workflow definitions. Their next iterationshould add typed domain state and evaluation suites without changing the core.
 
-Known gaps
+Production runtime status
 
-Paused workflows use MemorySaver plus an in-process graph cache. A restartloses them.
+Paused workflows use the Redis LangGraph checkpointer and survive process
+restarts. MongoDB remains the tenant-scoped history and audit store; the
+in-process graph cache is only an optimization and test fallback.
 
-Domain nodes are still imported from the global node package; explicituse-case manifests and lazy registration are the next boundary improvement.
+The locked Python environment and frontend package lock are verified in CI.
+All workflows also pass zero-token preflight before deployment.
 
-External-service tests need a dedicated Docker test profile and host-safeconfiguration.
+`/health` reports live dependency status and `/ready` returns 503 until every
+required service is reachable, including Redis checkpointing and configured
+MCP servers.
 
-The frontend package lock is not currently reproducible with npm ci.
+Production now has JWT-backed local users, Argon2 password hashes, Redis rate
+limits, input/output guardrails, tenant-scoped semantic caching, explicit
+provider deadlines and fallback, token/cost limits, structured request
+identity, and an IONOS Compose deployment behind automatic HTTPS.
 
-Service health is best-effort at startup; typed service contracts andreadiness failures are not yet enforced.
+Remaining product boundary
 
-Prompt injection, per-data-class model policy, retries, rate limits, andproduction deployment configuration still need hardening.
+Domain nodes are still imported from the global node package; explicit
+use-case manifests and lazy registration remain the next boundary improvement.
 
 Reference directions
 

@@ -12,14 +12,10 @@
 // <CorpusInspector />.
 
 import { useState, useEffect } from "react";
+import { apiBase, getAuthHeaders } from "../../api/client";
 
-// --- API base + auth. Swap these two if you have shared helpers. ------------
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
-const token = () => localStorage.getItem("token") ?? "";
-const authHeaders = (): Record<string, string> => {
-  const t = token();
-  return t ? { Authorization: `Bearer ${t}` } : {};
-};
+const API_BASE = apiBase();
+const authHeaders = getAuthHeaders;
 
 // --- Types mirror the FastAPI response models -------------------------------
 type ChunkView = {
@@ -121,7 +117,7 @@ function IngestedView() {
       const qs = new URLSearchParams();
       if (collectionId) qs.set("collection_id", collectionId);
       if (sessionId) qs.set("session_id", sessionId);
-      const r = await fetch(`${API_BASE}/inspect/chunks?${qs}`, { headers: authHeaders() });
+      const r = await fetch(`${API_BASE}/api/inspect/chunks?${qs}`, { headers: authHeaders() });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
     } catch (e: unknown) {
@@ -246,7 +242,7 @@ function RetrieveView() {
         doc_types: docTypes.split(",").map((s) => s.trim()).filter(Boolean),
         top_k: topK,
       };
-      const r = await fetch(`${API_BASE}/inspect/retrieve`, {
+      const r = await fetch(`${API_BASE}/api/inspect/retrieve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify(body),

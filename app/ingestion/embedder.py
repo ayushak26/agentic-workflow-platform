@@ -61,7 +61,11 @@ class Embedder:
                 raise RuntimeError(
                     "OPENAI_API_KEY is not set; embedder cannot create a default client"
                 )
-            self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+            self._client = AsyncOpenAI(
+                api_key=settings.openai_api_key,
+                timeout=settings.external_request_timeout_seconds,
+                max_retries=0,
+            )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed a list of texts. Returns vectors in the same order.

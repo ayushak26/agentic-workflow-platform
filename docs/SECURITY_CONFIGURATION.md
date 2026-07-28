@@ -42,11 +42,13 @@ these conditions is unsafe:
 - JWT secret is a known default or shorter than 32 bytes;
 - development login bypass is enabled;
 - interactive API documentation is enabled;
+- rate limiting, guardrails, or the semantic cache is disabled;
 - MongoDB or MinIO uses a committed development password;
 - Redis has no password;
 - Weaviate has no API key;
 - CORS contains wildcard, localhost, HTTP, or no origin; or
 - trusted hosts contains wildcard or a test host.
+- no LLM provider is configured, or the semantic cache has no OpenAI key.
 
 Recommended production values:
 
@@ -55,19 +57,28 @@ ENVIRONMENT=production
 SECRET_KEY=<unique random value of at least 32 bytes>
 DEV_BYPASS_ENABLED=false
 API_DOCS_ENABLED=false
-METRICS_ENABLED=false
+METRICS_ENABLED=true
 CORS_ALLOWED_ORIGINS=https://ai.example.com
 TRUSTED_HOSTS=ai.example.com
 MONGO_URI=mongodb://<restricted-app-user>:<secret>@mongo:27017/?authSource=<db>
 WEAVIATE_API_KEY=<secret>
 MINIO_ACCESS_KEY=<restricted-service-account>
 MINIO_SECRET_KEY=<secret>
-REDIS_URL=rediss://:<secret>@redis.example.internal:6379/0
+REDIS_URL=redis://:<secret>@redis:6379/0
+RATE_LIMIT_ENABLED=true
+GUARDRAILS_ENABLED=true
+SEMANTIC_CACHE_ENABLED=true
+OPENAI_API_KEY=<server-side provider key>
 ```
 
 Use a restricted MongoDB application user and a bucket-scoped MinIO service
-account. Terminate TLS at a trusted proxy or use native TLS to each service.
-Store production values in the deployment platform's secret manager.
+account. The supplied IONOS topology keeps all four data services on an
+internal Docker network; only Caddy publishes ports 80/443. Prometheus and
+Grafana bind to VPS loopback and Caddy blocks `/metrics`.
+
+Generate `.env.production` with `scripts/generate_production_env.py`, keep it
+mode `0600` at `/opt/eurskem/shared/.env.production`, and never put production
+provider or infrastructure secrets in GitHub Actions.
 
 ## GitHub repository settings
 

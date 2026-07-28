@@ -13,6 +13,8 @@ def production_settings(**overrides) -> Settings:
         "secret_key": "a-unique-production-secret-key-32-bytes",
         "dev_bypass_enabled": False,
         "api_docs_enabled": False,
+        "semantic_cache_enabled": True,
+        "openai_api_key": "test-openai-key",
         "mongo_uri": (
             "mongodb://app-user:unique-password@mongo:27017/"
             "?authSource=admin"
@@ -44,6 +46,9 @@ def test_secure_production_settings_are_accepted():
         ("secret_key", "replace-with-a-unique-random-secret"),
         ("dev_bypass_enabled", True),
         ("api_docs_enabled", True),
+        ("semantic_cache_enabled", False),
+        ("rate_limit_enabled", False),
+        ("guardrails_enabled", False),
         ("mongo_uri", "mongodb://eurskem:eurschempass@mongo:27017"),
         ("weaviate_api_key", ""),
         ("weaviate_api_key", "replace-with-local-weaviate-api-key"),

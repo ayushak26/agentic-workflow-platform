@@ -57,3 +57,16 @@ def test_commonly_leaked_secret_files_are_ignored():
         "credentials/",
     ):
         assert pattern in ignored
+
+
+def test_ionos_deploy_is_gated_and_uses_verified_ssh_transport():
+    raw = (ROOT / ".github" / "workflows" / "deploy-ionos.yml").read_text()
+
+    assert "workflow_run:" in raw
+    assert "conclusion == 'success'" in raw
+    assert "head_branch == 'main'" in raw
+    assert "environment: production" in raw
+    assert "persist-credentials: false" in raw
+    assert "DEPLOY_KNOWN_HOSTS" in raw
+    assert "StrictHostKeyChecking=no" not in raw
+    assert "sha256sum -c" in raw

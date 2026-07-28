@@ -1,6 +1,7 @@
 from pathlib import Path
+from typing import Literal
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,9 +14,12 @@ class Settings(BaseSettings):
     secret_key: str = "insecure-dev-secret-change-me"
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
+    jwt_issuer: str = "eurskem-ai"
+    jwt_audience: str = "eurskem-ai-ui"
     environment: str = "development"
+    auth_mode: Literal["local"] = "local"
     api_docs_enabled: bool = True
-    metrics_enabled: bool = False
+    metrics_enabled: bool = True
     cors_allowed_origins: str = (
         "http://localhost:5173,http://localhost:3000"
     )
@@ -37,11 +41,21 @@ class Settings(BaseSettings):
     minio_secret_key: str = "eurskempassword"
     minio_bucket: str = "eurskem-ai-docs"
     workflow_file_max_mb: int = 50
+    workflow_file_max_total_mb: int = 200
     workflow_file_max_files: int = 20
+    max_request_body_mb: int = 220
 
     @property
     def workflow_file_max_bytes(self) -> int:
         return self.workflow_file_max_mb * 1024 * 1024
+
+    @property
+    def workflow_file_max_total_bytes(self) -> int:
+        return self.workflow_file_max_total_mb * 1024 * 1024
+
+    @property
+    def max_request_body_bytes(self) -> int:
+        return self.max_request_body_mb * 1024 * 1024
 
     redis_url: str = "redis://localhost:6379/0"
     health_probe_timeout_seconds: float = 2.0
@@ -59,6 +73,63 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+
+    # Every outbound call has a finite deadline. Provider SDK retries remain
+    # disabled because the provider-neutral registry owns retries/failover.
+    external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+    llm_request_timeout_seconds: float = Field(default=120.0, gt=0, le=900)
+    mcp_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+
+    # Token and cost boundaries are enforced centrally by the LLM registry.
+    llm_max_input_tokens: int = Field(default=32_000, ge=1_000, le=1_000_000)
+    llm_max_output_tokens: int = Field(default=8_192, ge=128, le=65_536)
+    llm_user_daily_budget_usd: float = Field(default=5.0, gt=0)
+    llm_global_daily_budget_usd: float = Field(default=100.0, gt=0)
+    llm_emergency_model: str = "gpt-5-mini"
+    llm_emergency_max_input_tokens: int = Field(
+        default=2_000,
+        ge=256,
+        le=100_000,
+    )
+
+    # The cache is tenant-scoped and is only used for deterministic plain-text
+    # completions. Structured output and tool calls are never cached.
+    semantic_cache_enabled: bool = False
+    semantic_cache_similarity_threshold: float = Field(
+        default=0.97,
+        ge=0.80,
+        le=1.0,
+    )
+    semantic_cache_ttl_seconds: int = Field(default=3_600, ge=60, le=604_800)
+    semantic_cache_max_entries_per_scope: int = Field(
+        default=200,
+        ge=10,
+        le=5_000,
+    )
+
+    # Guardrails are applied before workflow execution and after every node.
+    guardrails_enabled: bool = True
+    guardrail_pii_mode: Literal["audit", "redact", "block"] = "audit"
+    guardrail_max_text_chars: int = Field(
+        default=2_000_000,
+        ge=1_000,
+        le=10_000_000,
+    )
+
+    # Redis-backed fixed-window limits work across Uvicorn workers.
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = Field(default=60, ge=1, le=10_000)
+    rate_limit_auth_requests_per_minute: int = Field(
+        default=10,
+        ge=1,
+        le=1_000,
+    )
+
+    # Optional OpenTelemetry export. Prometheus remains the local operator
+    # metrics path; OTLP can point at Grafana Cloud or another collector.
+    otel_enabled: bool = False
+    otel_service_name: str = "eurskem-ai"
+    otel_exporter_otlp_endpoint: str = ""
 
     # LLM resilience is owned by the provider-neutral registry. Provider SDK
     # retries are disabled so one policy controls attempt count, backoff,
@@ -96,6 +167,12 @@ class Settings(BaseSettings):
             problems.append("DEV_BYPASS_ENABLED must be false")
         if self.api_docs_enabled:
             problems.append("API_DOCS_ENABLED must be false")
+        if not self.rate_limit_enabled:
+            problems.append("RATE_LIMIT_ENABLED must be true")
+        if not self.guardrails_enabled:
+            problems.append("GUARDRAILS_ENABLED must be true")
+        if not self.semantic_cache_enabled:
+            problems.append("SEMANTIC_CACHE_ENABLED must be true")
         if (
             not self.weaviate_api_key.strip()
             or _is_placeholder(self.weaviate_api_key)
@@ -118,6 +195,26 @@ class Settings(BaseSettings):
             or _is_placeholder(self.redis_url)
         ):
             problems.append("REDIS_URL must include authentication")
+        if not self.openai_api_key.strip() and not self.anthropic_api_key.strip():
+            problems.append(
+                "At least one of OPENAI_API_KEY or ANTHROPIC_API_KEY must be configured"
+            )
+        if self.semantic_cache_enabled and not self.openai_api_key.strip():
+            problems.append(
+                "OPENAI_API_KEY is required when semantic caching is enabled"
+            )
+        if self.otel_enabled and not self.otel_exporter_otlp_endpoint.strip():
+            problems.append(
+                "OTEL_EXPORTER_OTLP_ENDPOINT is required when OTEL_ENABLED is true"
+            )
+        if self.workflow_file_max_total_mb < self.workflow_file_max_mb:
+            problems.append(
+                "WORKFLOW_FILE_MAX_TOTAL_MB cannot be less than WORKFLOW_FILE_MAX_MB"
+            )
+        if self.max_request_body_mb < self.workflow_file_max_total_mb:
+            problems.append(
+                "MAX_REQUEST_BODY_MB cannot be less than WORKFLOW_FILE_MAX_TOTAL_MB"
+            )
 
         origins = self.allowed_cors_origins
         if not origins:

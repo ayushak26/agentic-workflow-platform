@@ -6,7 +6,7 @@ modules only ever depend on this base class, never on a concrete provider.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Type, TypeVar, Any
+from typing import Awaitable, Callable, Type, TypeVar, Any
 
 from pydantic import BaseModel
 
@@ -22,6 +22,8 @@ class LLMResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     stop_reason: str | None = None
+    cache_hit: bool = False
+    cache_similarity: float | None = None
 
 
 class ToolCall(BaseModel):
@@ -62,6 +64,7 @@ class LLMGateway(ABC):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         """Plain text completion."""
         ...

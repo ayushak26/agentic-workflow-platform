@@ -4,12 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.evaluation import LLMJudge, load_golden_set, run_eval
 from app.evaluation.golden_set import GoldenExample
 from app.evaluation.judge import JUDGE_PROMPT_VERSION
+from app.security.dependencies import CurrentUser, require_permission
+from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 
 router = APIRouter(prefix="/api/eval", tags=["eval"])
 
@@ -36,10 +38,28 @@ def _load_reference() -> str:
     return PdfExtractor().extract(REFERENCE_PDF).full_text
 
 @router.post("/score-output")
-async def score_output(req: ScoreOutputRequest, request: Request) -> dict[str, Any]:
+async def score_output(
+    req: ScoreOutputRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_permission("eval:run")),
+) -> dict[str, Any]:
     services = request.app.state.services
+    try:
+        guarded = check_workflow_inputs(req.model_dump()).value
+        req = ScoreOutputRequest.model_validate(guarded)
+    except GuardrailViolation as exc:
+        raise HTTPException(422, str(exc)) from exc
     reference = req.reference or _load_reference()
-    judge = LLMJudge(services["llm"], model=req.judge_model)
+    llm = services["llm"]
+    if hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id="eval:score-output",
+            session_id=user.session_id or user.username,
+            node_id="judge",
+            ledger=services.get("cost_ledger"),
+            semantic_cache=services.get("semantic_cache"),
+        )
+    judge = LLMJudge(llm, model=req.judge_model)
     scores = await judge.score_all(
         question=req.question or "Evaluate this proposal against its sources.",
         answer=req.answer,
@@ -53,7 +73,10 @@ async def score_output(req: ScoreOutputRequest, request: Request) -> dict[str, A
     }
 
 @router.get("/golden-set")
-async def list_golden_set(name: str = "document_qa") -> dict[str, Any]:
+async def list_golden_set(
+    name: str = "document_qa",
+    _user: CurrentUser = Depends(require_permission("eval:run")),
+) -> dict[str, Any]:
     path = GOLDEN_DIR / f"{name}.jsonl"
     if not path.exists():
         raise HTTPException(404, f"Golden set not found: {name}")
@@ -63,7 +86,11 @@ async def list_golden_set(name: str = "document_qa") -> dict[str, Any]:
 
 
 @router.post("/run")
-async def run(req: RunEvalRequest, request: Request) -> dict[str, Any]:
+async def run(
+    req: RunEvalRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_permission("eval:run")),
+) -> dict[str, Any]:
     path = GOLDEN_DIR / f"{req.golden_set}.jsonl"
     if not path.exists():
         raise HTTPException(404, f"Golden set not found: {req.golden_set}")
@@ -71,6 +98,14 @@ async def run(req: RunEvalRequest, request: Request) -> dict[str, Any]:
 
     services = request.app.state.services
     llm = services["llm"]
+    if hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id=f"eval:{req.golden_set}",
+            session_id=user.session_id or user.username,
+            node_id="judge",
+            ledger=services.get("cost_ledger"),
+            semantic_cache=services.get("semantic_cache"),
+        )
     judge = LLMJudge(llm, model=req.judge_model)
 
     # Producer: for the document_qa path, answer the question grounded ONLY in
@@ -106,7 +141,11 @@ async def run(req: RunEvalRequest, request: Request) -> dict[str, Any]:
 
 
 @router.get("/history")
-async def history(request: Request, limit: int = 20) -> dict[str, Any]:
+async def history(
+    request: Request,
+    limit: int = 20,
+    _user: CurrentUser = Depends(require_permission("eval:run")),
+) -> dict[str, Any]:
     mongo = request.app.state.services.get("mongo")
     if mongo is None:
         return {"scorecards": []}

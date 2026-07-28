@@ -17,6 +17,7 @@ from app.proposal_graph.models import Authority
 from app.proposal_graph.state import proposal_graph_state_update
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 from app.security.dependencies import CurrentUser, require_consultant
+from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 from app.workflow.run_history import get_retry_checkpoint, get_run
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -45,6 +46,25 @@ def _store(request: Request, *, require_objects: bool = False):
             "object store unavailable",
         )
     return ProposalWorkspaceStore(db, object_store)
+
+
+def _scoped_llm(
+    services: dict[str, Any],
+    *,
+    session_id: str,
+    proposal_id: str,
+    node_id: str,
+):
+    llm = services["llm"]
+    if hasattr(llm, "with_context"):
+        return llm.with_context(
+            run_id=f"proposal:{proposal_id}",
+            session_id=session_id,
+            node_id=node_id,
+            ledger=services.get("cost_ledger"),
+            semantic_cache=services.get("semantic_cache"),
+        )
+    return llm
 
 
 def _graph_from_checkpoint(checkpoint: dict[str, Any]) -> ProposalGraph:
@@ -175,12 +195,13 @@ async def verify_claims(
     services = _services(request)
     store = _store(request, require_objects=True)
     graph = body.graph.model_copy(deep=True)
+    session_id = _scope(user)
 
     # Pin every known source to its latest immutable version before judging.
     for source_id, source in list(graph.evidence_sources.items()):
         try:
             version, _ = await store.source_text(
-                session_id=_scope(user),
+                session_id=session_id,
                 proposal_id=proposal_id,
                 source_id=source_id,
             )
@@ -197,13 +218,20 @@ async def verify_claims(
             }
         )
 
+    node_services = dict(services)
+    node_services["llm"] = _scoped_llm(
+        services,
+        session_id=session_id,
+        proposal_id=proposal_id,
+        node_id="verify_claims",
+    )
     node = ClaimEvidenceVerifier(
         "verify_claims",
         {
             "model": body.model,
             "minimum_support_confidence": body.minimum_support_confidence,
         },
-        services=services,
+        services=node_services,
     )
     result = await node.run(
         proposal_graph_state_update(graph),
@@ -238,18 +266,30 @@ async def concept_alternatives(
     user: CurrentUser = Depends(require_consultant),
 ):
     services = _services(request)
+    try:
+        concept_note = check_workflow_inputs(
+            {"concept_note": body.concept_note}
+        ).value["concept_note"]
+    except GuardrailViolation as exc:
+        raise HTTPException(422, str(exc)) from exc
+    session_id = _scope(user)
     result = await generate_concept_alternatives(
-        services["llm"],
+        _scoped_llm(
+            services,
+            session_id=session_id,
+            proposal_id=proposal_id,
+            node_id="concept_alternatives",
+        ),
         graph=body.graph,
         model=body.model,
-        concept_note=body.concept_note,
+        concept_note=concept_note,
     )
     graph = body.graph.model_copy(deep=True)
     graph.concept_alternatives = {
         item.id: item for item in result.alternatives
     }
     snapshot = await _store(request).save_snapshot(
-        session_id=_scope(user),
+        session_id=session_id,
         proposal_id=proposal_id,
         graph=graph,
         created_by=user.username,
@@ -349,9 +389,21 @@ async def horizon_evaluation(
 ):
     services = _services(request)
     try:
+        proposal_text = check_workflow_inputs(
+            {"proposal_text": body.proposal_text}
+        ).value["proposal_text"]
+    except GuardrailViolation as exc:
+        raise HTTPException(422, str(exc)) from exc
+    session_id = _scope(user)
+    try:
         report = await evaluate_horizon_proposal(
-            services["llm"],
-            proposal_text=body.proposal_text,
+            _scoped_llm(
+                services,
+                session_id=session_id,
+                proposal_id=proposal_id,
+                node_id="horizon_evaluation",
+            ),
+            proposal_text=proposal_text,
             graph=body.graph,
             generator_model=body.generator_model,
             evaluator_models=body.evaluator_models,
@@ -364,7 +416,7 @@ async def horizon_evaluation(
     if db is not None:
         await db["horizon_evaluations"].insert_one(
             {
-                "session_id": _scope(user),
+                "session_id": session_id,
                 "proposal_id": proposal_id,
                 "created_at": datetime.now(timezone.utc),
                 **report.model_dump(),

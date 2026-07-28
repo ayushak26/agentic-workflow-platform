@@ -16,6 +16,7 @@ import weaviate
 from weaviate.auth import Auth
 from weaviate.classes.config import Configure, DataType, Property
 from weaviate.collections.classes.data import DataObject
+from weaviate.config import AdditionalConfig, Timeout
 
 from app.config import settings
 from app.observability.logging import get_logger
@@ -81,6 +82,13 @@ class WeaviateClient:
                 Auth.api_key(settings.weaviate_api_key)
                 if settings.weaviate_api_key
                 else None
+            ),
+            additional_config=AdditionalConfig(
+                timeout=Timeout(
+                    init=settings.external_request_timeout_seconds,
+                    query=settings.external_request_timeout_seconds,
+                    insert=settings.external_request_timeout_seconds,
+                )
             ),
         )
         log.info("weaviate.connected", host=host, port=port)

@@ -14,11 +14,14 @@ import type {
   WorkflowSummary,
 } from './types';
 
-const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+const BASE = (
+  import.meta.env.VITE_API_URL
+  || window.location.origin
+).replace(/\/+$/, '');
 const API = `${BASE}/api`;
 
-// ---- auth token storage (in-memory; survives the SPA session) ----
-let _token: string | null = null;
+// ---- auth token storage (tab/session scoped; cleared when the browser closes) ----
+let _token: string | null = sessionStorage.getItem('eurskem_access_token');
 
 export type CriterionScore = { criterion: string; score: number; reasoning: string };
 export type ExampleResult = {
@@ -47,7 +50,10 @@ export async function login(username: string, password: string): Promise<{ usern
   });
   if (!r.ok) throw new Error(`login failed: ${r.status} ${await r.text()}`);
   const data = await r.json();
-  _token = data.access_token;
+  const accessToken = String(data.access_token);
+  _token = accessToken;
+  sessionStorage.setItem('eurskem_access_token', accessToken);
+  sessionStorage.setItem('eurskem_username', data.username);
   return { username: data.username };
 }
 
@@ -58,6 +64,10 @@ export function isAuthed(): boolean {
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return _token ? { ...extra, Authorization: `Bearer ${_token}` } : extra;
 }
+
+export const apiBase = () => BASE;
+export const getAuthHeaders = () => authHeaders();
+export const currentUsername = () => sessionStorage.getItem('eurskem_username') ?? '';
 
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
@@ -179,6 +189,12 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ decision }),
     }).then(j<{ ok: true }>),
+  websocketTicket: (run_id: string) =>
+    fetch(`${API}/ws/tickets`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ run_id }),
+    }).then(j<{ ticket: string; expires_in: number }>),
   costForRun: (run_id: string) =>
     fetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
@@ -328,15 +344,31 @@ export const api = {
       judge_prompt_version: string;
     }>),
 
-  fileUrl(key: string, download = false): string {
+  async artifactBlobUrl(key: string): Promise<string> {
     const params = new URLSearchParams({ key });
-    if (download) params.set('download', 'true');
-    return `${BASE}/api/files?${params.toString()}`;
+    const response = await fetch(`${API}/files?${params.toString()}`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    return URL.createObjectURL(await response.blob());
+  },
+
+  async downloadArtifact(key: string): Promise<void> {
+    const params = new URLSearchParams({ key, download: 'true' });
+    const response = await fetch(`${API}/files?${params.toString()}`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = key.split('/').pop() ?? 'download';
+    anchor.click();
+    URL.revokeObjectURL(url);
   },
 };
 
-export const wsUrl = (run_id: string) => {
+export const wsUrl = (run_id: string, ticket: string) => {
   const base = BASE.replace(/^http/, "ws");  // http→ws, https→wss
-  const t = _token ? `?token=${encodeURIComponent(_token)}` : "";
-  return `${base}/api/ws/runs/${run_id}${t}`;
+  return `${base}/api/ws/runs/${run_id}?ticket=${encodeURIComponent(ticket)}`;
 };

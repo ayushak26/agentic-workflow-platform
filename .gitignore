@@ -19,6 +19,7 @@ env/
 # Environment & secrets
 .env*
 !.env.example
+!.env.production.example
 *.pem
 *.key
 *.p12

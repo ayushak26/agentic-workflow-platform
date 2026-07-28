@@ -103,6 +103,13 @@ def _checkpointer_probe(services: dict[str, Any]) -> Probe | None:
     )
 
 
+def _semantic_cache_probe(services: dict[str, Any]) -> Probe | None:
+    cache = services.get("semantic_cache")
+    if cache is None:
+        return None
+    return cache.probe
+
+
 async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Probe every configured dependency concurrently."""
 
@@ -112,6 +119,7 @@ async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
         ("minio", _minio_probe(services)),
         ("redis", _redis_probe(services)),
         ("checkpointer", _checkpointer_probe(services)),
+        ("semantic_cache", _semantic_cache_probe(services)),
     ]
 
     mcp = services.get("mcp_client")

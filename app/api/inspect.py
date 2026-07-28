@@ -26,10 +26,12 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+from app.security.dependencies import CurrentUser, require_permission
+from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 
-router = APIRouter(prefix="/inspect", tags=["inspect"])
+router = APIRouter(prefix="/api/inspect", tags=["inspect"])
 
 
 # --------------------------------------------------------------------------- #
@@ -131,6 +133,7 @@ def list_chunks(
     collection_id: Optional[str] = Query(None),
     session_id: Optional[str] = Query(None),
     limit: int = Query(2000, le=10000),
+    user: CurrentUser = Depends(require_permission("workflow:read")),
 ) -> ChunksResponse:
     """List ingested chunks grouped by source document.
 
@@ -139,6 +142,14 @@ def list_chunks(
     so you can see exactly the slice a workflow run would retrieve against.
     """
     import weaviate.classes as wvc  # v4 query DSL
+
+    allowed_session = user.session_id or user.username
+    if session_id and session_id != allowed_session:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Cannot inspect another session",
+        )
+    session_id = allowed_session
 
     wv = _get_weaviate(request)
     col = _native_collection(wv)
@@ -207,7 +218,11 @@ def list_chunks(
 # --------------------------------------------------------------------------- #
 # View 2: live retrieval preview                                              #
 # --------------------------------------------------------------------------- #
-async def _run_retrieval(request: Request, req: RetrieveRequest):
+async def _run_retrieval(
+    request: Request,
+    req: RetrieveRequest,
+    user: CurrentUser,
+):
     """Call the REAL retrieve() pipeline.
 
     >>> VERIFY: this assumes app.retrieval.retriever.retrieve has signature
@@ -221,6 +236,14 @@ async def _run_retrieval(request: Request, req: RetrieveRequest):
 
     services = getattr(request.app.state, "services", {}) or {}
     llm = services.get("llm") or services.get("llm_gateway")
+    if llm is not None and hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id="inspect:retrieve",
+            session_id=user.session_id or user.username,
+            node_id="retrieval_preview",
+            ledger=services.get("cost_ledger"),
+            semantic_cache=services.get("semantic_cache"),
+        )
 
     filters = RetrievalFilters(
         collection_id=req.collection_id,
@@ -240,10 +263,27 @@ async def _run_retrieval(request: Request, req: RetrieveRequest):
 
 
 @router.post("/retrieve", response_model=RetrieveResponse)
-async def retrieve_preview(request: Request, req: RetrieveRequest) -> RetrieveResponse:
+async def retrieve_preview(
+    request: Request,
+    req: RetrieveRequest,
+    user: CurrentUser = Depends(require_permission("workflow:read")),
+) -> RetrieveResponse:
     """Run a query through hybrid search + rerank and show the ranked chunks."""
+    allowed_session = user.session_id or user.username
+    if req.session_id not in {"", "default", allowed_session}:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Cannot retrieve from another session",
+        )
     try:
-        result = await _run_retrieval(request, req)
+        safe_query = check_workflow_inputs({"query": req.query}).value["query"]
+    except GuardrailViolation as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    req = req.model_copy(
+        update={"query": safe_query, "session_id": allowed_session}
+    )
+    try:
+        result = await _run_retrieval(request, req, user)
     except Exception as e:  # surface the real error to the UI, don't 500 silently
         raise HTTPException(400, f"retrieval failed: {type(e).__name__}: {e}")
 

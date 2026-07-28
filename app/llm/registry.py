@@ -1,8 +1,8 @@
 """Resolve a model name to the right gateway instance.
 
-Architectural default is Claude (Anthropic) per the Eurskem proposal —
-flagship workflow YAMLs commit to claude-* models. The build currently
-runs OpenAI live; Anthropic is a documented stub.
+Architectural default is Claude (Anthropic) per the Eurskem proposal and both
+provider gateways are live. Availability is derived from configured
+credentials; missing providers are skipped before a request is attempted.
 
 The fallback layer decouples *intent* (what the YAML asks for) from
 *runtime* (what's actually available). When the intended provider is
@@ -15,7 +15,9 @@ Two providers in scope:
 from __future__ import annotations
 
 import asyncio
+import json
 import random
+import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any, Awaitable, Callable
@@ -24,9 +26,13 @@ import structlog
 
 from app.config import settings
 from app.llm.anthropic_gw import AnthropicGateway
-from app.llm.base import LLMGateway
+from app.llm.base import LLMGateway, LLMResponse
 from app.llm.openai_gw import OpenAIGateway
-from app.llm.errors import StructuredOutputError
+from app.llm.errors import (
+    LLMInputLimitError,
+    LLMProviderUnavailableError,
+    StructuredOutputError,
+)
 from app.observability import metrics
 
 log = structlog.get_logger(__name__)
@@ -45,6 +51,9 @@ _FALLBACK_MODEL: dict[str, str] = {
     "claude-haiku-4-5":  "gpt-5-mini",
     "claude-opus-4-7":   "gpt-5",
     "claude-opus-4-8":   "gpt-5",
+    "gpt-5.6-sol":        "claude-opus-5",
+    "gpt-5":              "claude-sonnet-4-5",
+    "gpt-5-mini":         "claude-haiku-4-5",
 }
 
 # Gateway classes that are stubbed (not live).
@@ -177,6 +186,48 @@ def _gateway_class_for(model_name: str) -> type[LLMGateway]:
     )
 
 
+def _provider_is_configured(model_name: str) -> bool:
+    gateway = _gateway_class_for(model_name)
+    if gateway in _INSTANCES:
+        return True
+    if gateway is OpenAIGateway:
+        return bool(settings.openai_api_key.strip())
+    if gateway is AnthropicGateway:
+        return bool(settings.anthropic_api_key.strip())
+    return False
+
+
+def _estimate_input_tokens(method_name: str, kwargs: dict[str, Any]) -> int:
+    """Estimate the complete provider payload before spending any tokens."""
+
+    if method_name in {"complete", "complete_structured"}:
+        payload = "\n".join(
+            (str(kwargs.get("system", "")), str(kwargs.get("user", "")))
+        )
+        response_model = kwargs.get("response_model")
+        if response_model is not None:
+            try:
+                payload += json.dumps(response_model.model_json_schema())
+            except Exception:
+                payload += str(response_model)
+    else:
+        payload = json.dumps(
+            {
+                "system": kwargs.get("system", ""),
+                "messages": kwargs.get("messages", []),
+                "tools": kwargs.get("tools", []),
+            },
+            default=str,
+            separators=(",", ":"),
+        )
+    try:
+        import tiktoken
+
+        return len(tiktoken.get_encoding("cl100k_base").encode(payload))
+    except Exception:
+        return max(1, len(payload) // 4)
+
+
 def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
     if gw_cls is OpenAIGateway:
         return OpenAIGateway(api_key=settings.openai_api_key)
@@ -187,6 +238,8 @@ def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
 
 def _record_usage(intended: str, resolved: str, resp) -> None:
     """Record token metrics. Never raises — instrumentation must not break calls."""
+    if getattr(resp, "cache_hit", False):
+        return
     try:
         metrics.LLM_CALLS.labels(model=resolved, status="success").inc()
         in_tok  = getattr(resp, "input_tokens",  0) or 0
@@ -225,6 +278,8 @@ class RegistryLLMGateway(LLMGateway):
         self._session_id: str | None = None
         self._node_id:    str | None = None
         self._ledger = None  # CostLedger | None
+        self._semantic_cache = None
+        self._event_bus = None
         self._retry_policy = retry_policy or RetryPolicy(
             max_attempts=settings.llm_retry_attempts,
             base_delay_seconds=settings.llm_retry_base_delay_seconds,
@@ -240,6 +295,8 @@ class RegistryLLMGateway(LLMGateway):
         session_id: str,
         node_id: str,
         ledger=None,
+        semantic_cache=None,
+        event_bus=None,
     ) -> "RegistryLLMGateway":
         """Return a context-bound copy for per-node cost tracking.
 
@@ -253,6 +310,8 @@ class RegistryLLMGateway(LLMGateway):
         clone._session_id = session_id
         clone._node_id    = node_id
         clone._ledger     = ledger
+        clone._semantic_cache = semantic_cache
+        clone._event_bus = event_bus
         return clone
 
     def _record_cost(self, intended: str, resolved: str, resp) -> None:
@@ -274,20 +333,32 @@ class RegistryLLMGateway(LLMGateway):
                     getattr(resp, "input_tokens",  0) or 0,
                     getattr(resp, "output_tokens", 0) or 0,
                 ),
+                cache_hit=bool(getattr(resp, "cache_hit", False)),
             )
             self._ledger.record(entry)
+            metrics.LLM_COST_USD.labels(model=resolved).inc(entry.cost_usd)
         except Exception:
             pass  # cost tracking must never break the actual LLM call
 
     def _models_for_call(self, intended: str) -> list[str]:
-        """Return primary then fallback, without duplicate static fallback."""
+        """Return configured primary/fallback providers without duplicates."""
 
         primary = resolve_model(intended)
         candidates = [primary]
         fallback = _FALLBACK_MODEL.get(intended)
         if fallback and fallback != primary:
             candidates.append(fallback)
-        return candidates
+        available = [
+            model
+            for model in candidates
+            if _provider_is_configured(model)
+        ]
+        if not available:
+            raise LLMProviderUnavailableError(
+                f"No configured provider is available for {intended!r}. "
+                "Set the corresponding provider API key."
+            )
+        return list(dict.fromkeys(available))
 
     def _delay_for(self, attempt: int, exc: BaseException) -> float:
         policy = self._retry_policy
@@ -315,8 +386,58 @@ class RegistryLLMGateway(LLMGateway):
         intended: str,
         kwargs: dict[str, Any],
     ) -> tuple[Any, str]:
+        intended, kwargs, input_tokens = await self._prepare_call(
+            method_name,
+            intended,
+            kwargs,
+        )
         candidates = self._models_for_call(intended)
         last_error: BaseException | None = None
+        cache_lookup = None
+
+        if (
+            method_name == "complete"
+            and self._semantic_cache is not None
+            and settings.semantic_cache_enabled
+            and float(kwargs.get("temperature", 0.0)) == 0.0
+            and self._session_id
+        ):
+            cache_lookup = await self._semantic_cache.get(
+                session_id=self._session_id,
+                model=intended,
+                system=str(kwargs.get("system", "")),
+                user=str(kwargs.get("user", "")),
+                temperature=float(kwargs.get("temperature", 0.0)),
+                max_tokens=int(kwargs.get("max_tokens", 1_024)),
+            )
+            if cache_lookup.hit and cache_lookup.response:
+                cached = cache_lookup.response
+                if self._event_bus is not None and self._run_id:
+                    from app.runtime.events import RunEvent
+
+                    await self._event_bus.publish(
+                        RunEvent(
+                            type="llm_token",
+                            run_id=self._run_id,
+                            node_id=self._node_id,
+                            token=str(cached["text"]),
+                            context={"cache_hit": True},
+                        )
+                    )
+                return (
+                    LLMResponse(
+                        text=str(cached["text"]),
+                        model=str(cached.get("model") or candidates[0]),
+                        input_tokens=0,
+                        output_tokens=0,
+                        stop_reason=cached.get("stop_reason"),
+                        cache_hit=True,
+                        cache_similarity=cache_lookup.similarity,
+                    ),
+                    str(cached.get("model") or candidates[0]),
+                )
+        elif method_name == "complete":
+            metrics.LLM_CACHE.labels(status="bypass").inc()
 
         for model_index, candidate in enumerate(candidates):
             gateway, resolved = get_gateway(candidate)
@@ -335,11 +456,75 @@ class RegistryLLMGateway(LLMGateway):
                 )
 
             for attempt in range(1, self._retry_policy.max_attempts + 1):
+                call_started = time.perf_counter()
                 try:
                     method = getattr(gateway, method_name)
-                    response = await method(model=resolved, **kwargs)
+                    call_kwargs = dict(kwargs)
+                    if (
+                        method_name == "complete"
+                        and self._event_bus is not None
+                        and self._run_id
+                    ):
+                        first_token = True
+
+                        async def on_token(token: str) -> None:
+                            nonlocal first_token
+                            if first_token:
+                                metrics.LLM_TIME_TO_FIRST_TOKEN.labels(
+                                    model=resolved
+                                ).observe(time.perf_counter() - call_started)
+                                first_token = False
+                            from app.runtime.events import RunEvent
+
+                            await self._event_bus.publish(
+                                RunEvent(
+                                    type="llm_token",
+                                    run_id=self._run_id or "unknown",
+                                    node_id=self._node_id,
+                                    token=token,
+                                    context={
+                                        "model": resolved,
+                                        "attempt": attempt,
+                                    },
+                                )
+                            )
+
+                        call_kwargs["on_token"] = on_token
+                    async with asyncio.timeout(
+                        settings.llm_request_timeout_seconds
+                    ):
+                        response = await method(model=resolved, **call_kwargs)
+                    metrics.LLM_LATENCY.labels(
+                        model=resolved,
+                        status="success",
+                    ).observe(time.perf_counter() - call_started)
+                    if (
+                        method_name == "complete"
+                        and self._semantic_cache is not None
+                        and cache_lookup is not None
+                        and not cache_lookup.hit
+                        and self._session_id
+                    ):
+                        await self._semantic_cache.put(
+                            session_id=self._session_id,
+                            model=intended,
+                            system=str(kwargs.get("system", "")),
+                            user=str(kwargs.get("user", "")),
+                            temperature=float(kwargs.get("temperature", 0.0)),
+                            max_tokens=int(kwargs.get("max_tokens", 1_024)),
+                            response={
+                                "text": response.text,
+                                "model": response.model,
+                                "stop_reason": response.stop_reason,
+                            },
+                            query_embedding=cache_lookup.query_embedding,
+                        )
                     return response, resolved
                 except Exception as exc:
+                    metrics.LLM_LATENCY.labels(
+                        model=resolved,
+                        status="error",
+                    ).observe(time.perf_counter() - call_started)
                     last_error = exc
                     retryable = _is_retryable_error(exc)
                     metrics.LLM_CALLS.labels(
@@ -395,6 +580,66 @@ class RegistryLLMGateway(LLMGateway):
 
         assert last_error is not None
         raise last_error
+
+    async def _prepare_call(
+        self,
+        method_name: str,
+        intended: str,
+        kwargs: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], int]:
+        prepared = dict(kwargs)
+        requested_output = int(prepared.get("max_tokens", 1_024))
+        prepared["max_tokens"] = min(
+            requested_output,
+            settings.llm_max_output_tokens,
+        )
+        input_tokens = _estimate_input_tokens(method_name, prepared)
+        if input_tokens > settings.llm_max_input_tokens:
+            raise LLMInputLimitError(
+                f"LLM input is approximately {input_tokens:,} tokens; "
+                f"the configured limit is {settings.llm_max_input_tokens:,}"
+            )
+
+        if (
+            self._ledger is not None
+            and self._session_id
+            and self._session_id != "unknown"
+        ):
+            user_spend, global_spend = await asyncio.gather(
+                asyncio.to_thread(
+                    self._ledger.daily_spend,
+                    self._session_id,
+                ),
+                asyncio.to_thread(self._ledger.daily_spend),
+            )
+            emergency = (
+                user_spend >= settings.llm_user_daily_budget_usd
+                or global_spend >= settings.llm_global_daily_budget_usd
+            )
+            if emergency:
+                if (
+                    global_spend >= settings.llm_global_daily_budget_usd
+                    and input_tokens
+                    > settings.llm_emergency_max_input_tokens
+                ):
+                    raise LLMInputLimitError(
+                        "The platform is in cost-protection mode and this "
+                        f"request exceeds {settings.llm_emergency_max_input_tokens:,} "
+                        "input tokens"
+                    )
+                log.warning(
+                    "llm.cost_protection",
+                    session_budget_reached=(
+                        user_spend >= settings.llm_user_daily_budget_usd
+                    ),
+                    global_budget_reached=(
+                        global_spend >= settings.llm_global_daily_budget_usd
+                    ),
+                    run_id=self._run_id,
+                    node_id=self._node_id,
+                )
+                intended = settings.llm_emergency_model
+        return intended, prepared, input_tokens
 
     async def complete(self, *, model: str, **kwargs):
         resp, resolved = await self._call_resilient(

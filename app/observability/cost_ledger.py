@@ -29,6 +29,7 @@ class LedgerEntry:
     input_tokens:   int
     output_tokens:  int
     cost_usd:       float
+    cache_hit:      bool = False
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -52,6 +53,7 @@ class CostLedger:
                 "input_tokens":   entry.input_tokens,
                 "output_tokens":  entry.output_tokens,
                 "cost_usd":       entry.cost_usd,
+                "cache_hit":      entry.cache_hit,
                 "ts":             entry.ts,
             })
         logger.info(
@@ -61,12 +63,18 @@ class CostLedger:
             model=entry.model,
             intended_model=entry.intended_model,
             cost_usd=entry.cost_usd,
+            cache_hit=entry.cache_hit,
         )
 
-    def run_summary(self, run_id: str) -> dict:
+    def run_summary(self, run_id: str, session_id: str) -> dict:
         if self._col is None:
             return {"run_id": run_id, "total_usd": 0.0, "by_node": []}
-        entries = list(self._col.find({"run_id": run_id}, {"_id": 0}))
+        entries = list(
+            self._col.find(
+                {"run_id": run_id, "session_id": session_id},
+                {"_id": 0},
+            )
+        )
         total = round(sum(e["cost_usd"] for e in entries), 6)
         return {"run_id": run_id, "total_usd": total, "by_node": entries}
 
@@ -76,3 +84,23 @@ class CostLedger:
         entries = list(self._col.find({"session_id": session_id}, {"_id": 0}))
         total = round(sum(e["cost_usd"] for e in entries), 6)
         return {"session_id": session_id, "total_usd": total, "by_run": entries}
+
+    def daily_spend(self, session_id: str | None = None) -> float:
+        """Return UTC-day spend globally or for one authenticated session."""
+
+        if self._col is None:
+            return 0.0
+        now = datetime.now(timezone.utc)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        match: dict[str, Any] = {"ts": {"$gte": start}}
+        if session_id is not None:
+            match["session_id"] = session_id
+        rows = list(
+            self._col.aggregate(
+                [
+                    {"$match": match},
+                    {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
+                ]
+            )
+        )
+        return float(rows[0]["total"]) if rows else 0.0

@@ -89,15 +89,17 @@ async def upload_workflow_input_files(
 
     session_id = _scope(user)
     uploaded: list[WorkflowFileRef] = []
+    remaining = settings.workflow_file_max_total_bytes
     try:
         for file in files:
-            uploaded.append(
-                await store_upload(
-                    file,
-                    session_id=session_id,
-                    object_store=object_store,
-                )
+            ref = await store_upload(
+                file,
+                session_id=session_id,
+                object_store=object_store,
+                remaining_total_bytes=remaining,
             )
+            uploaded.append(ref)
+            remaining -= ref.size_bytes
         await record_uploaded_files(
             services.get("audit_db"),
             session_id=session_id,
@@ -109,9 +111,15 @@ async def upload_workflow_input_files(
             str(exc),
         ) from exc
     except Exception as exc:
+        from app.observability.logging import get_logger
+
+        get_logger(__name__).warning(
+            "workflow_file.upload_failed",
+            error_type=type(exc).__name__,
+        )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            f"File upload failed: {exc}",
+            "File upload failed",
         ) from exc
 
     return {"files": [ref.model_dump() for ref in uploaded]}

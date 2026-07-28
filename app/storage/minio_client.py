@@ -82,7 +82,12 @@ class ObjectStore:
             aws_secret_access_key=secret_key or settings.minio_secret_key,
             # Path-style addressing works against both MinIO and S3; virtual-host
             # style does not work against MinIO without DNS setup.
-            config=Config(s3={"addressing_style": "path"}),
+            config=Config(
+                s3={"addressing_style": "path"},
+                connect_timeout=settings.external_request_timeout_seconds,
+                read_timeout=settings.external_request_timeout_seconds,
+                retries={"max_attempts": 3, "mode": "standard"},
+            ),
             region_name="us-east-1",  # MinIO ignores; S3 needs a value
         )
 

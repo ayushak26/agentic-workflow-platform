@@ -15,6 +15,7 @@ import uuid
 from typing import Any
 
 from app.observability import metrics
+from app.config import settings
 
 from .compiler import compile_workflow
 from .events import RunEvent, RunEventBus
@@ -88,6 +89,13 @@ async def run_workflow(
     run_services["retry_source_run_id"] = retry_source_run_id
     run_services["hitl_resume_decisions"] = hitl_resume_decisions or {}
     run_services["resume_replay"] = resume_replay
+    if (
+        settings.environment.lower() == "production"
+        and run_services.get("langgraph_checkpointer") is None
+    ):
+        raise RuntimeError(
+            "Production workflow execution requires the Redis checkpointer"
+        )
     graph = compile_workflow(
         spec,
         checkpointer=run_services.get("langgraph_checkpointer"),

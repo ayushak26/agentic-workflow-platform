@@ -14,13 +14,14 @@ as response_format -- never free-text JSON parsing.
 """
 from __future__ import annotations
 
-from typing import Type, TypeVar
+from typing import Awaitable, Callable, Type, TypeVar
 
 import structlog
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
+from app.config import settings
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -85,7 +86,11 @@ class OpenAIGateway(LLMGateway):
     """OpenAI-backed gateway. One AsyncOpenAI client per instance."""
 
     def __init__(self, api_key: str):
-        self._client = AsyncOpenAI(api_key=api_key, max_retries=0)
+        self._client = AsyncOpenAI(
+            api_key=api_key,
+            max_retries=0,
+            timeout=settings.llm_request_timeout_seconds,
+        )
 
     async def complete(
         self,
@@ -95,6 +100,7 @@ class OpenAIGateway(LLMGateway):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         call_kwargs: dict = {
             "model": model,
@@ -107,14 +113,45 @@ class OpenAIGateway(LLMGateway):
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
 
-        resp = await self._client.chat.completions.create(**call_kwargs)
-        choice = resp.choices[0]
+        if on_token is None:
+            resp = await self._client.chat.completions.create(**call_kwargs)
+            choice = resp.choices[0]
+            return LLMResponse(
+                text=choice.message.content or "",
+                model=resp.model,
+                input_tokens=resp.usage.prompt_tokens,
+                output_tokens=resp.usage.completion_tokens,
+                stop_reason=choice.finish_reason,
+            )
+
+        stream = await self._client.chat.completions.create(
+            **call_kwargs,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        parts: list[str] = []
+        input_tokens = 0
+        output_tokens = 0
+        stop_reason = None
+        response_model = model
+        async for chunk in stream:
+            response_model = chunk.model or response_model
+            if chunk.usage is not None:
+                input_tokens = chunk.usage.prompt_tokens
+                output_tokens = chunk.usage.completion_tokens
+            for choice in chunk.choices:
+                if choice.finish_reason is not None:
+                    stop_reason = choice.finish_reason
+                token = choice.delta.content or ""
+                if token:
+                    parts.append(token)
+                    await on_token(token)
         return LLMResponse(
-            text=choice.message.content or "",
-            model=resp.model,
-            input_tokens=resp.usage.prompt_tokens,
-            output_tokens=resp.usage.completion_tokens,
-            stop_reason=choice.finish_reason,
+            text="".join(parts),
+            model=response_model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            stop_reason=stop_reason,
         )
 
     async def complete_structured(

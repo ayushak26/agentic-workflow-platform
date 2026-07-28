@@ -37,6 +37,7 @@ from app.security.audit import (
     NODE_REUSED,
     NODE_ERROR,
 )
+from app.security.guardrails import check_generated_output
 from app.workflow.run_history import (
     build_node_input,
     record_checkpoint_node_completed,
@@ -157,6 +158,8 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                 session_id=session_id,
                 node_id=node_id,
                 ledger=services.get("cost_ledger"),
+                semantic_cache=services.get("semantic_cache"),
+                event_bus=services.get("event_bus"),
             ),
         }
         else:
@@ -188,6 +191,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     )
                 output = await instance.run(state, resolved)
                 extra_state = output.pop("__state__", {}) if isinstance(output, dict) else {}
+                output = check_generated_output(output).value
                 instance.output_schema(**output)
         except BaseException as e:
             # Log to stdout FIRST, before any client emission. A failure that is

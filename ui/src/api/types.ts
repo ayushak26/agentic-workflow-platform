@@ -85,6 +85,7 @@ export type RunEvent =
   | { type: 'node_completed'; run_id: string; node_id: string; output_preview: string; ts: string }
   | { type: 'node_reused'; run_id: string; node_id: string; output_preview: string; ts: string }
   | { type: 'node_paused';   run_id: string; node_id: string; context: Record<string, unknown>; ts: string }
+  | { type: 'llm_token'; run_id: string; node_id?: string; token: string; context?: Record<string, unknown>; ts: string }
   | { type: 'run_completed'; run_id: string; ts: string }
   | { type: 'run_failed';    run_id: string; node_id?: string; error: string; ts: string };
 

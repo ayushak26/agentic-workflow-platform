@@ -1,6 +1,6 @@
 /* Node outputs are runtime-defined by independently registered node plugins. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
@@ -20,6 +20,11 @@ export function OutputViewer({
     const [scores, setScores] = useState<{ criterion: string; score: number; reasoning: string }[] | null>(null);
     const [scoring, setScoring] = useState(false);
     const [scoreErr, setScoreErr] = useState<string | null>(null);
+    const [artifact, setArtifact] = useState<{
+        key: string;
+        url?: string;
+        error?: string;
+    } | null>(null);
 
     const nodeOutputs = state?.node_outputs ?? {};
     const workflowInputs = state?.inputs ?? {};
@@ -45,6 +50,28 @@ export function OutputViewer({
     // Only PDFs render inside an <iframe>; .docx cannot preview in-browser, so
     // for non-PDF documents we show a download card instead of a broken iframe.
     const canPreviewInline = ext === 'pdf';
+    const artifactUrl =
+        artifact && artifact.key === minioKey ? artifact.url ?? null : null;
+    const artifactError =
+        artifact && artifact.key === minioKey ? artifact.error ?? null : null;
+
+    useEffect(() => {
+        if (!minioKey || !canPreviewInline) return;
+        let cancelled = false;
+        let objectUrl: string | null = null;
+        api.artifactBlobUrl(minioKey)
+            .then(url => {
+                objectUrl = url;
+                if (!cancelled) setArtifact({ key: minioKey, url });
+            })
+            .catch(error => {
+                if (!cancelled) setArtifact({ key: minioKey, error: String(error) });
+            });
+        return () => {
+            cancelled = true;
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+        };
+    }, [canPreviewInline, minioKey]);
 
     const citations = nodeOutputs.knowledge_retrieval?.citations ?? [];
     const auditLog: any[] = state?.audit_log ?? [];
@@ -271,9 +298,6 @@ export function OutputViewer({
     }
 
     // ── Document layout (flagship proposal_generation, biomass, etc.) ───────
-    const viewUrl = api.fileUrl(minioKey);
-    const downloadUrl = api.fileUrl(minioKey, true);
-
     return (
         <div className="h-full flex flex-col">
             <header className="px-6 py-3 border-b border-slate-200 flex items-center justify-between bg-white">
@@ -286,11 +310,15 @@ export function OutputViewer({
                     </div>
                 </div>
                 <div className="flex gap-2">
-                    <a href={downloadUrl} className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm">
+                    <button
+                        type="button"
+                        onClick={() => void api.downloadArtifact(minioKey)}
+                        className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
+                    >
                         Download {fileKind}
-                    </a>
-                    {canPreviewInline && (
-                        <a href={viewUrl} target="_blank" rel="noreferrer"
+                    </button>
+                    {canPreviewInline && artifactUrl && (
+                        <a href={artifactUrl} target="_blank" rel="noreferrer"
                             className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
                             Open in new tab
                         </a>
@@ -306,9 +334,13 @@ export function OutputViewer({
 
             <div className="flex-1 flex min-h-0">
                 <div className="flex-1 bg-slate-100 p-4">
-                    {canPreviewInline ? (
-                        <iframe title="Proposal" src={viewUrl}
+                    {canPreviewInline && artifactUrl ? (
+                        <iframe title="Proposal" src={artifactUrl}
                             className="w-full h-full bg-white border border-slate-200 rounded-md" />
+                    ) : canPreviewInline ? (
+                        <div className="w-full h-full bg-white border border-slate-200 rounded-md flex items-center justify-center text-sm text-ink-500">
+                            {artifactError ?? 'Loading secure preview…'}
+                        </div>
                     ) : (
                         // .docx and other office formats cannot render in an <iframe>;
                         // offer a download card instead of a blank/broken preview.
@@ -317,10 +349,12 @@ export function OutputViewer({
                                 <div className="text-sm text-ink-500">
                                     {fileKind} documents can&rsquo;t preview in the browser.
                                 </div>
-                                <a href={downloadUrl}
+                                <button
+                                    type="button"
+                                    onClick={() => void api.downloadArtifact(minioKey)}
                                     className="inline-block px-4 py-2 rounded-md bg-accent-600 text-white text-sm">
                                     Download {fileKind}
-                                </a>
+                                </button>
                             </div>
                         </div>
                     )}

@@ -7,14 +7,15 @@ import { StudioRoot } from "./modes/studio/StudioRoot";
 import { EvalRoot } from "./modes/eval/EvalRoot";
 import { OperatorRoot } from "./modes/operator/OperatorRoot";
 import { RunCostContext } from "./RunCostContext";
+import { currentUsername, isAuthed } from "./api/client";
 
 type Mode = "studio" | "eval" | "operator";
 
 export default function App() {
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState(currentUsername());
   const [mode, setMode] = useState<Mode>("studio");
   const [runCost, setRunCost] = useState(0);
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(isAuthed());
 
   if (!loggedIn) {
     return <LoginPage onLogin={(u) => { setLoggedIn(true); setUsername(u); }} />;

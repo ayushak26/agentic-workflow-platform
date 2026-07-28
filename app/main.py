@@ -16,6 +16,7 @@ Services dict keys (consumed by routes and the runtime executor):
   event_bus      — RunEventBus for WebSocket live streaming
 """
 from contextlib import asynccontextmanager
+import asyncio
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
@@ -31,6 +32,12 @@ from app.runtime.events import RunEventBus
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
+from app.security.users import ensure_user_indexes
+from app.security.middleware import (
+    RedisRateLimitMiddleware,
+    RequestContextMiddleware,
+    RequestSizeLimitMiddleware,
+)
 
 from app.api import health
 from app.api.auth import router as auth_router
@@ -62,7 +69,16 @@ async def lifespan(app: FastAPI):
     try:
         from pymongo import MongoClient as PyMongoClient
         mongo_client = PyMongoClient(
-            settings.mongo_uri, serverSelectionTimeoutMS=3000
+            settings.mongo_uri,
+            serverSelectionTimeoutMS=int(
+                settings.external_request_timeout_seconds * 1_000
+            ),
+            connectTimeoutMS=int(
+                settings.external_request_timeout_seconds * 1_000
+            ),
+            socketTimeoutMS=int(
+                settings.external_request_timeout_seconds * 1_000
+            ),
         )
         mongo_client.server_info()          # fail fast if Mongo is down
         db = mongo_client[settings.mongo_db]
@@ -72,10 +88,12 @@ async def lifespan(app: FastAPI):
         # pymongo Database below, which the (sync) CostLedger needs.
         from app.db.mongo import MongoClient as AsyncMongo
         services["mongo"] = AsyncMongo(settings.mongo_uri)
+        services["mongo_sync_client"] = mongo_client
         services["collection_registry"] = CollectionRegistry(services["mongo"])
         services["audit_db"] = services["mongo"]._ensure_client()[DB_NAME]
         try:
             await ensure_run_indexes(services["audit_db"])
+            await ensure_user_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
                 services["audit_db"],
                 None,
@@ -98,6 +116,7 @@ async def lifespan(app: FastAPI):
     try:
         import weaviate
         from weaviate.auth import Auth
+        from weaviate.config import AdditionalConfig, Timeout
 
         auth_credentials = (
             Auth.api_key(settings.weaviate_api_key)
@@ -109,6 +128,13 @@ async def lifespan(app: FastAPI):
             port=settings.weaviate_port,
             grpc_port=settings.weaviate_grpc_port,
             auth_credentials=auth_credentials,
+            additional_config=AdditionalConfig(
+                timeout=Timeout(
+                    init=settings.external_request_timeout_seconds,
+                    query=settings.external_request_timeout_seconds,
+                    insert=settings.external_request_timeout_seconds,
+                )
+            ),
         )
         services["weaviate_client"] = weaviate_client
         logger.info("weaviate.connected")
@@ -122,6 +148,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.storage.minio_client import get_object_store
         services["object_store"] = get_object_store()
+        await asyncio.to_thread(services["object_store"].ensure_bucket)
         logger.info("object_store.ready")
     except Exception as exc:
         logger.warning(
@@ -131,7 +158,12 @@ async def lifespan(app: FastAPI):
 
     # ── Redis ──────────────────────────────────────────────────────────────────
     try:
-        redis_client = await aioredis.from_url(settings.redis_url)
+        redis_client = await aioredis.from_url(
+            settings.redis_url,
+            socket_connect_timeout=settings.external_request_timeout_seconds,
+            socket_timeout=settings.external_request_timeout_seconds,
+            health_check_interval=30,
+        )
         await redis_client.ping()
         services["redis"] = redis_client
         logger.info("redis.connected")
@@ -174,6 +206,35 @@ async def lifespan(app: FastAPI):
     services["llm"] = get_llm_gateway()
     logger.info("llm_gateway.ready")
 
+    # ── Embeddings + tenant-scoped semantic cache ───────────────────────────
+    embedder = None
+    if settings.openai_api_key:
+        try:
+            from app.ingestion.embedder import get_embedder
+
+            embedder = get_embedder()
+            services["embedder"] = embedder
+            logger.info("embedder.ready")
+        except Exception as exc:
+            logger.warning(
+                "embedder.unavailable",
+                error_type=type(exc).__name__,
+            )
+    if settings.semantic_cache_enabled:
+        if "redis" in services and embedder is not None:
+            from app.llm.semantic_cache import SemanticLLMCache
+
+            services["semantic_cache"] = SemanticLLMCache(
+                services["redis"],
+                embedder,
+            )
+            logger.info("semantic_cache.ready")
+        else:
+            logger.warning(
+                "semantic_cache.unavailable",
+                reason="redis_or_embedder_missing",
+            )
+
     # ── MCP client ───────────────────────────────────────────────────────────
     # Launches the MCP server as a stdio subprocess and keeps one session open
     # for the app's lifetime. The MCPAgent node calls list_tools()/call_tool().
@@ -189,27 +250,34 @@ async def lifespan(app: FastAPI):
 
     if "weaviate_client" in services:
         from app.retrieval import retrieve
-        from app.ingestion.embedder import get_embedder
-        _embedder = get_embedder()
-        services["embedder"] = _embedder
-        _wv = services["weaviate_client"]
-        _llm = services["llm"]
-        _registry = services["collection_registry"] 
-        services["retriever"] = lambda q, llm=None: retrieve(
-        q,
-        weaviate_client=_wv,
-        llm=llm or _llm,        # caller can pass a context-bound gateway
-        embedder=_embedder,
-        collection_registry=_registry,
-        )
-        logger.info("retriever.ready")
+        if embedder is None:
+            logger.warning(
+                "retriever.unavailable",
+                reason="embedding provider not configured",
+            )
+        else:
+            _embedder = embedder
+            services["embedder"] = _embedder
+            _wv = services["weaviate_client"]
+            _llm = services["llm"]
+            _registry = services["collection_registry"]
+            services["retriever"] = lambda q, llm=None: retrieve(
+                q,
+                weaviate_client=_wv,
+                llm=llm or _llm,
+                embedder=_embedder,
+                collection_registry=_registry,
+            )
+            logger.info("retriever.ready")
     else:
         logger.warning("retriever.unavailable", reason="weaviate not connected")
 
     # ── Event bus ─────────────────────────────────────────────────────────────
-    # In-process pub/sub for WebSocket live run streaming.
-    services["event_bus"] = RunEventBus()
-    logger.info("event_bus.ready")
+    services["event_bus"] = RunEventBus(services.get("redis"))
+    logger.info(
+        "event_bus.ready",
+        backend="redis" if "redis" in services else "memory",
+    )
 
     app.state.services = services
     yield
@@ -217,7 +285,9 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ───────────────────────────────────────────────────────────────
     logger.info("eurskem_ai.shutdown")
     if "mongo" in services:
-        services["mongo"].close()
+        await services["mongo"].close()
+    if "mongo_sync_client" in services:
+        services["mongo_sync_client"].close()
     if "weaviate_client" in services:
         services["weaviate_client"].close()
     if "redis" in services:
@@ -245,12 +315,21 @@ app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=list(settings.allowed_hosts),
 )
+app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(RedisRateLimitMiddleware)
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.allowed_cors_origins),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+    expose_headers=[
+        "X-Request-ID",
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+    ],
 )
 
 # ── Prometheus ─────────────────────────────────────────────────────────────────
@@ -269,3 +348,7 @@ app.include_router(audit_api.router)
 app.include_router(runs_api.router)
 app.include_router(proposals_api.router)
 app.include_router(workflow_files_api.router)
+
+from app.observability.tracing import configure_tracing
+
+configure_tracing(app)

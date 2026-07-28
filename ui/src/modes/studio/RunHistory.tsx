@@ -187,13 +187,16 @@ function NodeCard({
         </div>
         <div className="flex items-center gap-3 flex-none ml-3">
           {key && (
-            <a
-              href={api.fileUrl(key, true)}
-              onClick={(e) => e.stopPropagation()}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                void api.downloadArtifact(key);
+              }}
               className="text-xs text-accent-600 hover:underline"
             >
               Download
-            </a>
+            </button>
           )}
           <span className="text-ink-300 text-xs">{open ? 'Hide' : 'View'}</span>
         </div>
