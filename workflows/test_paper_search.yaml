@@ -1,14 +1,10 @@
 name: "Paper Search MCP — Integration Test"
 use_case: eu_proposal
 description: >
-  End-to-end smoke test of the paper-search-mcp discovery path. Seeds a few
-  AGRO-THRIVE-relevant claims into the proposal graph, runs the EvidenceAgent
-  against the second MCP server, then renders what came back so you can eyeball
-  the real DOIs / arXiv ids / citations. Proves the whole Path-A chain works:
-  multi-server MCPClient -> paper-search-mcp subprocess -> EvidenceSource
-  objects linked to claims. No RAG, no proposal drafting — just the evidence
-  discovery loop.
-version: "1.0"
+  End-to-end smoke test of candidate discovery, lawful full-text download,
+  exact page-level claim verification, contradiction search, and citation
+  integrity gates. Search metadata is never linked to a claim.
+version: "2.0"
 
 inputs:
   # A short, concept-note-style text the seeder turns into a couple of claims.
@@ -26,17 +22,33 @@ nodes:
     config:
       model: claude-sonnet-4-5
 
-  # Discovery: for each state_of_art / problem / impact claim with no evidence,
-  # query paper-search-mcp and attach EvidenceSource objects.
+  # Discovery only. Candidate records cannot change claim verification.
   - id: gather_evidence
-    type: EvidenceAgent
+    type: ScholarlyCandidateDiscoveryAgent
     config:
       mcp_server: "paper-search-mcp"
       tool: "search_papers"
       sources: ["arxiv", "openalex", "europepmc", "crossref"]
-      max_per_claim: 3
+      max_results_per_source: 2
+      max_candidates_per_claim: 6
       claim_types: ["state_of_art", "problem", "impact", "method"]
       model: claude-sonnet-4-5
+      require_contradiction_search: true
+
+  - id: acquire_full_text
+    type: FullTextEvidenceAcquirer
+    config:
+      candidates: "{{gather_evidence.candidates}}"
+      fail_when_none_acquired: false
+
+  - id: verify_evidence
+    type: ProposalEvidenceFactoryAgent
+    config:
+      model: claude-sonnet-4-5
+      candidates: "{{gather_evidence.candidates}}"
+      documents: "{{acquire_full_text.documents}}"
+      search_audit: "{{gather_evidence.search_audit}}"
+      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
 
   # Human-readable dump of what discovery produced, so you can verify the DOIs,
   # identifiers and citations are real (not model-invented).
@@ -51,11 +63,11 @@ nodes:
         sources. Do not add papers or facts — only report what is in the inputs.
 
         NORMALIZER REPORT: {{seed_claims.report}}
-        EVIDENCE REPORT:   {{gather_evidence.report}}
-        SOURCES ADDED:     {{gather_evidence.sources_added}}
-        CLAIMS LINKED:     {{gather_evidence.claims_linked}}
-        SOURCES FOUND (detailed, one record per paper):
-        {{gather_evidence.sources}}
+        CANDIDATE DISCOVERY: {{gather_evidence.report}}
+        FULL TEXT:           {{acquire_full_text.report}}
+        VERIFIED EVIDENCE:   {{verify_evidence.report}}
+        QA REPORT:           {{verify_evidence.qa_report}}
+        BLOCKING ISSUES:     {{verify_evidence.blocking_issues}}
 
         SCIENTIFIC SYNTHESIS:
         {{scientific_synthesis.answer}}
@@ -77,16 +89,20 @@ nodes:
         which claims remain unsafe to use in a proposal. Do not add papers,
         measurements, or conclusions that are absent from the records.
 
-        EVIDENCE REPORT:
-        {{gather_evidence.report}}
+        VERIFIED EVIDENCE REPORT:
+        {{verify_evidence.report}}
 
-        SOURCE RECORDS:
-        {{gather_evidence.sources}}
+        CLAIM-EVIDENCE LINKS:
+        {{verify_evidence.claim_evidence_links}}
 
 edges:
   - from: seed_claims
     to: gather_evidence
   - from: gather_evidence
+    to: acquire_full_text
+  - from: acquire_full_text
+    to: verify_evidence
+  - from: verify_evidence
     to: scientific_synthesis
   - from: scientific_synthesis
     to: show_evidence

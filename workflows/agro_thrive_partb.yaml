@@ -2,11 +2,10 @@ name: "AGRO-THRIVE Part B Generation (v2 \u2014 graph-grounded)"
 use_case: eu_proposal
 description: "Generates a Horizon Europe Part B for AGRO-THRIVE (HORIZON-CL6-2026-01-CIRCBIO-09) built\
   \ on the typed Proposal Knowledge Graph. concept_normalize POPULATES the graph with validated objects\
-  \ (objectives, WPs, partners, claims); the EvidenceAgent enriches claims with real citations from paper-search-mcp;\
-  \ and a deterministic ConsistencyChecker gates the render on structure + compliance. Model policy: Opus\
-  \ 4.8 on reasoning/writing nodes; Sonnet on the mechanical query node (gather_evidence only formulates\
-  \ search strings \u2014 Opus is wasted there); consistency_gate is deterministic (no LLM).\n"
-version: '2.0'
+  \ (objectives, WPs, partners, claims); the evidence factory keeps search candidates separate, downloads\
+  \ lawful full text, verifies exact page-level passages, searches for contradictions, and releases only\
+  \ citations that pass deterministic gates. A ConsistencyChecker gates the render on structure + compliance.\n"
+version: '3.0'
 inputs:
   concept_note:
     type: text
@@ -46,8 +45,8 @@ nodes:
   type: GraphNormalizer
   config:
     model: claude-opus-5
-- id: gather_evidence
-  type: EvidenceAgent
+- id: discover_candidates
+  type: ScholarlyCandidateDiscoveryAgent
   config:
     mcp_server: paper-search-mcp
     tool: search_papers
@@ -56,13 +55,27 @@ nodes:
     - openalex
     - europepmc
     - crossref
-    max_per_claim: 5
+    max_results_per_source: 2
+    max_candidates_per_claim: 8
     claim_types:
     - state_of_art
     - problem
     - impact
     - method
     model: claude-sonnet-4-5
+- id: acquire_evidence
+  type: FullTextEvidenceAcquirer
+  config:
+    candidates: '{{ discover_candidates.candidates }}'
+    fail_when_none_acquired: false
+- id: gather_evidence
+  type: ProposalEvidenceFactoryAgent
+  config:
+    model: claude-sonnet-4-5
+    candidates: '{{ discover_candidates.candidates }}'
+    documents: '{{ acquire_evidence.documents }}'
+    search_audit: '{{ discover_candidates.search_audit }}'
+    rejected_candidates: '{{ acquire_evidence.rejected_candidates }}'
 - id: draft_objectives
   type: TransformAgent
   config:
@@ -297,17 +310,55 @@ nodes:
       \ {{feasibility_check.parsed.scoring_risks}}\nrequired_human_inputs: {{feasibility_check.parsed.required_human_inputs}}\n"
     max_tokens: 32000
 - id: render_pdf
-  type: PDFProposalRenderer
+  type: HorizonHTMLProposalRenderer
   config:
-    template: corporate
-    proposal_title: "AGRO-THRIVE \u2014 Part B (HORIZON-CL6-2026-01-CIRCBIO-09)"
-    client_name: AGRO-THRIVE Consortium
-    sections:
-      Part B: '{{ compile_partb.raw }}'
+    content: '{{ compile_partb.raw }}'
+    content_format: markdown
+    metadata:
+      proposal_title: "AGRO-THRIVE: Balancing food security, bioeconomy, climate and biodiversity"
+      acronym: AGRO-THRIVE
+      call_id: HORIZON-CL6-2026-01-CIRCBIO-09
+      action_type: Research and Innovation Action (RIA)
+      consortium_name: AGRO-THRIVE Consortium
+      part_label: Part B
+      version: Evidence-verified draft
+    citation_registry: '{{ gather_evidence.citation_registry }}'
+    evidence_qa: '{{ gather_evidence.qa_report }}'
+    evidence_blockers: '{{ gather_evidence.blocking_issues }}'
+    include_toc: true
+    include_bibliography: true
+    include_evidence_annex: true
+    page_limit: 45
+    enforce_page_limit: false
+- id: render_docx
+  type: HorizonDOCXProposalRenderer
+  config:
+    content: '{{ compile_partb.raw }}'
+    content_format: markdown
+    metadata:
+      proposal_title: "AGRO-THRIVE: Balancing food security, bioeconomy, climate and biodiversity"
+      acronym: AGRO-THRIVE
+      call_id: HORIZON-CL6-2026-01-CIRCBIO-09
+      action_type: Research and Innovation Action (RIA)
+      consortium_name: AGRO-THRIVE Consortium
+      part_label: Part B
+      version: Evidence-verified draft
+    citation_registry: '{{ gather_evidence.citation_registry }}'
+    evidence_qa: '{{ gather_evidence.qa_report }}'
+    evidence_blockers: '{{ gather_evidence.blocking_issues }}'
+    include_toc: true
+    include_bibliography: true
+    include_evidence_annex: true
+    page_limit: 45
+    enforce_page_limit: false
 edges:
 - from: call_intel
   to: concept_normalize
 - from: concept_normalize
+  to: discover_candidates
+- from: discover_candidates
+  to: acquire_evidence
+- from: acquire_evidence
   to: gather_evidence
 - from: gather_evidence
   to: draft_objectives
@@ -355,3 +406,5 @@ edges:
   to: compile_partb
 - from: compile_partb
   to: render_pdf
+- from: compile_partb
+  to: render_docx

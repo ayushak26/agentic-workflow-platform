@@ -94,7 +94,10 @@ def test_reference_eu_proposal_pipeline_loads_with_all_new_nodes():
         Path("workflows/eu_proposal_evidence_pipeline.yaml").read_text()
     )
     assert {node.type for node in spec.nodes} >= {
-        "ClaimEvidenceVerifier",
+        "ScholarlyCandidateDiscoveryAgent",
+        "FullTextEvidenceAcquirer",
+        "ProposalEvidenceFactoryAgent",
+        "HorizonHTMLProposalRenderer",
         "CallCoverageMatrixAgent",
         "ConceptAlternativesAgent",
         "HorizonEvaluationAgent",

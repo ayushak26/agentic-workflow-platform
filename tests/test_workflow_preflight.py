@@ -51,6 +51,21 @@ def test_claim_evidence_verifier_is_auto_discovered():
     )
 
 
+def test_proposal_evidence_and_html_renderer_nodes_are_auto_discovered():
+    assert NodeRegistry.get(
+        "ScholarlyCandidateDiscoveryAgent"
+    ).__name__ == "ScholarlyCandidateDiscoveryAgent"
+    assert NodeRegistry.get(
+        "FullTextEvidenceAcquirer"
+    ).__name__ == "FullTextEvidenceAcquirer"
+    assert NodeRegistry.get(
+        "ProposalEvidenceFactoryAgent"
+    ).__name__ == "ProposalEvidenceFactoryAgent"
+    assert NodeRegistry.get(
+        "HorizonHTMLProposalRenderer"
+    ).__name__ == "HorizonHTMLProposalRenderer"
+
+
 def test_valid_preflight_compiles_and_spends_no_tokens():
     class ExplodingLLM:
         def __getattr__(self, name):

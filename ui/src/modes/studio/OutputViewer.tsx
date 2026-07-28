@@ -1,9 +1,8 @@
 /* Node outputs are runtime-defined by independently registered node plugins. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
-import type { ModelSelection } from '../../api/types';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 
 export function OutputViewer({
@@ -16,72 +15,84 @@ export function OutputViewer({
     workflowName?: string;
 }) {
     const navigate = useNavigate();
-    const [tab, setTab] = useState<
-        'variables' | 'models' | 'sources' | 'audit' | 'score'
-    >('variables');
+    const [tab, setTab] = useState<'variables' | 'sources' | 'audit' | 'score'>('variables');
     const [reference, setReference] = useState('');
     const [scores, setScores] = useState<{ criterion: string; score: number; reasoning: string }[] | null>(null);
     const [scoring, setScoring] = useState(false);
     const [scoreErr, setScoreErr] = useState<string | null>(null);
-    const [artifact, setArtifact] = useState<{
-        key: string;
-        url?: string;
-        error?: string;
-    } | null>(null);
 
     const nodeOutputs = state?.node_outputs ?? {};
     const workflowInputs = state?.inputs ?? {};
     const workflowVariables = state?.variables ?? {};
-    const modelSelections = (
-        Array.isArray(state?.model_selections)
-            ? state.model_selections
-            : []
-    ) as ModelSelection[];
 
-    // Renderer-agnostic: pick whichever document renderer ran. Either node type
-    // (PDFProposalRenderer / DOCXProposalRenderer) writes { minio_key, byte_size,
-    // template_used }, so the viewer only needs the key + the file extension.
-    // We find the producing node by looking for a node output that carries a
-    // minio_key, rather than hard-coding a single node id, so renaming or
-    // swapping the final node never breaks the download again.
-    const RENDERER_IDS = ['generate_docx', 'generate_pdf'];
-    let docNodeId: string | undefined = RENDERER_IDS.find((id) => nodeOutputs[id]?.minio_key);
-    if (!docNodeId) {
-        docNodeId = Object.keys(nodeOutputs).find((id) => nodeOutputs[id]?.minio_key);
+    // A proposal workflow can now publish PDF, editable DOCX, and its sanitised
+    // HTML source in the same run. Collect every renderer-owned artifact and
+    // deduplicate `minio_key` aliases rather than hiding all but one output.
+    type OutputArtifact = {
+        key: string;
+        extension: string;
+        nodeId: string;
+        output: any;
+    };
+    const rendererEntries = Object.entries(nodeOutputs).filter(([, output]: [string, any]) => (
+        output?.pdf_key
+        || output?.docx_key
+        || output?.html_key
+        || (
+            typeof output?.minio_key === 'string'
+            && ['pdf', 'docx', 'pptx', 'xlsx'].includes(
+                output.minio_key.split('.').pop()?.toLowerCase() ?? '',
+            )
+        )
+    ));
+    const artifactKeys = new Set<string>();
+    const artifacts: OutputArtifact[] = [];
+    for (const [nodeId, output] of rendererEntries as [string, any][]) {
+        for (const field of ['pdf_key', 'docx_key', 'html_key', 'minio_key']) {
+            const key = output?.[field];
+            if (typeof key !== 'string' || artifactKeys.has(key)) continue;
+            const extension = key.split('.').pop()?.toLowerCase() ?? '';
+            if (!['pdf', 'docx', 'html', 'pptx', 'xlsx'].includes(extension)) continue;
+            artifactKeys.add(key);
+            artifacts.push({ key, extension, nodeId, output });
+        }
     }
-    const doc = docNodeId ? nodeOutputs[docNodeId] : undefined;
-    const minioKey: string | undefined = doc?.minio_key;
+    const artifactOrder: Record<string, number> = {
+        pdf: 0,
+        docx: 1,
+        html: 2,
+        pptx: 3,
+        xlsx: 4,
+    };
+    artifacts.sort((left, right) => (
+        (artifactOrder[left.extension] ?? 99)
+        - (artifactOrder[right.extension] ?? 99)
+    ));
+    const primaryArtifact = artifacts[0];
+    const previewArtifact = artifacts.find(item => item.extension === 'pdf');
+    const doc = primaryArtifact?.output;
+    const minioKey = primaryArtifact?.key;
+    const fileKinds = artifacts.map(item => item.extension.toUpperCase()).join(' + ');
+    const rendererWarnings = Array.from(new Set(
+        rendererEntries.flatMap(([, output]: [string, any]) => (
+            Array.isArray(output?.warnings) ? output.warnings : []
+        )),
+    ));
+    const pageCountOutput = (
+        previewArtifact?.output
+        ?? artifacts.find(item => typeof item.output?.page_count === 'number')?.output
+    );
+    const pageCount = pageCountOutput?.page_count;
+    const pageCountEstimated = Boolean(pageCountOutput?.page_count_basis);
 
-    // Derive the file kind from the key's extension (e.g. proposal.docx -> DOCX).
-    const ext = (minioKey?.split('.').pop() ?? '').toLowerCase();
-    const fileKind = ext ? ext.toUpperCase() : 'FILE';
-    // Only PDFs render inside an <iframe>; .docx cannot preview in-browser, so
-    // for non-PDF documents we show a download card instead of a broken iframe.
-    const canPreviewInline = ext === 'pdf';
-    const artifactUrl =
-        artifact && artifact.key === minioKey ? artifact.url ?? null : null;
-    const artifactError =
-        artifact && artifact.key === minioKey ? artifact.error ?? null : null;
-
-    useEffect(() => {
-        if (!minioKey || !canPreviewInline) return;
-        let cancelled = false;
-        let objectUrl: string | null = null;
-        api.artifactBlobUrl(minioKey)
-            .then(url => {
-                objectUrl = url;
-                if (!cancelled) setArtifact({ key: minioKey, url });
-            })
-            .catch(error => {
-                if (!cancelled) setArtifact({ key: minioKey, error: String(error) });
-            });
-        return () => {
-            cancelled = true;
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-        };
-    }, [canPreviewInline, minioKey]);
-
-    const citations = nodeOutputs.knowledge_retrieval?.citations ?? [];
+    const evidenceOutput: any = Object.values(nodeOutputs).find(
+        (output: any) => Array.isArray(output?.citation_registry) && output?.qa_report,
+    );
+    const ragCitations = nodeOutputs.knowledge_retrieval?.citations ?? [];
+    const evidenceCitations = evidenceOutput?.citation_registry ?? [];
+    const citations = evidenceCitations.length > 0 ? evidenceCitations : ragCitations;
+    const evidenceBlockers: string[] = evidenceOutput?.blocking_issues ?? [];
+    const evidenceQa: any = evidenceOutput?.qa_report;
     const auditLog: any[] = state?.audit_log ?? [];
 
     const answerText: string =
@@ -90,7 +101,9 @@ export function OutputViewer({
         Object.values(nodeOutputs).map((o: any) => o?.raw).filter(Boolean).join('\n\n') ??
         '';
     const sourcesText: string = citations
-        .map((c: any) => `[${c.label}] ${c.source_doc}: ${c.snippet}`)
+        .map((c: any) => c.formatted_citation
+            ? `[${c.display_number}] ${c.formatted_citation}`
+            : `[${c.label}] ${c.source_doc}: ${c.snippet}`)
         .join('\n');
 
     async function runScoring() {
@@ -169,10 +182,6 @@ export function OutputViewer({
                     className={`flex-1 px-2 py-2 text-xs ${tab === 'sources' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Sources ({citations.length})
                 </button>
-                <button onClick={() => setTab('models')}
-                    className={`flex-1 px-2 py-2 text-xs ${tab === 'models' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
-                    Models ({modelSelections.length})
-                </button>
                 <button onClick={() => setTab('audit')}
                     className={`flex-1 px-2 py-2 text-xs ${tab === 'audit' ? 'border-b-2 border-accent-600 font-medium' : 'text-ink-500'}`}>
                     Audit ({auditEntries.length})
@@ -192,53 +201,46 @@ export function OutputViewer({
             )}
 
             {tab === 'sources' && (
-                <div className="p-4">
+                <div className="p-4 space-y-3">
+                    {evidenceQa && (
+                        <div className={`rounded-md border p-3 text-xs ${evidenceBlockers.length > 0
+                            ? 'border-red-300 bg-red-50 text-red-800'
+                            : 'border-emerald-300 bg-emerald-50 text-emerald-800'}`}>
+                            <div className="font-semibold">
+                                {evidenceBlockers.length > 0
+                                    ? `Evidence gate blocked (${evidenceBlockers.length})`
+                                    : 'Evidence gate passed'}
+                            </div>
+                            <div className="mt-1">
+                                {evidenceQa.verified_claims ?? 0}/{evidenceQa.claims_examined ?? 0} claims verified ·
+                                {' '}{Math.round((evidenceQa.exact_locator_rate ?? 0) * 100)}% exact locators
+                            </div>
+                            {evidenceBlockers.length > 0 && (
+                                <ul className="mt-2 list-disc pl-4 space-y-1">
+                                    {evidenceBlockers.map((item, index) => (
+                                        <li key={index}>{item}</li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                    )}
                     {citations.length === 0 ? (
                         <div className="text-sm text-ink-500">No citations recorded.</div>
                     ) : (
                         <ul className="space-y-2 text-xs">
                             {citations.map((c: any) => (
-                                <li key={c.label} className="border border-slate-200 rounded-md p-2">
-                                    <div className="font-medium">[{c.label}] {c.source_doc}</div>
-                                    <div className="text-ink-500 mt-1">{c.snippet}</div>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            )}
-
-            {tab === 'models' && (
-                <div className="p-4">
-                    {modelSelections.length === 0 ? (
-                        <div className="text-sm text-ink-500">
-                            No LLM provider call was recorded.
-                        </div>
-                    ) : (
-                        <ul className="space-y-2 text-xs">
-                            {modelSelections.map((selection, index) => (
-                                <li
-                                    key={`${selection.call_id}:${selection.actual_model}:${index}`}
-                                    className="rounded-md border border-accent-200 bg-accent-50/40 p-3"
-                                >
-                                    <div className="font-semibold text-accent-800">
-                                        {selection.actual_model}
-                                        {selection.fallback ? ' · fallback' : ''}
-                                        {selection.cache_hit ? ' · cache hit' : ''}
+                                <li key={c.citation_id ?? c.label} className="border border-slate-200 rounded-md p-2">
+                                    <div className="font-medium">
+                                        [{c.display_number ?? c.label}] {c.title ?? c.source_doc}
                                     </div>
-                                    <div className="mt-1 text-ink-500">
-                                        Requested {selection.requested_model}
-                                        {' · '}{selection.mode}
-                                        {' · '}{selection.complexity}{' '}
-                                        {selection.task_kind.replace('_', ' ')}
+                                    <div className="text-ink-500 mt-1">
+                                        {c.formatted_citation ?? c.snippet}
                                     </div>
-                                    <div className="mt-2 text-ink-700">
-                                        {selection.reason}
-                                    </div>
-                                    <div className="mt-2 text-ink-500">
-                                        Estimated maximum: $
-                                        {selection.estimated_cost_usd.toFixed(6)}
-                                    </div>
+                                    {c.version_id && (
+                                        <div className="text-ink-400 mt-1 font-mono">
+                                            {c.version_id} · {c.retraction_status}
+                                        </div>
+                                    )}
                                 </li>
                             ))}
                         </ul>
@@ -348,6 +350,8 @@ export function OutputViewer({
     }
 
     // ── Document layout (flagship proposal_generation, biomass, etc.) ───────
+    const viewUrl = previewArtifact ? api.fileUrl(previewArtifact.key) : undefined;
+
     return (
         <div className="h-full flex flex-col">
             <header className="px-6 py-3 border-b border-slate-200 flex items-center justify-between bg-white">
@@ -355,20 +359,34 @@ export function OutputViewer({
                     <h2 className="font-semibold">{workflowName ?? 'Proposal'} — completed</h2>
                     <div className="text-xs text-ink-500">
                         {doc.template_used ? `Template: ${doc.template_used} · ` : ''}
+                        {typeof pageCount === 'number'
+                            ? `${pageCountEstimated ? 'approximately ' : ''}${pageCount} pages · `
+                            : ''}
                         {typeof doc.byte_size === 'number' ? `${(doc.byte_size / 1024).toFixed(0)} KB · ` : ''}
-                        {fileKind}
+                        {fileKinds || 'FILE'}
                     </div>
+                    {rendererWarnings.length > 0 && (
+                        <div className="text-xs text-amber-700 mt-1">
+                            {rendererWarnings.join(' · ')}
+                        </div>
+                    )}
                 </div>
                 <div className="flex gap-2">
-                    <button
-                        type="button"
-                        onClick={() => void api.downloadArtifact(minioKey)}
-                        className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
-                    >
-                        Download {fileKind}
-                    </button>
-                    {canPreviewInline && artifactUrl && (
-                        <a href={artifactUrl} target="_blank" rel="noreferrer"
+                    {artifacts.map((artifact, index) => (
+                        <a
+                            key={artifact.key}
+                            href={api.fileUrl(artifact.key, true)}
+                            className={`px-4 py-2 rounded-md text-sm ${
+                                index === 0
+                                    ? 'bg-accent-600 text-white'
+                                    : 'border border-slate-300 hover:bg-slate-50'
+                            }`}
+                        >
+                            Download {artifact.extension.toUpperCase()}
+                        </a>
+                    ))}
+                    {previewArtifact && viewUrl && (
+                        <a href={viewUrl} target="_blank" rel="noreferrer"
                             className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
                             Open in new tab
                         </a>
@@ -384,27 +402,26 @@ export function OutputViewer({
 
             <div className="flex-1 flex min-h-0">
                 <div className="flex-1 bg-slate-100 p-4">
-                    {canPreviewInline && artifactUrl ? (
-                        <iframe title="Proposal" src={artifactUrl}
+                    {previewArtifact && viewUrl ? (
+                        <iframe title="Proposal" src={viewUrl}
                             className="w-full h-full bg-white border border-slate-200 rounded-md" />
-                    ) : canPreviewInline ? (
-                        <div className="w-full h-full bg-white border border-slate-200 rounded-md flex items-center justify-center text-sm text-ink-500">
-                            {artifactError ?? 'Loading secure preview…'}
-                        </div>
                     ) : (
-                        // .docx and other office formats cannot render in an <iframe>;
-                        // offer a download card instead of a blank/broken preview.
                         <div className="w-full h-full bg-white border border-slate-200 rounded-md flex items-center justify-center">
                             <div className="text-center space-y-3">
                                 <div className="text-sm text-ink-500">
-                                    {fileKind} documents can&rsquo;t preview in the browser.
+                                    {fileKinds || 'Office'} documents can&rsquo;t preview in the browser.
                                 </div>
-                                <button
-                                    type="button"
-                                    onClick={() => void api.downloadArtifact(minioKey)}
-                                    className="inline-block px-4 py-2 rounded-md bg-accent-600 text-white text-sm">
-                                    Download {fileKind}
-                                </button>
+                                <div className="flex flex-wrap justify-center gap-2">
+                                    {artifacts.map(artifact => (
+                                        <a
+                                            key={artifact.key}
+                                            href={api.fileUrl(artifact.key, true)}
+                                            className="inline-block px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
+                                        >
+                                            Download {artifact.extension.toUpperCase()}
+                                        </a>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}

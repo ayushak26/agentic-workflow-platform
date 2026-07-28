@@ -3,7 +3,7 @@ description: >-
   Normalise a Horizon concept, discover and verify evidence, build the
   requirement-coverage matrix, generate three concept alternatives, pause for
   human approvals, and run an independent two-provider Horizon evaluation.
-version: "1.2"
+version: "2.0"
 use_case: eu_proposal
 inputs:
   concept_note:
@@ -48,16 +48,26 @@ nodes:
       concept_note: "{{load_concept_note.text}}"
       call_facts: "{{load_call_facts.text}}"
   - id: discover_evidence
-    type: EvidenceAgent
+    type: ScholarlyCandidateDiscoveryAgent
     config:
       model: claude-sonnet-4-5
-      max_per_claim: 5
+      max_results_per_source: 2
+      max_candidates_per_claim: 8
       claim_types: [state_of_art, problem, impact, method]
+      require_contradiction_search: true
+  - id: acquire_full_text
+    type: FullTextEvidenceAcquirer
+    config:
+      candidates: "{{discover_evidence.candidates}}"
+      fail_when_none_acquired: false
   - id: verify_evidence
-    type: ClaimEvidenceVerifier
+    type: ProposalEvidenceFactoryAgent
     config:
       model: claude-sonnet-4-5
-      minimum_support_confidence: 0.72
+      candidates: "{{discover_evidence.candidates}}"
+      documents: "{{acquire_full_text.documents}}"
+      search_audit: "{{discover_evidence.search_audit}}"
+      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
   - id: scientific_synthesis
     type: ScientificSkillAgent
     config:
@@ -73,7 +83,9 @@ nodes:
         robust state-of-the-art conclusions, contradictions, evidence gaps,
         unsupported proposal claims, and implications for scientific ambition
         and feasibility. Use only the supplied records; never invent a source.
-        Verification findings: {{verify_evidence.findings}}.
+        Verified claims: {{verify_evidence.verified_claims}}.
+        Evidence QA: {{verify_evidence.qa_report}}.
+        Blocking issues: {{verify_evidence.blocking_issues}}.
         Discovery report: {{discover_evidence.report}}.
   - id: call_coverage
     type: CallCoverageMatrixAgent
@@ -116,6 +128,40 @@ nodes:
         - gpt-5
       criterion_threshold: 3.0
       total_threshold: 10.0
+  - id: render_proposal
+    type: HorizonHTMLProposalRenderer
+    config:
+      content: "{{load_proposal.text}}"
+      content_format: markdown
+      metadata:
+        proposal_title: Horizon Europe Proposal
+        part_label: Part B
+        version: Evidence-verified draft
+      citation_registry: "{{verify_evidence.citation_registry}}"
+      evidence_qa: "{{verify_evidence.qa_report}}"
+      evidence_blockers: "{{verify_evidence.blocking_issues}}"
+      include_toc: true
+      include_bibliography: true
+      include_evidence_annex: true
+      page_limit: 45
+      enforce_page_limit: false
+  - id: render_proposal_docx
+    type: HorizonDOCXProposalRenderer
+    config:
+      content: "{{load_proposal.text}}"
+      content_format: markdown
+      metadata:
+        proposal_title: Horizon Europe Proposal
+        part_label: Part B
+        version: Evidence-verified draft
+      citation_registry: "{{verify_evidence.citation_registry}}"
+      evidence_qa: "{{verify_evidence.qa_report}}"
+      evidence_blockers: "{{verify_evidence.blocking_issues}}"
+      include_toc: true
+      include_bibliography: true
+      include_evidence_annex: true
+      page_limit: 45
+      enforce_page_limit: false
 edges:
   - from: load_concept_note
     to: load_call_facts
@@ -124,6 +170,8 @@ edges:
   - from: normalise_concept
     to: discover_evidence
   - from: discover_evidence
+    to: acquire_full_text
+  - from: acquire_full_text
     to: verify_evidence
   - from: verify_evidence
     to: scientific_synthesis
@@ -139,8 +187,12 @@ edges:
     to: load_proposal
   - from: load_proposal
     to: horizon_evaluation
+  - from: horizon_evaluation
+    to: render_proposal
+  - from: render_proposal
+    to: render_proposal_docx
 entry: load_concept_note
-exit: horizon_evaluation
+exit: render_proposal_docx
 output:
   include_input: false
   nodes:
@@ -151,4 +203,10 @@ output:
     - node_id: concept_alternatives
       flatten: false
     - node_id: horizon_evaluation
+      flatten: false
+    - node_id: verify_evidence
+      flatten: false
+    - node_id: render_proposal
+      flatten: false
+    - node_id: render_proposal_docx
       flatten: false

@@ -1,6 +1,7 @@
 """EU Proposal Evidence and Reasoning System API."""
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -8,6 +9,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from app.nodes.claim_evidence_verifier import ClaimEvidenceVerifier
+from app.nodes.horizon_docx_renderer import HorizonDOCXProposalRenderer
+from app.nodes.html_proposal_renderer import HorizonHTMLProposalRenderer
+from app.nodes.proposal_evidence_factory import ProposalEvidenceFactoryAgent
+from app.evidence.models import (
+    CandidateSource,
+    EvidencePolicy,
+    FullTextDocument,
+    RejectedCandidate,
+    SearchAuditRecord,
+)
 from app.proposal_graph import PROPOSAL_NAMESPACE
 from app.proposal_graph.concepts import generate_concept_alternatives
 from app.proposal_graph.coverage import build_call_coverage_matrix
@@ -17,7 +28,6 @@ from app.proposal_graph.models import Authority
 from app.proposal_graph.state import proposal_graph_state_update
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 from app.security.dependencies import CurrentUser, require_consultant
-from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 from app.workflow.run_history import get_retry_checkpoint, get_run
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -46,25 +56,6 @@ def _store(request: Request, *, require_objects: bool = False):
             "object store unavailable",
         )
     return ProposalWorkspaceStore(db, object_store)
-
-
-def _scoped_llm(
-    services: dict[str, Any],
-    *,
-    session_id: str,
-    proposal_id: str,
-    node_id: str,
-):
-    llm = services["llm"]
-    if hasattr(llm, "with_context"):
-        return llm.with_context(
-            run_id=f"proposal:{proposal_id}",
-            session_id=session_id,
-            node_id=node_id,
-            ledger=services.get("cost_ledger"),
-            semantic_cache=services.get("semantic_cache"),
-        )
-    return llm
 
 
 def _graph_from_checkpoint(checkpoint: dict[str, Any]) -> ProposalGraph:
@@ -195,13 +186,12 @@ async def verify_claims(
     services = _services(request)
     store = _store(request, require_objects=True)
     graph = body.graph.model_copy(deep=True)
-    session_id = _scope(user)
 
     # Pin every known source to its latest immutable version before judging.
     for source_id, source in list(graph.evidence_sources.items()):
         try:
             version, _ = await store.source_text(
-                session_id=session_id,
+                session_id=_scope(user),
                 proposal_id=proposal_id,
                 source_id=source_id,
             )
@@ -218,20 +208,13 @@ async def verify_claims(
             }
         )
 
-    node_services = dict(services)
-    node_services["llm"] = _scoped_llm(
-        services,
-        session_id=session_id,
-        proposal_id=proposal_id,
-        node_id="verify_claims",
-    )
     node = ClaimEvidenceVerifier(
         "verify_claims",
         {
             "model": body.model,
             "minimum_support_confidence": body.minimum_support_confidence,
         },
-        services=node_services,
+        services=services,
     )
     result = await node.run(
         proposal_graph_state_update(graph),
@@ -266,30 +249,18 @@ async def concept_alternatives(
     user: CurrentUser = Depends(require_consultant),
 ):
     services = _services(request)
-    try:
-        concept_note = check_workflow_inputs(
-            {"concept_note": body.concept_note}
-        ).value["concept_note"]
-    except GuardrailViolation as exc:
-        raise HTTPException(422, str(exc)) from exc
-    session_id = _scope(user)
     result = await generate_concept_alternatives(
-        _scoped_llm(
-            services,
-            session_id=session_id,
-            proposal_id=proposal_id,
-            node_id="concept_alternatives",
-        ),
+        services["llm"],
         graph=body.graph,
         model=body.model,
-        concept_note=concept_note,
+        concept_note=body.concept_note,
     )
     graph = body.graph.model_copy(deep=True)
     graph.concept_alternatives = {
         item.id: item for item in result.alternatives
     }
     snapshot = await _store(request).save_snapshot(
-        session_id=session_id,
+        session_id=_scope(user),
         proposal_id=proposal_id,
         graph=graph,
         created_by=user.username,
@@ -389,21 +360,9 @@ async def horizon_evaluation(
 ):
     services = _services(request)
     try:
-        proposal_text = check_workflow_inputs(
-            {"proposal_text": body.proposal_text}
-        ).value["proposal_text"]
-    except GuardrailViolation as exc:
-        raise HTTPException(422, str(exc)) from exc
-    session_id = _scope(user)
-    try:
         report = await evaluate_horizon_proposal(
-            _scoped_llm(
-                services,
-                session_id=session_id,
-                proposal_id=proposal_id,
-                node_id="horizon_evaluation",
-            ),
-            proposal_text=proposal_text,
+            services["llm"],
+            proposal_text=body.proposal_text,
             graph=body.graph,
             generator_model=body.generator_model,
             evaluator_models=body.evaluator_models,
@@ -416,10 +375,167 @@ async def horizon_evaluation(
     if db is not None:
         await db["horizon_evaluations"].insert_one(
             {
-                "session_id": session_id,
+                "session_id": _scope(user),
                 "proposal_id": proposal_id,
                 "created_at": datetime.now(timezone.utc),
                 **report.model_dump(),
             }
         )
     return report.model_dump(mode="json")
+
+
+class ProposalEvidenceFactoryRequest(BaseModel):
+    graph: ProposalGraph
+    candidates: list[CandidateSource]
+    documents: list[FullTextDocument]
+    search_audit: list[SearchAuditRecord] = Field(default_factory=list)
+    rejected_candidates: list[RejectedCandidate] = Field(default_factory=list)
+    policy: EvidencePolicy = Field(default_factory=EvidencePolicy)
+    model: str = "claude-sonnet-4-5"
+
+
+@router.post("/{proposal_id}/evidence/verify")
+async def run_proposal_evidence_factory(
+    proposal_id: str,
+    body: ProposalEvidenceFactoryRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Verify already-fetched full text and return a citable evidence package."""
+
+    services = _services(request)
+    if services.get("llm") is None or services.get("object_store") is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "evidence verification services unavailable",
+        )
+    node = ProposalEvidenceFactoryAgent(
+        "proposal_evidence_factory",
+        {
+            "candidates": [
+                item.model_dump(mode="json") for item in body.candidates
+            ],
+            "documents": [
+                item.model_dump(mode="json") for item in body.documents
+            ],
+            "search_audit": [
+                item.model_dump(mode="json") for item in body.search_audit
+            ],
+            "rejected_candidates": [
+                item.model_dump(mode="json")
+                for item in body.rejected_candidates
+            ],
+            "policy": body.policy.model_dump(mode="json"),
+            "model": body.model,
+        },
+        services=services,
+    )
+    result = await node.run(
+        proposal_graph_state_update(body.graph),
+        node.config.model_dump(),
+    )
+    delta = (
+        (result.pop("__state__").get("domain_state") or {})
+        .get(PROPOSAL_NAMESPACE)
+        or {}
+    )
+    result["graph"] = ProposalGraph(
+        **merge_graph(body.graph, delta)
+    ).model_dump(mode="json")
+    return result
+
+
+class RenderProposalRequest(BaseModel):
+    content: str
+    content_format: Literal["markdown", "html"] = "markdown"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    citation_registry: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_qa: dict[str, Any] = Field(default_factory=dict)
+    evidence_blockers: list[str] = Field(default_factory=list)
+    include_toc: bool = True
+    include_bibliography: bool = True
+    include_evidence_annex: bool = False
+    page_limit: int | None = Field(default=45, ge=1, le=500)
+    enforce_page_limit: bool = False
+
+
+class RenderDOCXProposalRequest(RenderProposalRequest):
+    max_embedded_image_bytes: int = Field(
+        default=10_000_000,
+        ge=1_000,
+        le=50_000_000,
+    )
+
+
+@router.post("/{proposal_id}/render")
+async def render_proposal(
+    proposal_id: str,
+    body: RenderProposalRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Render a proposal and persist both sanitised HTML and final PDF."""
+
+    services = _services(request)
+    if services.get("object_store") is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "object store unavailable",
+        )
+    scope_hash = hashlib.sha256(
+        _scope(user).encode("utf-8")
+    ).hexdigest()[:12]
+    run_id = f"proposal-{scope_hash}-{proposal_id}"
+    node = HorizonHTMLProposalRenderer(
+        "render_proposal",
+        body.model_dump(),
+        services=services,
+    )
+    try:
+        result = await node.run(
+            {
+                "inputs": {"SYSTEM.run_id": run_id},
+                "session_id": _scope(user),
+            },
+            node.config.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return result
+
+
+@router.post("/{proposal_id}/render/docx")
+async def render_proposal_docx(
+    proposal_id: str,
+    body: RenderDOCXProposalRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Render a proposal as editable DOCX and persist its sanitised source."""
+
+    services = _services(request)
+    if services.get("object_store") is None:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "object store unavailable",
+        )
+    scope_hash = hashlib.sha256(
+        _scope(user).encode("utf-8")
+    ).hexdigest()[:12]
+    run_id = f"proposal-{scope_hash}-{proposal_id}"
+    node = HorizonDOCXProposalRenderer(
+        "render_proposal_docx",
+        body.model_dump(),
+        services=services,
+    )
+    try:
+        result = await node.run(
+            {
+                "inputs": {"SYSTEM.run_id": run_id},
+                "session_id": _scope(user),
+            },
+            node.config.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return result

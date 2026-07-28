@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="generator" content="Eurskem AI Horizon Proposal Renderer v2">
+  <title>{{ metadata.proposal_title }}</title>
+</head>
+<body>
+  <div class="running-header">
+    {{ metadata.acronym or metadata.proposal_title }} - {{ metadata.part_label }}
+  </div>
+  <div class="running-footer">
+    {{ metadata.call_id }}{% if metadata.version %} - {{ metadata.version }}{% endif %}
+  </div>
+
+  <section class="cover-page">
+    <div class="eu-rule"></div>
+    <p class="programme-label">HORIZON EUROPE</p>
+    <p class="part-label">{{ metadata.part_label }}</p>
+    <h1 class="proposal-title">{{ metadata.proposal_title }}</h1>
+    {% if metadata.acronym %}<p class="acronym">{{ metadata.acronym }}</p>{% endif %}
+    <table class="cover-meta">
+      <tbody>
+        {% if metadata.call_id %}
+        <tr><th>Call / topic</th><td>{{ metadata.call_id }}</td></tr>
+        {% endif %}
+        {% if metadata.topic_title %}
+        <tr><th>Topic title</th><td>{{ metadata.topic_title }}</td></tr>
+        {% endif %}
+        {% if metadata.action_type %}
+        <tr><th>Type of action</th><td>{{ metadata.action_type }}</td></tr>
+        {% endif %}
+        {% if metadata.consortium_name %}
+        <tr><th>Consortium</th><td>{{ metadata.consortium_name }}</td></tr>
+        {% endif %}
+        {% if metadata.coordinator %}
+        <tr><th>Coordinator</th><td>{{ metadata.coordinator }}</td></tr>
+        {% endif %}
+        <tr><th>Version</th><td>{{ metadata.version }}</td></tr>
+        <tr><th>Date</th><td>{{ metadata.document_date }}</td></tr>
+      </tbody>
+    </table>
+    <div class="cover-status">
+      <strong>{{ metadata.confidentiality }}</strong>
+      {% if evidence_blockers %}
+      <p class="not-ready">NOT SUBMISSION-READY - unresolved evidence blockers are listed in the evidence annex.</p>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if include_toc and toc %}
+  <nav class="toc">
+    <h1>Table of contents</h1>
+    <ol>
+      {% for item in toc %}
+      <li class="toc-level-{{ item.level }}">
+        <a href="#{{ item.id }}"><span>{{ item.title }}</span></a>
+      </li>
+      {% endfor %}
+    </ol>
+  </nav>
+  {% endif %}
+
+  <main class="proposal-body">
+    {{ content }}
+  </main>
+
+  {% if include_bibliography and citation_registry %}
+  <section class="references">
+    <h1 id="references">References</h1>
+    <ol>
+      {% for citation in citation_registry %}
+      <li id="{{ citation.citation_id }}" data-source-id="{{ citation.source_id }}">
+        {{ citation.formatted_citation }}
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
+
+  {% if include_evidence_annex %}
+  <section class="evidence-annex">
+    <h1 id="evidence-integrity-annex">Evidence integrity annex</h1>
+    {% if evidence_blockers %}
+    <h2>Blocking issues</h2>
+    <ul class="blockers">
+      {% for blocker in evidence_blockers %}<li>{{ blocker }}</li>{% endfor %}
+    </ul>
+    {% endif %}
+    {% if evidence_qa %}
+    <h2>Quality summary</h2>
+    <table>
+      <tbody>
+        {% for key, value in evidence_qa.items() %}
+        {% if value is string or value is number %}
+        <tr><th>{{ key | replace('_', ' ') | title }}</th><td>{{ value }}</td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </section>
+  {% endif %}
+</body>
+</html>

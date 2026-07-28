@@ -1,0 +1,73 @@
+{
+  "estimated_page_count": 7,
+  "page_count_basis": "matching_html_pdf_layout",
+  "docx_sha256": "c12f7b0388674d5a1aa88d92769728960ab642deb2ad9f9c8b287f4df1cbfba2",
+  "source_html_sha256": "cd999d1facc91838604b2eadf4575201533739ba3b410d62ff23064f8038a581",
+  "table_of_contents": [
+    {
+      "level": 1,
+      "id": "1-excellence",
+      "title": "1. Excellence",
+      "page": 3
+    },
+    {
+      "level": 2,
+      "id": "1-1-objectives-and-ambition",
+      "title": "1.1 Objectives and ambition",
+      "page": 3
+    },
+    {
+      "level": 2,
+      "id": "1-2-state-of-the-art-and-progress-beyond-it",
+      "title": "1.2 State of the art and progress beyond it",
+      "page": 3
+    },
+    {
+      "level": 2,
+      "id": "1-3-methodology",
+      "title": "1.3 Methodology",
+      "page": 3
+    },
+    {
+      "level": 1,
+      "id": "2-impact",
+      "title": "2. Impact",
+      "page": 4
+    },
+    {
+      "level": 2,
+      "id": "2-1-pathways-towards-impact",
+      "title": "2.1 Pathways towards impact",
+      "page": 4
+    },
+    {
+      "level": 2,
+      "id": "2-2-measures-to-maximise-impact",
+      "title": "2.2 Measures to maximise impact",
+      "page": 4
+    },
+    {
+      "level": 1,
+      "id": "3-quality-and-efficiency-of-implementation",
+      "title": "3. Quality and efficiency of implementation",
+      "page": 5
+    },
+    {
+      "level": 2,
+      "id": "3-1-work-plan-and-resources",
+      "title": "3.1 Work plan and resources",
+      "page": 5
+    },
+    {
+      "level": 2,
+      "id": "3-2-consortium-capacity",
+      "title": "3.2 Consortium capacity",
+      "page": 5
+    }
+  ],
+  "warnings": [
+    "6 visible INPUT NEEDED marker(s) remain."
+  ],
+  "embedded_image_count": 0,
+  "image_placeholder_count": 1
+}

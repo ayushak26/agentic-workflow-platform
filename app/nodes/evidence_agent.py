@@ -1,339 +1,312 @@
-"""
-EvidenceAgent — MCP-driven scholarly discovery that writes EvidenceSource
-objects into the ProposalGraph.
+"""Scholarly candidate discovery for proposal claims.
 
-Role in the pipeline (strategy doc "Evidence Factory", discovery half)
-----------------------------------------------------------------------
-Section drafters currently make state-of-the-art / impact claims with no
-citations — a scoring risk. This node takes claims (or claim-like topics),
-searches open scholarly sources via the paper-search-mcp server, and records
-each candidate paper as a typed EvidenceSource in the graph. It links sources
-to the originating Claim so a later verification pass (PaperQA2) can flip
-Claim.verification from MISSING -> verified.
+Important boundary:
+    Search metadata is a candidate set, not evidence.
 
-Provenance discipline (why this node is trustworthy)
-----------------------------------------------------
-The LLM is used ONLY to turn a claim into good search queries. The
-machine-verifiable facts (DOI, title, source) are taken DIRECTLY from the MCP
-tool result, never from LLM output — an LLM can hallucinate a DOI, the tool
-cannot. This mirrors the MCPAgent's session_id anti-spoofing rule: trusted
-facts come from the tool boundary, not the model.
-
-Scope
------
-- Second MCP server, reached through the EXISTING MCPClient (config-driven
-  server list). No new client plumbing.
-- Discovery only. It fills EvidenceSource and links Claim.evidence_source_ids.
-  It does NOT assert that a paper supports a claim — that is verification,
-  deferred to PaperQA2 per the backlog. EvidenceSource.authority is recorded;
-  Claim.verification stays MISSING until a verifier runs.
+This node never changes ``Claim.verification`` and never writes candidate IDs
+to ``Claim.evidence_source_ids``. Full text must be fetched and an exact
+passage must pass the separate ProposalEvidenceFactoryAgent before a proposal
+drafter may use a citation.
 """
 from __future__ import annotations
 
-import hashlib
-from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.evidence.models import CandidateSource, SearchAuditRecord
+from app.evidence.retrieval import (
+    candidate_from_paper,
+    deduplicate_candidates,
+    papers_from_payload,
+    utc_now,
+)
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
-from app.proposal_graph.graph import ProposalGraph
-from app.proposal_graph.models import Authority, Claim, EvidenceSource, Status
-from app.proposal_graph.state import (
-    proposal_graph_from_state,
-    proposal_graph_state_update,
-)
+from app.proposal_graph.models import Claim
+from app.proposal_graph.state import proposal_graph_from_state
 
 
-class EvidenceAgentOutput(BaseModel):
-    """Validated output for EvidenceAgent.run() (output_schema ClassVar)."""
-    sources_added: int = 0
-    claims_linked: int = 0
-    report: str = ""
-    # Per-paper detail so a display node can render titles/DOIs per claim,
-    # not just summary counts. Each item: {claim_id, claim_text, identifier,
-    # citation, authority}.
-    sources: list = Field(default_factory=list)
+_DEFAULT_SOURCES = [
+    "arxiv",
+    "openalex",
+    "europepmc",
+    "core",
+    "openaire",
+    "zenodo",
+    "hal",
+    "doaj",
+    "pmc",
+]
 
 
-class EvidenceAgentInput(BaseModel):
+class ClaimSearchPlan(BaseModel):
+    discovery_queries: list[str] = Field(default_factory=list, max_length=4)
+    contradiction_queries: list[str] = Field(default_factory=list, max_length=2)
+
+
+class ScholarlyCandidateDiscoveryInput(BaseModel):
     pass
 
 
-class EvidenceAgentConfig(BaseModel):
-    """Node config — base.__init__ does config_schema(**raw_config)."""
+class ScholarlyCandidateDiscoveryConfig(BaseModel):
     mcp_server: str = "paper-search-mcp"
     tool: str = "search_papers"
-    sources: list | None = None
-    max_per_claim: int = 5
-    claim_types: list | None = None
-    model: str | None = None
-
-# EU-lawful, open-first sources aligned with the call's posture. All are
-# keyless-runnable and marked reliable (✅) in paper-search-mcp's capability
-# matrix. CORE benefits from a free key but runs without one. Google Scholar /
-# SSRN / CiteSeerX / BASE deliberately excluded (⚠️ unstable or bot-gated).
-_DEFAULT_SOURCES = ["arxiv", "openalex", "europepmc", "core", "openaire",
-                    "zenodo", "hal", "doaj", "pmc"]
-
-# Map a source name to a provenance authority level.
-_AUTHORITY_BY_SOURCE = {
-    "arxiv": Authority.PREPRINT,
-    "biorxiv": Authority.PREPRINT,
-    "medrxiv": Authority.PREPRINT,
-    "ssrn": Authority.PREPRINT,
-    "europepmc": Authority.PEER_REVIEWED,
-    "pmc": Authority.PEER_REVIEWED,
-    "pubmed": Authority.PEER_REVIEWED,
-    "crossref": Authority.PEER_REVIEWED,
-    "openalex": Authority.PEER_REVIEWED,
-    "doaj": Authority.PEER_REVIEWED,     # Directory of Open Access Journals — peer-reviewed
-    "core": Authority.GREY,
-    "openaire": Authority.OFFICIAL_EU,   # EU research-output graph
-    "zenodo": Authority.GREY,
-    "hal": Authority.GREY,
-}
+    sources: list[str] = Field(default_factory=lambda: list(_DEFAULT_SOURCES))
+    max_results_per_source: int = Field(default=2, ge=1, le=10)
+    max_candidates_per_claim: int = Field(default=8, ge=1, le=30)
+    max_claims: int = Field(default=20, ge=1, le=100)
+    claim_types: list[str] = Field(
+        default_factory=lambda: [
+            "state_of_art",
+            "impact",
+            "problem",
+            "method",
+        ]
+    )
+    require_contradiction_search: bool = True
+    model: str | None = "claude-sonnet-4-5"
 
 
-def _first(d: dict, *keys: str) -> Any:
-    """Defensively pull the first present, non-empty field among name variants.
-    paper-search-mcp's Paper dict field names may vary across versions/sources,
-    so we try several rather than guessing one and silently producing wrong data."""
-    for k in keys:
-        v = d.get(k)
-        if v not in (None, "", [], {}):
-            return v
-    return None
+class ScholarlyCandidateDiscoveryOutput(BaseModel):
+    candidates_found: int = 0
+    claims_searched: int = 0
+    candidates: list[CandidateSource] = Field(default_factory=list)
+    search_audit: list[SearchAuditRecord] = Field(default_factory=list)
+    report: str = ""
+    # Backwards-compatible display fields. Candidate discovery does not add
+    # verified sources or link claims, so these remain zero by design.
+    sources_added: int = 0
+    claims_linked: int = 0
+    sources: list[dict[str, Any]] = Field(default_factory=list)
 
 
-def _paper_to_source(paper: dict, source_hint: str | None) -> EvidenceSource:
-    """Build an EvidenceSource from a real paper-search-mcp Paper dict.
+class _ScholarlyCandidateDiscovery(NodeType):
+    input_schema = ScholarlyCandidateDiscoveryInput
+    config_schema = ScholarlyCandidateDiscoveryConfig
+    output_schema = ScholarlyCandidateDiscoveryOutput
 
-    Verified schema (arXiv, 2026) — keys: paper_id, title, authors (a single
-    ';'-separated STRING, not a list), abstract, doi (often "" for preprints),
-    published_date (ISO datetime), pdf_url, url, source, categories, keywords,
-    citations. Other sources (OpenAlex/Crossref) generally populate `doi`.
+    async def run(
+        self,
+        state: dict[str, Any],
+        resolved_config: dict[str, Any],
+    ) -> dict[str, Any]:
+        cfg = ScholarlyCandidateDiscoveryConfig(**resolved_config)
+        graph = proposal_graph_from_state(state)
+        llm = self.services.get("llm")
+        mcp = self.services.get("mcp_client")
+        if llm is None or mcp is None:
+            missing = [
+                name
+                for name, service in (("llm", llm), ("mcp_client", mcp))
+                if service is None
+            ]
+            raise RuntimeError(
+                f"{self.type_name} requires services {missing}"
+            )
 
-    Identifier precedence: real DOI -> arXiv id (paper_id when source=arxiv) ->
-    canonical url. Facts come from the tool dict only, never from the model."""
-    src = str(_first(paper, "source", "platform") or source_hint or "").lower()
-    doi = _first(paper, "doi", "DOI")                 # "" for arXiv → treated as absent by _first
-    paper_id = _first(paper, "paper_id", "id")
-    url = _first(paper, "url", "pdf_url", "openaccess_url", "link")
+        wanted = set(cfg.claim_types)
+        targets = [
+            claim
+            for claim in graph.claims.values()
+            if claim.claim_type in wanted and not claim.evidence_relation_ids
+        ][: cfg.max_claims]
 
-    identifier = None
-    if doi:
-        d = str(doi)
-        identifier = d if d.startswith(("doi:", "http")) else f"doi:{d}"
-    elif paper_id and src == "arxiv":
-        identifier = f"arXiv:{paper_id}"
-    elif paper_id:
-        identifier = f"{src or 'id'}:{paper_id}"
-    elif url:
-        identifier = str(url)
+        candidates: list[CandidateSource] = []
+        audit: list[SearchAuditRecord] = []
+        report_lines: list[str] = []
+        sources_arg = ",".join(cfg.sources)
 
-    title = _first(paper, "title") or "(title unavailable)"
+        for claim in targets:
+            plan = await self._search_plan(llm, claim, cfg.model)
+            queries = [
+                ("discovery", query)
+                for query in plan.discovery_queries[:4]
+            ]
+            if cfg.require_contradiction_search:
+                queries.extend(
+                    ("contradiction", query)
+                    for query in plan.contradiction_queries[:2]
+                )
 
-    # authors: real schema is a ';'-separated string; also tolerate a list.
-    authors_raw = _first(paper, "authors", "author")
-    author_str = ""
-    if isinstance(authors_raw, str) and authors_raw:
-        first = authors_raw.split(";")[0].strip()
-        author_str = first + (" et al." if ";" in authors_raw else "")
-    elif isinstance(authors_raw, list) and authors_raw:
-        author_str = str(authors_raw[0]) + (" et al." if len(authors_raw) > 1 else "")
+            claim_candidates: list[CandidateSource] = []
+            for purpose, query in queries:
+                searched_at = utc_now()
+                error: str | None = None
+                papers: list[dict[str, Any]] = []
+                try:
+                    raw = await mcp.call_tool(
+                        name=cfg.tool,
+                        arguments={
+                            "query": query,
+                            "sources": sources_arg,
+                            "max_results_per_source": (
+                                cfg.max_results_per_source
+                            ),
+                        },
+                        server=cfg.mcp_server,
+                    )
+                    papers = papers_from_payload(raw)
+                except Exception as exc:
+                    error = f"{type(exc).__name__}: {exc}"[:500]
 
-    # year from published_date (ISO) or a plain year field
-    pub = _first(paper, "published_date", "year", "published", "publication_date")
-    year = ""
-    if pub:
-        s = str(pub)
-        year = s[:4] if len(s) >= 4 and s[:4].isdigit() else s
+                audit.append(
+                    SearchAuditRecord(
+                        claim_id=claim.id,
+                        query=query,
+                        source_or_database=sources_arg,
+                        filters={
+                            "max_results_per_source": (
+                                cfg.max_results_per_source
+                            )
+                        },
+                        searched_at=searched_at,
+                        result_count=len(papers),
+                        purpose=purpose,
+                        error=error,
+                    )
+                )
+                if error:
+                    report_lines.append(
+                        f"[{claim.id}] {purpose} search failed: {error}"
+                    )
+                    continue
+                for paper in papers:
+                    claim_candidates.append(
+                        candidate_from_paper(
+                            paper,
+                            claim_id=claim.id,
+                            query=query,
+                            purpose=purpose,
+                        )
+                    )
 
-    citation = ", ".join(p for p in [author_str, f"“{title}”", year] if p)
+            claim_candidates = deduplicate_candidates(claim_candidates)
+            # Preserve contradiction candidates before filling the remaining
+            # cap with ordinary discovery results.
+            contradiction = [
+                item
+                for item in claim_candidates
+                if item.purpose == "contradiction"
+            ]
+            discovery = [
+                item
+                for item in claim_candidates
+                if item.purpose == "discovery"
+            ]
+            retained = (
+                contradiction[:2] + discovery
+            )[: cfg.max_candidates_per_claim]
+            candidates.extend(retained)
+            report_lines.append(
+                f"[{claim.id}] retained {len(retained)} candidate records; "
+                "zero verified citations"
+            )
 
-    # stable id: prefer identifier, else hash the title, so re-runs dedup.
-    basis = identifier or title
-    sid = "SRC-" + hashlib.sha1(basis.encode("utf-8")).hexdigest()[:10]
+        candidates = deduplicate_candidates(candidates)
+        display_sources = [
+            {
+                "candidate_id": item.candidate_id,
+                "claim_id": item.claim_id,
+                "claim_text": graph.claims[item.claim_id].text,
+                "identifier": item.doi or item.paper_id or item.canonical_url,
+                "citation": item.title,
+                "authority": item.authority,
+                "status": "candidate_only",
+            }
+            for item in candidates
+        ]
+        return {
+            "candidates_found": len(candidates),
+            "claims_searched": len(targets),
+            "candidates": [
+                item.model_dump(mode="json") for item in candidates
+            ],
+            "search_audit": [
+                item.model_dump(mode="json") for item in audit
+            ],
+            "report": (
+                "Candidate discovery completed. Search results were not linked "
+                "to claims and did not change verification status.\n"
+                + "\n".join(report_lines)
+            ),
+            "sources_added": 0,
+            "claims_linked": 0,
+            "sources": display_sources,
+        }
 
-    return EvidenceSource(
-        id=sid,
-        citation=citation,
-        identifier=identifier,
-        authority=_AUTHORITY_BY_SOURCE.get(src, Authority.UNVERIFIED),
-        retrieved_at=date.today().isoformat(),
-        title=str(title),
-        source_type=src or None,
-        # Discovery results normally contain the abstract. It is kept as a
-        # candidate passage for the verifier; full text can later replace it
-        # through source versioning without changing the stable source id.
-        excerpt=str(_first(paper, "abstract", "summary", "snippet") or "") or None,
+    async def _search_plan(
+        self,
+        llm: Any,
+        claim: Claim,
+        model: str | None,
+    ) -> ClaimSearchPlan:
+        try:
+            result = await llm.complete_structured(
+                model=model,
+                system=(
+                    "Create a neutral scholarly search plan for one atomic "
+                    "proposal claim. Do not answer the claim and do not invent "
+                    "sources. Provide three complementary discovery queries and "
+                    "one query designed to find negative, null, conflicting, or "
+                    "boundary-condition evidence. Queries must be concise."
+                ),
+                user=f"CLAIM:\n{claim.text}",
+                response_model=ClaimSearchPlan,
+                temperature=0.0,
+                max_tokens=700,
+            )
+            discovery = [
+                item.strip()[:180]
+                for item in result.discovery_queries
+                if item.strip()
+            ]
+            contradiction = [
+                item.strip()[:180]
+                for item in result.contradiction_queries
+                if item.strip()
+            ]
+            if discovery:
+                return ClaimSearchPlan(
+                    discovery_queries=discovery[:4],
+                    contradiction_queries=contradiction[:2],
+                )
+        except Exception:
+            # A deterministic plan keeps discovery usable with local/test
+            # gateways that do not implement structured completion.
+            pass
+
+        base = " ".join(claim.text.split())[:150]
+        return ClaimSearchPlan(
+            discovery_queries=[
+                base,
+                f"{base} systematic review",
+                f"{base} methods evidence",
+            ],
+            contradiction_queries=[
+                f"{base} limitations conflicting evidence",
+            ],
+        )
+
+
+@NodeRegistry.register
+class ScholarlyCandidateDiscoveryAgent(_ScholarlyCandidateDiscovery):
+    type_name = "ScholarlyCandidateDiscoveryAgent"
+    description = (
+        "Find scholarly candidate records with multi-query and contradiction "
+        "searches. Candidates are never treated as verified evidence."
     )
 
 
 @NodeRegistry.register
-class EvidenceAgent(NodeType):
-    """For each target claim/topic: LLM drafts queries -> paper-search-mcp
-    returns papers -> node writes EvidenceSource objects into proposal_graph
-    and links them to the Claim. Discovery only; no support-assertion."""
+class EvidenceAgent(_ScholarlyCandidateDiscovery):
+    """Compatibility alias for saved workflows.
+
+    Its semantics are intentionally corrected: it now discovers candidates
+    only. New workflows should use ``ScholarlyCandidateDiscoveryAgent``.
+    """
 
     type_name = "EvidenceAgent"
-
-    input_schema = EvidenceAgentInput
-    config_schema = EvidenceAgentConfig
-    output_schema = EvidenceAgentOutput
-
-    async def run(self, state: dict, config: dict) -> dict:
-        graph = proposal_graph_from_state(state)
-
-        server = config.get("mcp_server", "paper-search-mcp")
-        tool = config.get("tool", "search_papers")
-        sources = config.get("sources", _DEFAULT_SOURCES)
-        cap = int(config.get("max_per_claim", 5))
-        want_types = set(config.get("claim_types", ["state_of_art", "impact", "problem", "method"]))
-
-        # Which claims to enrich: those of the wanted types lacking evidence.
-        targets = [c for c in graph.claims.values()
-                   if c.claim_type in want_types and not c.evidence_source_ids]
-
-        # Services wired into the node (llm gateway + mcp client) — same access
-        # pattern the MCPAgent uses. self.services is provided by NodeType.__init__.
-        llm = self.services.get("llm")
-        mcp = self.services.get("mcp_client")
-        if llm is None or mcp is None:
-            missing = [n for n, v in (("llm", llm), ("mcp_client", mcp)) if v is None]
-            raise RuntimeError(
-                f"EvidenceAgent requires services {missing}; run with the app's "
-                "services dict (llm gateway + mcp_client)."
-            )
-
-        new_sources: dict[str, EvidenceSource] = {}
-        updated_claims: dict[str, Claim] = {}
-        found_sources: list[dict] = []   # display-friendly per-paper records
-        lines: list[str] = []
-
-        for claim in targets:
-            # 1. LLM formulates a search query from the claim (query text only).
-            q = await self._make_query(llm, claim, config.get("model"))
-
-            # 2. Call the paper-search MCP tool through the existing client.
-            #    Real client signature: call_tool(name, arguments, server=...),
-            #    returning the tool's first TextContent as a STRING (already
-            #    unwrapped). Facts come back from the tool, not the model.
-            try:
-                # Real search_papers signature (verified against server.py):
-                #   search_papers(query: str, max_results_per_source: int = 5,
-                #                 sources: str = "all", year: str | None = None)
-                # sources is a COMMA-SEPARATED STRING (the tool _parse_sources()
-                # splits on commas), NOT a list. Passing a list yields zero valid
-                # sources and an empty result — the cause of earlier "no results".
-                sources_arg = (
-                    ",".join(sources) if isinstance(sources, (list, tuple)) else str(sources)
-                )
-                raw = await mcp.call_tool(
-                    name=tool,
-                    arguments={
-                        "query": q,
-                        "sources": sources_arg,
-                        "max_results_per_source": cap,
-                    },
-                    server=server,
-                )
-            except Exception as exc:  # tool/transport failure — record, continue
-                lines.append(f"[{claim.id}] search failed: {exc}")
-                continue
-
-            papers = self._extract_papers(raw)
-            linked_ids: list[str] = []
-            for paper in papers[:cap]:
-                src = _paper_to_source(paper, None)
-                new_sources[src.id] = src
-                linked_ids.append(src.id)
-                found_sources.append({
-                    "claim_id": claim.id,
-                    "claim_text": claim.text,
-                    "identifier": src.identifier,
-                    "citation": src.citation,
-                    "authority": src.authority.value,
-                })
-
-            if linked_ids:
-                updated = claim.model_copy(update={
-                    "evidence_source_ids": claim.evidence_source_ids + linked_ids,
-                    # discovery only: verification stays MISSING until a verifier runs
-                    "verification": Status.PARTIAL,
-                })
-                updated_claims[claim.id] = updated
-                lines.append(f"[{claim.id}] +{len(linked_ids)} sources (query: {q[:60]})")
-            else:
-                lines.append(f"[{claim.id}] no results")
-
-        report = (f"EvidenceAgent: enriched {len(updated_claims)}/{len(targets)} "
-                  f"claims, added {len(new_sources)} sources\n" + "\n".join(lines))
-
-        # Write back via the proposal_graph reducer (merge is field-wise safe).
-        graph_delta = ProposalGraph(
-            evidence_sources=new_sources,
-            claims=updated_claims,
-        )
-        return {
-            "sources_added": len(new_sources),
-            "claims_linked": len(updated_claims),
-            "report": report,
-            "sources": found_sources,
-            "__state__": proposal_graph_state_update(graph_delta),
-        }
-
-    async def _make_query(self, llm, claim: Claim, model: str | None) -> str:
-        """LLM turns a claim into a focused scholarly search query. Output is a
-        query STRING only — never used to assert facts."""
-        prompt = (
-            "Turn this proposal claim into ONE focused scholarly search query "
-            "(6-12 words, key technical terms, no punctuation, no boolean "
-            "operators). Return only the query.\n\nCLAIM: " + claim.text
-        )
-        resp = await llm.complete(
-            system=("You convert research claims into concise scholarly search "
-                    "queries. Return only the query text, nothing else."),
-            user=prompt,
-            model=model,
-        )
-        return (getattr(resp, "text", None) or str(resp)).strip().splitlines()[0][:120]
-
-    @staticmethod
-    def _extract_papers(raw: Any) -> list[dict]:
-        """Normalise the tool's return into a list of paper dicts.
-
-        Your MCPClient.call_tool already unwraps to the first TextContent's
-        text, so `raw` is normally a JSON STRING. We also tolerate an already-
-        parsed dict/list in case a caller hands us structured data. We do NOT
-        need to dig through {content:[{text:...}]} envelopes — the client did
-        that. This keeps the trust boundary clean: we parse tool JSON, we never
-        read LLM output here."""
-        import json
-
-        # If the client handed back a JSON string, parse it.
-        if isinstance(raw, str):
-            raw = raw.strip()
-            if not raw:
-                return []
-            try:
-                raw = json.loads(raw)
-            except json.JSONDecodeError:
-                return []
-
-        # paper-search-mcp search_papers commonly returns {"papers":[...]} or a
-        # bare list; tolerate a few shapes without assuming one.
-        if isinstance(raw, dict):
-            for key in ("papers", "results", "data"):
-                val = raw.get(key)
-                if isinstance(val, list):
-                    return [p for p in val if isinstance(p, dict)]
-            # single paper dict
-            if "title" in raw or "doi" in raw:
-                return [raw]
-            return []
-        if isinstance(raw, list):
-            return [p for p in raw if isinstance(p, dict)]
-        return []
+    description = (
+        "Legacy alias for ScholarlyCandidateDiscoveryAgent; discovery only."
+    )
