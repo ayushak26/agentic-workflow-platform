@@ -34,9 +34,12 @@ from app.llm.local_openai_gw import (
     LocalModelProfile,
     LocalOpenAICompatibleGateway,
 )
+from app.llm.model_catalog import AUTO_MODEL, MODEL_PROFILE_BY_NAME
+from app.llm.model_router import ModelRouter
 from app.llm.openai_gw import OpenAIGateway
 from app.llm.errors import StructuredOutputError
 from app.observability import metrics
+from app.runtime.events import RunEvent
 
 log = structlog.get_logger(__name__)
 
@@ -273,6 +276,39 @@ def _record_usage(intended: str, resolved: str, resp) -> None:
         pass
 
 
+def _estimate_input_tokens(kwargs: dict[str, Any]) -> int:
+    """Cheap pre-call token estimate for deterministic routing.
+
+    The router needs an input size *before* the provider is called (the real
+    token count only exists in the response). ~4 characters per token is the
+    standard rough heuristic; the router only uses coarse thresholds
+    (4k / 12k), so approximate is sufficient and, crucially, deterministic.
+    """
+    text = " ".join(
+        str(kwargs.get(field, ""))
+        for field in ("system", "user")
+    )
+    messages = kwargs.get("messages") or []
+    if isinstance(messages, list):
+        for message in messages:
+            if isinstance(message, dict):
+                text += " " + str(message.get("content", ""))
+    return max(0, len(text) // 4)
+
+
+def _is_model_available(model: str) -> bool:
+    """Routing availability: a model is usable unless its gateway is stubbed.
+
+    _STUB_GATEWAYS is currently empty, so today this is True for every model.
+    It becomes correct automatically the moment a provider is marked stubbed,
+    without changing the router or the call sites.
+    """
+    try:
+        return _gateway_class_for(model) not in _STUB_GATEWAYS
+    except ValueError:
+        return False
+
+
 class RegistryLLMGateway(LLMGateway):
     """LLMGateway adapter that dispatches every call through the registry.
 
@@ -281,6 +317,10 @@ class RegistryLLMGateway(LLMGateway):
       1. Resolves the intended model name (applying fallback if needed)
       2. Delegates to the right concrete gateway
       3. Records token metrics + cost to the ledger
+
+    When run under a bound context (see with_context) it also performs
+    deterministic automatic model selection and publishes operator-visible
+    model_selected / llm_token events to the run's event bus.
 
     Interview line: 'per-node YAML picks the model, the adapter routes,
     the registry's fallback table is the degradation pattern we'd use in
@@ -299,6 +339,15 @@ class RegistryLLMGateway(LLMGateway):
         self._session_id: str | None = None
         self._node_id:    str | None = None
         self._ledger = None  # CostLedger | None
+        # Automatic-routing context — bound per node by the compiler.
+        self._event_bus = None            # RunEventBus | None
+        self._node_type: str | None = None
+        self._allowed_models: list[str] | None = None
+        self._routing_policy: dict[str, Any] | None = None
+        # Per-instance selection record. The compiler lifts this into
+        # state["model_selections"]; direct callers read it as a property.
+        self._selection_history: list[dict[str, Any]] = []
+        self._call_seq: int = 0
         self._retry_policy = retry_policy or RetryPolicy(
             max_attempts=settings.llm_retry_attempts,
             base_delay_seconds=settings.llm_retry_base_delay_seconds,
@@ -314,12 +363,20 @@ class RegistryLLMGateway(LLMGateway):
         session_id: str,
         node_id: str,
         ledger=None,
+        *,
+        event_bus=None,
+        node_type: str | None = None,
+        allowed_models: list[str] | None = None,
+        routing_policy: dict[str, Any] | None = None,
     ) -> "RegistryLLMGateway":
-        """Return a context-bound copy for per-node cost tracking.
+        """Return a context-bound copy for per-node cost tracking and routing.
 
-        Called by the executor before handing the gateway to each node.
+        Called by the compiler before handing the gateway to each node.
         Does not mutate the singleton — returns a shallow clone so parallel
-        branches each get independent context.
+        branches each get independent context. The new keyword-only routing
+        arguments default to None, so existing positional callers
+        (run_id, session_id, node_id, ledger) are unaffected and behave
+        exactly as before.
         """
         clone = RegistryLLMGateway.__new__(RegistryLLMGateway)
         clone.__dict__.update(self.__dict__)
@@ -327,7 +384,66 @@ class RegistryLLMGateway(LLMGateway):
         clone._session_id = session_id
         clone._node_id    = node_id
         clone._ledger     = ledger
+        clone._event_bus       = event_bus
+        clone._node_type       = node_type
+        clone._allowed_models  = allowed_models
+        clone._routing_policy  = routing_policy
+        # Each bound clone accumulates its own selections independently.
+        clone._selection_history = []
+        clone._call_seq = 0
         return clone
+
+    @property
+    def selection_history(self) -> list[dict[str, Any]]:
+        """Per-call model-selection events recorded on this bound gateway.
+
+        Contains no prompt or generated content — safe for operator UI and
+        for lifting into workflow state.
+        """
+        return self._selection_history
+
+    def _next_call_id(self) -> int:
+        self._call_seq += 1
+        return self._call_seq
+
+    def _select_model(
+        self,
+        *,
+        method_name: str,
+        requested: str,
+        kwargs: dict[str, Any],
+    ):
+        """Deterministic, zero-token model choice for one call.
+
+        AUTO_MODEL -> ModelRouter.select over the node's allowed_models and
+        routing policy. Any explicit model -> describe_manual, so the event
+        stream still shows what ran and why, uniformly for auto and manual.
+        """
+        router = ModelRouter()
+        input_tokens = _estimate_input_tokens(kwargs)
+        if requested == AUTO_MODEL:
+            allowed = self._allowed_models or list(MODEL_PROFILE_BY_NAME.keys())
+            return router.select(
+                method_name=method_name,
+                kwargs=kwargs,
+                input_tokens=input_tokens,
+                allowed_models=allowed,
+                is_available=_is_model_available,
+                node_type=self._node_type,
+                policy=self._routing_policy,
+            )
+        return router.describe_manual(
+            requested_model=requested,
+            selected_model=requested,
+            method_name=method_name,
+            kwargs=kwargs,
+            input_tokens=input_tokens,
+            node_type=self._node_type,
+        )
+
+    async def _publish(self, evt: RunEvent) -> None:
+        if self._event_bus is not None:
+            await self._event_bus.publish(evt)
 
     def _record_cost(self, intended: str, resolved: str, resp) -> None:
         """Write a LedgerEntry if we have context + a ledger."""
@@ -471,13 +587,70 @@ class RegistryLLMGateway(LLMGateway):
         raise last_error
 
     async def complete(self, *, model: str, **kwargs):
-        resp, resolved = await self._call_resilient(
-            "complete",
-            intended=model,
+        # Fast path: no routing context bound (executor's plain calls, scripts,
+        # and the existing test suite). Behaviour is exactly as before —
+        # no selection, no events, no on_token injection.
+        if self._event_bus is None and self._allowed_models is None:
+            resp, resolved = await self._call_resilient(
+                "complete",
+                intended=model,
+                kwargs=kwargs,
+            )
+            _record_usage(model, resolved, resp)
+            self._record_cost(model, resolved, resp)
+            return resp
+
+        # Routing path: choose a model deterministically, announce it, then
+        # stream tokens. Streaming is applied ONLY here — complete_structured
+        # and chat_with_tools never receive on_token because streaming
+        # corrupts tool_use output.
+        selection = self._select_model(
+            method_name="complete",
+            requested=model,
             kwargs=kwargs,
         )
-        _record_usage(model, resolved, resp)
-        self._record_cost(model, resolved, resp)
+        intended = selection.selected_model
+        call_id = self._next_call_id()
+
+        # Publish model_selected BEFORE the provider call so the event order is
+        # deterministic: model_selected precedes any llm_token. actual_model is
+        # the resolved (fallback-aware) name of the primary candidate.
+        resolved_preview = resolve_model(intended)
+        event_dict = selection.to_event(
+            actual_model=resolved_preview,
+            call_id=call_id,
+        )
+        self._selection_history.append(event_dict)
+        await self._publish(
+            RunEvent(
+                type="model_selected",
+                run_id=self._run_id or "unknown",
+                session_id=self._session_id,
+                node_id=self._node_id,
+                context=event_dict,
+            )
+        )
+
+        async def _emit_token(token: str) -> None:
+            await self._publish(
+                RunEvent(
+                    type="llm_token",
+                    run_id=self._run_id or "unknown",
+                    session_id=self._session_id,
+                    node_id=self._node_id,
+                    token=token,
+                )
+            )
+
+        call_kwargs = dict(kwargs)
+        call_kwargs["on_token"] = _emit_token
+        resp, resolved = await self._call_resilient(
+            "complete",
+            intended=intended,
+            kwargs=call_kwargs,
+        )
+        _record_usage(intended, resolved, resp)
+        self._record_cost(intended, resolved, resp)
         return resp
 
     async def complete_structured(self, *, model: str, **kwargs):

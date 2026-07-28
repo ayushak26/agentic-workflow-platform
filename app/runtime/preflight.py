@@ -21,6 +21,7 @@ import yaml
 import app.nodes as nodes_package
 from app.config import settings
 from app.llm.catalog import local_service_name
+from app.llm.model_catalog import AUTO_MODEL
 from app.llm.registry import resolve_model
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
@@ -488,6 +489,11 @@ def _validate_nodes(
         if node_spec.selected_model:
             models.append((f"{path}.selected_model", node_spec.selected_model))
         for model_path, model_name in models:
+            if model_name == AUTO_MODEL:
+                # Routing sentinel — resolved to a concrete model at call time
+                # by the deterministic ModelRouter, so it is not a catalog
+                # entry and must not be routed here either.
+                continue
             if model_name not in DEFAULT_LLM_MODELS:
                 _issue(
                     report,

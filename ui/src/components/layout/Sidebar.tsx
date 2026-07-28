@@ -17,7 +17,7 @@ const SECONDARY = [
 interface Props {
   mode: Mode;
   onModeChange: (m: Mode) => void;
-  username: string;
+  username?: string | null;
 }
 
 export const Sidebar: FC<Props> = ({ mode, onModeChange, username }) => (
@@ -109,7 +109,7 @@ export const Sidebar: FC<Props> = ({ mode, onModeChange, username }) => (
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: 10, fontWeight: 600,
       }}>
-        {username.slice(0, 2).toUpperCase()}
+        {(username ?? "?").slice(0, 2).toUpperCase()}
       </div>
       <div>
         <div style={{ fontSize: 11, color: "#fff", fontWeight: 500 }}>{username}</div>

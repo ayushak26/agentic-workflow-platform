@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.llm.catalog import MODEL_NAMES
+from app.llm.model_catalog import AUTO_MODEL
 
 
 DEFAULT_LLM_MODELS = list(MODEL_NAMES)
@@ -70,6 +71,17 @@ class WorkflowInputSpec(BaseModel):
             return 1
         return min(self.max_files or platform_limit, platform_limit)
 
+class ModelRoutingPolicy(BaseModel):
+    """Automatic-selection policy consulted by the deterministic ModelRouter
+    when a node's model is the AUTO_MODEL sentinel. Accepts a plain dict in
+    YAML (Pydantic coerces) and exposes typed attributes to callers."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    accuracy_priority: Literal["maximum", "balanced", "economy"] = "balanced"
+    max_estimated_cost_usd: float | None = Field(default=None, ge=0)
+    prefer_low_latency: bool = False
+    quality_scores: dict[str, float] | None = None
 
 class NodeSpec(BaseModel):
     """One node instance in a workflow.
@@ -77,6 +89,11 @@ class NodeSpec(BaseModel):
     `selected_model` is a Builder-level override. The runtime applies it to the
     node's validated config at compile time, so changing the dropdown changes
     execution rather than only changing the saved YAML.
+
+    `model_routing` is an optional automatic-selection policy. It is only
+    consulted when `selected_model` (or the node's config model) is the
+    AUTO_MODEL sentinel; the deterministic ModelRouter reads it to choose a
+    concrete model per call without spending tokens.
     """
 
     id: str
@@ -86,10 +103,18 @@ class NodeSpec(BaseModel):
         default_factory=lambda: list(DEFAULT_LLM_MODELS)
     )
     selected_model: str | None = None
+    model_routing: ModelRoutingPolicy | None = None
 
     @model_validator(mode="after")
     def selected_model_must_be_allowed(self) -> "NodeSpec":
-        if self.selected_model and self.selected_model not in self.allowed_models:
+        # AUTO_MODEL is a routing sentinel, not a concrete model — it is
+        # resolved at call time by the ModelRouter, so it need not appear in
+        # allowed_models. Any other explicit selection must be permitted.
+        if (
+            self.selected_model
+            and self.selected_model != AUTO_MODEL
+            and self.selected_model not in self.allowed_models
+        ):
             raise ValueError(
                 f"selected_model {self.selected_model!r} is not in allowed_models"
             )

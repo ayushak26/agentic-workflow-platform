@@ -84,6 +84,48 @@ LLM_FAILOVERS = Counter(
     labelnames=("from_model", "to_model"),
 )
 
+# ── HTTP layer (middleware) ──────────────────────────────────────────────────
+
+HTTP_REQUESTS = Counter(
+    "awp_http_requests_total",
+    "HTTP requests, partitioned by method, route template, and status.",
+    # route is the ROUTE TEMPLATE (/api/workflows/{run_id}), never the filled
+    # path — keeps cardinality bounded by the number of routes, not requests.
+    labelnames=("method", "route", "status"),
+)
+
+HTTP_REQUEST_LATENCY = Histogram(
+    "awp_http_request_seconds",
+    "Wall-clock latency of an HTTP request, by method and route template.",
+    labelnames=("method", "route"),
+    # Web-tier buckets: most API calls are sub-second; SSE/render can be slow.
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10),
+)
+
+RATE_LIMIT_REJECTIONS = Counter(
+    "awp_rate_limit_rejections_total",
+    "Requests rejected with HTTP 429 by the Redis rate limiter.",
+    labelnames=("scope",),  # api | auth
+)
+
+# ── Guardrails (security) ────────────────────────────────────────────────────
+
+GUARDRAIL_EVENTS = Counter(
+    "awp_guardrail_events_total",
+    "Guardrail actions on model I/O, by direction and outcome.",
+    # direction: input | output
+    # outcome:   blocked | redact | block | redacted  (bounded set)
+    labelnames=("direction", "outcome"),
+)
+
+# ── LLM semantic cache ───────────────────────────────────────────────────────
+
+LLM_CACHE = Counter(
+    "awp_llm_cache_events_total",
+    "Semantic LLM cache lookups, partitioned by result.",
+    labelnames=("status",),  # hit | miss | error
+)
+
 
 @contextmanager
 def track_node(node_type: str) -> Iterator[None]:

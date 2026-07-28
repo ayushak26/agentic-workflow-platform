@@ -21,6 +21,8 @@ EventType = Literal[
     "run_completed",
     "run_rejected",
     "run_failed",
+    "model_selected",
+    "llm_token",
 ]
 _TERMINAL_EVENTS = {"run_completed", "run_rejected", "run_failed"}
 
@@ -36,6 +38,9 @@ class RunEvent:
     error: str | None = None
     ts: str = ""
     event_id: int | None = None
+    output_preview: str | None = None
+    token: str | None = None
+    context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.ts:

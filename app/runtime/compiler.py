@@ -152,16 +152,20 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         llm = services.get("llm")
         if llm is not None and hasattr(llm, "with_context"):
             node_services = {
-            **services,
-            "llm": llm.with_context(
-                run_id=run_id or "unknown",
-                session_id=session_id,
-                node_id=node_id,
-                ledger=services.get("cost_ledger"),
-            ),
-        }
+                **services,
+                "llm": llm.with_context(
+                    run_id=run_id or "unknown",
+                    session_id=session_id,
+                    node_id=node_id,
+                    ledger=services.get("cost_ledger"),
+                    event_bus=bus,
+                    node_type=type_name,
+                    allowed_models=getattr(instance, "_allowed_models", None),
+                    routing_policy=getattr(instance, "_model_routing", None),
+                ),
+            }
         else:
-            node_services = services  # no gateway — use services as-is
+            node_services = services
 
         instance.services = node_services
 
@@ -304,11 +308,17 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         patched_outputs = dict(extra_state.get("node_outputs") or {})
         patched_outputs[node_id] = output
         state_update["node_outputs"] = patched_outputs
+        bound_llm = node_services.get("llm")
+        selections = getattr(bound_llm, "selection_history", None) or []
+        if selections:
+            # Reducer on WorkflowState.model_selections is `add`, so returning a
+            # list appends it across nodes. Only write when non-empty to avoid
+            # emitting an empty list every node.
+            state_update["model_selections"] = list(selections)
         return state_update
-
+    
     runtime_fn.__name__ = f"node_{node_id}"
     return runtime_fn
-
 
 def _wire_edges(
     graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]
@@ -384,9 +394,17 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     instances = {}
     for node_spec in spec.nodes:
         node_class = NodeRegistry.get(node_spec.type)
-        instances[node_spec.id] = node_class(
+        inst = node_class(
             node_spec.id, node_spec.effective_config(), services=services
         )
+        # Carry routing config so runtime_fn can bind it into the gateway.
+        inst._allowed_models = node_spec.allowed_models
+        inst._model_routing = (
+            node_spec.model_routing.model_dump()
+            if node_spec.model_routing is not None
+            else None
+        )
+        instances[node_spec.id] = inst
 
     # Which nodes are human-in-loop? Their edges route reject → END.
     hitl_ids = {

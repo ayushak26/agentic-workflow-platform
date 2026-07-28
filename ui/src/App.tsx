@@ -23,7 +23,7 @@ export default function App() {
 
   return (
     <div style={{ display: "flex" }}>
-      <Sidebar mode={mode} onModeChange={setMode} username={username} />
+      <Sidebar mode={mode} onModeChange={setMode} username={username ?? ""} />
       <div style={{ marginLeft: "var(--sidebar-width)", flex: 1, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
         <Topbar mode={mode} runCostUsd={runCost} />
         <RunCostContext.Provider value={setRunCost}>
