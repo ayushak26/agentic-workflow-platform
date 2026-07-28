@@ -154,6 +154,17 @@ export type NodeRunStatus =
   | 'reused'
   | 'failed';
 
+export interface ModelSelection {
+  call_id: string;
+  requested_model: string;
+  actual_model: string;
+  mode: string;
+  complexity: string;
+  task_kind: string;
+  reason: string;
+  fallback: boolean;
+  cache_hit: boolean;
+}
 export interface NodeRun {
   node_id: string;
   type_name: string;
@@ -164,6 +175,7 @@ export interface NodeRun {
   ended_at: number | null;
   duration_s: number | null;
   error: string | null;
+  model_selections?: ModelSelection[];
 }
 
 export interface AuditEvent {

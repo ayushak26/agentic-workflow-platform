@@ -23,6 +23,7 @@ const API = `${BASE}/api`;
 
 // ---- auth token storage (in-memory; survives the SPA session) ----
 let _token: string | null = null;
+let _username: string | null = null;
 
 export type CriterionScore = { criterion: string; score: number; reasoning: string };
 export type ExampleResult = {
@@ -52,13 +53,29 @@ export async function login(username: string, password: string): Promise<{ usern
   if (!r.ok) throw new Error(`login failed: ${r.status} ${await r.text()}`);
   const data = await r.json();
   _token = data.access_token;
+  _username = data.username;
   return { username: data.username };
 }
 
 export function isAuthed(): boolean {
   return _token !== null;
 }
+export function apiBase(): string {
+  return BASE;
+}
 
+export function getAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return authHeaders(extra);
+}
+
+export function currentUsername(): string | null {
+  return _username;
+}
+
+export function wsUrl(runId: string, ticket: string): string {
+  const wsBase = BASE.replace(/^http/, 'ws');
+  return `${wsBase}/api/runs/${runId}/ws?ticket=${encodeURIComponent(ticket)}`;
+}
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return _token ? { ...extra, Authorization: `Bearer ${_token}` } : extra;
 }
@@ -77,16 +94,14 @@ async function j<T>(r: Response): Promise<T> {
           .map(issue => `${issue.code}: ${issue.message}`)
           .join(' · ');
         throw new Error(
-          `${detail.message ?? 'Workflow preflight failed'}${
-            errors ? ` ${errors}` : ''
+          `${detail.message ?? 'Workflow preflight failed'}${errors ? ` ${errors}` : ''
           }`,
         );
       }
       throw new Error(
-        `${r.status} ${
-          typeof detail === 'string'
-            ? detail
-            : (detail?.message ?? JSON.stringify(detail))
+        `${r.status} ${typeof detail === 'string'
+          ? detail
+          : (detail?.message ?? JSON.stringify(detail))
         }`,
       );
     } catch (error) {
@@ -189,6 +204,22 @@ export const api = {
   costForRun: (run_id: string) =>
     fetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
+  websocketTicket: (run_id: string) =>
+    fetch(`${API}/runs/${run_id}/ws-ticket`, {
+      method: 'POST',
+      headers: authHeaders(),
+    }).then(j<{ ticket: string }>),
+  downloadArtifact: async (key: string) => {
+    const response = await fetch(api.fileUrl(key, true), { headers: authHeaders() });
+    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = key.split('/').pop() ?? 'download';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
   runHistory: () =>
     fetch(`${API}/runs/mine`, { headers: authHeaders() })
       .then(j<{ count: number; runs: RunSummary[] }>),

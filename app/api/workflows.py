@@ -35,6 +35,63 @@ from app.workflow.file_inputs import (
 router = APIRouter(prefix="/api", tags=["workflows"])
 
 
+async def _reserve_run_id(
+    services: dict[str, Any],
+    *,
+    run_id: str,
+    session_id: str,
+) -> str:
+    """Claim a client-supplied run_id for one tenant, idempotently.
+
+    Two backing stores with different meanings:
+      - run_history (Mongo): COMMITTED runs. A hit means a real run exists.
+      - redis (SET NX):       PENDING reservations, before the run is committed.
+
+    Isolation rule: a caller only ever learns about run_ids it owns.
+      * owner re-reserving a committed id          -> 409 (already exists, yours)
+      * a different tenant hitting a committed id   -> 404 (hidden, as if absent)
+      * owner re-reserving a pending id             -> ok (idempotent re-POST)
+      * a different tenant hitting a pending id     -> 409 (claimed, cannot take)
+
+    Returns run_id on success; raises HTTPException(404|409) otherwise.
+
+    Only client-SUPPLIED run_ids need this. A freshly minted uuid4 has
+    negligible collision probability and no racing caller, so the run route
+    skips reservation for auto-generated ids.
+    """
+    db = services.get("audit_db")
+    redis = services.get("redis")
+
+    # 1. Committed runs win. Check ownership without disclosing across tenants.
+    if db is not None:
+        existing = await db["run_history"].find_one({"run_id": run_id})
+        if existing is not None:
+            if existing.get("session_id") == session_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"run_id already exists: {run_id}",
+                )
+            # Owned by another tenant — do not reveal that it exists.
+            raise HTTPException(status_code=404, detail="run_id not found")
+
+    # 2. No committed run. Try to claim a pending reservation in Redis.
+    if redis is not None:
+        key = f"run_reservation:{run_id}"
+        claimed = await redis.set(key, session_id, nx=True)
+        if not claimed:
+            owner = await redis.get(key)
+            if isinstance(owner, bytes):
+                owner = owner.decode()
+            if owner == session_id:
+                return run_id           # idempotent: same tenant, same id
+            raise HTTPException(
+                status_code=409,
+                detail=f"run_id already reserved: {run_id}",
+            )
+
+    return run_id
+
+
 def _scope(user: CurrentUser, body_session: str | None) -> str:
     """The value a run is scoped to for storage + retrieval.
 
@@ -57,10 +114,12 @@ def _scope(user: CurrentUser, body_session: str | None) -> str:
 async def list_workflows():
     return {"workflows": []}
 
+
 @router.get("/node-types")
 def list_node_types(user: CurrentUser = Depends(require_admin)):
     """The Workflow Builder UI calls this to populate the palette and forms."""
     return NodeRegistry.manifest()
+
 
 @router.get("/node-types/{node_type}/models")
 async def allowed_models(node_type: str):
@@ -157,7 +216,15 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
     except WorkflowFileInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     node_types = {n.id: n.type for n in spec.nodes}   # for UI colour-coding
-    run_id = req.run_id or str(uuid.uuid4())
+
+    # Client-supplied run_ids are reserved per-tenant (idempotent re-POST safe,
+    # cross-tenant claims blocked). Auto-generated ids need no reservation.
+    if req.run_id:
+        run_id = await _reserve_run_id(
+            services, run_id=req.run_id, session_id=session,
+        )
+    else:
+        run_id = str(uuid.uuid4())
     started_at = time.time()
 
     # Create the durable record BEFORE execution. This makes running and paused
@@ -364,7 +431,8 @@ async def resume(
             status=run_status,
         )
     return result
-    
+
+
 WORKFLOWS_DIR = Path("workflows")
 
 
@@ -422,6 +490,7 @@ def save_workflow(req: SaveWorkflowRequest):
 
     (WORKFLOWS_DIR / f"{req.name}.yaml").write_text(req.yaml)
     return {"ok": True, "name": req.name}
+
 
 def _sse_message(
     *,
@@ -507,6 +576,7 @@ async def stream_run_events(
             "X-Accel-Buffering": "no",
         },
     )
+
 
 @router.get("/files")
 def get_file(key: str, request: Request, download: bool = False):
