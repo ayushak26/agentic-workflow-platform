@@ -1,15 +1,15 @@
-"""Workflow run events with Redis fan-out and an offline in-process fallback.
+"""Bounded, session-scoped pub/sub for workflow Server-Sent Events.
 
-Architectural note for interviews:
-- Production passes a Redis client, so WebSocket/SSE subscribers receive events
-  even when the HTTP request and workflow run land on different Uvicorn workers.
-- Tests and offline scripts omit Redis and retain the same asyncio.Queue API.
+The transport is intentionally one-way: workflow state changes flow from the
+API to the browser over standard HTTP. Human decisions continue to use
+authenticated REST endpoints. A bounded replay buffer lets an SSE client
+reconnect with Last-Event-ID without losing node status transitions.
 """
 from __future__ import annotations
+
 import asyncio
-import json
-from collections import defaultdict
-from dataclasses import dataclass, asdict
+from collections import OrderedDict, deque
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -18,102 +18,134 @@ EventType = Literal[
     "node_completed",
     "node_reused",
     "node_paused",
-    "model_selected",
-    "llm_token",
     "run_completed",
+    "run_rejected",
     "run_failed",
 ]
+_TERMINAL_EVENTS = {"run_completed", "run_rejected", "run_failed"}
+
 
 @dataclass
 class RunEvent:
     type: EventType
     run_id: str
+    session_id: str | None = None
     node_id: str | None = None
     output_preview: str | None = None
     context: dict[str, Any] | None = None
-    token: str | None = None
     error: str | None = None
     ts: str = ""
+    event_id: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.ts:
+            self.ts = datetime.now(timezone.utc).isoformat()
+
+    @property
+    def terminal(self) -> bool:
+        return self.type in _TERMINAL_EVENTS
 
     def to_json(self) -> dict[str, Any]:
-        d = asdict(self)
-        if not d["ts"]:
-            d["ts"] = datetime.now(timezone.utc).isoformat()
-        return {k: v for k, v in d.items() if v is not None}
+        data = asdict(self)
+        data.pop("session_id", None)
+        return {
+            key: value
+            for key, value in data.items()
+            if value is not None
+        }
 
 
 class RunEventBus:
-    def __init__(self, redis=None) -> None:
-        self._redis = redis
-        self._subscribers: dict[str, list[asyncio.Queue[RunEvent]]] = defaultdict(list)
-        self._lock = asyncio.Lock()
-        self._redis_subscriptions: dict[
-            int,
-            tuple[asyncio.Task, Any],
+    def __init__(
+        self,
+        *,
+        max_events_per_run: int = 1000,
+        max_run_histories: int = 1000,
+    ) -> None:
+        self._subscribers: dict[
+            tuple[str, str],
+            list[asyncio.Queue[RunEvent]],
         ] = {}
-
-    async def publish(self, evt: RunEvent) -> None:
-        if self._redis is not None:
-            await self._redis.publish(
-                self._channel(evt.run_id),
-                json.dumps(evt.to_json(), separators=(",", ":")),
-            )
-            return
-        async with self._lock:
-            queues = list(self._subscribers.get(evt.run_id, []))
-        for q in queues:
-            await q.put(evt)
-
-    async def subscribe(self, run_id: str) -> asyncio.Queue[RunEvent]:
-        q: asyncio.Queue[RunEvent] = asyncio.Queue()
-        if self._redis is not None:
-            pubsub = self._redis.pubsub()
-            await pubsub.subscribe(self._channel(run_id))
-            task = asyncio.create_task(
-                self._forward_redis(pubsub, q),
-                name=f"run-events:{run_id}",
-            )
-            self._redis_subscriptions[id(q)] = (task, pubsub)
-            return q
-        async with self._lock:
-            self._subscribers[run_id].append(q)
-        return q
-
-    async def unsubscribe(self, run_id: str, q: asyncio.Queue[RunEvent]) -> None:
-        subscription = self._redis_subscriptions.pop(id(q), None)
-        if subscription is not None:
-            task, pubsub = subscription
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            await pubsub.unsubscribe(self._channel(run_id))
-            await pubsub.aclose()
-            return
-        async with self._lock:
-            if q in self._subscribers.get(run_id, []):
-                self._subscribers[run_id].remove(q)
-
-    async def _forward_redis(self, pubsub, queue: asyncio.Queue[RunEvent]) -> None:
-        while True:
-            message = await pubsub.get_message(
-                ignore_subscribe_messages=True,
-                timeout=1.0,
-            )
-            if not message:
-                await asyncio.sleep(0)
-                continue
-            raw = message.get("data")
-            if isinstance(raw, bytes):
-                raw = raw.decode("utf-8")
-            payload = json.loads(raw)
-            await queue.put(RunEvent(**payload))
+        self._history: OrderedDict[
+            tuple[str, str],
+            deque[RunEvent],
+        ] = OrderedDict()
+        self._next_event_id: dict[tuple[str, str], int] = {}
+        self._lock = asyncio.Lock()
+        self._max_events_per_run = max(1, max_events_per_run)
+        self._max_run_histories = max(1, max_run_histories)
 
     @staticmethod
-    def _channel(run_id: str) -> str:
-        return f"awp:run-events:{run_id}"
+    def _key(run_id: str, session_id: str | None) -> tuple[str, str]:
+        return (session_id or "", run_id)
+
+    async def publish(self, evt: RunEvent) -> None:
+        key = self._key(evt.run_id, evt.session_id)
+        async with self._lock:
+            next_id = self._next_event_id.get(key, 0) + 1
+            self._next_event_id[key] = next_id
+            evt.event_id = next_id
+
+            history = self._history.get(key)
+            if history is None:
+                while len(self._history) >= self._max_run_histories:
+                    old_key, _ = self._history.popitem(last=False)
+                    self._next_event_id.pop(old_key, None)
+                history = deque(maxlen=self._max_events_per_run)
+                self._history[key] = history
+            else:
+                self._history.move_to_end(key)
+            history.append(evt)
+            queues = list(self._subscribers.get(key, ()))
+
+        for queue in queues:
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            queue.put_nowait(evt)
+
+    async def subscribe(
+        self,
+        run_id: str,
+        session_id: str | None = None,
+        *,
+        after_event_id: int | None = None,
+    ) -> asyncio.Queue[RunEvent]:
+        key = self._key(run_id, session_id)
+        queue: asyncio.Queue[RunEvent] = asyncio.Queue(
+            maxsize=self._max_events_per_run
+        )
+        async with self._lock:
+            replay = tuple(self._history.get(key, ()))
+            self._subscribers.setdefault(key, []).append(queue)
+
+        cutoff = after_event_id or 0
+        for event in replay:
+            if (event.event_id or 0) > cutoff:
+                if queue.full():
+                    queue.get_nowait()
+                queue.put_nowait(event)
+        return queue
+
+    async def unsubscribe(
+        self,
+        run_id: str,
+        queue: asyncio.Queue[RunEvent],
+        session_id: str | None = None,
+    ) -> None:
+        key = self._key(run_id, session_id)
+        async with self._lock:
+            subscribers = self._subscribers.get(key)
+            if not subscribers:
+                return
+            if queue in subscribers:
+                subscribers.remove(queue)
+            if not subscribers:
+                self._subscribers.pop(key, None)
 
 
-# Singleton wired into the FastAPI services dict in main.py
+# Singleton retained for scripts that import it directly. The FastAPI lifespan
+# creates the configured instance used by the application.
 bus = RunEventBus()

@@ -7,6 +7,7 @@ import type {
   ProposalApproval,
   ProposalReview,
   RunDetail,
+  RunEvent,
   RunSummary,
   WorkflowFileCapabilities,
   WorkflowFileReference,
@@ -14,14 +15,11 @@ import type {
   WorkflowSummary,
 } from './types';
 
-const BASE = (
-  import.meta.env.VITE_API_URL
-  || window.location.origin
-).replace(/\/+$/, '');
+const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 const API = `${BASE}/api`;
 
-// ---- auth token storage (tab/session scoped; cleared when the browser closes) ----
-let _token: string | null = sessionStorage.getItem('eurskem_access_token');
+// ---- auth token storage (in-memory; survives the SPA session) ----
+let _token: string | null = null;
 
 export type CriterionScore = { criterion: string; score: number; reasoning: string };
 export type ExampleResult = {
@@ -50,10 +48,7 @@ export async function login(username: string, password: string): Promise<{ usern
   });
   if (!r.ok) throw new Error(`login failed: ${r.status} ${await r.text()}`);
   const data = await r.json();
-  const accessToken = String(data.access_token);
-  _token = accessToken;
-  sessionStorage.setItem('eurskem_access_token', accessToken);
-  sessionStorage.setItem('eurskem_username', data.username);
+  _token = data.access_token;
   return { username: data.username };
 }
 
@@ -64,10 +59,6 @@ export function isAuthed(): boolean {
 function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return _token ? { ...extra, Authorization: `Bearer ${_token}` } : extra;
 }
-
-export const apiBase = () => BASE;
-export const getAuthHeaders = () => authHeaders();
-export const currentUsername = () => sessionStorage.getItem('eurskem_username') ?? '';
 
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) {
@@ -189,12 +180,6 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ decision }),
     }).then(j<{ ok: true }>),
-  websocketTicket: (run_id: string) =>
-    fetch(`${API}/ws/tickets`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ run_id }),
-    }).then(j<{ ticket: string; expires_in: number }>),
   costForRun: (run_id: string) =>
     fetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
@@ -205,6 +190,17 @@ export const api = {
   runDetail: (run_id: string) =>
     fetch(`${API}/runs/mine/${run_id}`, { headers: authHeaders() })
       .then(j<{ run: RunDetail; audit: AuditEvent[] }>),
+  researchSkills: () =>
+    fetch(`${API}/research/skills`, { headers: authHeaders() })
+      .then(j<{
+        skills: {
+          name: string;
+          description: string;
+          version: string;
+          license: string;
+        }[];
+        load_errors: Record<string, string>;
+      }>),
   retryFailedRun: (source_run_id: string, run_id: string) =>
     fetch(`${API}/runs/mine/${source_run_id}/retry`, {
       method: 'POST',
@@ -344,31 +340,91 @@ export const api = {
       judge_prompt_version: string;
     }>),
 
-  async artifactBlobUrl(key: string): Promise<string> {
+  fileUrl(key: string, download = false): string {
     const params = new URLSearchParams({ key });
-    const response = await fetch(`${API}/files?${params.toString()}`, {
-      headers: authHeaders(),
-    });
-    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-    return URL.createObjectURL(await response.blob());
-  },
-
-  async downloadArtifact(key: string): Promise<void> {
-    const params = new URLSearchParams({ key, download: 'true' });
-    const response = await fetch(`${API}/files?${params.toString()}`, {
-      headers: authHeaders(),
-    });
-    if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
-    const url = URL.createObjectURL(await response.blob());
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = key.split('/').pop() ?? 'download';
-    anchor.click();
-    URL.revokeObjectURL(url);
+    if (download) params.set('download', 'true');
+    return `${BASE}/api/files?${params.toString()}`;
   },
 };
 
-export const wsUrl = (run_id: string, ticket: string) => {
-  const base = BASE.replace(/^http/, "ws");  // http→ws, https→wss
-  return `${base}/api/ws/runs/${run_id}?ticket=${encodeURIComponent(ticket)}`;
+type RunEventStreamOptions = {
+  signal: AbortSignal;
+  lastEventId?: number;
+  onOpen: () => void;
+  onEvent: (event: RunEvent) => void;
 };
+
+export async function streamRunEvents(
+  runId: string,
+  options: RunEventStreamOptions,
+): Promise<{ lastEventId?: number; terminal: boolean }> {
+  const headers = authHeaders({
+    Accept: 'text/event-stream',
+    'Cache-Control': 'no-cache',
+  });
+  if (options.lastEventId !== undefined) {
+    headers['Last-Event-ID'] = String(options.lastEventId);
+  }
+
+  const response = await fetch(`${API}/runs/${runId}/events`, {
+    method: 'GET',
+    headers,
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new Error(
+      `SSE connection failed: ${response.status} ${await response.text()}`,
+    );
+  }
+  if (!response.body) {
+    throw new Error('SSE response has no readable stream');
+  }
+
+  options.onOpen();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let lastEventId = options.lastEventId;
+  let terminal = false;
+
+  while (!terminal) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    buffer = buffer.replace(/\r\n/g, '\n');
+
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const block = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
+
+      if (!block || block.startsWith(':')) continue;
+      let eventName = 'message';
+      let id: number | undefined;
+      const dataLines: string[] = [];
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event:')) {
+          eventName = line.slice(6).trim();
+        } else if (line.startsWith('id:')) {
+          const parsed = Number(line.slice(3).trim());
+          if (Number.isFinite(parsed)) id = parsed;
+        } else if (line.startsWith('data:')) {
+          dataLines.push(line.slice(5).trimStart());
+        }
+      }
+      if (id !== undefined) lastEventId = id;
+      if (eventName === 'ready' || dataLines.length === 0) continue;
+
+      const event = JSON.parse(dataLines.join('\n')) as RunEvent;
+      options.onEvent(event);
+      terminal = (
+        event.type === 'run_completed'
+        || event.type === 'run_rejected'
+        || event.type === 'run_failed'
+      );
+    }
+    if (done) break;
+  }
+
+  return { lastEventId, terminal };
+}

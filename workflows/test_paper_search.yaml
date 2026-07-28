@@ -33,7 +33,7 @@ nodes:
     config:
       mcp_server: "paper-search-mcp"
       tool: "search_papers"
-      sources: ["arxiv", "openalex", "europe_pmc", "core", "openaire", "zenodo", "hal", "doaj", "pmc"]
+      sources: ["arxiv", "openalex", "europepmc", "crossref"]
       max_per_claim: 3
       claim_types: ["state_of_art", "problem", "impact", "method"]
       model: claude-sonnet-4-5
@@ -57,8 +57,36 @@ nodes:
         SOURCES FOUND (detailed, one record per paper):
         {{gather_evidence.sources}}
 
+        SCIENTIFIC SYNTHESIS:
+        {{scientific_synthesis.answer}}
+
+  # Apply reviewed K-Dense research methodology to the real MCP evidence.
+  # Skill files guide the LLM but cannot execute scripts or bypass platform
+  # tools, evidence checks, RBAC, audit, or human review.
+  - id: scientific_synthesis
+    type: ScientificSkillAgent
+    config:
+      model: claude-sonnet-4-5
+      skills:
+        - literature-review
+        - scientific-critical-thinking
+      auto_select: false
+      objective: |
+        Critically synthesize only the evidence records below. Group findings
+        by theme, identify evidence limitations and missing support, and list
+        which claims remain unsafe to use in a proposal. Do not add papers,
+        measurements, or conclusions that are absent from the records.
+
+        EVIDENCE REPORT:
+        {{gather_evidence.report}}
+
+        SOURCE RECORDS:
+        {{gather_evidence.sources}}
+
 edges:
   - from: seed_claims
     to: gather_evidence
   - from: gather_evidence
+    to: scientific_synthesis
+  - from: scientific_synthesis
     to: show_evidence

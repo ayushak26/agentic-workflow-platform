@@ -1,59 +1,49 @@
-FROM python:3.12.11-slim-bookworm AS builder
+FROM alpine:3.22 AS scientific-skills
+
+ARG SCIENTIFIC_SKILLS_REF=v2.59.0
+
+RUN apk add --no-cache ca-certificates git \
+    && git clone \
+        --branch "${SCIENTIFIC_SKILLS_REF}" \
+        --depth 1 \
+        https://github.com/K-Dense-AI/scientific-agent-skills.git \
+        /scientific-agent-skills \
+    && rm -rf /scientific-agent-skills/.git
+
+
+FROM python:3.12.11-slim-bookworm
 
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
-    UV_PROJECT_ENVIRONMENT=/opt/venv
+    PIP_NO_CACHE_DIR=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libffi-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python -m pip install uv==0.11.29
-
-COPY pyproject.toml uv.lock ./
-COPY app ./app
-RUN uv sync --frozen --no-dev --no-editable
-
-
-FROM python:3.12.11-slim-bookworm AS runtime
-
-WORKDIR /app
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH=/opt/venv/bin:$PATH
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
     libpango-1.0-0 \
     libpangoft2-1.0-0 \
+    libffi-dev \
     libcairo2 \
     libgdk-pixbuf-2.0-0 \
     libxml2 \
     libxslt1.1 \
-    shared-mime-info \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /opt/venv /opt/venv
+COPY pyproject.toml .
 COPY app ./app
-COPY workflows ./workflows
-COPY eval ./eval
-COPY scripts ./scripts
+RUN python -m pip install .
 
-RUN groupadd --system --gid 10001 app \
-    && useradd --system --uid 10001 --gid app --home-dir /app app \
-    && chown -R app:app /app
+COPY workflows ./workflows
+COPY --from=scientific-skills \
+    /scientific-agent-skills/skills \
+    /opt/scientific-agent-skills/skills
+
+RUN groupadd --system app \
+    && useradd --system --gid app --home-dir /app app \
+    && chown -R app:app /app /opt/scientific-agent-skills
 
 USER app
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

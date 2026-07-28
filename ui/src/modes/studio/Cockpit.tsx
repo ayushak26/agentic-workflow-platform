@@ -13,7 +13,7 @@ import ReactFlow, {
 import 'reactflow/dist/style.css';
 
 import { api } from '../../api/client';
-import { useRunSocket } from '../../hooks/useRunSocket';
+import { useRunEvents } from '../../hooks/useRunEvents';
 import { Spinner } from '../../components/Spinner';
 import { CockpitNode } from './CockpitNode';
 import { HITLPanel } from './HITLPanel';
@@ -23,16 +23,9 @@ import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } 
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 import { useSetRunCost } from "../../RunCostContext";
 import { layoutFlow } from './flow-layout';
-import type {
-  HITLReviewContent,
-  ModelSelection,
-  RunDetail,
-} from '../../api/types';
+import type { HITLReviewContent, RunDetail } from '../../api/types';
 
-type CockpitNodeData = WorkflowNodeData & {
-  status: NodeStatus;
-  modelSelection?: ModelSelection;
-};
+type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
 const nodeTypes = { workflow: CockpitNode };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -69,7 +62,7 @@ export function Cockpit() {
   const navigate = useNavigate();
 
   // Snapshot navigation state ONCE so the component binds to a stable run for its
-  // whole life — re-deriving it each render could remount and kill the socket.
+  // whole life — re-deriving it each render could remount the SSE stream.
   const [navState] = useState(
     () =>
       (location.state ?? {}) as {
@@ -94,12 +87,16 @@ export function Cockpit() {
   const [liveRun, setLiveRun] = useState<RunDetail | null>(null);
 
   // HITL gates and final result are driven off the run/resume HTTP responses,
-  // NOT the WebSocket — so approvals work even if the socket drops mid-run.
+  // NOT the SSE feed — so approvals work even if the stream drops mid-run.
   const [gate, setGate] = useState<Gate | null>(null);
   const [finished, setFinished] = useState<Finished | null>(null);
   const setRunCost = useSetRunCost();
 
-  const { events, open: wsOpen, error: wsError } = useRunSocket(runId ?? null);
+  const {
+    events,
+    open: streamOpen,
+    error: streamError,
+  } = useRunEvents(runId ?? null);
 
   // Apply a run/resume response: advance to the next gate, or finish.
   function applyResumeResult(res: any) {
@@ -138,7 +135,7 @@ export function Cockpit() {
     }
   }
   // Fetch run cost whenever the run reaches a completed state, regardless of
-// which path (HTTP resume vs WS) marked it finished.
+// which path (HTTP resume vs SSE) marked it finished.
 useEffect(() => {
   if (finished?.status === 'completed' && runId) {
     api.costForRun(runId)
@@ -146,9 +143,9 @@ useEffect(() => {
       .catch(e => console.error('cost fetch failed', e));
   }
 }, [finished, runId, setRunCost]);
-  // After WS opens, trigger the run exactly once. The run response seeds the first gate.
+  // Subscribe first, then trigger exactly once so no early SSE event is lost.
   useEffect(() => {
-    if (!wsOpen || runTriggered || !navState.workflowYaml || !runId) return;
+    if (!streamOpen || runTriggered || !navState.workflowYaml || !runId) return;
     // This state guards the one external run request owned by this effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRunTriggered(true);
@@ -170,7 +167,7 @@ useEffect(() => {
         setFinished({ status: 'failed', error: message });
       });
   }, [
-    wsOpen,
+    streamOpen,
     runTriggered,
     navState.workflowYaml,
     navState.inputs,
@@ -180,7 +177,7 @@ useEffect(() => {
 
   // Exact inputs and completed outputs are persisted incrementally in run
   // history. Polling that record powers the Variables panel while the graph is
-  // still executing; WebSocket previews remain intentionally small.
+  // still executing; SSE previews remain intentionally small.
   useEffect(() => {
     if (!runId || !runTriggered || finished) return;
     let cancelled = false;
@@ -199,11 +196,11 @@ useEffect(() => {
     };
   }, [finished, runId, runTriggered]);
 
-  // Derive node colors from WS events (best-effort animation).
+  // Derive node colors from SSE events (best-effort animation).
   const cockpit = useMemo(() => {
     const nodeIds = parsedWf?.nodes.map((n) => n.id) ?? [];
-    return deriveCockpitState(nodeIds, events, wsOpen);
-  }, [parsedWf, events, wsOpen]);
+    return deriveCockpitState(nodeIds, events, streamOpen);
+  }, [parsedWf, events, streamOpen]);
 
   // Build and arrange the graph once for this workflow.
   useEffect(() => {
@@ -220,7 +217,7 @@ useEffect(() => {
     setEdges(base.edges);
   }, [parsedWf, setEdges, setNodes]);
 
-  // WebSocket events change status without resetting the arranged positions.
+  // SSE events change status without resetting the arranged positions.
   useEffect(() => {
     setNodes((current) =>
       current.map((node) => ({
@@ -228,13 +225,10 @@ useEffect(() => {
         data: {
           ...node.data,
           status: cockpit.nodeStates[node.data.nodeId] ?? 'pending',
-          modelSelection: (
-            cockpit.modelSelections[node.data.nodeId] ?? []
-          ).at(-1),
         },
       })),
     );
-  }, [cockpit.modelSelections, cockpit.nodeStates, setNodes]);
+  }, [cockpit.nodeStates, setNodes]);
 
   const activeNodeId = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -374,7 +368,11 @@ useEffect(() => {
               Running: <span className="font-mono">{activeNodeId}</span>
             </div>
           )}
-          {wsError && <div className="text-xs text-ink-500 mt-1">live feed offline (gates still work)</div>}
+          {streamError && (
+            <div className="text-xs text-ink-500 mt-1">
+              live SSE feed reconnecting (gates still work)
+            </div>
+          )}
           {triggerError && <div className="text-xs text-bad mt-1">{triggerError}</div>}
         </div>
 
@@ -500,40 +498,6 @@ useEffect(() => {
                 <div className="text-xs uppercase tracking-wide text-ink-500">{selectedNode.data.typeName}</div>
                 <div className="font-semibold text-lg mt-1">{selectedNode.data.nodeId}</div>
                 <div className="mt-2 text-xs text-ink-500">Status: {selectedNode.data.status}</div>
-
-                <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">
-                  LLM selection
-                </h3>
-                {selectedNode.data.modelSelection ? (
-                  <div className="rounded-md border border-accent-200 bg-accent-50 p-3 text-xs">
-                    <div className="font-semibold text-accent-800">
-                      {selectedNode.data.modelSelection.actual_model}
-                    </div>
-                    <div className="text-ink-500 mt-1">
-                      Requested: {selectedNode.data.modelSelection.requested_model}
-                      {' · '}
-                      {selectedNode.data.modelSelection.mode}
-                      {' · '}
-                      {selectedNode.data.modelSelection.complexity}
-                      {' '}
-                      {selectedNode.data.modelSelection.task_kind.replace('_', ' ')}
-                    </div>
-                    <div className="text-ink-700 mt-2">
-                      {selectedNode.data.modelSelection.reason}
-                    </div>
-                    <div className="text-ink-500 mt-2">
-                      Estimated maximum call cost: $
-                      {selectedNode.data.modelSelection.estimated_cost_usd.toFixed(6)}
-                      {selectedNode.data.modelSelection.fallback
-                        ? ' · provider fallback'
-                        : ''}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-sm text-ink-500">
-                    No LLM provider call recorded for this node yet.
-                  </div>
-                )}
 
                 <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">Output preview</h3>
                 {cockpit.outputPreviews[selectedNode.data.nodeId] ? (

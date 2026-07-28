@@ -38,14 +38,8 @@ dependencies = [
     "tiktoken>=0.7.0",
     "prometheus-client>=0.20.0",
     "mcp>=1.0.0",
+    "paper-search-mcp==0.1.4",
     "httpx>=0.27.0",
-    "tenacity>=8.3.0",
-    "argon2-cffi>=23.1.0",
-    "opentelemetry-api>=1.27.0",
-    "opentelemetry-sdk>=1.27.0",
-    "opentelemetry-exporter-otlp-proto-http>=1.27.0",
-    "opentelemetry-instrumentation-fastapi>=0.48b0",
-    "opentelemetry-instrumentation-httpx>=0.48b0",
     "boto3",
     "markdown-it-py",
 ]
@@ -54,7 +48,6 @@ dependencies = [
 dev = [
     "pytest>=8.4,<10",
     "pytest-asyncio>=1.0,<2",
-    "httpx>=0.27.0",
 ]
 
 [tool.hatch.envs.default]

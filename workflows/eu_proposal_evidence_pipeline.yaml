@@ -58,6 +58,23 @@ nodes:
     config:
       model: claude-sonnet-4-5
       minimum_support_confidence: 0.72
+  - id: scientific_synthesis
+    type: ScientificSkillAgent
+    config:
+      model: claude-sonnet-4-5
+      skills:
+        - literature-review
+        - scientific-critical-thinking
+        - research-grants
+      auto_select: false
+      max_skills: 3
+      objective: >-
+        Synthesize the verified evidence for a Horizon Europe proposal. Identify
+        robust state-of-the-art conclusions, contradictions, evidence gaps,
+        unsupported proposal claims, and implications for scientific ambition
+        and feasibility. Use only the supplied records; never invent a source.
+        Verification findings: {{verify_evidence.findings}}.
+        Discovery report: {{discover_evidence.report}}.
   - id: call_coverage
     type: CallCoverageMatrixAgent
     config: {}
@@ -109,6 +126,8 @@ edges:
   - from: discover_evidence
     to: verify_evidence
   - from: verify_evidence
+    to: scientific_synthesis
+  - from: scientific_synthesis
     to: call_coverage
   - from: call_coverage
     to: approve_evidence
@@ -126,6 +145,8 @@ output:
   include_input: false
   nodes:
     - node_id: call_coverage
+      flatten: false
+    - node_id: scientific_synthesis
       flatten: false
     - node_id: concept_alternatives
       flatten: false

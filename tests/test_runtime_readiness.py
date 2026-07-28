@@ -88,12 +88,10 @@ def test_health_and_ready_probe_live_dependencies():
     assert health.json()["status"] == "ok"
     assert ready.status_code == 200
     assert ready.json()["ready"] is True
-    body = ready.json()
     assert all(
-        body["services"][name]["status"] == "ok"
-        for name in body["required_services"]
+        result["status"] == "ok"
+        for result in ready.json()["services"].values()
     )
-    assert body["services"]["semantic_cache"]["status"] == "unavailable"
 
 
 def test_health_stays_live_while_ready_fails_on_dependency_error():
@@ -135,6 +133,7 @@ def test_paper_search_server_path_is_configuration_driven():
             _env_file=None,
             paper_search_mcp_enabled=True,
             paper_search_mcp_path="/srv/paper-search-mcp",
+            paper_search_mcp_command="uv",
         )
     )
     args = enabled["paper-search-mcp"].args

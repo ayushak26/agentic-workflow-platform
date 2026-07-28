@@ -63,24 +63,34 @@ class Settings(BaseSettings):
         "mongo,weaviate,minio,redis,checkpointer,mcp:eurskem"
     )
 
-    # Optional external scholarly-search MCP server. Keeping this disabled and
-    # pathless by default makes the application portable; deployments that use
-    # EvidenceAgent enable it explicitly in their environment.
     paper_search_mcp_enabled: bool = False
     paper_search_mcp_path: str = ""
-    paper_search_mcp_command: str = "uv"
+    paper_search_mcp_command: str = "python"
     paper_search_mcp_module: str = "paper_search_mcp.server"
+    mcp_startup_timeout_seconds: float = 30.0
+    mcp_tool_timeout_seconds: float = 90.0
+
+    scientific_skills_enabled: bool = False
+    scientific_skills_path: str = (
+        "/opt/scientific-agent-skills/skills"
+    )
+    scientific_skills_allowlist: str = (
+        "literature-review,scientific-writing,research-grants,"
+        "scientific-critical-thinking"
+    )
+    scientific_skills_max_prompt_chars: int = 30000
+
+    sse_heartbeat_seconds: float = 15.0
+    sse_replay_events_per_run: int = 1000
+    sse_replay_run_limit: int = 1000
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
-    # Every outbound call has a finite deadline. Provider SDK retries remain
-    # disabled because the provider-neutral registry owns retries/failover.
     external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
     llm_request_timeout_seconds: float = Field(default=120.0, gt=0, le=900)
     mcp_request_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
 
-    # Token and cost boundaries are enforced centrally by the LLM registry.
     llm_max_input_tokens: int = Field(default=32_000, ge=1_000, le=1_000_000)
     llm_max_output_tokens: int = Field(default=8_192, ge=128, le=65_536)
     llm_user_daily_budget_usd: float = Field(default=5.0, gt=0)
@@ -92,8 +102,6 @@ class Settings(BaseSettings):
         le=100_000,
     )
 
-    # The cache is tenant-scoped and is only used for deterministic plain-text
-    # completions. Structured output and tool calls are never cached.
     semantic_cache_enabled: bool = False
     semantic_cache_similarity_threshold: float = Field(
         default=0.97,
@@ -107,7 +115,6 @@ class Settings(BaseSettings):
         le=5_000,
     )
 
-    # Guardrails are applied before workflow execution and after every node.
     guardrails_enabled: bool = True
     guardrail_pii_mode: Literal["audit", "redact", "block"] = "audit"
     guardrail_max_text_chars: int = Field(
@@ -116,7 +123,6 @@ class Settings(BaseSettings):
         le=10_000_000,
     )
 
-    # Redis-backed fixed-window limits work across Uvicorn workers.
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = Field(default=60, ge=1, le=10_000)
     rate_limit_auth_requests_per_minute: int = Field(
@@ -125,15 +131,10 @@ class Settings(BaseSettings):
         le=1_000,
     )
 
-    # Optional OpenTelemetry export. Prometheus remains the local operator
-    # metrics path; OTLP can point at Grafana Cloud or another collector.
     otel_enabled: bool = False
     otel_service_name: str = "eurskem-ai"
     otel_exporter_otlp_endpoint: str = ""
 
-    # LLM resilience is owned by the provider-neutral registry. Provider SDK
-    # retries are disabled so one policy controls attempt count, backoff,
-    # failover, metrics, and logs without multiplying hidden SDK retries.
     llm_retry_attempts: int = 3
     llm_retry_base_delay_seconds: float = 1.0
     llm_retry_max_delay_seconds: float = 8.0
@@ -254,6 +255,14 @@ class Settings(BaseSettings):
     def resolved_paper_search_mcp_path(self) -> Path | None:
         value = self.paper_search_mcp_path.strip()
         return Path(value).expanduser() if value else None
+
+    @property
+    def resolved_scientific_skills_path(self) -> Path:
+        return Path(self.scientific_skills_path).expanduser()
+
+    @property
+    def allowed_scientific_skills(self) -> tuple[str, ...]:
+        return _csv_values(self.scientific_skills_allowlist)
 
     @property
     def allowed_cors_origins(self) -> tuple[str, ...]:

@@ -1,16 +1,14 @@
-import time
-import uuid
 import asyncio
 import json
+import time
+import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Depends
+from fastapi import APIRouter, HTTPException, Request, Depends, Header
 from pydantic import BaseModel, Field
 import yaml
 from pathlib import Path
-from fastapi import WebSocket, WebSocketDisconnect
-from fastapi.responses import Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.nodes.registry import NodeRegistry
 from app.runtime.executor import run_workflow
@@ -22,7 +20,6 @@ from app.runtime.preflight import (
     preflight_workflow_yaml,
 )
 from app.security.dependencies import require_permission, require_consultant, require_admin, CurrentUser
-from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 # Phase 11A — run history + durable retry checkpoints
 from app.workflow.run_history import (
     initialize_run_checkpoint,
@@ -57,9 +54,7 @@ def _scope(user: CurrentUser, body_session: str | None) -> str:
 
 
 @router.get("/")
-async def root_workflows(
-    _user: CurrentUser = Depends(require_permission("workflow:read")),
-):
+async def list_workflows():
     return {"workflows": []}
 
 @router.get("/node-types")
@@ -68,56 +63,26 @@ def list_node_types(user: CurrentUser = Depends(require_admin)):
     return NodeRegistry.manifest()
 
 @router.get("/node-types/{node_type}/models")
-async def allowed_models(
-    node_type: str,
-    _user: CurrentUser = Depends(require_permission("workflow:read")),
-):
-    """Return picker options and operational traits for model routing."""
-    from app.llm.model_catalog import (
-        AUTO_MODEL,
-        AUTO_MODEL_LABEL,
-        DEFAULT_LLM_MODELS,
-        MODEL_PROFILES,
-    )
-    from app.llm.registry import _provider_is_configured
+async def allowed_models(node_type: str):
+    """Returns the default allowed model list for a node type."""
+    from app.runtime.schema import DEFAULT_LLM_MODELS
 
     return {
         "node_type": node_type,
-        "automatic": {
-            "value": AUTO_MODEL,
-            "label": AUTO_MODEL_LABEL,
-            "description": (
-                "Choose deterministically from configured providers using "
-                "prompt complexity, task fit, cost, and optional eval scores."
-            ),
-        },
         "allowed_models": list(DEFAULT_LLM_MODELS),
-        "models": [
-            {
-                "name": profile.name,
-                "provider": profile.provider,
-                "tier": profile.tier,
-                "available": _provider_is_configured(profile.name),
-                "strengths": sorted(profile.strengths),
-            }
-            for profile in MODEL_PROFILES
-        ],
     }
 
 
 class RunRequest(BaseModel):
-    workflow_yaml: str = Field(min_length=1, max_length=2_000_000)
+    workflow_yaml: str
     inputs: dict = Field(default_factory=dict)
     session_id: str | None = None
     collection_id: str = "default"
-    run_id: str | None = Field(
-        default=None,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
-    )
+    run_id: str | None = None
 
 
 class ValidateWorkflowRequest(BaseModel):
-    workflow_yaml: str = Field(min_length=1, max_length=2_000_000)
+    workflow_yaml: str
     inputs: dict[str, Any] | None = None
     check_services: bool = False
 
@@ -162,13 +127,6 @@ async def validate_workflow(
 @router.post("/workflows/run")
 async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(require_consultant)):
     services = getattr(request.app.state, "services", {})
-    session = _scope(user, req.session_id)
-    if req.run_id:
-        await _reserve_run_id(
-            services,
-            run_id=req.run_id,
-            session_id=session,
-        )
     preflight = await preflight_workflow_for_run(
         req.workflow_yaml,
         provided_inputs=req.inputs,
@@ -188,6 +146,7 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
         raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}")
 
     db = services.get("audit_db")   # Phase 11A — Mongo handle for run history + audit
+    session = _scope(user, req.session_id)   # matched to runs.py read scope
     try:
         validated_inputs = await validate_workflow_inputs(
             spec.inputs,
@@ -196,10 +155,6 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
             object_store=services.get("object_store"),
         )
     except WorkflowFileInputError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    try:
-        validated_inputs = check_workflow_inputs(validated_inputs).value
-    except GuardrailViolation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     node_types = {n.id: n.type for n in spec.nodes}   # for UI colour-coding
     run_id = req.run_id or str(uuid.uuid4())
@@ -414,9 +369,7 @@ WORKFLOWS_DIR = Path("workflows")
 
 
 @router.get("/workflows")
-def list_workflows(
-    _user: CurrentUser = Depends(require_permission("workflow:read")),
-):
+def list_workflows():
     """Library view in the UI calls this to render the saved-workflow list."""
     out = []
     for p in sorted(WORKFLOWS_DIR.glob("*.yaml")):
@@ -435,10 +388,7 @@ def list_workflows(
 
 
 @router.get("/workflows/by-name/{name}")
-def get_workflow(
-    name: str,
-    _user: CurrentUser = Depends(require_permission("workflow:read")),
-):
+def get_workflow(name: str):
     """Builder calls this to load an existing workflow for editing.
 
     Note the /by-name/ segment: it disambiguates from /workflows/{run_id}/resume.
@@ -456,10 +406,7 @@ class SaveWorkflowRequest(BaseModel):
 
 
 @router.post("/workflows/save")
-def save_workflow(
-    req: SaveWorkflowRequest,
-    _user: CurrentUser = Depends(require_permission("workflow:write")),
-):
+def save_workflow(req: SaveWorkflowRequest):
     """Builder calls this on Save. Validates the YAML parses to a WorkflowSpec
     before writing — bad input never lands on disk."""
     report = preflight_workflow_yaml(req.yaml, compile_graph=True)
@@ -476,215 +423,102 @@ def save_workflow(
     (WORKFLOWS_DIR / f"{req.name}.yaml").write_text(req.yaml)
     return {"ok": True, "name": req.name}
 
-class WebSocketTicketRequest(BaseModel):
-    run_id: str = Field(
-        min_length=8,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$",
-    )
-
-
-async def _reserve_run_id(
-    services: dict[str, Any],
+def _sse_message(
     *,
-    run_id: str,
-    session_id: str,
-) -> None:
-    """Atomically bind a client-generated run id to one authenticated tenant."""
-
-    db = services.get("audit_db")
-    if db is None:
-        raise HTTPException(status_code=503, detail="Run store unavailable")
-    existing = await db["run_history"].find_one(
-        {"run_id": run_id},
-        {"_id": 0, "session_id": 1},
+    event: str,
+    data: dict[str, Any],
+    event_id: int | None = None,
+) -> str:
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event}")
+    lines.append(
+        "data: "
+        + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     )
-    if existing is not None:
-        # Do not disclose whether another tenant owns a guessed run id.
-        if existing.get("session_id") != session_id:
-            raise HTTPException(status_code=404, detail="Run not found")
-        raise HTTPException(status_code=409, detail="Run id already exists")
-
-    redis = services.get("redis")
-    if redis is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Run reservation service is unavailable",
-        )
-    key = f"awp:run-reservation:{run_id}"
-    reserved = await redis.set(key, session_id, ex=300, nx=True)
-    if reserved:
-        return
-    owner = await redis.get(key)
-    if isinstance(owner, bytes):
-        owner = owner.decode("utf-8", errors="replace")
-    if owner != session_id:
-        raise HTTPException(status_code=409, detail="Run id is unavailable")
-
-
-@router.post("/ws/tickets")
-async def create_websocket_ticket(
-    body: WebSocketTicketRequest,
-    request: Request,
-    user: CurrentUser = Depends(require_permission("workflow:read")),
-):
-    redis = getattr(request.app.state, "services", {}).get("redis")
-    if redis is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Live event authentication is unavailable",
-        )
-    session_id = user.session_id or user.username
-    db = getattr(request.app.state, "services", {}).get("audit_db")
-    existing = (
-        await db["run_history"].find_one(
-            {"run_id": body.run_id},
-            {"_id": 0, "session_id": 1},
-        )
-        if db is not None
-        else None
-    )
-    if existing is not None:
-        if existing.get("session_id") != session_id:
-            raise HTTPException(status_code=404, detail="Run not found")
-    else:
-        await _reserve_run_id(
-            getattr(request.app.state, "services", {}),
-            run_id=body.run_id,
-            session_id=session_id,
-        )
-    ticket = uuid.uuid4().hex + uuid.uuid4().hex
-    payload = {
-        "run_id": body.run_id,
-        "session_id": session_id,
-        "username": user.username,
-    }
-    await redis.set(
-        f"awp:ws-ticket:{ticket}",
-        json.dumps(payload, separators=(",", ":")),
-        ex=60,
-        nx=True,
-    )
-    return {"ticket": ticket, "expires_in": 60}
-
-
-@router.websocket("/ws/runs/{run_id}")
-async def ws_run(ws: WebSocket, run_id: str, ticket: str = ""):
-    """Live event stream for one workflow run.
-
-    Wire format: one JSON envelope per message, see RunEvent.to_json().
-    Client lifecycle: ws.connect → receive events → ws closes after run_completed/run_failed.
-    On reconnect the client should call GET /api/runs/{run_id} to refetch state.
-    """
-    services = ws.app.state.services
-    redis = services.get("redis")
-    if redis is None or not ticket:
-        await ws.close(code=4401, reason="Authentication required")
-        return
-    raw_ticket = await redis.getdel(f"awp:ws-ticket:{ticket}")
-    if not raw_ticket:
-        await ws.close(code=4401, reason="Invalid or expired ticket")
-        return
-    try:
-        ticket_data = json.loads(raw_ticket)
-    except (TypeError, ValueError, json.JSONDecodeError):
-        await ws.close(code=4401, reason="Invalid ticket")
-        return
-    if ticket_data.get("run_id") != run_id:
-        await ws.close(code=4403, reason="Ticket scope mismatch")
-        return
-    bus = services["event_bus"]
-
-    await ws.accept()
-    q = await bus.subscribe(run_id)
-    try:
-        while True:
-            evt = await q.get()
-            await ws.send_json(evt.to_json())
-            if evt.type in {"run_completed", "run_failed"}:
-                break
-    except WebSocketDisconnect:
-        pass
-    finally:
-        await bus.unsubscribe(run_id, q)
+    return "\n".join(lines) + "\n\n"
 
 
 @router.get("/runs/{run_id}/events")
 async def stream_run_events(
     run_id: str,
     request: Request,
-    user: CurrentUser = Depends(require_permission("workflow:read")),
+    last_event_id: int | None = Header(
+        default=None,
+        alias="Last-Event-ID",
+    ),
+    user: CurrentUser = Depends(require_consultant),
 ):
-    """Authenticated SSE alternative for clients that do not use WebSockets."""
+    """Authenticated Server-Sent Events stream for one workflow run."""
 
-    services = getattr(request.app.state, "services", {})
-    db = services.get("audit_db")
-    session_id = user.session_id or user.username
-    if db is None:
-        raise HTTPException(status_code=503, detail="Run store unavailable")
-    owned = await db["run_history"].find_one(
-        {"run_id": run_id, "session_id": session_id},
-        {"_id": 1},
+    services = request.app.state.services
+    event_bus = services["event_bus"]
+    session_id = _scope(user, None)
+    queue = await event_bus.subscribe(
+        run_id,
+        session_id,
+        after_event_id=last_event_id,
     )
-    if owned is None:
-        raise HTTPException(status_code=404, detail="Run not found")
-
-    bus = services.get("event_bus")
-    if bus is None:
-        raise HTTPException(status_code=503, detail="Event service unavailable")
 
     async def generate():
-        queue = await bus.subscribe(run_id)
         try:
+            yield _sse_message(
+                event="ready",
+                data={"run_id": run_id},
+            )
             while True:
+                if await request.is_disconnected():
+                    break
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    event = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=(
+                            request.app.state.services.get(
+                                "sse_heartbeat_seconds",
+                                15.0,
+                            )
+                        ),
+                    )
                 except TimeoutError:
-                    yield ": keepalive\n\n"
+                    yield ": keep-alive\n\n"
                     continue
-                yield f"data: {json.dumps(event.to_json(), separators=(',', ':'))}\n\n"
-                if event.type in {"run_completed", "run_failed"}:
+
+                yield _sse_message(
+                    event=event.type,
+                    data=event.to_json(),
+                    event_id=event.event_id,
+                )
+                if event.terminal:
                     break
         finally:
-            await bus.unsubscribe(run_id, queue)
+            await event_bus.unsubscribe(
+                run_id,
+                queue,
+                session_id,
+            )
 
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache, no-store",
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )
 
-
 @router.get("/files")
-async def get_file(
-    key: str,
-    request: Request,
-    download: bool = False,
-    user: CurrentUser = Depends(require_permission("workflow:read")),
-):
+def get_file(key: str, request: Request, download: bool = False):
     """Stream a file from object storage by key (used by the Output Viewer).
     POC: serves any workflow-scoped key. Phase 11 adds session-scoped access."""
     if not key.startswith("workflows/"):
         raise HTTPException(status_code=400, detail="only workflow-scoped keys are served")
-    key_parts = key.split("/", 2)
-    if len(key_parts) != 3 or not key_parts[1]:
-        raise HTTPException(status_code=404, detail="file not found")
-    services = getattr(request.app.state, "services", {})
-    db = services.get("audit_db")
-    session_id = user.session_id or user.username
-    if db is None or await db["run_history"].find_one(
-        {"run_id": key_parts[1], "session_id": session_id},
-        {"_id": 1},
-    ) is None:
-        raise HTTPException(status_code=404, detail="file not found")
-    store = services.get("object_store")
+    store = getattr(request.app.state, "services", {}).get("object_store")
     if store is None:
         raise HTTPException(status_code=503, detail="object store unavailable")
     try:
-        data = await asyncio.to_thread(store.get_bytes, key)
+        data = store.get_bytes(key)
     except Exception:
         raise HTTPException(status_code=404, detail="file not found")
 

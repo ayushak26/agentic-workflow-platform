@@ -15,7 +15,6 @@ import uuid
 from typing import Any
 
 from app.observability import metrics
-from app.config import settings
 
 from .compiler import compile_workflow
 from .events import RunEvent, RunEventBus
@@ -89,13 +88,6 @@ async def run_workflow(
     run_services["retry_source_run_id"] = retry_source_run_id
     run_services["hitl_resume_decisions"] = hitl_resume_decisions or {}
     run_services["resume_replay"] = resume_replay
-    if (
-        settings.environment.lower() == "production"
-        and run_services.get("langgraph_checkpointer") is None
-    ):
-        raise RuntimeError(
-            "Production workflow execution requires the Redis checkpointer"
-        )
     graph = compile_workflow(
         spec,
         checkpointer=run_services.get("langgraph_checkpointer"),
@@ -135,7 +127,12 @@ async def run_workflow(
         metrics.WORKFLOW_RUNS.labels(workflow=workflow_name, status="error").inc()
         if bus is not None:
             await bus.publish(
-                RunEvent(type="run_failed", run_id=run_id, error=str(e)[:240])
+                RunEvent(
+                    type="run_failed",
+                    run_id=run_id,
+                    session_id=effective_session,
+                    error=str(e)[:240],
+                )
             )
         raise
     finally:
@@ -169,6 +166,16 @@ async def run_workflow(
             workflow=workflow_name,
             status="rejected",
         ).inc()
+        if bus is not None:
+            await bus.publish(
+                RunEvent(
+                    type="run_rejected",
+                    run_id=run_id,
+                    session_id=effective_session,
+                    node_id=rejection["node_id"],
+                    error=rejection["reason"],
+                )
+            )
         result = {
             "status": "rejected",
             "run_id": run_id,
@@ -181,7 +188,13 @@ async def run_workflow(
     # Terminal success outcome.
     metrics.WORKFLOW_RUNS.labels(workflow=workflow_name, status="success").inc()
     if bus is not None:
-        await bus.publish(RunEvent(type="run_completed", run_id=run_id))
+        await bus.publish(
+            RunEvent(
+                type="run_completed",
+                run_id=run_id,
+                session_id=effective_session,
+            )
+        )
 
     result = {"status": "completed", "run_id": run_id, "state": final_state}
     if retry_source_run_id:

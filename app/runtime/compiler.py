@@ -37,7 +37,6 @@ from app.security.audit import (
     NODE_REUSED,
     NODE_ERROR,
 )
-from app.security.guardrails import check_generated_output
 from app.workflow.run_history import (
     build_node_input,
     record_checkpoint_node_completed,
@@ -57,14 +56,7 @@ from .node_events import sanitize_preview, is_graph_interrupt
 log = get_logger(__name__)
 
 
-def _make_runtime_fn(
-    instance,
-    bus: RunEventBus | None,
-    services: dict,
-    *,
-    allowed_models: list[str] | None = None,
-    routing_policy: dict[str, Any] | None = None,
-):
+def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
     """Wrap a NodeType instance so it conforms to LangGraph's
     'state -> partial state' contract.
 
@@ -103,6 +95,7 @@ def _make_runtime_fn(
                     RunEvent(
                         type="node_reused",
                         run_id=run_id,
+                        session_id=session_id,
                         node_id=node_id,
                         output_preview=sanitize_preview(output),
                     )
@@ -159,19 +152,14 @@ def _make_runtime_fn(
         llm = services.get("llm")
         if llm is not None and hasattr(llm, "with_context"):
             node_services = {
-                **services,
-                "llm": llm.with_context(
-                    run_id=run_id or "unknown",
-                    session_id=session_id,
-                    node_id=node_id,
-                    ledger=services.get("cost_ledger"),
-                    semantic_cache=services.get("semantic_cache"),
-                    event_bus=services.get("event_bus"),
-                    node_type=type_name,
-                    allowed_models=allowed_models,
-                    routing_policy=routing_policy,
-                ),
-            }
+            **services,
+            "llm": llm.with_context(
+                run_id=run_id or "unknown",
+                session_id=session_id,
+                node_id=node_id,
+                ledger=services.get("cost_ledger"),
+            ),
+        }
         else:
             node_services = services  # no gateway — use services as-is
 
@@ -181,6 +169,7 @@ def _make_runtime_fn(
             await bus.publish(RunEvent(
                 type="node_started",
                 run_id=run_id,
+                session_id=session_id,
                 node_id=node_id,
             ))
         if audit is not None and run_id:
@@ -201,24 +190,10 @@ def _make_runtime_fn(
                     )
                 output = await instance.run(state, resolved)
                 extra_state = output.pop("__state__", {}) if isinstance(output, dict) else {}
-                bound_llm = node_services.get("llm")
-                model_selections = (
-                    bound_llm.selection_history
-                    if bound_llm is not None
-                    and hasattr(bound_llm, "selection_history")
-                    else []
-                )
-                if model_selections:
-                    extra_state = dict(extra_state)
-                    extra_state["model_selections"] = [
-                        *list(extra_state.get("model_selections") or []),
-                        *model_selections,
-                    ]
-                output = check_generated_output(output).value
                 instance.output_schema(**output)
         except BaseException as e:
             # Log to stdout FIRST, before any client emission. A failure that is
-            # only published to the WebSocket bus vanishes the moment the client
+            # only published to the SSE bus vanishes the moment the client
             # disconnects (the run then returns 200 with no server-side trace).
             # Server-side logging must not depend on a client being connected.
             # Interrupts are control flow (HITL pause), not errors — info only.
@@ -247,13 +222,6 @@ def _make_runtime_fn(
             else:
                 log.error("node_failed", node_id=node_id, type_name=type_name,
                           run_id=run_id, error=str(e), exc_info=True)
-                failed_llm = node_services.get("llm")
-                failed_model_selections = (
-                    failed_llm.selection_history
-                    if failed_llm is not None
-                    and hasattr(failed_llm, "selection_history")
-                    else []
-                )
                 # Audit only real failures — an interrupt is a HITL pause, not an error.
                 if audit is not None and run_id:
                     await write_audit_event(
@@ -267,7 +235,6 @@ def _make_runtime_fn(
                         node_id=node_id,
                         type_name=type_name,
                         error=str(e)[:500],
-                        model_selections=failed_model_selections,
                         ended_at=time.time(),
                         duration_s=time.time() - started,
                     )
@@ -276,6 +243,7 @@ def _make_runtime_fn(
                     await bus.publish(RunEvent(
                         type="node_paused",
                         run_id=run_id,
+                        session_id=session_id,
                         node_id=node_id,
                         context={"interrupt": sanitize_preview(getattr(e, "args", None))},
                     ))
@@ -283,6 +251,7 @@ def _make_runtime_fn(
                     await bus.publish(RunEvent(
                         type="run_failed",
                         run_id=run_id,
+                        session_id=session_id,
                         node_id=node_id,
                         error=str(e)[:240],
                     ))
@@ -292,6 +261,7 @@ def _make_runtime_fn(
             await bus.publish(RunEvent(
                 type="node_completed",
                 run_id=run_id,
+                session_id=session_id,
                 node_id=node_id,
                 output_preview=sanitize_preview(output),
             ))
@@ -314,7 +284,6 @@ def _make_runtime_fn(
                 session_id=session_id,
                 node_id=node_id,
                 output=output,
-                model_selections=model_selections,
                 ended_at=time.time(),
                 duration_s=time.time() - started,
             )
@@ -426,21 +395,8 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
     }
 
     # 2. Add each node as a runtime function — bus-aware and cost-aware.
-    node_specs = {node.id: node for node in spec.nodes}
     for node_id, instance in instances.items():
-        node_spec = node_specs[node_id]
-        graph.add_node(
-            node_id,
-            _make_runtime_fn(
-                instance,
-                bus,
-                services,
-                allowed_models=node_spec.allowed_models,
-                routing_policy=node_spec.model_routing.model_dump(
-                    mode="python"
-                ),
-            ),
-        )
+        graph.add_node(node_id, _make_runtime_fn(instance, bus, services))
 
     # 3-5. Wire edges, entry, and exits.
     sources = _wire_edges(graph, spec.edges, hitl_ids)

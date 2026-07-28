@@ -103,13 +103,6 @@ def _checkpointer_probe(services: dict[str, Any]) -> Probe | None:
     )
 
 
-def _semantic_cache_probe(services: dict[str, Any]) -> Probe | None:
-    cache = services.get("semantic_cache")
-    if cache is None:
-        return None
-    return cache.probe
-
-
 async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Probe every configured dependency concurrently."""
 
@@ -119,8 +112,15 @@ async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
         ("minio", _minio_probe(services)),
         ("redis", _redis_probe(services)),
         ("checkpointer", _checkpointer_probe(services)),
-        ("semantic_cache", _semantic_cache_probe(services)),
     ]
+    skill_catalog = services.get("scientific_skill_catalog")
+    if settings.scientific_skills_enabled or skill_catalog is not None:
+        probes.append(
+            (
+                "scientific_skills",
+                getattr(skill_catalog, "probe", None),
+            )
+        )
 
     mcp = services.get("mcp_client")
     configured = tuple(getattr(mcp, "configured_servers", ())) if mcp else ()
@@ -147,12 +147,21 @@ async def _health_payload(request: Request) -> tuple[dict[str, Any], bool]:
         f"mcp:{name}"
         for name in getattr(mcp, "configured_servers", ())
     )
+    enabled_research = (
+        ("scientific_skills",)
+        if settings.scientific_skills_enabled
+        else ()
+    )
     # Every enabled MCP process is a required dependency. This prevents an
     # explicitly enabled paper-search server from failing while /ready stays
     # green because an operator forgot to duplicate it in the CSV setting.
     required = tuple(
         dict.fromkeys(
-            (*settings.required_readiness_services, *configured_mcp)
+            (
+                *settings.required_readiness_services,
+                *configured_mcp,
+                *enabled_research,
+            )
         )
     )
     ready = all(

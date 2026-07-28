@@ -24,7 +24,6 @@ from app.llm.registry import resolve_model
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.runtime.schema import (
-    AUTO_MODEL,
     DEFAULT_LLM_MODELS,
     EdgeSpec,
     NodeSpec,
@@ -354,6 +353,7 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         "MCPAgent",
         "GraphNormalizer",
         "EvidenceAgent",
+        "ScientificSkillAgent",
         "ClaimEvidenceVerifier",
         "ConceptAlternativesAgent",
         "HorizonEvaluationAgent",
@@ -365,6 +365,8 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         required.add("retriever")
     if node_type in {"MCPAgent", "EvidenceAgent"}:
         required.add("mcp_client")
+    if node_type == "ScientificSkillAgent":
+        required.add("scientific_skill_catalog")
     if node_type in {
         "PDFTextExtractor",
         "PDFProposalRenderer",
@@ -470,23 +472,15 @@ def _validate_nodes(
         if node_spec.selected_model:
             models.append((f"{path}.selected_model", node_spec.selected_model))
         for model_path, model_name in models:
-            if (
-                model_name != AUTO_MODEL
-                and model_name not in DEFAULT_LLM_MODELS
-            ):
+            if model_name not in DEFAULT_LLM_MODELS:
                 _issue(
                     report,
                     "MODEL_NOT_IN_CATALOG",
                     f"Model {model_name!r} is not in the approved model catalog.",
                     path=f"{path}.{model_path}",
                     node_id=node_spec.id,
-                    suggestion=(
-                        f"Choose {AUTO_MODEL!r} or one of: "
-                        f"{', '.join(DEFAULT_LLM_MODELS)}."
-                    ),
+                    suggestion=f"Choose one of: {', '.join(DEFAULT_LLM_MODELS)}.",
                 )
-                continue
-            if model_name == AUTO_MODEL:
                 continue
             try:
                 resolve_model(model_name)

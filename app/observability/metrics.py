@@ -3,7 +3,7 @@
 Two-layer observability (the proposal's framing):
   - This module is the SYSTEM layer (operators). Prometheus scrapes /metrics,
     Grafana renders it in the Operator Console.
-  - The WORKFLOW layer (end users) is the WebSocket event bus from Phase 9.
+  - The WORKFLOW layer (end users) is the SSE event bus.
 
 Metric type choices — the reasoning you defend in interviews:
   - Histogram for latency: we care about the DISTRIBUTION (p50/p95/p99), not just
@@ -23,27 +23,6 @@ from contextlib import contextmanager
 from typing import Iterator
 
 from prometheus_client import Counter, Gauge, Histogram
-
-# ── HTTP boundary ───────────────────────────────────────────────────────────
-
-HTTP_REQUESTS = Counter(
-    "awp_http_requests_total",
-    "HTTP requests by method, bounded route template, and status.",
-    labelnames=("method", "route", "status"),
-)
-
-HTTP_REQUEST_LATENCY = Histogram(
-    "awp_http_request_seconds",
-    "HTTP request latency by method and bounded route template.",
-    labelnames=("method", "route"),
-    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60),
-)
-
-RATE_LIMIT_REJECTIONS = Counter(
-    "awp_rate_limit_rejections_total",
-    "Requests rejected by the shared Redis rate limiter.",
-    labelnames=("scope",),
-)
 
 # ── Workflow / node execution ───────────────────────────────────────────────
 
@@ -103,36 +82,6 @@ LLM_FAILOVERS = Counter(
     "awp_llm_failovers_total",
     "LLM calls moved from a primary model to its mapped fallback.",
     labelnames=("from_model", "to_model"),
-)
-
-LLM_LATENCY = Histogram(
-    "awp_llm_request_seconds",
-    "Provider request latency by resolved model and outcome.",
-    labelnames=("model", "status"),
-    buckets=(0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300),
-)
-LLM_TIME_TO_FIRST_TOKEN = Histogram(
-    "awp_llm_time_to_first_token_seconds",
-    "Time from provider request start to first streamed text token",
-    ["model"],
-)
-
-LLM_CACHE = Counter(
-    "awp_llm_semantic_cache_total",
-    "Tenant-scoped LLM cache lookups by outcome.",
-    labelnames=("status",),  # hit | miss | bypass | error
-)
-
-LLM_COST_USD = Counter(
-    "awp_llm_cost_usd_total",
-    "Calculated LLM cost in USD by resolved model.",
-    labelnames=("model",),
-)
-
-GUARDRAIL_EVENTS = Counter(
-    "awp_guardrail_events_total",
-    "Guardrail events by direction and outcome.",
-    labelnames=("direction", "outcome"),
 )
 
 

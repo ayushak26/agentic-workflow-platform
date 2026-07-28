@@ -1,25 +1,23 @@
-import type { ModelSelection, RunEvent } from '../../api/types';
+import type { RunEvent } from '../../api/types';
 
 export type NodeStatus = 'pending' | 'active' | 'done' | 'reused' | 'paused' | 'failed';
-export type RunStatus = 'connecting' | 'running' | 'paused' | 'completed' | 'failed';
+export type RunStatus = 'connecting' | 'running' | 'paused' | 'completed' | 'rejected' | 'failed';
 
 export type CockpitState = {
   runStatus: RunStatus;
   nodeStates: Record<string, NodeStatus>;
   outputPreviews: Record<string, string>;
-  modelSelections: Record<string, ModelSelection[]>;
   pausedNode: { id: string; context: unknown } | null;
   errorMessage: string | null;
 };
 
-export function initialCockpitState(nodeIds: string[], wsOpen: boolean): CockpitState {
+export function initialCockpitState(nodeIds: string[], streamOpen: boolean): CockpitState {
   const nodeStates: Record<string, NodeStatus> = {};
   for (const id of nodeIds) nodeStates[id] = 'pending';
   return {
-    runStatus: wsOpen ? 'running' : 'connecting',
+    runStatus: streamOpen ? 'running' : 'connecting',
     nodeStates,
     outputPreviews: {},
-    modelSelections: {},
     pausedNode: null,
     errorMessage: null,
   };
@@ -28,9 +26,9 @@ export function initialCockpitState(nodeIds: string[], wsOpen: boolean): Cockpit
 export function deriveCockpitState(
   nodeIds: string[],
   events: RunEvent[],
-  wsOpen: boolean,
+  streamOpen: boolean,
 ): CockpitState {
-  const s = initialCockpitState(nodeIds, wsOpen);
+  const s = initialCockpitState(nodeIds, streamOpen);
   for (const e of events) {
     switch (e.type) {
       case 'node_started':
@@ -55,20 +53,12 @@ export function deriveCockpitState(
         }
         s.runStatus = 'paused';
         break;
-      case 'model_selected':
-        if (e.node_id) {
-          s.modelSelections[e.node_id] = [
-            ...(s.modelSelections[e.node_id] ?? []),
-            e.context,
-          ];
-        }
-        break;
-      case 'llm_token':
-        // Token chunks are consumed by streaming clients and do not change
-        // the workflow graph state.
-        break;
       case 'run_completed':
         s.runStatus = 'completed';
+        break;
+      case 'run_rejected':
+        s.runStatus = 'rejected';
+        s.errorMessage = e.error ?? null;
         break;
       case 'run_failed':
         s.runStatus = 'failed';

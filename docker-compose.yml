@@ -1,28 +1,19 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        SCIENTIFIC_SKILLS_REF: ${SCIENTIFIC_SKILLS_REF:-v2.59.0}
     ports:
       - "127.0.0.1:8000:8000"
-    env_file:
-      - path: .env
-        required: false
+    env_file: .env
     environment:
-      ENVIRONMENT: ${ENVIRONMENT:-development}
-      SECRET_KEY: ${SECRET_KEY:-local-development-secret-key-32-bytes-only}
-      MONGO_URI: ${MONGO_URI:-mongodb://eurskem-dev:eurskem-dev-password@mongo:27017/?authSource=admin}
-      MONGO_DB: ${MONGO_DB:-eurskem_ai}
-      WEAVIATE_HOST: weaviate
-      WEAVIATE_PORT: 8080
-      WEAVIATE_GRPC_PORT: 50051
-      WEAVIATE_API_KEY: ${WEAVIATE_API_KEY:-eurskem-dev-weaviate-key}
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-eurskem-dev}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-eurskem-dev-minio-password}
-      MINIO_BUCKET: ${MINIO_BUCKET:-eurskem-ai-docs}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-eurskem-dev-redis-password}@redis:6379/0
-      DEV_BYPASS_ENABLED: ${DEV_BYPASS_ENABLED:-true}
-      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-true}
-      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      PAPER_SEARCH_MCP_ENABLED: ${PAPER_SEARCH_MCP_ENABLED:-true}
+      PAPER_SEARCH_MCP_PATH: ${PAPER_SEARCH_MCP_PATH:-}
+      PAPER_SEARCH_MCP_COMMAND: ${PAPER_SEARCH_MCP_COMMAND:-python}
+      PAPER_SEARCH_MCP_MODULE: ${PAPER_SEARCH_MCP_MODULE:-paper_search_mcp.server}
+      SCIENTIFIC_SKILLS_ENABLED: ${SCIENTIFIC_SKILLS_ENABLED:-true}
+      SCIENTIFIC_SKILLS_PATH: ${SCIENTIFIC_SKILLS_PATH:-/opt/scientific-agent-skills/skills}
     depends_on:
       mongo:
         condition: service_healthy
@@ -43,8 +34,8 @@ services:
     ports:
       - "127.0.0.1:27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-eurskem-dev}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-eurskem-dev-password}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
     volumes:
       - mongo-data:/data/db
     healthcheck:
@@ -68,7 +59,7 @@ services:
       QUERY_DEFAULTS_LIMIT: 25
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "false"
       AUTHENTICATION_APIKEY_ENABLED: "true"
-      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:-eurskem-dev-weaviate-key}
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_API_KEY:?Set WEAVIATE_API_KEY in .env}
       AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_API_KEY_USER:-eurskem-app}
       AUTHORIZATION_ADMINLIST_ENABLED: "true"
       AUTHORIZATION_ADMINLIST_USERS: ${WEAVIATE_API_KEY_USER:-eurskem-app}
@@ -96,8 +87,8 @@ services:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-eurskem-dev}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-eurskem-dev-minio-password}
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?Set MINIO_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?Set MINIO_SECRET_KEY in .env}
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
@@ -115,23 +106,22 @@ services:
 
   redis:
     # redis-stack-server carries the RediSearch engine (FT.*) the LangGraph
-    # Redis checkpointer requires. The core `redis:8.x` library image is
-    # search-less (verified: 267 cmds, FT._LIST unknown); redis-stack-server
-    # reports 407 cmds and answers FT._LIST. Do NOT override the entrypoint
-    # with a bare redis-server command — that bypasses the managed startup
-    # that loads search. Pass args via REDIS_ARGS instead.
+    # Redis checkpointer requires. Plain redis:8.x (incl. -alpine) does NOT
+    # include search — verified: FT._LIST -> unknown command. Do not override
+    # the entrypoint with a bare redis-server command; that bypasses the
+    # managed startup that loads search. Pass args via REDIS_ARGS instead.
     image: redis/redis-stack-server:latest
     ports:
       - "127.0.0.1:6379:6379"
     environment:
-      REDIS_ARGS: "--appendonly yes --requirepass ${REDIS_PASSWORD:-eurskem-dev-redis-password}"
+      REDIS_ARGS: "--appendonly yes --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"
     volumes:
       - redis-data:/data
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          'redis-cli --no-auth-warning -a "${REDIS_PASSWORD:-eurskem-dev-redis-password}" ping | grep -q PONG',
+          'redis-cli --no-auth-warning -a "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}" ping | grep -q PONG',
         ]
       interval: 5s
       timeout: 3s
@@ -155,7 +145,7 @@ services:
     environment:
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-eurskem-dev-grafana-password}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
     networks:
       - eurskem-net
 
