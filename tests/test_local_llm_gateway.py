@@ -104,6 +104,25 @@ async def test_local_completion_uses_served_model_and_reasoning_effort():
 
 
 @pytest.mark.asyncio
+async def test_local_completion_omits_system_message_when_empty():
+    # Moonshot's hosted Kimi K3 rejects a system message with empty content
+    # (400: "message at position 0 with role 'system' must not be empty").
+    # An unset system prompt must drop the message, not send "".
+    client = _client(_response(content="answer"))
+    gateway = LocalOpenAICompatibleGateway(_profile(), client=client)
+
+    await gateway.complete(
+        model="local-kimi-k3",
+        system="",
+        user="question",
+        max_tokens=321,
+    )
+
+    kwargs = client.chat.completions.create.await_args.kwargs
+    assert kwargs["messages"] == [{"role": "user", "content": "question"}]
+
+
+@pytest.mark.asyncio
 async def test_local_structured_output_is_schema_constrained_and_validated():
     client = _client(
         _response(content='{"supported":true,"reason":"page 4 supports it"}')

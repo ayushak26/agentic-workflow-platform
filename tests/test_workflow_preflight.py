@@ -6,7 +6,13 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 import pytest
 
-from app.api.workflows import RunRequest, run
+from app.api.workflows import (
+    RunRequest,
+    ValidateWorkflowRequest,
+    run,
+    validate_workflow,
+)
+from app.llm.registry import ModelAccessResult
 from app.nodes.registry import NodeRegistry
 from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import (
@@ -16,6 +22,7 @@ from app.runtime.preflight import (
 )
 from app.security.dependencies import CurrentUser
 from app.security.rbac import Role
+from app.workflow.file_inputs import workflow_input_prefix
 
 
 VALID = """
@@ -43,6 +50,35 @@ exit: second
 
 def codes(report) -> set[str]:
     return {issue.code for issue in report.issues}
+
+
+class HealthyAuditDB:
+    async def command(self, _name):
+        return {"ok": 1}
+
+
+class AccessProbeLLM:
+    def __init__(self, denied: set[str]):
+        self.denied = denied
+        self.generation_calls = 0
+
+    async def probe_model_access(self, models):
+        return {
+            model: ModelAccessResult(
+                available=model not in self.denied,
+                reason=(
+                    "provider confirmed model access"
+                    if model not in self.denied
+                    else "provider rejected this model (HTTP 403)"
+                ),
+                status_code=403 if model in self.denied else None,
+            )
+            for model in models
+        }
+
+    def __getattr__(self, _name):
+        self.generation_calls += 1
+        raise AssertionError("Strict preflight must not generate tokens")
 
 
 def test_claim_evidence_verifier_is_auto_discovered():
@@ -266,6 +302,212 @@ nodes:
         "services.llm",
     }
     assert report.tokens_spent == 0
+
+
+@pytest.mark.asyncio
+async def test_strict_preflight_excludes_denied_auto_candidate_without_tokens():
+    workflow = """
+name: Model access test
+nodes:
+  - id: writer
+    type: TransformAgent
+    selected_model: auto
+    allowed_models: [gpt-5.6-sol, gpt-5]
+    config:
+      model: gpt-5.6-sol
+      prompt_template: Draft the methodology.
+"""
+    llm = AccessProbeLLM({"gpt-5.6-sol"})
+    report = await preflight_workflow_for_run(
+        workflow,
+        provided_inputs={},
+        services={
+            "llm": llm,
+            "cost_ledger": object(),
+            "audit_db": HealthyAuditDB(),
+            "event_bus": object(),
+        },
+    )
+
+    assert report.valid is True
+    assert "AUTO_MODEL_CANDIDATE_EXCLUDED" in codes(report)
+    assert "AUTO_MODEL_ACCESS_UNAVAILABLE" not in codes(report)
+    assert report.tokens_spent == 0
+    assert llm.generation_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_strict_preflight_blocks_when_auto_has_no_accessible_model():
+    workflow = """
+name: No model access
+nodes:
+  - id: writer
+    type: TransformAgent
+    selected_model: auto
+    allowed_models: [gpt-5.6-sol]
+    config:
+      model: gpt-5.6-sol
+      prompt_template: Draft the methodology.
+"""
+    report = await preflight_workflow_for_run(
+        workflow,
+        provided_inputs={},
+        services={
+            "llm": AccessProbeLLM({"gpt-5.6-sol"}),
+            "cost_ledger": object(),
+            "audit_db": HealthyAuditDB(),
+            "event_bus": object(),
+        },
+    )
+
+    assert report.valid is False
+    assert "AUTO_MODEL_ACCESS_UNAVAILABLE" in codes(report)
+    assert report.tokens_spent == 0
+
+
+@pytest.mark.asyncio
+async def test_strict_preflight_blocks_inaccessible_manual_model():
+    workflow = """
+name: Manual model access
+nodes:
+  - id: writer
+    type: TransformAgent
+    selected_model: gpt-5.6-sol
+    allowed_models: [gpt-5.6-sol, gpt-5]
+    config:
+      model: gpt-5.6-sol
+      prompt_template: Draft the methodology.
+"""
+    report = await preflight_workflow_for_run(
+        workflow,
+        provided_inputs={},
+        services={
+            "llm": AccessProbeLLM({"gpt-5.6-sol"}),
+            "cost_ledger": object(),
+            "audit_db": HealthyAuditDB(),
+            "event_bus": object(),
+        },
+    )
+
+    assert report.valid is False
+    assert "MODEL_ACCESS_UNAVAILABLE" in codes(report)
+    assert report.tokens_spent == 0
+
+
+@pytest.mark.asyncio
+async def test_minio_access_key_error_has_actionable_diagnosis():
+    class InvalidCredentials(Exception):
+        response = {
+            "Error": {
+                "Code": "InvalidAccessKeyId",
+            }
+        }
+
+    class ObjectStoreClient:
+        def list_buckets(self):
+            raise InvalidCredentials()
+
+    workflow = """
+name: Object storage access
+nodes:
+  - id: load
+    type: WorkflowFileLoader
+    config:
+      files: []
+"""
+    report = await preflight_workflow_for_run(
+        workflow,
+        provided_inputs={},
+        services={
+            "object_store": SimpleNamespace(client=ObjectStoreClient()),
+            "audit_db": HealthyAuditDB(),
+            "event_bus": object(),
+        },
+    )
+
+    issue = next(
+        item
+        for item in report.errors
+        if item.code == "OBJECT_STORE_CREDENTIALS_INVALID"
+    )
+    assert "MINIO_ACCESS_KEY" in (issue.suggestion or "")
+    assert report.tokens_spent == 0
+
+
+@pytest.mark.asyncio
+async def test_full_zero_token_api_test_validates_uploaded_file_reference():
+    class ObjectStoreClient:
+        def list_buckets(self):
+            return []
+
+    class ObjectStore:
+        client = ObjectStoreClient()
+
+        def object_exists(self, _key):
+            return True
+
+    workflow = """
+name: Uploaded input rehearsal
+inputs:
+  concept_note:
+    type: file
+    required: true
+    accept: [pdf]
+nodes:
+  - id: load
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.concept_note}}"
+"""
+    session_id = "session-1"
+    file_ref = {
+        "kind": "workflow_file",
+        "file_id": "wf_123",
+        "name": "concept.pdf",
+        "extension": ".pdf",
+        "category": "pdf",
+        "content_type": "application/pdf",
+        "size_bytes": 100,
+        "sha256": "a" * 64,
+        "minio_key": (
+            workflow_input_prefix(session_id) + ("a" * 64) + ".pdf"
+        ),
+        "parseable_text": True,
+    }
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                services={
+                    "object_store": ObjectStore(),
+                    "audit_db": HealthyAuditDB(),
+                    "event_bus": object(),
+                }
+            )
+        )
+    )
+    user = CurrentUser(
+        username="user@example.com",
+        role=Role.CONSULTANT,
+        session_id=session_id,
+    )
+
+    report = await validate_workflow(
+        ValidateWorkflowRequest(
+            workflow_yaml=workflow,
+            inputs={"concept_note": file_ref},
+            check_services=True,
+        ),
+        request,
+        user,
+    )
+
+    assert report["valid"] is True
+    assert report["tokens_spent"] == 0
+    assert any(
+        check["name"] == "input_files"
+        and check["status"] == "passed"
+        for check in report["checks"]
+    )
 
 
 @pytest.mark.asyncio

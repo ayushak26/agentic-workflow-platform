@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -9,6 +10,7 @@ from fastapi import HTTPException
 
 from app.api.runs import RetryRunRequest, retry_failed_run
 from app.api.workflows import _scope
+from app.config import settings
 from app.runtime.executor import run_workflow
 from app.runtime.events import RunEventBus
 from app.runtime.loader import load_workflow_from_string
@@ -17,6 +19,7 @@ from app.security.rbac import Role
 from app.workflow.run_history import (
     build_node_input,
     get_retry_checkpoint,
+    get_run,
     initialize_run_checkpoint,
     record_checkpoint_node_completed,
     record_node_completed,
@@ -200,6 +203,51 @@ async def test_private_checkpoint_keeps_exact_replayable_node_result():
     assert saved["node_id"] == "draft.section"
     assert saved["output"]["raw"] == "completed draft"
     assert saved["extra_state"]["domain_state"]["eu_proposal"]["title"] == "Draft"
+
+
+@pytest.mark.asyncio
+async def test_stale_running_run_is_marked_failed_on_read():
+    db = FakeDB()
+    stale_updated_at = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.stale_run_after_seconds + 60
+    )
+    db["run_history"].find_one.return_value = {
+        "run_id": "run-stale",
+        "session_id": "user@example.com",
+        "status": "running",
+        "updated_at": stale_updated_at,
+        "active_nodes": ["compile_v1"],
+    }
+
+    run = await get_run(db, "user@example.com", "run-stale")
+
+    assert run["status"] == "failed"
+    assert "no progress" in run["error"]
+    assert run["active_nodes"] == []
+
+    _, history_update = db["run_history"].update_one.await_args.args
+    assert history_update["$set"]["status"] == "failed"
+    assert history_update["$set"]["node_runs.compile_v1.status"] == "failed"
+
+    _, checkpoint_update = db["run_checkpoints"].update_one.await_args.args
+    assert checkpoint_update["$set"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_recently_updated_running_run_is_left_alone():
+    db = FakeDB()
+    db["run_history"].find_one.return_value = {
+        "run_id": "run-live",
+        "session_id": "user@example.com",
+        "status": "running",
+        "updated_at": datetime.now(timezone.utc),
+        "active_nodes": ["compile_v1"],
+    }
+
+    run = await get_run(db, "user@example.com", "run-live")
+
+    assert run["status"] == "running"
+    db["run_history"].update_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio

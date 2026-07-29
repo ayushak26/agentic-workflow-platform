@@ -10,13 +10,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.evidence.models import (
     CandidateSource,
     EvidencePolicy,
     FullTextDocument,
     RejectedCandidate,
+    coerce_typed_list_field,
 )
 from app.evidence.retrieval import (
     download_path_from_payload,
@@ -42,6 +43,12 @@ class FullTextEvidenceAcquirerConfig(BaseModel):
     mcp_server: str = "paper-search-mcp"
     download_tool: str = "download_with_fallback"
     fail_when_none_acquired: bool = False
+    max_concurrent_claims: int = Field(default=6, ge=1, le=20)
+
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def _coerce_candidates(cls, value: Any) -> Any:
+        return coerce_typed_list_field(value, CandidateSource, "candidates")
 
 
 class FullTextEvidenceAcquirerOutput(BaseModel):
@@ -100,142 +107,56 @@ class FullTextEvidenceAcquirer(NodeType):
         documents: list[FullTextDocument] = []
         rejected: list[RejectedCandidate] = []
 
+        candidates_by_claim: dict[str, list[CandidateSource]] = defaultdict(
+            list
+        )
+        for candidate in cfg.candidates:
+            candidates_by_claim[candidate.claim_id].append(candidate)
+
         with TemporaryDirectory(
             prefix=f"eurskem-evidence-{run_component}-"
         ) as temporary:
             root = Path(temporary).resolve()
-            for candidate in cfg.candidates:
-                if (
-                    counts[candidate.claim_id]
-                    >= cfg.policy.max_full_text_documents_per_claim
-                ):
-                    continue
-                rejection = self._pre_download_rejection(candidate)
-                if rejection:
-                    rejected.append(rejection)
-                    continue
+            # Claims are fetched concurrently (bounded); each claim's own
+            # candidates stay sequential so the per-claim cap below never
+            # needs locking. Without this, one claim whose candidates all
+            # time out serializes the whole node behind it.
+            semaphore = asyncio.Semaphore(cfg.max_concurrent_claims)
 
-                candidate_dir = root / _safe_component(candidate.candidate_id)
-                candidate_dir.mkdir(parents=True, exist_ok=True)
-                try:
-                    raw_result = await mcp.call_tool(
-                        name=cfg.download_tool,
-                        arguments={
-                            "source": candidate.source,
-                            "paper_id": candidate.paper_id or "",
-                            "doi": candidate.doi or "",
-                            "title": candidate.title,
-                            "save_path": str(candidate_dir),
-                            # Eurskem uses lawful OA retrieval only.
-                            "use_scihub": False,
-                        },
-                        server=cfg.mcp_server,
-                    )
-                    local_pdf = validate_downloaded_pdf(
-                        download_path_from_payload(raw_result),
-                        allowed_root=candidate_dir,
-                        max_bytes=cfg.policy.max_download_bytes,
-                    )
-                    raw_pdf = await asyncio.to_thread(local_pdf.read_bytes)
-                    pages = await asyncio.to_thread(
-                        extract_text_from_pdf,
-                        raw_pdf,
-                    )
-                    usable_pages = [
-                        page for page in pages if str(page.get("text") or "").strip()
-                    ]
-                    if not usable_pages:
-                        raise ValueError(
-                            "PDF contains no extractable text; OCR/manual review required"
+            async def _process_claim(
+                claim_candidates: list[CandidateSource],
+            ) -> None:
+                async with semaphore:
+                    for candidate in claim_candidates:
+                        if (
+                            counts[candidate.claim_id]
+                            >= cfg.policy.max_full_text_documents_per_claim
+                        ):
+                            continue
+                        rejection = self._pre_download_rejection(candidate)
+                        if rejection:
+                            rejected.append(rejection)
+                            continue
+                        outcome = await self._acquire_one(
+                            candidate,
+                            root=root,
+                            run_component=run_component,
+                            mcp=mcp,
+                            store=store,
+                            cfg=cfg,
                         )
+                        if isinstance(outcome, RejectedCandidate):
+                            rejected.append(outcome)
+                        else:
+                            documents.append(outcome)
+                            counts[candidate.claim_id] += 1
 
-                    digest = hashlib.sha256(raw_pdf).hexdigest()
-                    version_id = f"VER-{digest[:16]}"
-                    source_id = stable_id(
-                        "SRC",
-                        candidate.doi
-                        or candidate.paper_id
-                        or candidate.canonical_url
-                        or candidate.title,
-                    )
-                    base_key = (
-                        f"evidence/{run_component}/{source_id}/{version_id}"
-                    )
-                    pdf_key = f"{base_key}.pdf"
-                    pages_key = f"{base_key}.pages.json"
-                    pages_payload = json.dumps(
-                        {
-                            "source_id": source_id,
-                            "version_id": version_id,
-                            "content_sha256": digest,
-                            "pages": pages,
-                        },
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                    ).encode("utf-8")
-                    await asyncio.to_thread(
-                        store.put_bytes,
-                        raw_pdf,
-                        pdf_key,
-                        content_type="application/pdf",
-                    )
-                    await asyncio.to_thread(
-                        store.put_bytes,
-                        pages_payload,
-                        pages_key,
-                        content_type="application/json",
-                    )
-                    document = FullTextDocument(
-                        document_id=stable_id(
-                            "DOC",
-                            candidate.candidate_id,
-                            version_id,
-                        ),
-                        candidate_id=candidate.candidate_id,
-                        claim_id=candidate.claim_id,
-                        title=candidate.title,
-                        citation=formatted_citation(candidate),
-                        identifier=(
-                            f"doi:{candidate.doi}"
-                            if candidate.doi
-                            else candidate.paper_id
-                            or candidate.canonical_url
-                        ),
-                        canonical_url=(
-                            f"https://doi.org/{candidate.doi}"
-                            if candidate.doi
-                            else candidate.canonical_url
-                        ),
-                        source_type=candidate.source,
-                        authority=candidate.authority,
-                        independence_group=candidate.independence_group,
-                        version_id=version_id,
-                        content_sha256=digest,
-                        pdf_object_key=pdf_key,
-                        pages_object_key=pages_key,
-                        page_count=len(pages),
-                        canonical_metadata_validated=(
-                            candidate.metadata_status == "canonical"
-                        ),
-                        retraction_status=candidate.retraction_status,
-                        fetched_at=utc_now(),
-                    )
-                    documents.append(document)
-                    counts[candidate.claim_id] += 1
-                except Exception as exc:
-                    rejected.append(
-                        RejectedCandidate(
-                            claim_id=candidate.claim_id,
-                            candidate_title=candidate.title,
-                            candidate_identifier=(
-                                candidate.doi
-                                or candidate.paper_id
-                                or candidate.canonical_url
-                            ),
-                            reason="full_text_unavailable",
-                            notes=f"{type(exc).__name__}: {exc}"[:500],
-                        )
-                    )
+            await asyncio.gather(
+                *(
+                    _process_claim(group)
+                    for group in candidates_by_claim.values()
+                )
+            )
 
         if cfg.fail_when_none_acquired and cfg.candidates and not documents:
             raise RuntimeError(
@@ -257,6 +178,131 @@ class FullTextEvidenceAcquirer(NodeType):
                 "and search snippets were not promoted to evidence."
             ),
         }
+
+    @staticmethod
+    async def _acquire_one(
+        candidate: CandidateSource,
+        *,
+        root: Path,
+        run_component: str,
+        mcp: Any,
+        store: Any,
+        cfg: FullTextEvidenceAcquirerConfig,
+    ) -> FullTextDocument | RejectedCandidate:
+        candidate_dir = root / _safe_component(candidate.candidate_id)
+        candidate_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            raw_result = await mcp.call_tool(
+                name=cfg.download_tool,
+                arguments={
+                    "source": candidate.source,
+                    "paper_id": candidate.paper_id or "",
+                    "doi": candidate.doi or "",
+                    "title": candidate.title,
+                    "save_path": str(candidate_dir),
+                    # Eurskem uses lawful OA retrieval only.
+                    "use_scihub": False,
+                },
+                server=cfg.mcp_server,
+            )
+            local_pdf = validate_downloaded_pdf(
+                download_path_from_payload(raw_result),
+                allowed_root=candidate_dir,
+                max_bytes=cfg.policy.max_download_bytes,
+            )
+            raw_pdf = await asyncio.to_thread(local_pdf.read_bytes)
+            pages = await asyncio.to_thread(
+                extract_text_from_pdf,
+                raw_pdf,
+            )
+            usable_pages = [
+                page for page in pages if str(page.get("text") or "").strip()
+            ]
+            if not usable_pages:
+                raise ValueError(
+                    "PDF contains no extractable text; OCR/manual review required"
+                )
+
+            digest = hashlib.sha256(raw_pdf).hexdigest()
+            version_id = f"VER-{digest[:16]}"
+            source_id = stable_id(
+                "SRC",
+                candidate.doi
+                or candidate.paper_id
+                or candidate.canonical_url
+                or candidate.title,
+            )
+            base_key = f"evidence/{run_component}/{source_id}/{version_id}"
+            pdf_key = f"{base_key}.pdf"
+            pages_key = f"{base_key}.pages.json"
+            pages_payload = json.dumps(
+                {
+                    "source_id": source_id,
+                    "version_id": version_id,
+                    "content_sha256": digest,
+                    "pages": pages,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            await asyncio.to_thread(
+                store.put_bytes,
+                raw_pdf,
+                pdf_key,
+                content_type="application/pdf",
+            )
+            await asyncio.to_thread(
+                store.put_bytes,
+                pages_payload,
+                pages_key,
+                content_type="application/json",
+            )
+            return FullTextDocument(
+                document_id=stable_id(
+                    "DOC",
+                    candidate.candidate_id,
+                    version_id,
+                ),
+                candidate_id=candidate.candidate_id,
+                claim_id=candidate.claim_id,
+                title=candidate.title,
+                citation=formatted_citation(candidate),
+                identifier=(
+                    f"doi:{candidate.doi}"
+                    if candidate.doi
+                    else candidate.paper_id or candidate.canonical_url
+                ),
+                canonical_url=(
+                    f"https://doi.org/{candidate.doi}"
+                    if candidate.doi
+                    else candidate.canonical_url
+                ),
+                source_type=candidate.source,
+                authority=candidate.authority,
+                independence_group=candidate.independence_group,
+                version_id=version_id,
+                content_sha256=digest,
+                pdf_object_key=pdf_key,
+                pages_object_key=pages_key,
+                page_count=len(pages),
+                canonical_metadata_validated=(
+                    candidate.metadata_status == "canonical"
+                ),
+                retraction_status=candidate.retraction_status,
+                fetched_at=utc_now(),
+            )
+        except Exception as exc:
+            return RejectedCandidate(
+                claim_id=candidate.claim_id,
+                candidate_title=candidate.title,
+                candidate_identifier=(
+                    candidate.doi
+                    or candidate.paper_id
+                    or candidate.canonical_url
+                ),
+                reason="full_text_unavailable",
+                notes=f"{type(exc).__name__}: {exc}"[:500],
+            )
 
     @staticmethod
     def _pre_download_rejection(

@@ -3,6 +3,7 @@
 Resolution happens at runtime, not at compile time — the values being
 referenced don't exist until upstream nodes have executed."""
 from __future__ import annotations
+
 import re
 from typing import Any
 
@@ -20,16 +21,34 @@ def _lookup(path: str, state: dict) -> Any:
     parts = path.split(".")
     if parts[0] == "outputs":
         parts[0] = "node_outputs"
-    # Sugar: if the first segment matches a node_outputs key, prepend.
+
     node_outputs = state.get("node_outputs", {})
+
+    # Sugar: if the first segment matches a node_outputs key, prepend.
     if parts[0] in node_outputs:
         parts = ["node_outputs"] + parts
+
     cursor: Any = state
+    walked: list[str] = []
     for p in parts:
         if isinstance(cursor, dict) and p in cursor:
             cursor = cursor[p]
+            walked.append(p)
+            continue
+
+        # Build a precise, self-diagnosing failure. Show exactly which
+        # segment failed and what keys WERE available at that level, so the
+        # cause (missing node vs. wrong shape) is visible from the log alone.
+        where = ".".join(walked) or "<root>"
+        if isinstance(cursor, dict):
+            available = sorted(cursor.keys())
         else:
-            raise KeyError(f"Template path not resolvable: {path}")
+            available = f"<not a dict: {type(cursor).__name__}={cursor!r}>"
+        raise KeyError(
+            f"Template path not resolvable: {path} — "
+            f"failed at segment '{p}' under '{where}'; "
+            f"available at that level: {available}"
+        )
     return cursor
 
 
@@ -46,7 +65,9 @@ def resolve(value: Any, state: dict) -> Any:
         if m:
             return _lookup(m.group(1), state)
         # Embedded mode: always returns a string
-        return TEMPLATE_RE.sub(lambda mm: str(_lookup(mm.group(1), state)), value)
+        return TEMPLATE_RE.sub(
+            lambda mm: str(_lookup(mm.group(1), state)), value
+        )
     if isinstance(value, dict):
         return {k: resolve(v, state) for k, v in value.items()}
     if isinstance(value, list):

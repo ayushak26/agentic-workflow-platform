@@ -5,6 +5,7 @@ import type {
   WorkflowFileCapabilities,
   WorkflowFileReference,
 } from '../../api/types';
+import { CopyButton } from '../../components/CopyButton';
 import {
   RichTextEditor,
   type RichEditorValue,
@@ -327,7 +328,10 @@ export function HITLPanel({
         <summary className="text-xs font-medium text-ink-700 cursor-pointer">
           Supporting pause context
         </summary>
-        <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 mt-2 overflow-x-auto max-h-80 whitespace-pre-wrap">
+        <div className="mt-2 flex justify-end">
+          <CopyButton text={JSON.stringify(context, null, 2)} />
+        </div>
+        <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 mt-1 overflow-x-auto max-h-80 whitespace-pre-wrap">
 {JSON.stringify(context, null, 2)}
         </pre>
       </details>

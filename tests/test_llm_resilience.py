@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 import app.llm.registry as registry
@@ -93,6 +95,33 @@ async def test_non_retryable_error_does_not_retry_or_fail_over(monkeypatch):
     )
 
     with pytest.raises(ProviderError, match="bad credentials"):
+        await gateway.complete(
+            model="claude-sonnet-4-5",
+            system="s",
+            user="u",
+        )
+
+    assert primary.calls == ["claude-sonnet-4-5"]
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_task_cancellation_is_not_swallowed_or_failed_over(monkeypatch):
+    primary = ScriptedGateway([asyncio.CancelledError()])
+    fallback = ScriptedGateway(["must not run"])
+    monkeypatch.setattr(
+        registry,
+        "_INSTANCES",
+        {
+            registry.AnthropicGateway: primary,
+            registry.OpenAIGateway: fallback,
+        },
+    )
+    gateway = RegistryLLMGateway(
+        retry_policy=RetryPolicy(max_attempts=3),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
         await gateway.complete(
             model="claude-sonnet-4-5",
             system="s",

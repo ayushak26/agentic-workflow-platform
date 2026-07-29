@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
 from typing import Any, Awaitable, Callable
@@ -37,7 +38,7 @@ from app.llm.local_openai_gw import (
 from app.llm.model_catalog import AUTO_MODEL, MODEL_PROFILE_BY_NAME
 from app.llm.model_router import ModelRouter
 from app.llm.openai_gw import OpenAIGateway
-from app.llm.errors import StructuredOutputError
+from app.llm.errors import LLMProviderUnavailableError, StructuredOutputError
 from app.observability import metrics
 from app.runtime.events import RunEvent
 
@@ -73,7 +74,8 @@ class RetryPolicy:
 
     ``max_attempts`` includes the first request. After transient failures
     exhaust the primary model, the registry starts a fresh retry sequence on
-    the mapped fallback. Validation/authentication errors fail immediately.
+    the mapped fallback. Validation/authentication errors fail immediately;
+    model-access errors skip directly to the next candidate.
     """
 
     max_attempts: int = 3
@@ -90,6 +92,16 @@ class RetryPolicy:
             raise ValueError("jitter_ratio must be between 0 and 1")
 
 
+@dataclass(frozen=True)
+class ModelAccessResult:
+    """Result of a model-metadata probe that uses no generation tokens."""
+
+    available: bool
+    reason: str
+    status_code: int | None = None
+    cached: bool = False
+
+
 def _status_code(exc: BaseException) -> int | None:
     direct = getattr(exc, "status_code", None)
     if isinstance(direct, int):
@@ -97,6 +109,22 @@ def _status_code(exc: BaseException) -> int | None:
     response = getattr(exc, "response", None)
     response_status = getattr(response, "status_code", None)
     return response_status if isinstance(response_status, int) else None
+
+
+def _anthropic_error_type(exc: BaseException) -> str | None:
+    """Anthropic streams some errors (e.g. overload) as an in-band SSE event
+    after the HTTP response already returned 200, so the wrapping exception's
+    status_code reflects the original 200, not the real error. Read the
+    error type out of the response body instead."""
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            error_type = error.get("type")
+            if isinstance(error_type, str):
+                return error_type
+    return None
 
 
 def _is_retryable_error(exc: BaseException) -> bool:
@@ -111,6 +139,9 @@ def _is_retryable_error(exc: BaseException) -> bool:
     ):
         return True
 
+    if _anthropic_error_type(exc) in {"overloaded_error", "api_error"}:
+        return True
+
     status = _status_code(exc)
 
     if status is not None:
@@ -123,6 +154,64 @@ def _is_retryable_error(exc: BaseException) -> bool:
         "RateLimitError",
         "ServiceUnavailableError",
     }
+
+
+def _provider_error_code(exc: BaseException) -> str | None:
+    """Extract a provider error code without depending on one SDK's shape."""
+
+    pending: list[Any] = [
+        getattr(exc, "code", None),
+        getattr(exc, "body", None),
+        getattr(exc, "error", None),
+    ]
+    seen: set[int] = set()
+    while pending:
+        value = pending.pop()
+        if value is None:
+            continue
+        if isinstance(value, str):
+            if value.lower() == "model_not_found":
+                return value
+            continue
+        value_id = id(value)
+        if value_id in seen:
+            continue
+        seen.add(value_id)
+        if isinstance(value, dict):
+            code = value.get("code")
+            if isinstance(code, str):
+                return code
+            pending.extend(
+                value.get(key)
+                for key in ("error", "detail", "body")
+            )
+            continue
+        code = getattr(value, "code", None)
+        if isinstance(code, str):
+            return code
+        pending.extend(
+            getattr(value, key, None)
+            for key in ("error", "detail", "body")
+        )
+    return None
+
+
+def _is_model_unavailable_error(exc: BaseException) -> bool:
+    """Return whether this candidate cannot serve the requested model.
+
+    Retrying the same model cannot fix a permission or model-catalog mismatch,
+    but another candidate may be usable. Authentication failures (401) are
+    deliberately excluded because switching models does not repair bad
+    credentials.
+    """
+
+    if _status_code(exc) in {403, 404}:
+        return True
+    code = (_provider_error_code(exc) or "").lower()
+    if code == "model_not_found":
+        return True
+    return "model_not_found" in str(exc).lower()
+
 
 def _retry_after_seconds(exc: BaseException) -> float | None:
     response = getattr(exc, "response", None)
@@ -360,6 +449,12 @@ class RegistryLLMGateway(LLMGateway):
         self._routing_policy: dict[str, Any] | None = None
         self._semantic_cache = None
         self._use_cache: bool = False
+        # Shared by context-bound clones. Strict preflight populates this only
+        # through provider model-metadata endpoints, never generation calls.
+        self._model_access_cache: dict[
+            str, tuple[float, ModelAccessResult]
+        ] = {}
+        self._model_access_lock = asyncio.Lock()
         # Per-instance selection record. The compiler lifts this into
         # state["model_selections"]; direct callers read it as a property.
         self._selection_history: list[dict[str, Any]] = []
@@ -413,6 +508,135 @@ class RegistryLLMGateway(LLMGateway):
         clone._call_seq = 0
         return clone
 
+    def _cached_model_access(self, model: str) -> ModelAccessResult | None:
+        cached = self._model_access_cache.get(model)
+        if cached is None:
+            return None
+        checked_at, result = cached
+        if (
+            time.monotonic() - checked_at
+            > settings.llm_model_access_cache_ttl_seconds
+        ):
+            self._model_access_cache.pop(model, None)
+            return None
+        return ModelAccessResult(
+            available=result.available,
+            reason=result.reason,
+            status_code=result.status_code,
+            cached=True,
+        )
+
+    def _available_for_auto(self, model: str) -> bool:
+        """Combine configured-provider checks with verified project access."""
+
+        if not _is_model_available(model):
+            return False
+        result = self._cached_model_access(model)
+        return result.available if result is not None else True
+
+    async def probe_model_access(
+        self,
+        models: list[str] | tuple[str, ...] | set[str],
+    ) -> dict[str, ModelAccessResult]:
+        """Probe concrete models without creating a completion.
+
+        Cloud gateways use the provider's model-metadata endpoint. Local
+        endpoints already have a dedicated readiness probe, so this method
+        records only their configured state and lets that probe do the network
+        check.
+        """
+
+        requested = sorted(
+            {
+                model
+                for model in models
+                if model and model != AUTO_MODEL
+            }
+        )
+        results: dict[str, ModelAccessResult] = {}
+
+        async with self._model_access_lock:
+            for model in requested:
+                cached = self._cached_model_access(model)
+                if cached is not None:
+                    results[model] = cached
+                    continue
+
+                if not _is_model_available(model):
+                    result = ModelAccessResult(
+                        available=False,
+                        reason="provider is not configured or enabled",
+                    )
+                    self._model_access_cache[model] = (
+                        time.monotonic(),
+                        result,
+                    )
+                    results[model] = result
+                    continue
+
+                if is_local_model(model):
+                    result = ModelAccessResult(
+                        available=True,
+                        reason=(
+                            "local endpoint is configured; its readiness "
+                            "probe runs separately"
+                        ),
+                    )
+                    self._model_access_cache[model] = (
+                        time.monotonic(),
+                        result,
+                    )
+                    results[model] = result
+                    continue
+
+                try:
+                    gateway, resolved = get_gateway(model)
+                    probe = getattr(gateway, "probe_model_access", None)
+                    if probe is None:
+                        # Dependency-injected gateways used by tests and
+                        # private deployments may not expose provider metadata.
+                        result = ModelAccessResult(
+                            available=True,
+                            reason="injected gateway has no metadata probe",
+                        )
+                    else:
+                        await asyncio.wait_for(
+                            probe(resolved),
+                            timeout=(
+                                settings
+                                .llm_model_access_probe_timeout_seconds
+                            ),
+                        )
+                        result = ModelAccessResult(
+                            available=True,
+                            reason="provider confirmed model access",
+                        )
+                except Exception as exc:
+                    status = _status_code(exc)
+                    if status in {401, 403, 404}:
+                        reason = (
+                            "provider rejected this model for the configured "
+                            f"project (HTTP {status})"
+                        )
+                    else:
+                        reason = (
+                            "model metadata probe failed: "
+                            f"{type(exc).__name__}"
+                        )
+                    result = ModelAccessResult(
+                        available=False,
+                        reason=reason,
+                        status_code=status,
+                    )
+
+                self._model_access_cache[model] = (
+                    time.monotonic(),
+                    result,
+                )
+                results[model] = result
+
+        return results
+
     @property
     def selection_history(self) -> list[dict[str, Any]]:
         """Per-call model-selection events recorded on this bound gateway.
@@ -448,7 +672,7 @@ class RegistryLLMGateway(LLMGateway):
                 kwargs=kwargs,
                 input_tokens=input_tokens,
                 allowed_models=allowed,
-                is_available=_is_model_available,
+                is_available=self._available_for_auto,
                 node_type=self._node_type,
                 policy=self._routing_policy,
             )
@@ -489,14 +713,46 @@ class RegistryLLMGateway(LLMGateway):
         except Exception:
             pass  # cost tracking must never break the actual LLM call
 
-    def _models_for_call(self, intended: str) -> list[str]:
-        """Return primary then fallback, without duplicate static fallback."""
+    def _models_for_call(
+        self,
+        intended: str,
+        candidate_models: tuple[str, ...] | list[str] | None = None,
+    ) -> list[str]:
+        """Return the permitted, ordered runtime fallback chain.
 
-        primary = resolve_model(intended)
-        candidates = [primary]
-        fallback = _FALLBACK_MODEL.get(intended)
-        if fallback and fallback != primary:
-            candidates.append(fallback)
+        Auto routing supplies its complete scored candidate list. Manual and
+        legacy calls retain the static provider fallback. Filtering happens
+        before model resolution so a fallback can never escape the node's
+        ``allowed_models`` boundary.
+        """
+
+        requested = list(candidate_models or [intended])
+        if intended not in requested:
+            requested.insert(0, intended)
+        if candidate_models is None:
+            static_fallback = _FALLBACK_MODEL.get(intended)
+            if static_fallback and static_fallback not in requested:
+                requested.append(static_fallback)
+
+        allowed = (
+            set(self._allowed_models)
+            if self._allowed_models is not None
+            else None
+        )
+        candidates: list[str] = []
+        for model in requested:
+            if model == AUTO_MODEL:
+                continue
+            if allowed is not None and model not in allowed:
+                continue
+            resolved = resolve_model(model)
+            if resolved not in candidates:
+                candidates.append(resolved)
+
+        if not candidates:
+            raise LLMProviderUnavailableError(
+                "No permitted model remains in the runtime fallback chain."
+            )
         return candidates
 
     def _delay_for(self, attempt: int, exc: BaseException) -> float:
@@ -524,8 +780,12 @@ class RegistryLLMGateway(LLMGateway):
         *,
         intended: str,
         kwargs: dict[str, Any],
+        candidate_models: tuple[str, ...] | list[str] | None = None,
     ) -> tuple[Any, str]:
-        candidates = self._models_for_call(intended)
+        candidates = self._models_for_call(
+            intended,
+            candidate_models=candidate_models,
+        )
         last_error: BaseException | None = None
 
         for model_index, candidate in enumerate(candidates):
@@ -549,14 +809,44 @@ class RegistryLLMGateway(LLMGateway):
                     method = getattr(gateway, method_name)
                     response = await method(model=resolved, **kwargs)
                     return response, resolved
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
                     last_error = exc
                     retryable = _is_retryable_error(exc)
+                    model_unavailable = _is_model_unavailable_error(exc)
                     metrics.LLM_CALLS.labels(
                         model=resolved,
                         status="error",
                     ).inc()
                     exhausted = attempt >= self._retry_policy.max_attempts
+
+                    if model_unavailable:
+                        unavailable_result = ModelAccessResult(
+                            available=False,
+                            reason=(
+                                "runtime call confirmed this model is "
+                                "unavailable"
+                            ),
+                            status_code=_status_code(exc),
+                        )
+                        for unavailable_model in {candidate, resolved}:
+                            self._model_access_cache[unavailable_model] = (
+                                time.monotonic(),
+                                unavailable_result,
+                            )
+                        log.warning(
+                            "llm.model_unavailable",
+                            intended=intended,
+                            resolved=resolved,
+                            status_code=_status_code(exc),
+                            provider_error_code=_provider_error_code(exc),
+                            has_fallback=model_index + 1 < len(candidates),
+                            error_type=type(exc).__name__,
+                            run_id=self._run_id,
+                            node_id=self._node_id,
+                        )
+                        break
 
                     if not retryable:
                         log.error(
@@ -703,7 +993,14 @@ class RegistryLLMGateway(LLMGateway):
             "complete",
             intended=intended,
             kwargs=call_kwargs,
+            candidate_models=(
+                selection.candidate_models
+                if model == AUTO_MODEL
+                else None
+            ),
         )
+        event_dict["actual_model"] = resolved
+        event_dict["fallback"] = resolved != resolved_preview
         _record_usage(intended, resolved, resp)
         self._record_cost(intended, resolved, resp)
         return resp
@@ -745,7 +1042,14 @@ class RegistryLLMGateway(LLMGateway):
             "complete_structured",
             intended=intended,
             kwargs=kwargs,
+            candidate_models=(
+                selection.candidate_models
+                if model == AUTO_MODEL
+                else None
+            ),
         )
+        event_dict["actual_model"] = resolved
+        event_dict["fallback"] = resolved != resolved_preview
         # Concrete gateways return StructuredResult so cost survives native
         # structured output. The registry preserves the public bare-model API.
         _record_usage(intended, resolved, resp)
@@ -789,7 +1093,14 @@ class RegistryLLMGateway(LLMGateway):
             "chat_with_tools",
             intended=intended,
             kwargs=kwargs,
+            candidate_models=(
+                selection.candidate_models
+                if model == AUTO_MODEL
+                else None
+            ),
         )
+        event_dict["actual_model"] = resolved
+        event_dict["fallback"] = resolved != resolved_preview
         _record_usage(intended, resolved, resp)
         self._record_cost(intended, resolved, resp)
         return resp

@@ -55,6 +55,15 @@ class AnthropicGateway(LLMGateway):
             max_retries=0,
         )
 
+    async def probe_model_access(self, model: str) -> str:
+        """Verify workspace access through model metadata, with no generation."""
+
+        result = await self._client.models.retrieve(
+            model_id=model,
+            timeout=settings.llm_model_access_probe_timeout_seconds,
+        )
+        return result.id
+
     async def _create(
         self,
         *,

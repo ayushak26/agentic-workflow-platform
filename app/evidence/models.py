@@ -1,9 +1,10 @@
 """Typed contracts for the EU proposal evidence factory."""
 from __future__ import annotations
 
-from typing import Any, Literal
+import json
+from typing import Any, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
 EvidencePurpose = Literal[
@@ -284,3 +285,52 @@ class ProposalEvidencePackage(BaseModel):
     evidence_gaps: list[EvidenceGap] = Field(default_factory=list)
     qa_report: EvidenceQAReport
     blocking_issues: list[str] = Field(default_factory=list)
+
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+def coerce_typed_list_field(
+    value: Any,
+    model: type[_ModelT],
+    field_name: str,
+) -> str | list[_ModelT]:
+    """Accept a node's records as a list, JSON text, or empty text.
+
+    Config fields typed ``str | list[Model]`` hold an unresolved
+    ``{{node.field}}`` template string at compile time and the real value
+    once the runtime substitutes it. Callers that paste that real value by
+    hand (workflow "text"/"json" inputs) may supply it as JSON text rather
+    than an already-parsed list, or paste empty text to mean "none". Passing
+    a whole node record (a dict) instead of its list field is the most common
+    mistake, so that case gets a specific, actionable message instead of
+    pydantic's generic union error.
+    """
+    if isinstance(value, list):
+        return TypeAdapter(list[model]).validate_python(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if "{{" in text and "}}" in text:
+            return value  # Unresolved template placeholder; substituted later.
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"{field_name} must be empty, a template placeholder, or a "
+                f"JSON array of {model.__name__} records; could not parse "
+                f"the supplied text: {exc}"
+            ) from exc
+        return coerce_typed_list_field(parsed, model, field_name)
+    if isinstance(value, dict):
+        raise ValueError(
+            f"{field_name} must be a JSON array of {model.__name__} "
+            f"records, not a single object (got keys: {sorted(value)}). "
+            "Copy the node's output FIELD (a list), not the whole node "
+            "input/output record."
+        )
+    raise ValueError(
+        f"{field_name} must be empty text, a template placeholder, or a "
+        f"JSON array of {model.__name__} records."
+    )

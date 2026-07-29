@@ -1,0 +1,408 @@
+name: Horizon Europe Part B - Drafts to DOCX (full checkpoint)
+description: >-
+  Post-drafting "resume from drafts" checkpoint for the Horizon Europe RIA/IA
+  Part B workflow. Every artifact the upstream pipeline produces is declared as
+  an input so this file is Import-inputs-from-JSON compatible with the full and
+  acquisition variants. The six official section drafts (1.1, 1.2, 2.1,
+  2.2 [+optional 2.3], 3.1, 3.2) plus the locked blueprint, verified evidence
+  and call context are supplied directly; this workflow does not re-run
+  discovery, evidence verification or drafting. It compiles the drafts into one
+  coherent Part B, runs an independent evaluation and red-team pass, applies a
+  single controlled revision tuned to fill the page budget to a full ~44-page
+  proposal within the 45-page hard limit, runs deterministic consistency and
+  submission gates, and renders an editable DOCX. Missing facts stay visible as
+  [INPUT NEEDED] markers and block submission-readiness; nothing is fabricated
+  to fill space.
+  INPUT USAGE: inputs marked [LIVE] are consumed by a node prompt/config below;
+  inputs marked [PASSTHROUGH] are declared for checkpoint completeness and
+  provenance but are not yet read by any node - wire them into a prompt when a
+  node needs them.
+version: 2.0-drafts2docx-full
+use_case: eu_proposal
+
+inputs:
+  # ---- Renderer / identity -------------------------------------------------
+  metadata:
+    type: json
+    required: true
+    description: "[LIVE] partb_metadata.parsed - proposal title, acronym, call_id, action_type, funding_model, consortium_name, part_label, version. Used by the DOCX renderer."
+
+  # ---- Evidence layer ------------------------------------------------------
+  citation_registry:
+    type: json
+    required: true
+    description: "[LIVE] verify_evidence.citation_registry - verified citation IDs used across the section drafts. Used by final_revision and the renderer bibliography."
+
+  evidence_qa:
+    type: json
+    required: true
+    description: "[LIVE] verify_evidence.qa_report - evidence QA summary. Used by the red-team pass and the renderer."
+
+  evidence_blockers:
+    type: json
+    required: true
+    description: "[LIVE] verify_evidence.blocking_issues - unresolved evidence blockers. Used by the submission gate."
+
+  verified_claims:
+    type: json
+    required: false
+    description: "[LIVE] verify_evidence.verified_claims - full verified claim records (claim -> evidence -> locator -> verification). Given to the red-team pass so it can check citation/claim fit precisely."
+
+  scientific_synthesis:
+    type: text
+    required: false
+    description: "[LIVE] scientific_synthesis.answer - proposal-engineering evidence synthesis. Given to final_revision so evidence-safe expansions stay grounded."
+
+  # ---- Call layer ----------------------------------------------------------
+  call_intelligence:
+    type: json
+    required: false
+    description: "[LIVE] call_intelligence.parsed - atomic call checklist (expected outcomes, scope, mandatory conditions, evaluation priorities, exclusions, page/format rules). Given to compile_v1 and red_team_v1 to check coverage and format rules."
+
+  call_coverage:
+    type: json
+    required: true
+    description: "[LIVE] call_coverage output - requirement -> section coverage matrix. Used by the red-team pass."
+
+  # ---- Blueprint / normalised source --------------------------------------
+  proposal_blueprint:
+    type: json
+    required: false
+    description: "[LIVE] proposal_blueprint.parsed - the locked single source of truth (objective->result->outcome->impact chain, page budget, WP/task/deliverable/KPI/risk registers, figure/table plan). Given to compile_v1, red_team_v1 and final_revision to keep every section aligned to the frozen model."
+
+  normalise_report:
+    type: json
+    required: false
+    description: "[PASSTHROUGH] normalise_source_graph.report - typed ProposalGraph extracted from source. Declared for provenance; not yet read by a node."
+
+  normalise_warnings:
+    type: json
+    required: false
+    description: "[PASSTHROUGH] normalise_source_graph.warnings - normalisation warnings. Declared for provenance; not yet read by a node."
+
+  # ---- Discovery provenance ------------------------------------------------
+  candidates:
+    type: json
+    required: false
+    description: "[PASSTHROUGH] discover_evidence.candidates - scholarly candidate list. Declared for provenance/audit; evidence is already verified, so no node re-reads it."
+
+  search_audit:
+    type: json
+    required: false
+    description: "[PASSTHROUGH] discover_evidence.search_audit - search provenance for the evidence run. Declared for audit; not read by a node."
+
+  # ---- Source text ---------------------------------------------------------
+  concept_note:
+    type: file
+    required: false
+    multiple: true
+    max_files: 5
+    accept: [pdf, document, markdown, presentation]
+    description: "[LIVE] The selected project concept note file(s). Loaded and given to final_revision so revisions stay faithful to the actual concept, not the drafts alone."
+
+  documents:
+    type: file
+    required: false
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+    description: "[PASSTHROUGH] Supporting documents (call text, template, consortium, budget, pilots). Declared so the checkpoint is self-contained; not re-read here because the drafts already encode them. Wire into a node if a section must be re-derived."
+
+  # ---- Section drafts (the core payload) -----------------------------------
+  draft_1_1:
+    type: text
+    required: true
+    description: "[LIVE] draft_1_1_objectives_ambition.raw - Markdown for '1.1 Objectives and ambition'."
+
+  draft_1_2:
+    type: text
+    required: true
+    description: "[LIVE] draft_1_2_methodology.raw - Markdown for '1.2 Methodology'."
+
+  draft_2_1:
+    type: text
+    required: true
+    description: "[LIVE] draft_2_1_pathways.raw - Markdown for '2.1 Project's pathways towards impact'."
+
+  draft_2_2_2_3:
+    type: text
+    required: true
+    description: "[LIVE] draft_2_2_measures_and_2_3_summary.raw - Markdown for '2.2 Measures to maximise impact' and optional '2.3 Summary'."
+
+  draft_3_1:
+    type: text
+    required: true
+    description: "[LIVE] draft_3_1_workplan_resources.raw - Markdown for '3.1 Work plan and resources', including Tables 3.1a-3.1h."
+
+  draft_3_2:
+    type: text
+    required: true
+    description: "[LIVE] draft_3_2_consortium.raw - Markdown for '3.2 Capacity of participants and consortium as a whole'."
+
+nodes:
+  - id: load_concept
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.concept_note}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: false
+
+  - id: compile_v1
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Assemble a single coherent Horizon Europe Part B Markdown document from
+        the six supplied section drafts. Preserve ONLY the official structure:
+        title and participant list; 1 Excellence with 1.1 and 1.2; 2 Impact with
+        2.1, 2.2 and optional 2.3; 3 Quality and efficiency of the implementation
+        with 3.1 and 3.2. Do not add Part A, annexes or extra numbered sections.
+
+        Use the locked blueprint as the single source of truth: every objective,
+        result, WP, task, deliverable, milestone, KPI, risk and partner must
+        agree with it. Use the call checklist to confirm the official headings,
+        page/format rules and that every mandatory requirement is present.
+
+        Remove cross-section duplication, align objectives / results / WPs /
+        tasks / deliverables / milestones / risks / KPIs / partners, keep every
+        valid citation identifier and every [INPUT NEEDED] marker, and add no
+        facts. Keep all official Tables 3.1a-3.1h as plain text tables. Keep the
+        whole document within the 45-page hard limit and aim for a full,
+        evaluator-dense proposal near the 44-page working target - do not pad
+        with filler, but do not compress a section below the evaluator value it
+        needs.
+
+        LOCKED BLUEPRINT:
+        {{ inputs.proposal_blueprint }}
+
+        CALL CHECKLIST:
+        {{ inputs.call_intelligence }}
+
+        1.1:
+        {{ inputs.draft_1_1 }}
+
+        1.2:
+        {{ inputs.draft_1_2 }}
+
+        2.1:
+        {{ inputs.draft_2_1 }}
+
+        2.2 AND OPTIONAL 2.3:
+        {{ inputs.draft_2_2_2_3 }}
+
+        3.1:
+        {{ inputs.draft_3_1 }}
+
+        3.2:
+        {{ inputs.draft_3_2 }}
+
+  - id: evaluate_v1
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{compile_v1.raw}}"
+      generator_model: auto
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 4.0
+      total_threshold: 12.0
+
+  - id: red_team_v1
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - claude-opus-5
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-sol
+      max_tokens: 12000
+      output_schema:
+        blocking_gaps: list
+        excellence_risks: list
+        impact_risks: list
+        implementation_risks: list
+        evidence_and_citation_risks: list
+        numerical_inconsistencies: list
+        page_budget_actions: list
+        safe_revision_instructions: list
+      prompt_template: |
+        Red-team this compiled Part B draft as a strict Horizon evaluator and
+        proposal engineer. Find only concrete, actionable defects. Check call
+        coverage against the coverage matrix, causal logic, measurable ambition,
+        evidence/citation fit against the verified claim records, partner and
+        work-package consistency against the blueprint, person-month and budget
+        contradictions, official Tables 3.1a-3.1h, milestones, risks, gender
+        dimension, SSH, open science and multi-actor requirements.
+
+        Also assess PAGE FILL explicitly. The target is a full ~44-page proposal
+        within a 45-page hard limit. In page_budget_actions, for each official
+        subsection state whether it is under-developed, about right, or over the
+        budget, and give specific, evidence-safe expansions for any subsection
+        that is thin (for example: add a validation-criteria table, expand a WP
+        description, add missing risk rows) - never invent facts to fill space.
+        Flag any non-official section, any content outside Part B, any likely
+        breach of the 45-page limit, and any misuse of Part A information. A
+        missing fact is a blocker or input request, not permission to invent.
+
+        DRAFT:
+        {{compile_v1.raw}}
+
+        LOCKED BLUEPRINT:
+        {{ inputs.proposal_blueprint }}
+
+        CALL CHECKLIST:
+        {{ inputs.call_intelligence }}
+
+        CALL COVERAGE:
+        {{ inputs.call_coverage }}
+
+        VERIFIED CLAIMS:
+        {{ inputs.verified_claims }}
+
+        EVIDENCE QA:
+        {{ inputs.evidence_qa }}
+
+  - id: final_revision
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Produce the final submission candidate in Markdown. Apply the evaluator
+        and red-team recommendations only when they can be resolved from the
+        supplied drafts, blueprint, concept note, scientific synthesis, citation
+        registry or evidence QA. Improve logic, specificity, consistency, section
+        balance and evaluator readability. Keep every section faithful to the
+        locked blueprint and the actual concept note - do not drift from either.
+
+        Fill the page budget toward a full proposal: aim for ~44 rendered pages
+        within the 45-page hard limit, following the page_budget_actions from the
+        red-team pass. Expand thin subsections only with evidence-safe content
+        already grounded in the drafts, blueprint and verified evidence (added
+        detail, validation tables, WP/task specificity, risk rows, KPI rows).
+        Never fabricate a missing number, partner fact, result, source, KPI, TRL,
+        budget or timeline to reach a page count - preserve unresolved facts as
+        [INPUT NEEDED: ...]. Keep all valid citation identifiers intact. Preserve
+        the exact official Part B headings. Do not create annexes or move
+        required content outside the 45-page document.
+
+        VERSION 1:
+        {{compile_v1.raw}}
+
+        LOCKED BLUEPRINT:
+        {{ inputs.proposal_blueprint }}
+
+        CONCEPT NOTE:
+        {{ load_concept.text }}
+
+        SCIENTIFIC SYNTHESIS:
+        {{ inputs.scientific_synthesis }}
+
+        INDEPENDENT EVALUATION:
+        {{evaluate_v1}}
+
+        RED TEAM:
+        {{red_team_v1.parsed}}
+
+        VERIFIED CITATIONS:
+        {{ inputs.citation_registry }}
+
+  - id: evaluate_final
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{final_revision.raw}}"
+      generator_model: auto
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 4.0
+      total_threshold: 12.0
+
+  - id: consistency_gate
+    type: ConsistencyChecker
+    config:
+      block_on_warn: false
+
+  - id: submission_gate
+    type: ProposalSubmissionGate
+    config:
+      proposal_text: "{{final_revision.raw}}"
+      evidence_blockers: "{{ inputs.evidence_blockers }}"
+      consistency_gate: "{{consistency_gate.gate}}"
+      consistency_findings: "{{consistency_gate.findings}}"
+      evaluation_threshold_passed: "{{evaluate_final.threshold_passed}}"
+      evaluation_total_score: "{{evaluate_final.total_score}}"
+      evaluation_blockers: "{{evaluate_final.deterministic_blockers}}"
+      minimum_proposal_characters: 20000
+      require_evaluation_pass: true
+      block_on_input_needed: true
+
+  - id: render_submission_docx
+    type: HorizonDOCXProposalRenderer
+    config:
+      content: "{{final_revision.raw}}"
+      content_format: markdown
+      metadata: "{{ inputs.metadata }}"
+      citation_registry: "{{ inputs.citation_registry }}"
+      evidence_qa: "{{ inputs.evidence_qa }}"
+      evidence_blockers: "{{submission_gate.blockers}}"
+      include_toc: false
+      include_bibliography: true
+      include_evidence_annex: false
+      page_limit: 45
+      enforce_page_limit: true
+
+edges:
+  - from: load_concept
+    to: compile_v1
+  - from: compile_v1
+    to:
+      - evaluate_v1
+      - red_team_v1
+  - from: evaluate_v1
+    to: final_revision
+  - from: red_team_v1
+    to: final_revision
+  - from: final_revision
+    to:
+      - evaluate_final
+      - consistency_gate
+  - from: evaluate_final
+    to: submission_gate
+  - from: consistency_gate
+    to: submission_gate
+  - from: submission_gate
+    to: render_submission_docx
+
+entry: load_concept
+exit: render_submission_docx
+
+output:
+  include_input: false
+  nodes:
+    - node_id: evaluate_final
+      flatten: false
+    - node_id: consistency_gate
+      flatten: false
+    - node_id: submission_gate
+      flatten: false
+    - node_id: render_submission_docx
+      flatten: false

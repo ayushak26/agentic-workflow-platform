@@ -9,7 +9,7 @@ import app.llm.registry as registry
 from app.llm.base import LLMResponse
 from app.llm.model_catalog import AUTO_MODEL, DEFAULT_LLM_MODELS
 from app.llm.model_router import ModelRouter, ModelRoutingError
-from app.llm.registry import RegistryLLMGateway
+from app.llm.registry import RegistryLLMGateway, RetryPolicy
 from app.runtime.executor import run_workflow
 from app.runtime.events import RunEventBus
 from app.runtime.loader import load_workflow_from_string
@@ -153,6 +153,29 @@ def test_enabled_local_models_participate_in_auto_routing():
     assert structured.selected_model == "local-glm-5"
 
 
+def test_maximum_accuracy_priority_prefers_hosted_over_free_local_tie():
+    # Same tier ("premium") and same "writing" strength as claude-opus-5, but
+    # $0-metered -> would otherwise win every cost tie-break. Under
+    # accuracy_priority: maximum, cost should not decide between
+    # equal-quality models; hosted providers should win the tie instead,
+    # since local infra doesn't carry the same reliability guarantees.
+    decision = ModelRouter().select(
+        method_name="complete",
+        kwargs={
+            "system": "Draft a Horizon Europe proposal.",
+            "user": "x" * 40_000,
+            "max_tokens": 8_000,
+        },
+        input_tokens=15_000,
+        allowed_models=DEFAULT_LLM_MODELS,
+        is_available=_all_available,
+        node_type="TransformAgent",
+        policy={"accuracy_priority": "maximum"},
+    )
+
+    assert decision.selected_model == "claude-opus-5"
+
+
 class RecordingGateway:
     def __init__(self):
         self.calls: list[str] = []
@@ -183,6 +206,83 @@ class RecordingGateway:
 
     async def chat_with_tools(self, *, model: str, **_kwargs):
         self.calls.append(model)
+        return SimpleNamespace(
+            text="ok",
+            model=model,
+            input_tokens=10,
+            output_tokens=5,
+        )
+
+
+class ModelAccessError(RuntimeError):
+    status_code = 403
+
+
+class AccessAwareRecordingGateway(RecordingGateway):
+    def __init__(self, denied: set[str] | None = None):
+        super().__init__()
+        self.denied = denied or set()
+        self.probes: list[str] = []
+
+    async def probe_model_access(self, model: str):
+        self.probes.append(model)
+        if model in self.denied:
+            raise ModelAccessError("model is not available to this project")
+        return model
+
+
+class RuntimeModelError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int,
+        code: str | None = None,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.body = {"error": {"code": code}} if code else None
+
+
+class RuntimeFailingRecordingGateway(RecordingGateway):
+    def __init__(self, failures: dict[str, BaseException] | None = None):
+        super().__init__()
+        self.failures = failures or {}
+
+    def _raise_failure(self, model: str) -> None:
+        failure = self.failures.get(model)
+        if failure is not None:
+            raise failure
+
+    async def complete(self, *, model: str, **_kwargs):
+        self.calls.append(model)
+        self._raise_failure(model)
+        return LLMResponse(
+            text="ok",
+            model=model,
+            input_tokens=10,
+            output_tokens=5,
+        )
+
+    async def complete_structured(
+        self,
+        *,
+        model: str,
+        response_model,
+        **_kwargs,
+    ):
+        self.calls.append(model)
+        self._raise_failure(model)
+        return SimpleNamespace(
+            parsed=response_model(answer="ok"),
+            model=model,
+            input_tokens=10,
+            output_tokens=5,
+        )
+
+    async def chat_with_tools(self, *, model: str, **_kwargs):
+        self.calls.append(model)
+        self._raise_failure(model)
         return SimpleNamespace(
             text="ok",
             model=model,
@@ -284,6 +384,274 @@ async def test_registry_auto_selection_applies_to_structured_calls(monkeypatch):
     assert event.context["actual_model"] == "gpt-5.6-sol"
     assert openai.calls == ["gpt-5.6-sol"]
     assert anthropic.calls == []
+
+
+def test_auto_runtime_chain_preserves_order_and_allowed_models():
+    gateway = RegistryLLMGateway().with_context(
+        run_id="run-chain",
+        session_id="user-1",
+        node_id="verify",
+        allowed_models=["gpt-5.6-sol", "claude-opus-5", "gpt-5"],
+    )
+
+    chain = gateway._models_for_call(
+        "gpt-5.6-sol",
+        candidate_models=(
+            "gpt-5.6-sol",
+            "disallowed-model",
+            "claude-opus-5",
+            "gpt-5",
+        ),
+    )
+
+    assert chain == ["gpt-5.6-sol", "claude-opus-5", "gpt-5"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RuntimeModelError("forbidden", status_code=403),
+        RuntimeModelError("missing", status_code=404),
+        RuntimeModelError(
+            "provider rejected the requested model",
+            status_code=400,
+            code="model_not_found",
+        ),
+    ],
+    ids=["http-403", "http-404", "model-not-found"],
+)
+async def test_auto_runtime_model_unavailable_advances_without_retry(
+    monkeypatch,
+    failure,
+):
+    openai = RuntimeFailingRecordingGateway(
+        failures={"gpt-5.6-sol": failure},
+    )
+    anthropic = RuntimeFailingRecordingGateway()
+    monkeypatch.setattr(
+        registry,
+        "_INSTANCES",
+        {
+            registry.OpenAIGateway: openai,
+            registry.AnthropicGateway: anthropic,
+        },
+    )
+    monkeypatch.setattr(registry, "_is_model_available", _cloud_available)
+
+    async def unexpected_sleep(_delay):
+        raise AssertionError("an unavailable model must not be retried")
+
+    gateway = RegistryLLMGateway(
+        retry_policy=RetryPolicy(max_attempts=3),
+        sleep=unexpected_sleep,
+    ).with_context(
+        run_id="run-runtime-fallback",
+        session_id="user-1",
+        node_id="partb_metadata",
+        event_bus=RunEventBus(),
+        node_type="TransformAgent",
+        allowed_models=["gpt-5.6-sol", "claude-opus-5", "gpt-5"],
+        routing_policy={"accuracy_priority": "maximum"},
+    )
+
+    result = await gateway.complete_structured(
+        model=AUTO_MODEL,
+        system="Extract renderer metadata and return the schema.",
+        user="x" * 76_000,
+        response_model=StructuredAnswer,
+        max_tokens=4_000,
+    )
+
+    assert result.answer == "ok"
+    assert openai.calls == ["gpt-5.6-sol"]
+    assert anthropic.calls == ["claude-opus-5"]
+    assert gateway.selection_history[-1]["candidate_models"] == [
+        "gpt-5.6-sol",
+        "claude-opus-5",
+        "gpt-5",
+    ]
+    assert gateway.selection_history[-1]["actual_model"] == "claude-opus-5"
+    assert gateway.selection_history[-1]["fallback"] is True
+
+    second_result = await gateway.complete_structured(
+        model=AUTO_MODEL,
+        system="Extract renderer metadata and return the schema.",
+        user="x" * 76_000,
+        response_model=StructuredAnswer,
+        max_tokens=4_000,
+    )
+
+    assert second_result.answer == "ok"
+    assert openai.calls == ["gpt-5.6-sol"]
+    assert anthropic.calls == ["claude-opus-5", "claude-opus-5"]
+    assert gateway.selection_history[-1]["selected_model"] == "claude-opus-5"
+    assert gateway.selection_history[-1]["fallback"] is False
+
+
+@pytest.mark.asyncio
+async def test_auto_runtime_chain_can_skip_multiple_unavailable_models(
+    monkeypatch,
+):
+    openai = RuntimeFailingRecordingGateway(
+        failures={
+            "gpt-5.6-sol": RuntimeModelError(
+                "forbidden",
+                status_code=403,
+            ),
+        },
+    )
+    anthropic = RuntimeFailingRecordingGateway(
+        failures={
+            "claude-opus-5": RuntimeModelError(
+                "missing",
+                status_code=404,
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        registry,
+        "_INSTANCES",
+        {
+            registry.OpenAIGateway: openai,
+            registry.AnthropicGateway: anthropic,
+        },
+    )
+    monkeypatch.setattr(registry, "_is_model_available", _cloud_available)
+    gateway = RegistryLLMGateway(
+        retry_policy=RetryPolicy(max_attempts=3),
+    ).with_context(
+        run_id="run-multiple-fallbacks",
+        session_id="user-1",
+        node_id="partb_metadata",
+        event_bus=RunEventBus(),
+        node_type="TransformAgent",
+        allowed_models=["gpt-5.6-sol", "claude-opus-5", "gpt-5"],
+        routing_policy={"accuracy_priority": "maximum"},
+    )
+
+    result = await gateway.complete_structured(
+        model=AUTO_MODEL,
+        system="Extract renderer metadata and return the schema.",
+        user="x" * 76_000,
+        response_model=StructuredAnswer,
+        max_tokens=4_000,
+    )
+
+    assert result.answer == "ok"
+    assert openai.calls == ["gpt-5.6-sol", "gpt-5"]
+    assert anthropic.calls == ["claude-opus-5"]
+    assert gateway.selection_history[-1]["actual_model"] == "gpt-5"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", ["complete", "chat_with_tools"])
+async def test_auto_runtime_fallback_is_wired_for_other_call_types(
+    monkeypatch,
+    method_name,
+):
+    openai = RuntimeFailingRecordingGateway(
+        failures={
+            "gpt-5.6-sol": RuntimeModelError(
+                "forbidden",
+                status_code=403,
+            ),
+        },
+    )
+    anthropic = RuntimeFailingRecordingGateway(
+        failures={
+            "claude-opus-5": RuntimeModelError(
+                "forbidden",
+                status_code=403,
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        registry,
+        "_INSTANCES",
+        {
+            registry.OpenAIGateway: openai,
+            registry.AnthropicGateway: anthropic,
+        },
+    )
+    monkeypatch.setattr(registry, "_is_model_available", _cloud_available)
+    node_type = (
+        "ProposalSectionDraftAgent"
+        if method_name == "complete"
+        else "MCPAgent"
+    )
+    gateway = RegistryLLMGateway(
+        retry_policy=RetryPolicy(max_attempts=3),
+    ).with_context(
+        run_id=f"run-{method_name}",
+        session_id="user-1",
+        node_id="proposal-node",
+        event_bus=RunEventBus(),
+        node_type=node_type,
+        allowed_models=["gpt-5.6-sol", "claude-opus-5", "gpt-5"],
+        routing_policy={"accuracy_priority": "maximum"},
+    )
+
+    if method_name == "complete":
+        response = await gateway.complete(
+            model=AUTO_MODEL,
+            system="Draft the proposal section.",
+            user="x" * 76_000,
+            max_tokens=4_000,
+        )
+    else:
+        response = await gateway.chat_with_tools(
+            model=AUTO_MODEL,
+            system="Research the proposal evidence.",
+            messages=[{"role": "user", "content": "x" * 76_000}],
+            tools=[],
+            max_tokens=4_000,
+        )
+
+    assert response.text == "ok"
+    assert gateway.selection_history[-1]["fallback"] is True
+    assert gateway.selection_history[-1]["actual_model"] == "gpt-5"
+
+
+@pytest.mark.asyncio
+async def test_zero_token_probe_excludes_inaccessible_auto_model(monkeypatch):
+    openai = AccessAwareRecordingGateway(denied={"gpt-5.6-sol"})
+    monkeypatch.setattr(
+        registry,
+        "_INSTANCES",
+        {registry.OpenAIGateway: openai},
+    )
+    gateway = RegistryLLMGateway()
+
+    access = await gateway.probe_model_access(
+        {"gpt-5.6-sol", "gpt-5"},
+    )
+
+    assert access["gpt-5.6-sol"].available is False
+    assert access["gpt-5.6-sol"].status_code == 403
+    assert access["gpt-5"].available is True
+    assert openai.calls == []
+
+    bound = gateway.with_context(
+        run_id="run-access",
+        session_id="user-1",
+        node_id="verify",
+        event_bus=RunEventBus(),
+        node_type="ProposalEvidenceFactoryAgent",
+        allowed_models=["gpt-5.6-sol", "gpt-5"],
+        routing_policy={"accuracy_priority": "maximum"},
+    )
+    result = await bound.complete_structured(
+        model=AUTO_MODEL,
+        system="Verify scientific evidence and return the schema.",
+        user="x" * 40_000,
+        response_model=StructuredAnswer,
+        max_tokens=8_000,
+    )
+
+    assert result.answer == "ok"
+    assert openai.calls == ["gpt-5"]
+    assert bound.selection_history[-1]["selected_model"] == "gpt-5"
 
 
 @pytest.mark.asyncio

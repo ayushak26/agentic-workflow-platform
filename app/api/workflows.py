@@ -15,6 +15,9 @@ from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import (
+    PreflightCheck,
+    PreflightIssue,
+    PreflightSeverity,
     WorkflowPreflightReport,
     preflight_workflow_for_run,
     preflight_workflow_yaml,
@@ -175,6 +178,50 @@ async def validate_workflow(
             probe_services=True,
             require_run_history=True,
         )
+        if report.valid:
+            try:
+                spec = load_workflow_from_string(req.workflow_yaml)
+                await validate_workflow_inputs(
+                    spec.inputs,
+                    req.inputs or {},
+                    session_id=_scope(user, None),
+                    object_store=services.get("object_store"),
+                )
+            except WorkflowFileInputError as exc:
+                report.issues.append(
+                    PreflightIssue(
+                        code="WORKFLOW_INPUT_INVALID",
+                        severity=PreflightSeverity.ERROR,
+                        message=str(exc),
+                        path="inputs",
+                        suggestion=(
+                            "Re-upload the affected file or correct the input "
+                            "before starting the workflow."
+                        ),
+                    )
+                )
+                report.checks.append(
+                    PreflightCheck(
+                        name="input_files",
+                        status="failed",
+                        detail=(
+                            "Input references were checked without executing "
+                            "a node."
+                        ),
+                    )
+                )
+                report.refresh()
+            else:
+                report.checks.append(
+                    PreflightCheck(
+                        name="input_files",
+                        status="passed",
+                        detail=(
+                            "Input references exist, belong to this session, "
+                            "and match the workflow contract."
+                        ),
+                    )
+                )
     else:
         report = preflight_workflow_yaml(
             req.workflow_yaml,

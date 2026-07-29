@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api,rehydrate } from '../../api/client';
+import { CopyButton } from '../../components/CopyButton';
 import type {
   AuditEvent,
   EventType,
@@ -98,10 +99,16 @@ function workflowFileRefs(value: unknown): WorkflowFileReference[] {
 function FileInputValue({ value }: { value: unknown }) {
   const refs = workflowFileRefs(value);
   if (refs.length === 0) {
+    const rendered = renderValue(value);
     return (
-      <pre className="font-mono text-[11px] text-ink-700 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-        {renderValue(value)}
-      </pre>
+      <div className="relative">
+        <div className="absolute right-0 top-0">
+          <CopyButton text={rendered} />
+        </div>
+        <pre className="font-mono text-[11px] text-ink-700 whitespace-pre-wrap break-words max-h-64 overflow-y-auto pr-16">
+          {rendered}
+        </pre>
+      </div>
     );
   }
   return (
@@ -245,20 +252,42 @@ function NodeCard({
             </div>
           )}
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-ink-300 mb-1">
-              Node input
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[11px] uppercase tracking-wide text-ink-300">
+                Node input
+              </div>
+              {nodeRun && (
+                <CopyButton text={renderValue(nodeRun.input)} label="Copy input" />
+              )}
             </div>
             <pre className="text-[12px] leading-relaxed text-ink-700 whitespace-pre-wrap break-words font-mono max-h-72 overflow-y-auto">
               {nodeRun ? renderValue(nodeRun.input) : 'Input not recorded for this older run.'}
             </pre>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wide text-ink-300 mb-1">
-              Node output
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-[11px] uppercase tracking-wide text-ink-300">
+                Node output
+              </div>
+              {value != null && (
+                <CopyButton text={readableOutput(value)} label="Copy output" />
+              )}
             </div>
             <pre className="text-[12px] leading-relaxed text-ink-700 whitespace-pre-wrap break-words font-mono max-h-96 overflow-y-auto">
               {value == null && status === 'running' ? 'Running…' : readableOutput(value)}
             </pre>
+            {value != null && typeof value === 'object' && !Array.isArray(value) && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {Object.entries(value as Record<string, unknown>).map(([field, fieldValue]) => (
+                  <CopyButton
+                    key={field}
+                    text={renderValue(fieldValue)}
+                    label={`Copy "${field}" field`}
+                    className="text-[9px]"
+                  />
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -527,7 +556,16 @@ export function RunHistory() {
             )}
 
             <div className="mb-5">
-              <div className="text-xs font-medium text-ink-500 mb-2">Inputs</div>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-ink-500">Inputs</div>
+                {Object.entries(inputs).length > 0 && (
+                  <CopyButton
+                    text={JSON.stringify(inputs, null, 2)}
+                    label="Copy as JSON"
+                    copiedLabel="Copied"
+                  />
+                )}
+              </div>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
                 {Object.entries(inputs).length === 0 ? (
                   <div className="px-4 py-2.5 text-xs text-ink-300">—</div>

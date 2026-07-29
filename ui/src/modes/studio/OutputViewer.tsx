@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
+import { CopyButton } from '../../components/CopyButton';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 
 export function OutputViewer({
@@ -321,7 +322,16 @@ export function OutputViewer({
                                 const o = out ?? {};
                                 return (
                                     <div key={nid} className="border border-slate-200 rounded-md p-3 bg-white">
-                                        <div className="font-mono text-sm font-medium mb-1">{nid}</div>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <div className="font-mono text-sm font-medium">{nid}</div>
+                                            <CopyButton
+                                                text={
+                                                    typeof o.raw === 'string' && o.raw
+                                                        ? o.raw
+                                                        : JSON.stringify(o.parsed ?? o, null, 2)
+                                                }
+                                            />
+                                        </div>
                                         {typeof o.raw === 'string' && o.raw ? (
                                             <div className="text-sm whitespace-pre-wrap text-ink-700">{o.raw}</div>
                                         ) : o.decision ? (
@@ -337,6 +347,22 @@ export function OutputViewer({
                                             <pre className="text-xs bg-slate-50 rounded p-2 overflow-x-auto">
                                                 {JSON.stringify(o, null, 2)}
                                             </pre>
+                                        )}
+                                        {o != null && typeof o === 'object' && !Array.isArray(o) && (
+                                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                                {Object.entries(o as Record<string, unknown>).map(([field, fieldValue]) => (
+                                                    <CopyButton
+                                                        key={field}
+                                                        text={
+                                                            typeof fieldValue === 'string'
+                                                                ? fieldValue
+                                                                : JSON.stringify(fieldValue, null, 2)
+                                                        }
+                                                        label={`Copy "${field}" field`}
+                                                        className="text-[9px]"
+                                                    />
+                                                ))}
+                                            </div>
                                         )}
                                     </div>
                                 );

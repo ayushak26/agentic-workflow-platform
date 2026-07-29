@@ -16,7 +16,7 @@ from pydantic import BaseModel, ValidationError
 
 from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
 from app.llm.errors import StructuredOutputError
-from app.llm.openai_gw import StructuredResult
+from app.llm.openai_gw import StructuredResult, _system_messages
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -140,7 +140,7 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         create_kwargs: dict[str, Any] = {
             "model": self.profile.served_model,
             "messages": [
-                {"role": "system", "content": system},
+                *_system_messages(system),
                 {"role": "user", "content": user},
             ],
             self._max_tokens_field(): max_tokens,
@@ -173,7 +173,7 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         structured_kwargs: dict[str, Any] = {
             "model": self.profile.served_model,
             "messages": [
-                {"role": "system", "content": system},
+                *_system_messages(system),
                 {"role": "user", "content": user},
             ],
             self._max_tokens_field(): max_tokens,
@@ -216,9 +216,7 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> LLMToolUseResponse:
-        openai_messages: list[dict[str, Any]] = [
-            {"role": "system", "content": system}
-        ]
+        openai_messages: list[dict[str, Any]] = _system_messages(system)
         for message in messages:
             role = message["role"]
             if role == "user":

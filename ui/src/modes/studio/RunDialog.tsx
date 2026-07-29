@@ -2,8 +2,25 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { api } from '../../api/client';
-import type { WorkflowFileCapabilities } from '../../api/types';
+import type { WorkflowFileCapabilities, WorkflowFileReference } from '../../api/types';
 import type { WorkflowInputSpec } from './yaml-bridge';
+
+function isFileReferenceLike(value: unknown): value is WorkflowFileReference {
+  return (
+    typeof value === 'object'
+    && value !== null
+    && (value as { kind?: unknown }).kind === 'workflow_file'
+    && typeof (value as { file_id?: unknown }).file_id === 'string'
+  );
+}
+
+function fileReferencesFrom(value: unknown): WorkflowFileReference[] | null {
+  if (isFileReferenceLike(value)) return [value];
+  if (Array.isArray(value) && value.length > 0 && value.every(isFileReferenceLike)) {
+    return value as WorkflowFileReference[];
+  }
+  return null;
+}
 
 const FALLBACK_CATEGORIES: Record<string, string[]> = {
   pdf: ['.pdf'],
@@ -68,6 +85,8 @@ function FileInputField({
   inputName,
   spec,
   files,
+  loadedRefs,
+  onClearLoaded,
   capabilities,
   error,
   onChange,
@@ -76,6 +95,8 @@ function FileInputField({
   inputName: string;
   spec: WorkflowInputSpec;
   files: File[];
+  loadedRefs: WorkflowFileReference[];
+  onClearLoaded: () => void;
   capabilities: WorkflowFileCapabilities;
   error?: string;
   onChange: (files: File[], error?: string) => void;
@@ -137,63 +158,89 @@ function FileInputField({
         <p className="text-xs text-ink-500 mb-2">{spec.description}</p>
       )}
 
-      <label
-        htmlFor={inputId}
-        onDragOver={event => {
-          event.preventDefault();
-          event.dataTransfer.dropEffect = 'copy';
-        }}
-        onDrop={event => {
-          event.preventDefault();
-          addFiles(Array.from(event.dataTransfer.files));
-        }}
-        className="mt-1 flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-4 text-center hover:border-accent-500 hover:bg-accent-50"
-      >
-        <span className="text-sm font-medium text-ink-700">
-          Drop files here or choose files
-        </span>
-        <span className="mt-1 text-xs text-ink-500">
-          {spec.accept?.join(', ') || 'PDF, documents, Markdown, presentations, spreadsheets, code, images'}
-          {' · '}up to {maximum} file{maximum === 1 ? '' : 's'}
-          {' · '}{formatBytes(capabilities.max_file_size_bytes)} each
-        </span>
-      </label>
-      <input
-        id={inputId}
-        type="file"
-        multiple={Boolean(spec.multiple)}
-        accept={extensions.join(',')}
-        className="sr-only"
-        onChange={event => {
-          addFiles(Array.from(event.target.files ?? []));
-          event.target.value = '';
-        }}
-      />
-
-      {files.length > 0 && (
-        <ul className="mt-2 space-y-1.5">
-          {files.map((file, index) => (
-            <li
-              key={`${file.name}:${file.size}`}
-              className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2"
+      {loadedRefs.length > 0 ? (
+        <div className="mt-1 rounded-lg border border-accent-200 bg-accent-50 px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-accent-700">
+              Loaded from JSON
+            </span>
+            <button
+              type="button"
+              onClick={onClearLoaded}
+              className="text-xs text-ink-500 hover:underline"
             >
-              <div className="min-w-0">
-                <div className="truncate text-sm text-ink-700">{file.name}</div>
-                <div className="text-xs text-ink-500">
-                  {formatBytes(file.size)}
-                  {file.type ? ` · ${file.type}` : ''}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => onChange(files.filter((_, i) => i !== index))}
-                className="ml-3 text-xs text-bad hover:underline"
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
+              Clear · upload manually instead
+            </button>
+          </div>
+          <ul className="mt-1.5 space-y-1">
+            {loadedRefs.map(ref => (
+              <li key={ref.file_id} className="text-xs text-ink-700 truncate">
+                {ref.name} <span className="text-ink-500">({formatBytes(ref.size_bytes)})</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <>
+          <label
+            htmlFor={inputId}
+            onDragOver={event => {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'copy';
+            }}
+            onDrop={event => {
+              event.preventDefault();
+              addFiles(Array.from(event.dataTransfer.files));
+            }}
+            className="mt-1 flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 px-5 py-4 text-center hover:border-accent-500 hover:bg-accent-50"
+          >
+            <span className="text-sm font-medium text-ink-700">
+              Drop files here or choose files
+            </span>
+            <span className="mt-1 text-xs text-ink-500">
+              {spec.accept?.join(', ') || 'PDF, documents, Markdown, presentations, spreadsheets, code, images'}
+              {' · '}up to {maximum} file{maximum === 1 ? '' : 's'}
+              {' · '}{formatBytes(capabilities.max_file_size_bytes)} each
+            </span>
+          </label>
+          <input
+            id={inputId}
+            type="file"
+            multiple={Boolean(spec.multiple)}
+            accept={extensions.join(',')}
+            className="sr-only"
+            onChange={event => {
+              addFiles(Array.from(event.target.files ?? []));
+              event.target.value = '';
+            }}
+          />
+
+          {files.length > 0 && (
+            <ul className="mt-2 space-y-1.5">
+              {files.map((file, index) => (
+                <li
+                  key={`${file.name}:${file.size}`}
+                  className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm text-ink-700">{file.name}</div>
+                    <div className="text-xs text-ink-500">
+                      {formatBytes(file.size)}
+                      {file.type ? ` · ${file.type}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onChange(files.filter((_, i) => i !== index))}
+                    className="ml-3 text-xs text-bad hover:underline"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
       {error && <p className="mt-1 text-xs text-bad">{error}</p>}
     </div>
@@ -214,10 +261,18 @@ export function RunDialog({
   const navigate = useNavigate();
   const [values, setValues] = useState<Record<string, string>>({});
   const [fileValues, setFileValues] = useState<Record<string, File[]>>({});
+  const [fileRefValues, setFileRefValues] = useState<
+    Record<string, WorkflowFileReference[]>
+  >({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [launchStage, setLaunchStage] = useState<string | null>(null);
   const [capabilities, setCapabilities] = useState(FALLBACK_CAPABILITIES);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
 
   useEffect(() => {
     api.workflowFileCapabilities()
@@ -229,6 +284,81 @@ export function RunDialog({
 
   const keys = Object.keys(inputs);
 
+  function applyImportedJson(raw: string) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      setImportError('That is not valid JSON.');
+      setImportMessage(null);
+      return;
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      setImportError('Expected a JSON object of {inputName: value}, like the "Copy as JSON" output from run history.');
+      setImportMessage(null);
+      return;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    const nextValues = { ...values };
+    const nextFileRefs = { ...fileRefValues };
+
+    for (const key of keys) {
+      if (!(key in record)) continue;
+      const spec = inputs[key];
+      const rawValue = record[key];
+      if (spec.type === 'file') {
+        const refs = fileReferencesFrom(rawValue);
+        if (refs) {
+          nextFileRefs[key] = refs;
+          setFileValues(current => {
+            const next = { ...current };
+            delete next[key];
+            return next;
+          });
+          applied.push(key);
+        } else {
+          skipped.push(`${key} (needs an already-uploaded file reference)`);
+        }
+        continue;
+      }
+      nextValues[key] = typeof rawValue === 'string'
+        ? rawValue
+        : JSON.stringify(rawValue, null, 2);
+      applied.push(key);
+    }
+
+    for (const key of Object.keys(record)) {
+      if (!(key in inputs)) skipped.push(`${key} (not an input on this workflow)`);
+    }
+
+    setValues(nextValues);
+    setFileRefValues(nextFileRefs);
+    setErrors(current => {
+      const next = { ...current };
+      applied.forEach(key => delete next[key]);
+      return next;
+    });
+    setImportError(null);
+    setImportMessage(
+      applied.length
+        ? `Loaded ${applied.length} input${applied.length === 1 ? '' : 's'}: ${applied.join(', ')}.`
+          + (skipped.length ? ` Skipped: ${skipped.join(', ')}.` : '')
+        : `Nothing matched this workflow's inputs.${skipped.length ? ` Skipped: ${skipped.join(', ')}.` : ''}`,
+    );
+  }
+
+  function handleImportFilePicked(file: File) {
+    file.text()
+      .then(applyImportedJson)
+      .catch(() => {
+        setImportError(`Couldn't read ${file.name}.`);
+        setImportMessage(null);
+      });
+  }
+
   async function launch() {
     const nextErrors: Record<string, string> = {};
     const runInputs: Record<string, unknown> = {};
@@ -237,7 +367,8 @@ export function RunDialog({
       const spec = inputs[key];
       if (spec.type === 'file') {
         const selected = fileValues[key] ?? [];
-        if (spec.required && selected.length === 0) {
+        const loaded = fileRefValues[key] ?? [];
+        if (spec.required && selected.length === 0 && loaded.length === 0) {
           nextErrors[key] = 'Add at least one file.';
         }
         continue;
@@ -265,6 +396,7 @@ export function RunDialog({
     }
 
     setUploading(true);
+    setLaunchStage('Checking workflow structure…');
     setLaunchError(null);
     try {
       const preflight = await api.validateWorkflow(workflowYaml);
@@ -281,18 +413,49 @@ export function RunDialog({
           `Workflow blocked before upload/run. ${errors.join(' · ')}`,
         );
         setUploading(false);
+        setLaunchStage(null);
         return;
       }
 
+      setLaunchStage('Uploading files…');
       for (const key of keys) {
         const spec = inputs[key];
         if (spec.type !== 'file') continue;
+        const loaded = fileRefValues[key] ?? [];
+        if (loaded.length > 0) {
+          // Already uploaded — e.g. re-supplied from a previous run's JSON.
+          runInputs[key] = spec.multiple ? loaded : loaded[0];
+          continue;
+        }
         const selected = fileValues[key] ?? [];
         if (selected.length === 0) continue;
         const uploaded = await api.uploadWorkflowFiles(selected);
         runInputs[key] = spec.multiple
           ? uploaded.files
           : uploaded.files[0];
+      }
+
+      setLaunchStage('Running full zero-token test…');
+      const fullPreflight = await api.validateWorkflow(
+        workflowYaml,
+        runInputs,
+        true,
+      );
+      if (!fullPreflight.valid) {
+        const fullErrors = fullPreflight.issues
+          .filter(issue => issue.severity === 'error')
+          .slice(0, 8)
+          .map(issue => (
+            `${issue.code}${issue.node_id ? ` (${issue.node_id})` : ''}: ${
+              issue.message
+            }${issue.suggestion ? ` ${issue.suggestion}` : ''}`
+          ));
+        setLaunchError(
+          `Zero-token test blocked the run. ${fullErrors.join(' · ')}`,
+        );
+        setUploading(false);
+        setLaunchStage(null);
+        return;
       }
 
       const runId = crypto.randomUUID();
@@ -302,6 +465,7 @@ export function RunDialog({
     } catch (error: unknown) {
       setLaunchError(error instanceof Error ? error.message : String(error));
       setUploading(false);
+      setLaunchStage(null);
     }
   }
 
@@ -330,6 +494,66 @@ export function RunDialog({
               This workflow declares no inputs.
             </div>
           )}
+
+          {keys.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setImportOpen(open => !open)}
+                className="text-xs font-medium text-accent-700 hover:underline"
+              >
+                {importOpen ? 'Hide' : 'Import inputs from JSON'}
+              </button>
+              {!importOpen && (
+                <p className="mt-1 text-xs text-ink-500">
+                  Paste or upload a run&apos;s inputs JSON (e.g. from &quot;Copy
+                  as JSON&quot; in Run History) to refill this form — handy
+                  after a crashed run.
+                </p>
+              )}
+              {importOpen && (
+                <div className="mt-2 space-y-2">
+                  <textarea
+                    rows={5}
+                    value={importText}
+                    onChange={event => setImportText(event.target.value)}
+                    placeholder='{"inputName": "value", ...}'
+                    className="block w-full rounded-md border-slate-300 text-xs py-2 px-3 border font-mono"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applyImportedJson(importText)}
+                      disabled={!importText.trim()}
+                      className="px-3 py-1.5 rounded-md bg-accent-600 text-white text-xs hover:bg-accent-500 disabled:opacity-50"
+                    >
+                      Apply pasted JSON
+                    </button>
+                    <label className="px-3 py-1.5 rounded-md border border-slate-300 text-xs hover:bg-slate-100 cursor-pointer">
+                      Upload JSON file
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        className="sr-only"
+                        onChange={event => {
+                          const file = event.target.files?.[0];
+                          if (file) handleImportFilePicked(file);
+                          event.target.value = '';
+                        }}
+                      />
+                    </label>
+                  </div>
+                  {importMessage && (
+                    <p className="text-xs text-ink-700">{importMessage}</p>
+                  )}
+                  {importError && (
+                    <p className="text-xs text-bad">{importError}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           {keys.map((key, index) => {
             const spec = inputs[key];
             if (spec.type === 'file') {
@@ -340,6 +564,14 @@ export function RunDialog({
                   inputName={key}
                   spec={spec}
                   files={fileValues[key] ?? []}
+                  loadedRefs={fileRefValues[key] ?? []}
+                  onClearLoaded={() => {
+                    setFileRefValues(current => {
+                      const next = { ...current };
+                      delete next[key];
+                      return next;
+                    });
+                  }}
                   capabilities={capabilities}
                   error={errors[key]}
                   onChange={(nextFiles, nextError) => {
@@ -406,7 +638,8 @@ export function RunDialog({
 
         <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between gap-3">
           <span className="text-xs text-ink-500">
-            Files are stored once and reused by token-saving workflow retries.
+            Files are stored once, then services, model access, and inputs are
+            tested with 0 generation tokens before the run opens.
           </span>
           <div className="flex gap-3">
             <button
@@ -421,7 +654,7 @@ export function RunDialog({
               disabled={uploading}
               className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
             >
-              {uploading ? 'Uploading files…' : 'Run workflow'}
+              {uploading ? (launchStage ?? 'Checking…') : 'Test & run workflow'}
             </button>
           </div>
         </div>

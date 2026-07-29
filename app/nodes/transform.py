@@ -182,5 +182,6 @@ class TransformAgent(NodeType):
 
         raise RuntimeError(
             f"TransformAgent '{self.node_id}' failed to produce valid "
-            f"structured output after {total_attempts} attempt(s)"
+            f"structured output after {total_attempts} attempt(s): "
+            f"{last_error}"
         ) from last_error

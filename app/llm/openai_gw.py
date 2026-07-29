@@ -15,6 +15,7 @@ as response_format -- never free-text JSON parsing.
 from __future__ import annotations
 
 from typing import Awaitable, Callable, Type, TypeVar
+import json
 
 import structlog
 from openai import AsyncOpenAI
@@ -67,6 +68,16 @@ def _completion_tokens_for(model: str, requested: int) -> int:
     return requested
 
 
+def _system_messages(system: str) -> list[dict]:
+    """Build the leading system message, omitting it when empty.
+
+    Some OpenAI-compatible endpoints (e.g. Moonshot's hosted Kimi K3) reject
+    a request whose system message has empty content with a 400 error, so an
+    unset system prompt must drop the message rather than send "".
+    """
+    return [{"role": "system", "content": system}] if system else []
+
+
 def _chat_tool_reasoning_effort(model: str) -> str | None:
     """Return the safe Chat Completions effort for function-tool calls.
 
@@ -92,6 +103,15 @@ class OpenAIGateway(LLMGateway):
             timeout=settings.llm_request_timeout_seconds,
         )
 
+    async def probe_model_access(self, model: str) -> str:
+        """Verify project access through model metadata, with no generation."""
+
+        result = await self._client.models.retrieve(
+            model,
+            timeout=settings.llm_model_access_probe_timeout_seconds,
+        )
+        return result.id
+
     async def complete(
         self,
         *,
@@ -105,7 +125,7 @@ class OpenAIGateway(LLMGateway):
         call_kwargs: dict = {
             "model": model,
             "messages": [
-                {"role": "system", "content": system},
+                *_system_messages(system),
                 {"role": "user", "content": user},
             ],
             "max_completion_tokens": _completion_tokens_for(model, max_tokens),
@@ -164,30 +184,45 @@ class OpenAIGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> T:
+        # Non-strict JSON mode: allows free-form object fields that OpenAI's
+        # strict schema mode (.parse) rejects. We validate with Pydantic
+        # ourselves; the caller's retry loop re-prompts on validation failure.
+        schema = response_model.model_json_schema()
+        system_with_schema = (
+            f"{system}\n\n"
+            "Respond with a single JSON object that conforms to this schema. "
+            "Return every field using its native JSON type (objects as JSON "
+            "objects, lists as JSON arrays). Output only the JSON, no prose.\n"
+            f"SCHEMA:\n{json.dumps(schema)}"
+        )
         call_kwargs: dict = {
             "model": model,
             "messages": [
-                {"role": "system", "content": system},
+                {"role": "system", "content": system_with_schema},
                 {"role": "user", "content": user},
             ],
-            "response_format": response_model,
+            "response_format": {"type": "json_object"},
             "max_completion_tokens": _completion_tokens_for(model, max_tokens),
         }
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
 
-        resp = await self._client.beta.chat.completions.parse(**call_kwargs)
-        parsed = resp.choices[0].message.parsed
-        if parsed is None:
-            refusal = resp.choices[0].message.refusal
+        resp = await self._client.chat.completions.create(**call_kwargs)
+        content = resp.choices[0].message.content
+        if not content:
+            refusal = getattr(resp.choices[0].message, "refusal", None)
             raise RuntimeError(
-                f"OpenAIGateway: structured parse failed for "
+                f"OpenAIGateway: empty structured response for "
                 f"{response_model.__name__}. refusal={refusal!r}"
             )
+        # Validate against the Pydantic model (raises ValidationError on mismatch,
+        # which the caller's retry loop catches and re-prompts on).
+        instance = response_model.model_validate_json(content)
+        usage = resp.usage
         return StructuredResult(
-            parsed=parsed,
-            input_tokens=resp.usage.prompt_tokens,
-            output_tokens=resp.usage.completion_tokens,
+            parsed=instance,
+            input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
+            output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
             model=resp.model,
         )
 
@@ -205,7 +240,7 @@ class OpenAIGateway(LLMGateway):
         import json  # local import keeps module-level imports lean
 
         # Translate neutral messages → OpenAI format
-        openai_messages: list[dict] = [{"role": "system", "content": system}]
+        openai_messages: list[dict] = _system_messages(system)
         for m in messages:
             role = m["role"]
             if role == "user":

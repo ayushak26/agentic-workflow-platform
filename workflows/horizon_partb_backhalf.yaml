@@ -1,0 +1,679 @@
+name: Horizon Europe Part B - Verified Evidence to DOCX
+description: >-
+  Post-evidence slice of the Horizon Europe RIA/IA Part B workflow. It starts
+  from verified evidence: acquired full-text documents and discovery candidates
+  are supplied as inputs, evidence is verified into citation-grounded claims,
+  synthesised, mapped to the call, turned into a locked blueprint, drafted into
+  the six official subsections in parallel, compiled, independently evaluated and
+  red-teamed, revised once toward a full ~44-page proposal within the 45-page
+  hard limit, gated deterministically, and rendered to an editable DOCX. Missing
+  facts stay visible as [INPUT NEEDED] markers and block submission-readiness;
+  nothing is fabricated to fill space.
+version: 2.0-evidence2docx
+use_case: eu_proposal
+
+inputs:
+  concept_note:
+    type: file
+    required: true
+    multiple: true
+    max_files: 5
+    accept: [pdf, document, markdown, presentation]
+    description: The selected project concept note. This is the concept to develop.
+
+  documents:
+    type: file
+    required: true
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+    description: Supporting documents - call/topic text, downloaded Part B template, consortium profiles, work plan, budget, pilot information, prior research, guidance.
+
+  metadata:
+    type: json
+    required: true
+    description: partb_metadata.parsed (renderer metadata).
+
+  call_intelligence:
+    type: json
+    required: true
+    description: call_intelligence.parsed (atomic call checklist).
+
+  normalise_report:
+    type: json
+    required: true
+    description: normalise_source_graph.report.
+
+  normalise_warnings:
+    type: json
+    required: true
+    description: normalise_source_graph.warnings.
+
+  candidates:
+    type: json
+    required: true
+    description: discover_evidence.candidates (list of scholarly candidates).
+
+  search_audit:
+    type: json
+    required: true
+    description: discover_evidence.search_audit.
+
+nodes:
+  - id: load_concept
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.concept_note}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: load_documents
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.documents}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: acquire_full_text
+    type: FullTextEvidenceAcquirer
+    config:
+      candidates: "{{ inputs.candidates }}"
+      fail_when_none_acquired: false
+
+  - id: verify_evidence
+    type: ProposalEvidenceFactoryAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - claude-opus-5
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      candidates: "{{ inputs.candidates }}"
+      documents: "{{acquire_full_text.documents}}"
+      search_audit: "{{ inputs.search_audit }}"
+      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
+      max_passages_per_document: 10
+
+  - id: scientific_synthesis
+    type: ScientificSkillAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      skills:
+        - literature-review
+        - scientific-critical-thinking
+        - research-grants
+        - scientific-writing
+      auto_select: false
+      max_skills: 4
+      max_tokens: 16000
+      objective: |
+        Produce a proposal-engineering evidence synthesis using only the
+        verified claim records. For each scientific proposition state the
+        supported conclusion, boundary conditions, contradiction status,
+        evidence strength, citation IDs, and proposal section where it is safe
+        to use. Separate verified evidence from gaps. Never promote a candidate
+        record or abstract to evidence.
+
+        VERIFIED CLAIMS:
+        {{verify_evidence.verified_claims}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
+        BLOCKING ISSUES:
+        {{verify_evidence.blocking_issues}}
+
+  - id: call_coverage
+    type: CallCoverageMatrixAgent
+    config: {}
+
+  - id: proposal_blueprint
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 20000
+      output_schema:
+        proposal_identity: object
+        source_hierarchy_and_fact_ledger: object
+        official_partb_structure: object
+        hard_page_limit: int
+        working_page_target: int
+        section_page_budget: object
+        objective_result_outcome_chain: object
+        state_of_art_and_innovations: object
+        methodology_and_validation: object
+        impact_pathways_and_kpis: object
+        work_packages_tasks_deliverables: object
+        consortium_and_resources: object
+        risks_and_mitigations: object
+        cross_cutting_compliance: object
+        figure_and_table_plan: object
+        unresolved_inputs: list
+      prompt_template: |
+        Treat the supplied concept note as the selected project concept. Create
+        the master blueprint only for the Horizon Europe RIA/IA Part B technical
+        description. Follow the official 2026 headings exactly:
+        1.1 Objectives and ambition; 1.2 Methodology; 2.1 Project's pathways
+        towards impact; 2.2 Measures to maximise impact - dissemination,
+        exploitation and communication; optional 2.3 Summary; 3.1 Work plan and
+        resources; 3.2 Capacity of participants and consortium as a whole.
+        Do not create sections 1.3, 3.3, 3.4, Part A, ethics forms, security
+        forms, budget forms or submission instructions.
+
+        Use a hard limit of 45 pages for a verified lump-sum topic and a working
+        target of 44 pages, including title, participant list, tables, figures
+        and references. Use this starting budget: front matter 1; 1.1 = 4;
+        1.2 = 13; 2.1 = 3; 2.2 = 3; optional 2.3 = 1; 3.1 = 16; 3.2 = 3.
+        Retain one page of safety against rendering variation. If section 2.3 is
+        omitted, reallocate its page only where evaluator value is highest. This
+        is a full proposal: plan each subsection to fill its budget with
+        evaluator-dense, grounded content, not filler.
+
+        Map every call requirement to a Part B subsection, result, owner,
+        evidence claim, KPI, WP, task, deliverable, milestone and risk where
+        grounded. Build an explicit objective -> result -> outcome -> impact chain.
+        Plan only evaluator-useful tables and figures. Use
+        [INPUT NEEDED: exact item] for missing facts; never invent partner,
+        budget, KPI, TRL, timeline, pilot, source or evidence details.
+
+        CONCEPT NOTE:
+        {{ load_concept.text }}
+
+        PROPOSAL METADATA:
+        {{ inputs.metadata }}
+
+        CALL CHECKLIST:
+        {{ inputs.call_intelligence }}
+
+        CALL COVERAGE:
+        {{call_coverage}}
+
+        NORMALISED SOURCE:
+        {{ inputs.normalise_report }}
+        {{ inputs.normalise_warnings }}
+
+        SUPPORTING DOCUMENTS:
+        {{ load_documents.text }}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+  - id: draft_1_1_objectives_ambition
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft only official subsection "1.1 Objectives and ambition" in polished
+        proposal-ready Markdown, targeting a full 4 pages. Define measurable,
+        verifiable and realistically achievable objectives and show their
+        pertinence to the topic. Compare the project with the state of the art
+        and available solutions, identify the precise advance and ambition, and
+        state R&I maturity or start/end TRLs only when grounded. Include an
+        objective table and an innovation/state-of-the-art table where they aid
+        the evaluator. Use only verified citation IDs. Preserve missing facts as
+        [INPUT NEEDED: exact item]. Do not draft methodology or create 1.3.
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+        CITATION REGISTRY:
+        {{verify_evidence.citation_registry}}
+
+  - id: draft_1_2_methodology
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft only official subsection "1.2 Methodology" in proposal-ready
+        Markdown, targeting a full 13 pages. Present the overall methodology as a
+        coherent narrative, not a repetition of work packages. Explain concepts,
+        models, assumptions, methods, data, validation, uncertainty,
+        methodological challenges and mitigation; how relevant national or
+        international R&I results feed the project; interdisciplinarity; SSH
+        integration where required; the gender dimension in R&I content; open
+        science, FAIR research-output management and stakeholder/end-user
+        engagement. Integrate the multi-actor approach where the call requires
+        it. Provide a method-per-objective structure with validation criteria so
+        the section fills its page budget with evaluator-useful detail. Use only
+        verified citations and supplied facts. Preserve missing details as
+        [INPUT NEEDED: exact item].
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+        CITATION REGISTRY:
+        {{verify_evidence.citation_registry}}
+
+  - id: draft_2_1_pathways
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft only official subsection "2.1 Project's pathways towards impact"
+        in proposal-ready Markdown, targeting a full 3 pages. Give a concise
+        causal narrative from specific needs through project results, target
+        groups and uptake mechanisms to every expected topic outcome and wider
+        destination impact. Provide quantified estimates only when meaningful and
+        grounded. Identify external requirements, assumptions and barriers, how
+        they may evolve, and mitigation within or beyond the project. Do not
+        place implementation risks here. Every number must have a baseline,
+        target, unit, source, owner and time horizon or remain
+        [INPUT NEEDED: exact item].
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        CALL OUTCOMES:
+        {{ inputs.call_intelligence.expected_outcomes }}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+  - id: draft_2_2_measures_and_2_3_summary
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft official subsection "2.2 Measures to maximise impact -
+        Dissemination, exploitation and communication" in proposal-ready
+        Markdown, targeting a full 3 pages. Provide the first plan for
+        dissemination, exploitation and communication with differentiated
+        objectives, target groups, messages, measures, channels, timing,
+        ownership and KPIs. Cover post-project uptake, policy feedback,
+        standardisation, result ownership, IP protection and access rights where
+        relevant. Do not mix open-science methodology with communication.
+
+        Add official optional subsection "2.3 Summary" only when it improves
+        evaluator comprehension. If used, keep it to one page as a compact
+        impact canvas covering specific needs, expected results, D/E/C measures,
+        target groups, outcomes and impacts. If it cannot fit the working page
+        target, omit it completely. Preserve missing facts as
+        [INPUT NEEDED: exact item].
+
+        CALL CHECKLIST:
+        {{ inputs.call_intelligence }}
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        SUPPORTING DOCUMENTS:
+        {{ load_documents.text }}
+
+  - id: draft_3_1_workplan_resources
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft only official subsection "3.1 Work plan and resources" in
+        proposal-ready Markdown, targeting a full 16 pages including all tables.
+        Include: work-plan logic; timing; a Gantt placeholder; a PERT/dependency
+        placeholder; WP/task descriptions with quantified activities,
+        participants, effort and resources; governance and decision controls;
+        quality assurance; data management; dissemination/exploitation/
+        communication implementation; milestones; implementation risks and
+        mitigations; and lump-sum resource coherence.
+
+        Produce the official tables exactly as applicable:
+        3.1a list of work packages; 3.1b description of each work package;
+        3.1c deliverables; 3.1d milestones; 3.1e critical risks; 3.1f staff
+        effort; 3.1g subcontracting costs; and 3.1h major equipment purchase
+        costs above the applicable threshold. Preserve exact identifiers and
+        numbers from the documents. Missing leads, dates, person-months, costs,
+        owners or quantities remain [INPUT NEEDED: exact item]. Never fabricate
+        a balanced budget or partner allocation.
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        SUPPORTING DOCUMENTS:
+        {{ load_documents.text }}
+
+  - id: draft_3_2_consortium
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft only official subsection "3.2 Capacity of participants and
+        consortium as a whole" in proposal-ready Markdown, targeting a full 3
+        pages. Do not repeat the Part A organisation descriptions. Demonstrate
+        how the consortium collectively matches the objectives, combines
+        disciplinary and interdisciplinary expertise, covers SSH/open
+        science/gender capabilities where relevant, accesses critical
+        infrastructure, covers the value chain and target groups, and assigns
+        complementary roles. Explain any affiliated entities, associated partners
+        or international participants only when documented. Integrate multi-actor
+        co-creation capacity when required by the call. Preserve absent partner
+        or facility facts as [INPUT NEEDED: exact item].
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        SUPPORTING DOCUMENTS:
+        {{ load_documents.text }}
+
+  - id: compile_v1
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Assemble a single coherent Horizon Europe Part B Markdown document.
+        Preserve only the official structure: title and participant list;
+        1 Excellence with 1.1 and 1.2; 2 Impact with 2.1, 2.2 and optional 2.3;
+        3 Quality and efficiency of the implementation with 3.1 and 3.2.
+        Do not add Part A, annexes or extra numbered sections. Remove
+        duplication, align objectives/results/WPs/tasks/deliverables/milestones/
+        risks/KPIs/partners, retain every valid citation and [INPUT NEEDED]
+        marker, and add no facts. Keep all tables, figures and references inside
+        the 44-page working target and 45-page hard limit, aiming for a full
+        evaluator-dense proposal.
+
+        1.1:
+        {{draft_1_1_objectives_ambition.raw}}
+
+        1.2:
+        {{draft_1_2_methodology.raw}}
+
+        2.1:
+        {{draft_2_1_pathways.raw}}
+
+        2.2 AND OPTIONAL 2.3:
+        {{draft_2_2_measures_and_2_3_summary.raw}}
+
+        3.1:
+        {{draft_3_1_workplan_resources.raw}}
+
+        3.2:
+        {{draft_3_2_consortium.raw}}
+
+  - id: evaluate_v1
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{compile_v1.raw}}"
+      generator_model: auto
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 4.0
+      total_threshold: 12.0
+
+  - id: red_team_v1
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - claude-opus-5
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-sol
+      max_tokens: 12000
+      output_schema:
+        blocking_gaps: list
+        excellence_risks: list
+        impact_risks: list
+        implementation_risks: list
+        evidence_and_citation_risks: list
+        numerical_inconsistencies: list
+        page_budget_actions: list
+        safe_revision_instructions: list
+      prompt_template: |
+        Red-team this draft as a strict Horizon evaluator and proposal engineer.
+        Find only concrete, actionable defects. Check call coverage, causal
+        logic, measurable ambition, evidence/citation fit, partner and
+        work-package consistency, person-month and budget contradictions,
+        official Tables 3.1a-3.1h, milestones, risks, gender dimension, SSH,
+        open science, multi-actor requirements and page density.
+
+        Assess PAGE FILL explicitly. The target is a full ~44-page proposal
+        within a 45-page hard limit. In page_budget_actions, for each official
+        subsection state whether it is under-developed, about right, or over
+        budget, and give specific, evidence-safe expansions for any thin
+        subsection (for example: add a validation-criteria table, expand a WP
+        description, add missing risk rows) - never invent facts to fill space.
+        Flag any non-official section, any content outside Part B, any likely
+        breach of the 45-page limit, and any misuse of Part A information. A
+        missing fact is a blocker or input request, not permission to invent.
+
+        DRAFT:
+        {{compile_v1.raw}}
+
+        CALL COVERAGE:
+        {{call_coverage}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
+  - id: final_revision
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Produce the final submission candidate in Markdown. Apply evaluator and
+        red-team recommendations only when they can be resolved from supplied
+        content or verified evidence. Improve logic, specificity, consistency,
+        section balance and evaluator readability.
+
+        Fill the page budget toward a full proposal: aim for ~44 rendered pages
+        within the 45-page hard limit, following the page_budget_actions from the
+        red-team pass. Expand thin subsections only with evidence-safe content
+        already grounded in the drafts and verified citations. Never fabricate a
+        missing number, partner fact, result, source, KPI, TRL, budget or
+        timeline to reach a page count - preserve unresolved facts as
+        [INPUT NEEDED: ...]. Keep all valid citation identifiers intact. Preserve
+        the exact official Part B headings and the section budget. Do not create
+        annexes or move required content outside the 45-page document.
+
+        VERSION 1:
+        {{compile_v1.raw}}
+
+        INDEPENDENT EVALUATION:
+        {{evaluate_v1}}
+
+        RED TEAM:
+        {{red_team_v1.parsed}}
+
+        VERIFIED CITATIONS:
+        {{verify_evidence.citation_registry}}
+
+  - id: evaluate_final
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{final_revision.raw}}"
+      generator_model: auto
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 4.0
+      total_threshold: 12.0
+
+  - id: consistency_gate
+    type: ConsistencyChecker
+    config:
+      block_on_warn: false
+
+  - id: submission_gate
+    type: ProposalSubmissionGate
+    config:
+      proposal_text: "{{final_revision.raw}}"
+      evidence_blockers: "{{verify_evidence.blocking_issues}}"
+      consistency_gate: "{{consistency_gate.gate}}"
+      consistency_findings: "{{consistency_gate.findings}}"
+      evaluation_threshold_passed: "{{evaluate_final.threshold_passed}}"
+      evaluation_total_score: "{{evaluate_final.total_score}}"
+      evaluation_blockers: "{{evaluate_final.deterministic_blockers}}"
+      minimum_proposal_characters: 20000
+      require_evaluation_pass: true
+      block_on_input_needed: true
+
+  - id: render_submission_docx
+    type: HorizonDOCXProposalRenderer
+    config:
+      content: "{{final_revision.raw}}"
+      content_format: markdown
+      metadata: "{{ inputs.metadata }}"
+      citation_registry: "{{verify_evidence.citation_registry}}"
+      evidence_qa: "{{verify_evidence.qa_report}}"
+      evidence_blockers: "{{submission_gate.blockers}}"
+      include_toc: false
+      include_bibliography: true
+      include_evidence_annex: false
+      page_limit: 45
+      enforce_page_limit: true
+
+edges:
+  - from: load_concept
+    to: load_documents
+  - from: load_documents
+    to: acquire_full_text
+  - from: acquire_full_text
+    to: verify_evidence
+  - from: verify_evidence
+    to: scientific_synthesis
+  - from: scientific_synthesis
+    to: call_coverage
+  - from: call_coverage
+    to: proposal_blueprint
+  - from: proposal_blueprint
+    to:
+      - draft_1_1_objectives_ambition
+      - draft_1_2_methodology
+      - draft_2_1_pathways
+      - draft_2_2_measures_and_2_3_summary
+      - draft_3_1_workplan_resources
+      - draft_3_2_consortium
+  - from: draft_1_1_objectives_ambition
+    to: compile_v1
+  - from: draft_1_2_methodology
+    to: compile_v1
+  - from: draft_2_1_pathways
+    to: compile_v1
+  - from: draft_2_2_measures_and_2_3_summary
+    to: compile_v1
+  - from: draft_3_1_workplan_resources
+    to: compile_v1
+  - from: draft_3_2_consortium
+    to: compile_v1
+  - from: compile_v1
+    to:
+      - evaluate_v1
+      - red_team_v1
+  - from: evaluate_v1
+    to: final_revision
+  - from: red_team_v1
+    to: final_revision
+  - from: final_revision
+    to:
+      - evaluate_final
+      - consistency_gate
+  - from: evaluate_final
+    to: submission_gate
+  - from: consistency_gate
+    to: submission_gate
+  - from: submission_gate
+    to: render_submission_docx
+
+entry: load_concept
+exit: render_submission_docx
+
+output:
+  include_input: false
+  nodes:
+    - node_id: call_coverage
+      flatten: false
+    - node_id: verify_evidence
+      flatten: false
+    - node_id: evaluate_final
+      flatten: false
+    - node_id: submission_gate
+      flatten: false
+    - node_id: render_submission_docx
+      flatten: false

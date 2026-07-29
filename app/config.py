@@ -94,7 +94,18 @@ class Settings(BaseSettings):
 
     # Every outbound call has a finite deadline.
     external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
-    llm_request_timeout_seconds: float = Field(default=120.0, gt=0, le=900)
+    llm_request_timeout_seconds: float = Field(default=200.0, gt=0, le=900)
+    # Strict preflight checks provider model metadata, never generation.
+    llm_model_access_probe_timeout_seconds: float = Field(
+        default=8.0,
+        gt=0,
+        le=60,
+    )
+    llm_model_access_cache_ttl_seconds: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+    )
 
     # Tenant-scoped semantic cache for deterministic plain-text completions.
     semantic_cache_enabled: bool = False
@@ -150,6 +161,11 @@ class Settings(BaseSettings):
     llm_retry_base_delay_seconds: float = 1.0
     llm_retry_max_delay_seconds: float = 8.0
     llm_retry_jitter_ratio: float = 0.2
+
+    # A run stuck in "running" with no write activity for this long (e.g. the
+    # server process restarted or crashed mid-execution) is treated as
+    # orphaned and lazily flipped to "failed" the next time it is read.
+    stale_run_after_seconds: int = Field(default=900, ge=60, le=86_400)
 
     dev_bypass_enabled: bool = True
     dev_bypass_username: str = "ayush"

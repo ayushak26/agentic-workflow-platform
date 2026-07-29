@@ -20,7 +20,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.evidence.models import (
     CandidateSource,
@@ -35,6 +35,7 @@ from app.evidence.models import (
     RetrievedPassage,
     SearchAuditRecord,
     VerifiedClaim,
+    coerce_typed_list_field,
 )
 from app.evidence.retrieval import (
     retrieve_passages,
@@ -81,6 +82,28 @@ class ProposalEvidenceFactoryConfig(BaseModel):
     model: str = "claude-sonnet-4-5"
     citation_style: str = "numeric_compact"
     max_passages_per_document: int = Field(default=7, ge=1, le=20)
+
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def _coerce_candidates(cls, value: Any) -> Any:
+        return coerce_typed_list_field(value, CandidateSource, "candidates")
+
+    @field_validator("documents", mode="before")
+    @classmethod
+    def _coerce_documents(cls, value: Any) -> Any:
+        return coerce_typed_list_field(value, FullTextDocument, "documents")
+
+    @field_validator("search_audit", mode="before")
+    @classmethod
+    def _coerce_search_audit(cls, value: Any) -> Any:
+        return coerce_typed_list_field(value, SearchAuditRecord, "search_audit")
+
+    @field_validator("rejected_candidates", mode="before")
+    @classmethod
+    def _coerce_rejected_candidates(cls, value: Any) -> Any:
+        return coerce_typed_list_field(
+            value, RejectedCandidate, "rejected_candidates"
+        )
 
 
 class ProposalEvidenceFactoryOutput(ProposalEvidencePackage):

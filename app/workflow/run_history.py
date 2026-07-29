@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.config import settings
 from app.observability.logging import get_logger
 
 logger = get_logger(__name__)
@@ -691,14 +692,96 @@ async def get_resume_checkpoint(
     return document
 
 
+def _as_aware_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+async def _reconcile_if_stale(db, doc: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Flip an orphaned "running" run to "failed" the moment it is read.
+
+    A run can be left stuck at status="running" forever if the process
+    executing it dies or restarts mid-node (e.g. a dev server reload) —
+    nothing is left to write the failure. Rather than run a background
+    sweep, every read lazily checks staleness: no write to this run in over
+    `stale_run_after_seconds` while it claims to be running means the
+    executing task is gone, not just slow.
+    """
+
+    if doc is None or doc.get("status") != "running":
+        return doc
+    updated_at = doc.get("updated_at")
+    if not isinstance(updated_at, datetime):
+        return doc
+
+    now = datetime.now(timezone.utc)
+    age_seconds = (now - _as_aware_utc(updated_at)).total_seconds()
+    if age_seconds < settings.stale_run_after_seconds:
+        return doc
+
+    run_id = doc["run_id"]
+    session_id = doc["session_id"]
+    stale_minutes = int(settings.stale_run_after_seconds // 60)
+    error_message = (
+        "Run marked failed automatically: no progress for over "
+        f"{stale_minutes} minute(s). The process executing this run likely "
+        "restarted or crashed mid-execution."
+    )
+
+    fields: dict[str, Any] = {
+        "status": "failed",
+        "error": error_message,
+        "ended_at": now,
+        "updated_at": now,
+        "active_nodes": [],
+    }
+    for node_id in doc.get("active_nodes") or []:
+        key = _node_key(node_id)
+        fields[f"node_runs.{key}.status"] = "failed"
+        fields[f"node_runs.{key}.error"] = error_message
+        fields[f"node_runs.{key}.ended_at"] = now.timestamp()
+
+    try:
+        await db["run_history"].update_one(
+            {"run_id": run_id, "session_id": session_id, "status": "running"},
+            {"$set": fields},
+        )
+        await db["run_checkpoints"].update_one(
+            {"run_id": run_id, "session_id": session_id},
+            {"$set": {"status": "failed", "updated_at": now}},
+        )
+    except Exception as exc:
+        logger.error(
+            "run_history_stale_reconcile_failed",
+            error=str(exc),
+            run_id=run_id,
+        )
+        return doc
+
+    logger.warning(
+        "run_history.stale_run_marked_failed",
+        run_id=run_id,
+        age_seconds=age_seconds,
+    )
+    doc.update(
+        {
+            "status": "failed",
+            "error": error_message,
+            "ended_at": now,
+            "active_nodes": [],
+        }
+    )
+    return doc
+
+
 async def get_run(db, session_id: str, run_id: str) -> dict[str, Any] | None:
     """Return one full run if it belongs to the caller's session."""
 
     _require_session(session_id)
-    return await db["run_history"].find_one(
+    doc = await db["run_history"].find_one(
         {"session_id": session_id, "run_id": run_id},
         {"_id": 0},
     )
+    return await _reconcile_if_stale(db, doc)
 
 
 async def list_runs(
@@ -722,4 +805,5 @@ async def list_runs(
         .sort("created_at", -1)
         .limit(limit)
     )
-    return [doc async for doc in cursor]
+    docs = [doc async for doc in cursor]
+    return [await _reconcile_if_stale(db, doc) for doc in docs]

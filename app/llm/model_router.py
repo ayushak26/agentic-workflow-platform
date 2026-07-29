@@ -248,7 +248,8 @@ class ModelRouter:
         scored.sort(
             key=lambda item: (
                 item[0],
-                -estimated_costs[item[1].name],
+                _hosted_bonus(item[1], priority),
+                0.0 if priority == "maximum" else -estimated_costs[item[1].name],
                 item[1].name,
             ),
             reverse=True,
@@ -421,6 +422,20 @@ def _accuracy_priority(value: Any) -> AccuracyPriority:
     )
 
 
+def _hosted_bonus(profile: ModelProfile, priority: AccuracyPriority) -> float:
+    """Break same-score ties toward hosted providers under max accuracy.
+
+    Self-hosted local models are metered at $0, so they otherwise win every
+    tie once cost stops counting against the score. That's fine when the
+    workflow is optimizing for cost, but under `maximum` it should mean
+    "the best available model", not "whichever one is free" — hosted
+    providers carry stronger production-reliability guarantees.
+    """
+    if priority != "maximum":
+        return 0.0
+    return 0.0 if profile.provider.endswith("-local") else 1.0
+
+
 def _target_tier(
     complexity: Complexity,
     priority: AccuracyPriority,
@@ -467,7 +482,7 @@ def _score_profile(
 
     normalized_cost = estimated_cost / max_cost if max_cost else 0.0
     cost_weight = {
-        "maximum": 2.0,
+        "maximum": 0.0,
         "balanced": 8.0,
         "economy": 18.0,
     }[priority]

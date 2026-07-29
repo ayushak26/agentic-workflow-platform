@@ -414,6 +414,20 @@ def _validate_nodes(
         required_services.update(_required_services_for_node(node_spec))
         validated_config = node_spec.effective_config()
 
+        for allowed_index, model_name in enumerate(node_spec.allowed_models):
+            if model_name not in DEFAULT_LLM_MODELS:
+                _issue(
+                    report,
+                    "MODEL_NOT_IN_CATALOG",
+                    f"Allowed model {model_name!r} is not in the approved "
+                    "model catalog.",
+                    path=f"{path}.allowed_models.{allowed_index}",
+                    node_id=node_spec.id,
+                    suggestion=(
+                        f"Choose from: {', '.join(DEFAULT_LLM_MODELS)}."
+                    ),
+                )
+
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", node_spec.id):
             _issue(
                 report,
@@ -1146,13 +1160,42 @@ async def _probe_services(
         try:
             await asyncio.to_thread(store.client.list_buckets)
         except Exception as exc:
-            _issue(
-                report,
-                "OBJECT_STORE_UNAVAILABLE",
-                f"Object storage is configured but not reachable: {exc}",
-                path="services.object_store",
-                suggestion="Start MinIO and verify endpoint/credentials.",
+            response = getattr(exc, "response", {}) or {}
+            error = (
+                response.get("Error", {})
+                if isinstance(response, dict)
+                else {}
             )
+            error_code = error.get("Code")
+            if error_code in {
+                "InvalidAccessKeyId",
+                "SignatureDoesNotMatch",
+                "AccessDenied",
+            }:
+                _issue(
+                    report,
+                    "OBJECT_STORE_CREDENTIALS_INVALID",
+                    "MinIO is reachable but rejected the configured "
+                    f"credentials ({error_code}).",
+                    path="services.object_store",
+                    suggestion=(
+                        "Make MINIO_ACCESS_KEY and MINIO_SECRET_KEY identical "
+                        "for the API and MinIO service, remove conflicting "
+                        "values from .env.local, then restart both containers."
+                    ),
+                )
+            else:
+                _issue(
+                    report,
+                    "OBJECT_STORE_UNAVAILABLE",
+                    "Object storage is configured but not reachable: "
+                    f"{type(exc).__name__}.",
+                    path="services.object_store",
+                    suggestion=(
+                        "Start MinIO and verify MINIO_ENDPOINT, network, "
+                        "bucket, and credentials."
+                    ),
+                )
 
     for service_name in sorted(required):
         if not service_name.startswith("llm:local-"):
@@ -1252,41 +1295,162 @@ async def _probe_services(
 
     llm = services.get("llm")
     if "llm" in required and llm is not None:
-        # Only the live registry gateway needs environment credentials. Test
-        # stubs/custom local gateways are accepted by their injected contract.
-        if llm.__class__.__module__ == "app.llm.registry":
-            model_names = {
-                model
-                for node in spec.nodes
-                for _, model in _iter_model_values(
-                    _validated_node_config(node)
-                )
-            }
-            for intended in sorted(model_names):
-                try:
-                    resolved = resolve_model(intended)
-                except Exception:
-                    continue
-                if resolved.startswith("claude-") and not settings.anthropic_api_key:
-                    _issue(
-                        report,
-                        "MODEL_CREDENTIAL_MISSING",
-                        f"ANTHROPIC_API_KEY is missing for model {resolved!r}.",
-                        suggestion="Add the key to .env.local and restart the API.",
-                    )
-                if resolved.startswith("gpt-") and not settings.openai_api_key:
-                    _issue(
-                        report,
-                        "MODEL_CREDENTIAL_MISSING",
-                        f"OPENAI_API_KEY is missing for model {resolved!r}.",
-                        suggestion="Add the key to .env.local and restart the API.",
-                    )
+        await _probe_workflow_model_access(spec, llm, report)
 
     _add_check(
         report,
         "required_services",
         before,
         f"{len(required)} required service(s) checked without an LLM call.",
+    )
+
+
+async def _probe_workflow_model_access(
+    spec: WorkflowSpec,
+    llm: Any,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Confirm provider/project access without making a generation request."""
+
+    before = len(report.issues)
+    explicit_models: dict[str, set[str]] = defaultdict(set)
+    automatic_candidates: dict[str, list[str]] = {}
+
+    for node in spec.nodes:
+        config_models = {
+            model
+            for _, model in _iter_model_values(
+                _validated_node_config(node)
+            )
+        }
+        automatic = (
+            node.selected_model == AUTO_MODEL
+            or AUTO_MODEL in config_models
+        )
+        if automatic:
+            automatic_candidates[node.id] = [
+                model
+                for model in node.allowed_models
+                if model != AUTO_MODEL
+            ]
+        for model in config_models:
+            if model != AUTO_MODEL:
+                explicit_models[model].add(node.id)
+
+    models_to_probe = set(explicit_models)
+    for candidates in automatic_candidates.values():
+        models_to_probe.update(candidates)
+
+    probe = getattr(llm, "probe_model_access", None)
+    if probe is None:
+        # Custom dependency-injected gateways own their own availability
+        # contract. Structural preflight has already validated model names.
+        _add_check(
+            report,
+            "model_access",
+            before,
+            "Custom LLM gateway supplied; provider metadata probe skipped.",
+        )
+        return
+
+    try:
+        results = await probe(models_to_probe)
+    except Exception as exc:
+        _issue(
+            report,
+            "MODEL_ACCESS_PROBE_FAILED",
+            "Could not verify provider model access without generation: "
+            f"{type(exc).__name__}.",
+            path="services.llm",
+            suggestion=(
+                "Verify provider connectivity and credentials, then repeat "
+                "the zero-token test."
+            ),
+        )
+        _add_check(
+            report,
+            "model_access",
+            before,
+            "Provider model metadata could not be checked.",
+        )
+        return
+
+    for model, node_ids in sorted(explicit_models.items()):
+        result = results.get(model)
+        if result is None:
+            _issue(
+                report,
+                "MODEL_ACCESS_PROBE_INCOMPLETE",
+                f"Model access probe returned no result for {model!r}.",
+                path="services.llm",
+                node_id=sorted(node_ids)[0],
+                suggestion="Repeat the zero-token test before running.",
+            )
+            continue
+        if result.available:
+            continue
+        _issue(
+            report,
+            "MODEL_ACCESS_UNAVAILABLE",
+            f"Configured project cannot use model {model!r}: "
+            f"{result.reason}.",
+            path="services.llm",
+            node_id=sorted(node_ids)[0],
+            suggestion=(
+                "Grant this project access, choose an accessible model, or "
+                "use Auto with at least one accessible allowed model."
+            ),
+        )
+
+    warned_models: set[str] = set()
+    for node_id, candidates in sorted(automatic_candidates.items()):
+        accessible = [
+            model
+            for model in candidates
+            if (result := results.get(model)) is not None
+            and result.available
+        ]
+        unavailable = [
+            model
+            for model in candidates
+            if (result := results.get(model)) is not None
+            and not result.available
+        ]
+        if not accessible:
+            _issue(
+                report,
+                "AUTO_MODEL_ACCESS_UNAVAILABLE",
+                "Auto has no accessible model in this node's allowed_models.",
+                path=f"nodes.{node_id}.allowed_models",
+                node_id=node_id,
+                suggestion=(
+                    "Configure provider credentials or add at least one model "
+                    "the configured project can access."
+                ),
+            )
+            continue
+        for model in unavailable:
+            if model in warned_models:
+                continue
+            warned_models.add(model)
+            result = results[model]
+            _issue(
+                report,
+                "AUTO_MODEL_CANDIDATE_EXCLUDED",
+                f"Auto will exclude model {model!r}: {result.reason}.",
+                severity=PreflightSeverity.WARNING,
+                path="services.llm",
+                suggestion=(
+                    "No action is required if another accessible candidate is "
+                    "acceptable; otherwise grant this project model access."
+                ),
+            )
+
+    _add_check(
+        report,
+        "model_access",
+        before,
+        f"{len(models_to_probe)} model(s) checked through zero-token metadata.",
     )
 
 

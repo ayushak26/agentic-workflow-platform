@@ -14,6 +14,7 @@ import 'reactflow/dist/style.css';
 
 import { api } from '../../api/client';
 import { useRunEvents } from '../../hooks/useRunEvents';
+import { CopyButton } from '../../components/CopyButton';
 import { Spinner } from '../../components/Spinner';
 import { CockpitNode } from './CockpitNode';
 import { HITLPanel } from './HITLPanel';
@@ -499,7 +500,12 @@ useEffect(() => {
                 <div className="font-semibold text-lg mt-1">{selectedNode.data.nodeId}</div>
                 <div className="mt-2 text-xs text-ink-500">Status: {selectedNode.data.status}</div>
 
-                <h3 className="text-sm font-medium text-ink-700 mt-6 mb-2">Output preview</h3>
+                <div className="flex items-center justify-between mt-6 mb-2">
+                  <h3 className="text-sm font-medium text-ink-700">Output preview</h3>
+                  {cockpit.outputPreviews[selectedNode.data.nodeId] && (
+                    <CopyButton text={cockpit.outputPreviews[selectedNode.data.nodeId]} />
+                  )}
+                </div>
                 {cockpit.outputPreviews[selectedNode.data.nodeId] ? (
                   <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 overflow-x-auto whitespace-pre-wrap">
 {cockpit.outputPreviews[selectedNode.data.nodeId]}
