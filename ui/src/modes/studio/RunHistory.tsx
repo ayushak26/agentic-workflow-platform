@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api } from '../../api/client';
+import { api,rehydrate } from '../../api/client';
 import type {
   AuditEvent,
   EventType,
@@ -28,14 +28,14 @@ const STATUS_DOT: Record<string, string> = {
 // Node-type colour coding. Each agent type gets a tint + dot + label.
 // Falls back to neutral gray when the type is unknown (e.g. resume-path runs).
 const TYPE_STYLE: Record<string, { dot: string; chip: string; label: string }> = {
-  TransformAgent:    { dot: 'bg-violet-500',  chip: 'bg-violet-50 text-violet-700',   label: 'Transform' },
-  RAGAgent:          { dot: 'bg-teal-500',     chip: 'bg-teal-50 text-teal-700',       label: 'RAG' },
-  MCPAgent:          { dot: 'bg-blue-500',     chip: 'bg-blue-50 text-blue-700',       label: 'MCP' },
-  RouterAgent:       { dot: 'bg-amber-500',    chip: 'bg-amber-50 text-amber-700',     label: 'Router' },
-  HumanInLoopAgent:  { dot: 'bg-pink-500',     chip: 'bg-pink-50 text-pink-700',       label: 'Human' },
-  ExcelToolNode:     { dot: 'bg-green-500',    chip: 'bg-green-50 text-green-700',     label: 'Excel' },
-  PowerPointToolNode:{ dot: 'bg-orange-500',   chip: 'bg-orange-50 text-orange-700',   label: 'PowerPoint' },
-  PDFToolNode:       { dot: 'bg-red-500',      chip: 'bg-red-50 text-red-700',         label: 'PDF' },
+  TransformAgent: { dot: 'bg-violet-500', chip: 'bg-violet-50 text-violet-700', label: 'Transform' },
+  RAGAgent: { dot: 'bg-teal-500', chip: 'bg-teal-50 text-teal-700', label: 'RAG' },
+  MCPAgent: { dot: 'bg-blue-500', chip: 'bg-blue-50 text-blue-700', label: 'MCP' },
+  RouterAgent: { dot: 'bg-amber-500', chip: 'bg-amber-50 text-amber-700', label: 'Router' },
+  HumanInLoopAgent: { dot: 'bg-pink-500', chip: 'bg-pink-50 text-pink-700', label: 'Human' },
+  ExcelToolNode: { dot: 'bg-green-500', chip: 'bg-green-50 text-green-700', label: 'Excel' },
+  PowerPointToolNode: { dot: 'bg-orange-500', chip: 'bg-orange-50 text-orange-700', label: 'PowerPoint' },
+  PDFToolNode: { dot: 'bg-red-500', chip: 'bg-red-50 text-red-700', label: 'PDF' },
 };
 const TYPE_FALLBACK = { dot: 'bg-slate-400', chip: 'bg-slate-100 text-ink-500', label: 'Node' };
 
@@ -279,23 +279,40 @@ export function RunHistory() {
 
   useEffect(() => {
     let cancelled = false;
+    let timer: number | undefined;
+
     const load = () => {
       api.runHistory()
         .then((data) => {
-          if (!cancelled) {
-            setRuns(data.runs);
-            setListErr(null);
-          }
+          if (cancelled) return;
+          setRuns(data.runs);
+          setListErr(null);
         })
-        .catch((error) => {
-          if (!cancelled) setListErr(String(error));
+        .catch(async (error) => {
+          if (cancelled) return;
+          const msg = String(error);
+          // On auth failure, stop polling and try to recover the session from
+          // the cookie once. If that fails, surface it instead of hammering.
+          if (msg.includes('401')) {
+            if (timer) window.clearInterval(timer);
+            const user = await rehydrate();
+            if (!cancelled && user) {
+              load(); // session recovered — resume
+              timer = window.setInterval(load, 2500);
+            } else if (!cancelled) {
+              setListErr('Session expired — please log in again.');
+            }
+            return;
+          }
+          setListErr(msg);
         });
     };
+
     load();
-    const timer = window.setInterval(load, 2500);
+    timer = window.setInterval(load, 2500);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer) window.clearInterval(timer);
     };
   }, []);
 
@@ -383,9 +400,8 @@ export function RunHistory() {
             <button
               key={r.run_id}
               onClick={() => navigate(`/history/${r.run_id}`)}
-              className={`w-full text-left px-3.5 py-3 border-b border-slate-100 transition-colors ${
-                on ? 'bg-slate-100 border-l-2 border-l-accent-600' : 'border-l-2 border-l-transparent hover:bg-slate-50'
-              }`}
+              className={`w-full text-left px-3.5 py-3 border-b border-slate-100 transition-colors ${on ? 'bg-slate-100 border-l-2 border-l-accent-600' : 'border-l-2 border-l-transparent hover:bg-slate-50'
+                }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm text-ink-900 font-medium truncate">{r.workflow_name}</span>
@@ -569,9 +585,8 @@ export function RunHistory() {
                   return (
                     <div
                       key={`${a.node_id}-${a.ts}-${i}`}
-                      className={`grid grid-cols-[64px_170px_1fr] gap-3 items-start px-3 py-2 ${
-                        e.human ? 'border-l-2 border-l-pink-500 bg-pink-50' : 'border-l-2 border-l-transparent'
-                      }`}
+                      className={`grid grid-cols-[64px_170px_1fr] gap-3 items-start px-3 py-2 ${e.human ? 'border-l-2 border-l-pink-500 bg-pink-50' : 'border-l-2 border-l-transparent'
+                        }`}
                     >
                       <span className="font-mono text-[11px] text-ink-300">{clock(a.ts)}</span>
                       <span className="flex items-center gap-2 text-xs">

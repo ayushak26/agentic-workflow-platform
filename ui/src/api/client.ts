@@ -21,7 +21,12 @@ import type {
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 const API = `${BASE}/api`;
 
-// ---- auth token storage (in-memory; survives the SPA session) ----
+// ---- auth identity (in-memory) ----
+// The JWT lives in an HttpOnly cookie set by /auth/token; JS cannot read it.
+// We keep _token only for the live session so we can also send the
+// Authorization header (belt-and-suspenders with the cookie). _username is
+// the auth signal the UI keys off, because after a refresh _token is gone
+// but the cookie is still valid and rehydrate() can recover the identity.
 let _token: string | null = null;
 let _username: string | null = null;
 
@@ -43,11 +48,17 @@ export type Scorecard = {
   created_at: string;
 };
 
+// Central fetch wrapper: always send cookies so the HttpOnly auth cookie
+// rides along on every request (same-origin via the Vite proxy).
+function afetch(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, { ...init, credentials: 'include' });
+}
+
 export async function login(username: string, password: string): Promise<{ username: string }> {
   const body = new URLSearchParams({ username, password });
-  const r = await fetch(`${BASE}/auth/token`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+  const r = await afetch(`${BASE}/auth/token`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body,
   });
   if (!r.ok) throw new Error(`login failed: ${r.status} ${await r.text()}`);
@@ -57,8 +68,33 @@ export async function login(username: string, password: string): Promise<{ usern
   return { username: data.username };
 }
 
+// Recover the session from the HttpOnly cookie after a page refresh, when
+// _token is null but the cookie is still valid. Returns the user or null.
+export async function rehydrate(): Promise<{ username: string } | null> {
+  try {
+    const r = await afetch(`${BASE}/auth/me`);
+    if (!r.ok) return null;
+    const data = await r.json();
+    _username = data.username;
+    return { username: data.username };
+  } catch {
+    return null;
+  }
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await afetch(`${BASE}/auth/logout`, { method: 'POST' });
+  } finally {
+    _token = null;
+    _username = null;
+  }
+}
+
 export function isAuthed(): boolean {
-  return _token !== null;
+  // Cookie-based: presence of a known user is the signal, not the in-memory
+  // token (which is HttpOnly-invisible and lost on refresh).
+  return _username !== null;
 }
 export function apiBase(): string {
   return BASE;
@@ -117,19 +153,19 @@ async function j<T>(r: Response): Promise<T> {
 export const api = {
   // ---- node registry
   nodeTypes: () =>
-    fetch(`${API}/node-types`, { headers: authHeaders() }).then(j<NodeTypeManifest[]>),
+    afetch(`${API}/node-types`, { headers: authHeaders() }).then(j<NodeTypeManifest[]>),
   llmModels: () =>
-    fetch(`${API}/llm/models`, { headers: authHeaders() })
+    afetch(`${API}/llm/models`, { headers: authHeaders() })
       .then(j<{ models: LLMModelInfo[] }>),
 
   // ---- workflow CRUD
   listWorkflows: () =>
-    fetch(`${API}/workflows`, { headers: authHeaders() }).then(j<WorkflowSummary[]>),
+    afetch(`${API}/workflows`, { headers: authHeaders() }).then(j<WorkflowSummary[]>),
   getWorkflow: (name: string) =>
-    fetch(`${API}/workflows/by-name/${name}`, { headers: authHeaders() })
+    afetch(`${API}/workflows/by-name/${name}`, { headers: authHeaders() })
       .then(j<{ name: string; yaml: string }>),
   saveWorkflow: (name: string, yaml: string) =>
-    fetch(`${API}/workflows/save`, {
+    afetch(`${API}/workflows/save`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ name, yaml }),
@@ -139,21 +175,21 @@ export const api = {
     inputs?: Record<string, unknown>,
     check_services = false,
   ) =>
-    fetch(`${API}/workflows/validate`, {
+    afetch(`${API}/workflows/validate`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ workflow_yaml, inputs, check_services }),
     }).then(j<WorkflowPreflightReport>),
 
   workflowFileCapabilities: () =>
-    fetch(`${API}/workflow-input-files/capabilities`, {
+    afetch(`${API}/workflow-input-files/capabilities`, {
       headers: authHeaders(),
     }).then(j<WorkflowFileCapabilities>),
 
   uploadWorkflowFiles: (files: File[]) => {
     const form = new FormData();
     for (const file of files) form.append('files', file);
-    return fetch(`${API}/workflow-input-files`, {
+    return afetch(`${API}/workflow-input-files`, {
       method: 'POST',
       headers: authHeaders(),
       body: form,
@@ -164,7 +200,7 @@ export const api = {
     file: WorkflowFileReference,
     max_chars = 1_000_000,
   ) =>
-    fetch(`${API}/workflow-input-files/extract`, {
+    afetch(`${API}/workflow-input-files/extract`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ file, max_chars }),
@@ -172,7 +208,7 @@ export const api = {
 
   downloadWorkflowFile: async (ref: WorkflowFileReference) => {
     const params = new URLSearchParams({ key: ref.minio_key });
-    const response = await fetch(
+    const response = await afetch(
       `${API}/workflow-input-files/content?${params.toString()}`,
       { headers: authHeaders() },
     );
@@ -190,27 +226,27 @@ export const api = {
 
   // ---- execution
   runWorkflow: (workflow_yaml: string, inputs: Record<string, unknown>, session_id?: string, run_id?: string) =>
-    fetch(`${API}/workflows/run`, {
+    afetch(`${API}/workflows/run`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ workflow_yaml, inputs, session_id, run_id }),
     }).then(j<{ run_id: string; status: string; state?: unknown }>),
   resumeWorkflow: (run_id: string, decision: Record<string, unknown>) =>
-    fetch(`${API}/workflows/${run_id}/resume`, {
+    afetch(`${API}/workflows/${run_id}/resume`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ decision }),
     }).then(j<{ ok: true }>),
   costForRun: (run_id: string) =>
-    fetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
+    afetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
   websocketTicket: (run_id: string) =>
-    fetch(`${API}/runs/${run_id}/ws-ticket`, {
+    afetch(`${API}/runs/${run_id}/ws-ticket`, {
       method: 'POST',
       headers: authHeaders(),
     }).then(j<{ ticket: string }>),
   downloadArtifact: async (key: string) => {
-    const response = await fetch(api.fileUrl(key, true), { headers: authHeaders() });
+    const response = await afetch(api.fileUrl(key, true), { headers: authHeaders() });
     if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
@@ -221,14 +257,14 @@ export const api = {
     URL.revokeObjectURL(url);
   },
   runHistory: () =>
-    fetch(`${API}/runs/mine`, { headers: authHeaders() })
+    afetch(`${API}/runs/mine`, { headers: authHeaders() })
       .then(j<{ count: number; runs: RunSummary[] }>),
 
   runDetail: (run_id: string) =>
-    fetch(`${API}/runs/mine/${run_id}`, { headers: authHeaders() })
+    afetch(`${API}/runs/mine/${run_id}`, { headers: authHeaders() })
       .then(j<{ run: RunDetail; audit: AuditEvent[] }>),
   researchSkills: () =>
-    fetch(`${API}/research/skills`, { headers: authHeaders() })
+    afetch(`${API}/research/skills`, { headers: authHeaders() })
       .then(j<{
         skills: {
           name: string;
@@ -239,7 +275,7 @@ export const api = {
         load_errors: Record<string, string>;
       }>),
   retryFailedRun: (source_run_id: string, run_id: string) =>
-    fetch(`${API}/runs/mine/${source_run_id}/retry`, {
+    afetch(`${API}/runs/mine/${source_run_id}/retry`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ run_id }),
@@ -255,7 +291,7 @@ export const api = {
     }>),
 
   proposalReview: (run_id: string) =>
-    fetch(`${API}/proposals/runs/${run_id}/review`, {
+    afetch(`${API}/proposals/runs/${run_id}/review`, {
       headers: authHeaders(),
     }).then(j<ProposalReview>),
 
@@ -270,7 +306,7 @@ export const api = {
       metadata?: Record<string, unknown>;
     },
   ) =>
-    fetch(
+    afetch(
       `${API}/proposals/${proposal_id}/sources/${source_id}/versions`,
       {
         method: 'POST',
@@ -284,7 +320,7 @@ export const api = {
     graph: Record<string, unknown>,
     model = 'claude-sonnet-4-5',
   ) =>
-    fetch(`${API}/proposals/${proposal_id}/verify-claims`, {
+    afetch(`${API}/proposals/${proposal_id}/verify-claims`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ graph, model }),
@@ -300,7 +336,7 @@ export const api = {
     concept_note = '',
     model = 'claude-opus-5',
   ) =>
-    fetch(`${API}/proposals/${proposal_id}/concept-alternatives`, {
+    afetch(`${API}/proposals/${proposal_id}/concept-alternatives`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ graph, concept_note, model }),
@@ -315,7 +351,7 @@ export const api = {
     stage: string,
     selected_concept_id?: string,
   ) =>
-    fetch(`${API}/proposals/${proposal_id}/approvals`, {
+    afetch(`${API}/proposals/${proposal_id}/approvals`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ graph, stage, selected_concept_id }),
@@ -327,7 +363,7 @@ export const api = {
     decision: 'approved' | 'rejected' | 'changes_requested',
     comment?: string,
   ) =>
-    fetch(
+    afetch(
       `${API}/proposals/${proposal_id}/approvals/${approval_id}/decision`,
       {
         method: 'POST',
@@ -345,7 +381,7 @@ export const api = {
       evaluator_models?: string[];
     },
   ) =>
-    fetch(`${API}/proposals/${proposal_id}/horizon-evaluation`, {
+    afetch(`${API}/proposals/${proposal_id}/horizon-evaluation`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
@@ -355,7 +391,7 @@ export const api = {
     proposal_id: string,
     body: ProposalRenderRequest,
   ) =>
-    fetch(`${API}/proposals/${proposal_id}/render`, {
+    afetch(`${API}/proposals/${proposal_id}/render`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
@@ -365,29 +401,29 @@ export const api = {
     proposal_id: string,
     body: ProposalRenderRequest & { max_embedded_image_bytes?: number },
   ) =>
-    fetch(`${API}/proposals/${proposal_id}/render/docx`, {
+    afetch(`${API}/proposals/${proposal_id}/render/docx`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     }).then(j<ProposalRenderResult>),
 
   goldenSet: (name: string) =>
-    fetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
+    afetch(`${API}/eval/golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
       .then(j<{ name: string; n: number; examples: { id: string; question: string; context: string; reference: string }[] }>),
 
   runEval: (golden_set: string, judge_model: string) =>
-    fetch(`${API}/eval/run`, {
+    afetch(`${API}/eval/run`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ golden_set, judge_model }),
     }).then(j<Scorecard>),
 
   evalHistory: (limit = 20) =>
-    fetch(`${API}/eval/history?limit=${limit}`, { headers: authHeaders() })
+    afetch(`${API}/eval/history?limit=${limit}`, { headers: authHeaders() })
       .then(j<{ scorecards: Scorecard[] }>),
 
   scoreOutput: (body: { answer: string; sources: string; question?: string; reference?: string; judge_model?: string }) =>
-    fetch(`${API}/eval/score-output`, {
+    afetch(`${API}/eval/score-output`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
@@ -423,7 +459,7 @@ export async function streamRunEvents(
     headers['Last-Event-ID'] = String(options.lastEventId);
   }
 
-  const response = await fetch(`${API}/runs/${runId}/events`, {
+  const response = await afetch(`${API}/runs/${runId}/events`, {
     method: 'GET',
     headers,
     signal: options.signal,

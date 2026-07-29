@@ -67,10 +67,13 @@ class CostLedger:
             cost_usd=entry.cost_usd,
         )
 
-    def run_summary(self, run_id: str) -> dict:
+    def run_summary(self, run_id: str, session_id: str | None = None) -> dict:
         if self._col is None:
             return {"run_id": run_id, "total_usd": 0.0, "by_node": []}
-        entries = list(self._col.find({"run_id": run_id}, {"_id": 0}))
+        query: dict = {"run_id": run_id}
+        if session_id is not None:
+            query["session_id"] = session_id
+        entries = list(self._col.find(query, {"_id": 0}))
         total = round(sum(e["cost_usd"] for e in entries), 6)
         return {"run_id": run_id, "total_usd": total, "by_node": entries}
 

@@ -19,7 +19,9 @@ from app.runtime.preflight import (
     preflight_workflow_for_run,
     preflight_workflow_yaml,
 )
-from app.security.dependencies import require_permission, require_consultant, require_admin, CurrentUser
+from app.security.dependencies import (
+    require_permission, require_consultant, require_admin, CurrentUser,
+)
 # Phase 11A — run history + durable retry checkpoints
 from app.workflow.run_history import (
     initialize_run_checkpoint,
