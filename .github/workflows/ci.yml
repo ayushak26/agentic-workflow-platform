@@ -80,16 +80,16 @@ jobs:
           exit 1
 
       - name: Install backend
-        run: python -m pip install -e ".[dev]"
+        run: uv sync --extra dev --frozen
 
       - name: Compile Python
-        run: python -m compileall -q app scripts tests
+        run: uv run python -m compileall -q app scripts tests
 
       - name: Run backend tests
-        run: python -m pytest -q
+        run: uv run python -m pytest -q
 
       - name: Preflight all workflows
-        run: python scripts/preflight_workflows.py --warnings-as-errors
+        run: uv run python scripts/preflight_workflows.py --warnings-as-errors
 
       - name: Show service logs on failure
         if: failure()
