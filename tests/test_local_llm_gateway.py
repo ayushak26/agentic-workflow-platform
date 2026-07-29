@@ -99,7 +99,7 @@ async def test_local_completion_uses_served_model_and_reasoning_effort():
     assert response.input_tokens == 12
     kwargs = client.chat.completions.create.await_args.kwargs
     assert kwargs["model"] == "served-model"
-    assert kwargs["max_tokens"] == 321
+    assert kwargs[gateway._max_tokens_field()] == 321
     assert kwargs["extra_body"]["reasoning_effort"] == "max"
 
 

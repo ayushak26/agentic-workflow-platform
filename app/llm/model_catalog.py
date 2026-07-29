@@ -14,7 +14,12 @@ AUTO_MODEL = "auto"
 AUTO_MODEL_LABEL = "Best possible LLM (Auto)"
 
 ModelTier = Literal["economy", "standard", "premium"]
-ProviderName = Literal["anthropic", "openai"]
+ProviderName = Literal[
+    "anthropic",
+    "openai",
+    "moonshot-local",
+    "zai-local",
+]
 
 
 @dataclass(frozen=True)
@@ -88,6 +93,30 @@ MODEL_PROFILES: tuple[ModelProfile, ...] = (
         ),
         input_usd_per_1k=0.0005,
         output_usd_per_1k=0.0015,
+    ),
+    ModelProfile(
+        name="local-kimi-k3",
+        provider="moonshot-local",
+        tier="premium",
+        speed_rank=1,
+        strengths=frozenset(
+            {"writing", "reasoning", "tool_use", "long_context"}
+        ),
+        # API-metered cost is zero. Infrastructure cost is accounted for
+        # separately by the private deployment.
+        input_usd_per_1k=0.0,
+        output_usd_per_1k=0.0,
+    ),
+    ModelProfile(
+        name="local-glm-5",
+        provider="zai-local",
+        tier="premium",
+        speed_rank=1,
+        strengths=frozenset(
+            {"reasoning", "structured", "tool_use", "coding"}
+        ),
+        input_usd_per_1k=0.0,
+        output_usd_per_1k=0.0,
     ),
 )
 

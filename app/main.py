@@ -251,7 +251,7 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ───────────────────────────────────────────────────────────────
     logger.info("eurskem_ai.shutdown")
     if "mongo" in services:
-        services["mongo"].close()
+        await services["mongo"].close()
     if "weaviate_client" in services:
         services["weaviate_client"].close()
     if "redis" in services:

@@ -35,5 +35,8 @@ def test_login_dev_bypass(client):
 
 
 def test_protected_route_without_token(client):
+    # The module-scoped TestClient persists the HttpOnly cookie created by the
+    # login test above. Clear it so this request is genuinely unauthenticated.
+    client.cookies.clear()
     res = client.get("/api/cost/run/some-run-id")
     assert res.status_code == 401

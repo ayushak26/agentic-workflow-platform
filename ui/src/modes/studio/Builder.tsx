@@ -30,6 +30,7 @@ import {
   reactFlowToYaml,
   type WorkflowNodeData,
   type WorkflowInputSpec,
+  type ModelRoutingPolicy,
   type YamlWorkflow,
 } from './yaml-bridge';
 import { generateDefaults, newNodeId, findManifest } from './builder-helpers';
@@ -102,12 +103,32 @@ export function Builder() {
       const existingIds = new Set(nodes.map(n => n.data.nodeId));
       const id = newNodeId(typeName, existingIds);
       const config = generateDefaults(manifest.config_schema) ?? {};
+      const supportsModelSelection = Boolean(
+        (
+          manifest.config_schema as {
+            properties?: Record<string, unknown>;
+          }
+        ).properties?.model,
+      );
 
       const newNode: RFNode<WorkflowNodeData> = {
         id,
         type: 'workflow',
         position,
-        data: { nodeId: id, typeName, config },
+        data: {
+          nodeId: id,
+          typeName,
+          config,
+          ...(supportsModelSelection
+            ? {
+                selectedModel: 'auto',
+                modelRouting: {
+                  accuracy_priority: 'maximum' as const,
+                  prefer_low_latency: false,
+                },
+              }
+            : {}),
+        },
       };
       setPreflight(null);
       setNodes(ns => [...ns, newNode]);
@@ -164,6 +185,48 @@ export function Builder() {
       setSelectedId(nextId);
     },
     [selectedId, setNodes, setEdges],
+  );
+
+  const onModelSelectionChange = useCallback(
+    (nextModel: string | null) => {
+      if (!selectedId) return;
+      setPreflight(null);
+      setNodes(current =>
+        current.map(node =>
+          node.id === selectedId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  selectedModel: nextModel,
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [selectedId, setNodes],
+  );
+
+  const onModelRoutingChange = useCallback(
+    (nextPolicy: ModelRoutingPolicy | undefined) => {
+      if (!selectedId) return;
+      setPreflight(null);
+      setNodes(current =>
+        current.map(node =>
+          node.id === selectedId
+            ? {
+                ...node,
+                data: {
+                  ...node.data,
+                  modelRouting: nextPolicy,
+                },
+              }
+            : node,
+        ),
+      );
+    },
+    [selectedId, setNodes],
   );
 
   // ---- Save ----
@@ -374,6 +437,8 @@ export function Builder() {
             llmModels={llmModels}
             onIdChange={onIdChange}
             onConfigChange={onConfigChange}
+            onModelSelectionChange={onModelSelectionChange}
+            onModelRoutingChange={onModelRoutingChange}
           />
         )}
       </aside>

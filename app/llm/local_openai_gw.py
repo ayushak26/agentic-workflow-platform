@@ -49,7 +49,15 @@ def normalize_openai_base_url(value: str) -> str:
     if parsed.query or parsed.fragment:
         raise ValueError("local LLM base URL cannot contain query or fragment data")
     path = parsed.path.rstrip("/")
-    if not path.endswith("/v1"):
+    # Self-hosted vLLM/SGLang expose /v1. Hosted first-party APIs may use a
+    # different versioned path (e.g. Z.ai's /api/paas/v4). Only synthesize /v1
+    # when the URL carries no version segment at all, so we never mangle a
+    # provider-owned path such as /api/paas/v4 into /api/paas/v4/v1.
+    has_version_segment = any(
+        seg and seg[0] == "v" and seg[1:].isdigit()
+        for seg in path.split("/")
+    )
+    if not has_version_segment:
         path += "/v1"
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
@@ -96,13 +104,27 @@ class LocalOpenAICompatibleGateway(LLMGateway):
     def _generation_options(self) -> dict[str, Any]:
         # ``extra_body`` keeps compatibility with OpenAI SDK versions that do
         # not yet type provider-specific fields while still placing them at the
-        # top level of the JSON request sent to vLLM/SGLang.
+        # top level of the JSON request sent to the endpoint.
         extra_body: dict[str, Any] = {
             "reasoning_effort": self.profile.reasoning_effort,
         }
         if self.profile.provider == "zai-local":
             extra_body["enable_thinking"] = self.profile.enable_thinking
         return {"extra_body": extra_body}
+
+    def _fixed_sampling_provider(self) -> bool:
+        # Moonshot's hosted K3 fixes temperature/top_p/n/penalties and errors
+        # if any are sent. Detect by provider prefix so a hypothetical future
+        # self-hosted K3 (which DOES accept sampling) is unaffected.
+        return self.profile.provider.startswith("moonshot")
+
+    def _max_tokens_field(self) -> str:
+        # Hosted K3 deprecated `max_tokens` in favour of `max_completion_tokens`.
+        return (
+            "max_completion_tokens"
+            if self._fixed_sampling_provider()
+            else "max_tokens"
+        )
 
     async def complete(
         self,
@@ -112,17 +134,21 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        on_token: object | None = None,
     ) -> LLMResponse:
-        response = await self._client.chat.completions.create(
-            model=self.profile.served_model,
-            messages=[
+        _ = on_token  # accepted for registry-streaming parity; not emitted
+        create_kwargs: dict[str, Any] = {
+            "model": self.profile.served_model,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
+            self._max_tokens_field(): max_tokens,
             **self._generation_options(),
-        )
+        }
+        if not self._fixed_sampling_provider():
+            create_kwargs["temperature"] = temperature
+        response = await self._client.chat.completions.create(**create_kwargs)
         choice = response.choices[0]
         input_tokens, output_tokens = _usage(response)
         return LLMResponse(
@@ -144,15 +170,14 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         max_tokens: int = 4096,
     ) -> StructuredResult:
         schema = response_model.model_json_schema()
-        response = await self._client.chat.completions.create(
-            model=self.profile.served_model,
-            messages=[
+        structured_kwargs: dict[str, Any] = {
+            "model": self.profile.served_model,
+            "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={
+            self._max_tokens_field(): max_tokens,
+            "response_format": {
                 "type": "json_schema",
                 "json_schema": {
                     "name": response_model.__name__.lower(),
@@ -161,7 +186,10 @@ class LocalOpenAICompatibleGateway(LLMGateway):
                 },
             },
             **self._generation_options(),
-        )
+        }
+        if not self._fixed_sampling_provider():
+            structured_kwargs["temperature"] = temperature
+        response = await self._client.chat.completions.create(**structured_kwargs)
         content = response.choices[0].message.content or ""
         try:
             parsed = response_model.model_validate_json(content)
@@ -240,10 +268,11 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         kwargs: dict[str, Any] = {
             "model": self.profile.served_model,
             "messages": openai_messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            self._max_tokens_field(): max_tokens,
             **self._generation_options(),
         }
+        if not self._fixed_sampling_provider():
+            kwargs["temperature"] = temperature
         if openai_tools:
             kwargs["tools"] = openai_tools
             kwargs["tool_choice"] = "auto"

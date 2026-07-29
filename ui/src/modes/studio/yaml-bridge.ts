@@ -87,7 +87,7 @@ export function yamlToReactFlow(
 
   const edges: RFEdge[] = [];
   let edgeId = 0;
-  for (const e of wf.edges) {
+  for (const e of wf.edges ?? []) {
     // Conditional router edges: one source, multiple labeled branches.
     if (e.branches) {
       for (const [label, target] of Object.entries(e.branches)) {

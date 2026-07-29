@@ -297,16 +297,30 @@ def _estimate_input_tokens(kwargs: dict[str, Any]) -> int:
 
 
 def _is_model_available(model: str) -> bool:
-    """Routing availability: a model is usable unless its gateway is stubbed.
+    """Return whether auto-routing may safely select ``model``.
 
-    _STUB_GATEWAYS is currently empty, so today this is True for every model.
-    It becomes correct automatically the moment a provider is marked stubbed,
-    without changing the router or the call sites.
+    Automatic selection must not choose a provider that cannot be called.
+    Tests and dependency-injected deployments may provide an instantiated
+    gateway directly; otherwise cloud providers require credentials and local
+    providers must be explicitly enabled by deployment configuration.
     """
     try:
-        return _gateway_class_for(model) not in _STUB_GATEWAYS
+        gateway_class = _gateway_class_for(model)
     except ValueError:
         return False
+    if gateway_class in _STUB_GATEWAYS:
+        return False
+    if gateway_class in _INSTANCES:
+        return True
+    if gateway_class is OpenAIGateway:
+        return bool(settings.openai_api_key)
+    if gateway_class is AnthropicGateway:
+        return bool(settings.anthropic_api_key)
+    if gateway_class is KimiK3LocalGateway:
+        return settings.local_kimi_enabled
+    if gateway_class is GLM5LocalGateway:
+        return settings.local_glm_enabled
+    return False
 
 
 class RegistryLLMGateway(LLMGateway):
@@ -344,6 +358,8 @@ class RegistryLLMGateway(LLMGateway):
         self._node_type: str | None = None
         self._allowed_models: list[str] | None = None
         self._routing_policy: dict[str, Any] | None = None
+        self._semantic_cache = None
+        self._use_cache: bool = False
         # Per-instance selection record. The compiler lifts this into
         # state["model_selections"]; direct callers read it as a property.
         self._selection_history: list[dict[str, Any]] = []
@@ -368,6 +384,8 @@ class RegistryLLMGateway(LLMGateway):
         node_type: str | None = None,
         allowed_models: list[str] | None = None,
         routing_policy: dict[str, Any] | None = None,
+        semantic_cache=None,
+        use_cache: bool = False,
     ) -> "RegistryLLMGateway":
         """Return a context-bound copy for per-node cost tracking and routing.
 
@@ -388,6 +406,8 @@ class RegistryLLMGateway(LLMGateway):
         clone._node_type       = node_type
         clone._allowed_models  = allowed_models
         clone._routing_policy  = routing_policy
+        clone._semantic_cache  = semantic_cache
+        clone._use_cache       = use_cache
         # Each bound clone accumulates its own selections independently.
         clone._selection_history = []
         clone._call_seq = 0
@@ -591,6 +611,28 @@ class RegistryLLMGateway(LLMGateway):
         # and the existing test suite). Behaviour is exactly as before —
         # no selection, no events, no on_token injection.
         if self._event_bus is None and self._allowed_models is None:
+            cache = self._semantic_cache
+            use_cache = (
+                self._use_cache
+                and cache is not None
+                and settings.semantic_cache_enabled
+                and self._session_id is not None
+                and kwargs.get("on_token") is None
+            )
+            lookup = None
+            if use_cache:
+                lookup = await cache.get(
+                    session_id=self._session_id,
+                    model=resolve_model(model),
+                    system=kwargs.get("system", ""),
+                    user=kwargs.get("user", ""),
+                    temperature=float(kwargs.get("temperature", 0.0)),
+                    max_tokens=int(kwargs.get("max_tokens", 1024)),
+                )
+                if lookup.hit and lookup.response is not None:
+                    from app.llm.base import LLMResponse
+
+                    return LLMResponse(**lookup.response)
             resp, resolved = await self._call_resilient(
                 "complete",
                 intended=model,
@@ -598,6 +640,19 @@ class RegistryLLMGateway(LLMGateway):
             )
             _record_usage(model, resolved, resp)
             self._record_cost(model, resolved, resp)
+            if use_cache:
+                await cache.put(
+                    session_id=self._session_id,
+                    model=resolved,
+                    system=kwargs.get("system", ""),
+                    user=kwargs.get("user", ""),
+                    temperature=float(kwargs.get("temperature", 0.0)),
+                    max_tokens=int(kwargs.get("max_tokens", 1024)),
+                    response=resp.model_dump(),
+                    query_embedding=(
+                        lookup.query_embedding if lookup is not None else None
+                    ),
+                )
             return resp
 
         # Routing path: choose a model deterministically, announce it, then
@@ -654,25 +709,89 @@ class RegistryLLMGateway(LLMGateway):
         return resp
 
     async def complete_structured(self, *, model: str, **kwargs):
+        if self._event_bus is None and self._allowed_models is None:
+            resp, resolved = await self._call_resilient(
+                "complete_structured",
+                intended=model,
+                kwargs=kwargs,
+            )
+            _record_usage(model, resolved, resp)
+            self._record_cost(model, resolved, resp)
+            return resp.parsed
+
+        selection = self._select_model(
+            method_name="complete_structured",
+            requested=model,
+            kwargs=kwargs,
+        )
+        intended = selection.selected_model
+        call_id = self._next_call_id()
+        resolved_preview = resolve_model(intended)
+        event_dict = selection.to_event(
+            actual_model=resolved_preview,
+            call_id=call_id,
+        )
+        self._selection_history.append(event_dict)
+        await self._publish(
+            RunEvent(
+                type="model_selected",
+                run_id=self._run_id or "unknown",
+                session_id=self._session_id,
+                node_id=self._node_id,
+                context=event_dict,
+            )
+        )
         resp, resolved = await self._call_resilient(
             "complete_structured",
-            intended=model,
+            intended=intended,
             kwargs=kwargs,
         )
         # Concrete gateways return StructuredResult so cost survives native
         # structured output. The registry preserves the public bare-model API.
-        _record_usage(model, resolved, resp)
-        self._record_cost(model, resolved, resp)
+        _record_usage(intended, resolved, resp)
+        self._record_cost(intended, resolved, resp)
         return resp.parsed
 
     async def chat_with_tools(self, *, model: str, **kwargs):
-        resp, resolved = await self._call_resilient(
-            "chat_with_tools",
-            intended=model,
+        if self._event_bus is None and self._allowed_models is None:
+            resp, resolved = await self._call_resilient(
+                "chat_with_tools",
+                intended=model,
+                kwargs=kwargs,
+            )
+            _record_usage(model, resolved, resp)
+            self._record_cost(model, resolved, resp)
+            return resp
+
+        selection = self._select_model(
+            method_name="chat_with_tools",
+            requested=model,
             kwargs=kwargs,
         )
-        _record_usage(model, resolved, resp)
-        self._record_cost(model, resolved, resp)
+        intended = selection.selected_model
+        call_id = self._next_call_id()
+        resolved_preview = resolve_model(intended)
+        event_dict = selection.to_event(
+            actual_model=resolved_preview,
+            call_id=call_id,
+        )
+        self._selection_history.append(event_dict)
+        await self._publish(
+            RunEvent(
+                type="model_selected",
+                run_id=self._run_id or "unknown",
+                session_id=self._session_id,
+                node_id=self._node_id,
+                context=event_dict,
+            )
+        )
+        resp, resolved = await self._call_resilient(
+            "chat_with_tools",
+            intended=intended,
+            kwargs=kwargs,
+        )
+        _record_usage(intended, resolved, resp)
+        self._record_cost(intended, resolved, resp)
         return resp
 
 

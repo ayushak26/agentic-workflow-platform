@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.config import settings
 from app.llm.catalog import MODEL_CATALOG, is_local_model
+from app.llm.model_catalog import AUTO_MODEL, AUTO_MODEL_LABEL
 from app.llm.registry import local_model_enabled, probe_local_model
 from app.security.dependencies import (
     CurrentUser,
@@ -49,7 +50,30 @@ async def list_models(
             definition.provider,
         )
         models.append(item)
-    return {"models": models}
+    auto_configured = any(
+        item["enabled"] and item["configured"]
+        for item in models
+    )
+    auto = {
+        "name": AUTO_MODEL,
+        "display_name": AUTO_MODEL_LABEL,
+        "provider": "task-aware-router",
+        "local": False,
+        "automatic": True,
+        "enabled": True,
+        "configured": auto_configured,
+        "tool_calling": True,
+        "structured_output": True,
+        "reasoning_efforts": [],
+        "platform_modalities": ["text"],
+        "upstream_url": None,
+        "description": (
+            "Deterministically chooses the best configured model for each "
+            "call using task type, complexity, required capabilities, "
+            "quality policy, cost, latency, and provider availability."
+        ),
+    }
+    return {"models": [auto, *models]}
 
 
 @router.post("/models/{model}/probe")

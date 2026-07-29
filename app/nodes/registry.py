@@ -10,8 +10,7 @@ from typing import Type
 
 from pydantic import BaseModel
 
-from app.llm.catalog import MODEL_NAMES
-from app.llm.model_catalog import MODEL_OPTION_LABELS
+from app.llm.model_catalog import MODEL_OPTION_LABELS, MODEL_SELECTION_OPTIONS
 
 from .base import NodeType
 
@@ -91,7 +90,7 @@ def _with_model_catalog(schema: dict) -> dict:
         return schema
 
     if model_schema.get("type") == "string":
-        model_schema["enum"] = list(MODEL_NAMES)
+        model_schema["enum"] = list(MODEL_SELECTION_OPTIONS)
         model_schema["x-enum-labels"] = dict(MODEL_OPTION_LABELS)
         return schema
 
@@ -106,8 +105,8 @@ def _with_model_catalog(schema: dict) -> dict:
             isinstance(variant, dict)
             and variant.get("type") == "string"
         ):
-            variant["enum"] = list(MODEL_NAMES)
-            variant["x-enum-labels"] = dict(MODEL_OPTION_LABELS)        
+            variant["enum"] = list(MODEL_SELECTION_OPTIONS)
+            variant["x-enum-labels"] = dict(MODEL_OPTION_LABELS)
             break
 
     return schema

@@ -1,0 +1,695 @@
+name: Horizon Proposal Engineering - Autonomous DOCX
+description: >-
+  Fully autonomous Horizon Europe proposal-engineering workflow. It converts a
+  concept note, authoritative call documents, consortium facts, and work-plan
+  and budget facts into an evidence-verified, independently evaluated,
+  submission-gated, editable Part B DOCX. It contains no human pause. Missing
+  facts remain visible and cause the release gate and DOCX submission_ready
+  flag to fail rather than being invented.
+version: "1.0"
+use_case: eu_proposal
+inputs:
+  concept_note:
+    type: file
+    description: The proposal concept note and project idea.
+    required: true
+    multiple: true
+    max_files: 5
+    accept: [pdf, document, markdown, presentation]
+  call_documents:
+    type: file
+    description: Authoritative topic text, conditions, Part B template, and guidance.
+    required: true
+    multiple: true
+    max_files: 10
+    accept: [pdf, document, markdown, presentation]
+  consortium_documents:
+    type: file
+    description: Partner profiles, roles, countries, facilities, pilot sites, and person-month facts.
+    required: true
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+  workplan_budget_documents:
+    type: file
+    description: Work packages, tasks, deliverables, milestones, timing, resources, risks, and budget facts.
+    required: true
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+  proposal_metadata:
+    type: json
+    description: >-
+      Renderer metadata object, for example proposal_title, acronym, call_id,
+      action_type, consortium_name, part_label, and version.
+    required: true
+nodes:
+  - id: load_concept
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.concept_note}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: load_call
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.call_documents}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: load_consortium
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.consortium_documents}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: load_workplan_budget
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.workplan_budget_documents}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: call_intelligence
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - gpt-5-mini
+      - claude-opus-5
+      - claude-sonnet-4-5
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-sol
+      max_tokens: 12000
+      output_schema:
+        call_identity: object
+        expected_outcomes: list
+        scope_requirements: list
+        mandatory_conditions: list
+        evaluation_priorities: list
+        exclusions: list
+        page_and_format_rules: object
+        unresolved_call_questions: list
+      prompt_template: |
+        Extract an atomic, traceable Horizon Europe call checklist from the
+        authoritative documents below. Separate expected outcomes, scope
+        requirements, eligibility or mandatory conditions, evaluator priorities,
+        exclusions, and page/format rules. Do not infer a requirement that is not
+        present. Put ambiguity in unresolved_call_questions.
+
+        AUTHORITATIVE CALL DOCUMENTS:
+        {{load_call.text}}
+
+  - id: normalise_source_graph
+    type: GraphNormalizer
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - claude-opus-5
+      - claude-sonnet-4-5
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-sol
+      max_tokens: 32000
+      concept_note: |
+        CONCEPT NOTE:
+        {{load_concept.text}}
+
+        CONSORTIUM FACTS:
+        {{load_consortium.text}}
+
+        WORK-PLAN AND BUDGET FACTS:
+        {{load_workplan_budget.text}}
+      call_facts: |
+        CALL DOCUMENTS:
+        {{load_call.text}}
+
+        ATOMIC CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+  - id: discover_evidence
+    type: ScholarlyCandidateDiscoveryAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5
+      - gpt-5-mini
+      - claude-sonnet-4-5
+      - local-glm-5
+    model_routing:
+      accuracy_priority: balanced
+      prefer_low_latency: true
+    config:
+      model: gpt-5
+      max_results_per_source: 3
+      max_candidates_per_claim: 10
+      max_claims: 30
+      claim_types: [state_of_art, problem, impact, method]
+      require_contradiction_search: true
+
+  - id: acquire_full_text
+    type: FullTextEvidenceAcquirer
+    config:
+      candidates: "{{discover_evidence.candidates}}"
+      fail_when_none_acquired: false
+
+  - id: verify_evidence
+    type: ProposalEvidenceFactoryAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - claude-opus-5
+      - claude-sonnet-4-5
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-sol
+      candidates: "{{discover_evidence.candidates}}"
+      documents: "{{acquire_full_text.documents}}"
+      search_audit: "{{discover_evidence.search_audit}}"
+      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
+      max_passages_per_document: 10
+
+  - id: scientific_synthesis
+    type: ScientificSkillAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      skills:
+        - literature-review
+        - scientific-critical-thinking
+        - research-grants
+        - scientific-writing
+      auto_select: false
+      max_skills: 4
+      max_tokens: 16000
+      objective: |
+        Produce a proposal-engineering evidence synthesis using only the
+        verified claim records. For each scientific proposition state the
+        supported conclusion, boundary conditions, contradiction status,
+        evidence strength, citation IDs, and proposal section where it is safe
+        to use. Separate verified evidence from gaps. Never promote a candidate
+        record or abstract to evidence.
+
+        VERIFIED CLAIMS:
+        {{verify_evidence.verified_claims}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
+        BLOCKING ISSUES:
+        {{verify_evidence.blocking_issues}}
+
+  - id: call_coverage
+    type: CallCoverageMatrixAgent
+    config: {}
+
+  - id: concept_alternatives
+    type: ConceptAlternativesAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      concept_note: "{{load_concept.text}}"
+
+  - id: select_concept
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 8000
+      output_schema:
+        selected_concept_id: str
+        selection_rationale: str
+        retained_strengths: list
+        risks_to_control: list
+        assumptions_requiring_evidence: list
+      prompt_template: |
+        Select the strongest credible concept posture for this call. Prefer
+        evaluator strength and complete call coverage, but do not select an
+        ambitious option whose required capabilities or evidence are absent.
+        selected_concept_id must be one of the supplied IDs.
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+        COVERAGE:
+        {{call_coverage}}
+
+        CONCEPT ALTERNATIVES:
+        {{concept_alternatives.alternatives}}
+
+        VERIFIED EVIDENCE SYNTHESIS:
+        {{scientific_synthesis.answer}}
+
+  - id: proposal_blueprint
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 20000
+      output_schema:
+        identity_and_narrative: object
+        objective_result_outcome_chain: object
+        state_of_art_and_innovations: object
+        methodology_and_validation: object
+        impact_pathways_and_kpis: object
+        work_packages_tasks_deliverables: object
+        consortium_and_resources: object
+        risks_and_mitigations: object
+        cross_cutting_compliance: object
+        section_page_budget: object
+        figure_and_table_plan: object
+        unresolved_inputs: list
+      prompt_template: |
+        Create the master Part B proposal blueprint for the selected concept.
+        Map every call requirement to a section, result, owner, evidence claim,
+        KPI, work package, task, deliverable, milestone, and risk where grounded.
+        Build an explicit objective -> result -> outcome -> impact chain. Allocate
+        the 45-page narrative budget across Excellence, Impact, and
+        Implementation. Plan only useful tables and figures. Use
+        [INPUT NEEDED: exact item] for missing facts; never invent partner,
+        budget, KPI, TRL, timeline, pilot, or evidence details.
+
+        SELECTED CONCEPT:
+        {{select_concept.parsed}}
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+        NORMALISED SOURCE:
+        {{normalise_source_graph.report}}
+        {{normalise_source_graph.warnings}}
+
+        CONSORTIUM DOCUMENTS:
+        {{load_consortium.text}}
+
+        WORK-PLAN AND BUDGET DOCUMENTS:
+        {{load_workplan_budget.text}}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+  - id: draft_excellence
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft the complete Part B Excellence section in polished proposal-ready
+        Markdown: 1.1 Objectives and Ambition, 1.2 Relation to the Work
+        Programme and State of the Art, and 1.3 Methodology. Demonstrate the
+        beyond-state-of-the-art advance claim by claim. Use only verified
+        citation IDs supplied below. Explain interdisciplinarity, validation,
+        open science, SSH, and the gender dimension where relevant. Preserve
+        missing facts as [INPUT NEEDED: ...].
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+        CITATION REGISTRY:
+        {{verify_evidence.citation_registry}}
+
+  - id: draft_impact
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft the complete Part B Impact section in proposal-ready Markdown:
+        2.1 credible pathways to all call outcomes and impacts, 2.2 scale and
+        significance with traceable KPIs, and 2.3 dissemination,
+        exploitation, communication, IP, barriers, assumptions, and uptake.
+        Use a result -> user -> adoption mechanism -> outcome -> impact chain.
+        Every quantitative claim must name its baseline, target, unit, source,
+        owner, and date or remain [INPUT NEEDED: ...].
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        CALL OUTCOMES:
+        {{call_intelligence.parsed.expected_outcomes}}
+
+        VERIFIED EVIDENCE:
+        {{scientific_synthesis.answer}}
+
+  - id: draft_implementation
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft the complete Part B Implementation section in proposal-ready
+        Markdown: 3.1 work plan and timing, detailed work-package and task
+        descriptions, deliverables, milestones, dependencies and critical path;
+        3.2 consortium capacity and complementarity; 3.3 resources and lump-sum
+        coherence; 3.4 governance, quality, data, risk and decision controls.
+        Preserve exact partner facts and numbers from the supplied documents.
+        Add readable tables and figure placeholders with generation prompts.
+        Missing leads, months, person-months, costs, owners, or dates must remain
+        [INPUT NEEDED: ...].
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        CONSORTIUM FACTS:
+        {{load_consortium.text}}
+
+        WORK-PLAN AND BUDGET FACTS:
+        {{load_workplan_budget.text}}
+
+  - id: draft_cross_cutting
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft the proposal-ready cross-cutting material that belongs inside the
+        three scored sections: multi-actor approach, gender dimension in R&I,
+        SSH integration, open science and FAIR data, data management, ethics,
+        GDPR, security, DNSH, standardisation, synergies, policy alignment, and
+        practice abstracts where required. Do not create a reassuring claim
+        when the supporting fact is absent; insert [INPUT NEEDED: ...].
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+        BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        SOURCE GRAPH WARNINGS:
+        {{normalise_source_graph.warnings}}
+
+  - id: compile_v1
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Assemble a single coherent Horizon Europe Part B Markdown document.
+        Preserve the exact numbered structure 1 Excellence, 2 Impact, and
+        3 Implementation. Remove duplication, align identifiers and terminology,
+        retain every valid citation and [INPUT NEEDED] marker, and do not add
+        facts. Include only tables and figure placeholders that materially help
+        an evaluator.
+
+        EXCELLENCE:
+        {{draft_excellence.raw}}
+
+        IMPACT:
+        {{draft_impact.raw}}
+
+        IMPLEMENTATION:
+        {{draft_implementation.raw}}
+
+        CROSS-CUTTING MATERIAL:
+        {{draft_cross_cutting.raw}}
+
+  - id: evaluate_v1
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{compile_v1.raw}}"
+      generator_model: auto
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 4.0
+      total_threshold: 12.0
+
+  - id: red_team_v1
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - claude-opus-5
+      - local-glm-5
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-sol
+      max_tokens: 12000
+      output_schema:
+        blocking_gaps: list
+        excellence_risks: list
+        impact_risks: list
+        implementation_risks: list
+        evidence_and_citation_risks: list
+        numerical_inconsistencies: list
+        page_budget_actions: list
+        safe_revision_instructions: list
+      prompt_template: |
+        Red-team this draft as a strict Horizon evaluator and proposal engineer.
+        Find only concrete, actionable defects. Check call coverage, causal logic,
+        measurable ambition, evidence/citation fit, partner and work-package
+        consistency, person-month and budget contradictions, deliverables,
+        milestones, risks, ethics, gender, SSH, open science, and page density.
+        A missing fact is a blocker or input request, not permission to invent.
+
+        DRAFT:
+        {{compile_v1.raw}}
+
+        CALL COVERAGE:
+        {{call_coverage}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
+  - id: final_revision
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+      - local-glm-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Produce the final submission candidate in Markdown. Apply evaluator and
+        red-team recommendations only when they can be resolved from supplied
+        content or verified evidence. Improve logic, specificity, consistency,
+        section balance and evaluator readability. Never fabricate a missing
+        number, partner fact, result, source, KPI, TRL, budget or timeline.
+        Preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
+        citation identifiers intact.
+
+        VERSION 1:
+        {{compile_v1.raw}}
+
+        INDEPENDENT EVALUATION:
+        {{evaluate_v1}}
+
+        RED TEAM:
+        {{red_team_v1.parsed}}
+
+        VERIFIED CITATIONS:
+        {{verify_evidence.citation_registry}}
+
+  - id: evaluate_final
+    type: HorizonEvaluationAgent
+    config:
+      proposal_text: "{{final_revision.raw}}"
+      generator_model: auto
+      evaluator_models:
+        - claude-sonnet-4-5
+        - gpt-5
+      criterion_threshold: 4.0
+      total_threshold: 12.0
+
+  - id: consistency_gate
+    type: ConsistencyChecker
+    config:
+      block_on_warn: false
+
+  - id: submission_gate
+    type: ProposalSubmissionGate
+    config:
+      proposal_text: "{{final_revision.raw}}"
+      evidence_blockers: "{{verify_evidence.blocking_issues}}"
+      consistency_gate: "{{consistency_gate.gate}}"
+      consistency_findings: "{{consistency_gate.findings}}"
+      evaluation_threshold_passed: "{{evaluate_final.threshold_passed}}"
+      evaluation_total_score: "{{evaluate_final.total_score}}"
+      evaluation_blockers: "{{evaluate_final.deterministic_blockers}}"
+      minimum_proposal_characters: 20000
+      require_evaluation_pass: true
+      block_on_input_needed: true
+
+  - id: render_submission_docx
+    type: HorizonDOCXProposalRenderer
+    config:
+      content: "{{final_revision.raw}}"
+      content_format: markdown
+      metadata: "{{inputs.proposal_metadata}}"
+      citation_registry: "{{verify_evidence.citation_registry}}"
+      evidence_qa: "{{verify_evidence.qa_report}}"
+      evidence_blockers: "{{submission_gate.blockers}}"
+      include_toc: true
+      include_bibliography: true
+      include_evidence_annex: true
+      page_limit: 45
+      enforce_page_limit: true
+
+edges:
+  - from: load_concept
+    to:
+      - load_call
+      - load_consortium
+      - load_workplan_budget
+  - from: load_call
+    to: call_intelligence
+  - from: load_call
+    to: normalise_source_graph
+  - from: load_consortium
+    to: normalise_source_graph
+  - from: load_workplan_budget
+    to: normalise_source_graph
+  - from: call_intelligence
+    to: normalise_source_graph
+  - from: normalise_source_graph
+    to: discover_evidence
+  - from: discover_evidence
+    to: acquire_full_text
+  - from: acquire_full_text
+    to: verify_evidence
+  - from: verify_evidence
+    to: scientific_synthesis
+  - from: scientific_synthesis
+    to: call_coverage
+  - from: call_coverage
+    to: concept_alternatives
+  - from: concept_alternatives
+    to: select_concept
+  - from: select_concept
+    to: proposal_blueprint
+  - from: proposal_blueprint
+    to:
+      - draft_excellence
+      - draft_impact
+      - draft_implementation
+      - draft_cross_cutting
+  - from: draft_excellence
+    to: compile_v1
+  - from: draft_impact
+    to: compile_v1
+  - from: draft_implementation
+    to: compile_v1
+  - from: draft_cross_cutting
+    to: compile_v1
+  - from: compile_v1
+    to:
+      - evaluate_v1
+      - red_team_v1
+  - from: evaluate_v1
+    to: final_revision
+  - from: red_team_v1
+    to: final_revision
+  - from: final_revision
+    to:
+      - evaluate_final
+      - consistency_gate
+  - from: evaluate_final
+    to: submission_gate
+  - from: consistency_gate
+    to: submission_gate
+  - from: submission_gate
+    to: render_submission_docx
+entry: load_concept
+exit: render_submission_docx
+output:
+  include_input: false
+  nodes:
+    - node_id: call_coverage
+      flatten: false
+    - node_id: verify_evidence
+      flatten: false
+    - node_id: evaluate_final
+      flatten: false
+    - node_id: submission_gate
+      flatten: false
+    - node_id: render_submission_docx
+      flatten: false

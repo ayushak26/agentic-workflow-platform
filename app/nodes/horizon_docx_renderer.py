@@ -26,7 +26,7 @@ class HorizonDOCXProposalRendererInput(BaseModel):
 class HorizonDOCXProposalRendererConfig(BaseModel):
     content: str
     content_format: Literal["markdown", "html"] = "markdown"
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: str | dict[str, Any] = Field(default_factory=dict)
     citation_registry: str | list[dict[str, Any]] = Field(default_factory=list)
     evidence_qa: str | dict[str, Any] = Field(default_factory=dict)
     evidence_blockers: str | list[str] = Field(default_factory=list)
@@ -93,6 +93,7 @@ class HorizonDOCXProposalRenderer(NodeType):
         unresolved = [
             name
             for name, value in {
+                "metadata": cfg.metadata,
                 "citation_registry": cfg.citation_registry,
                 "evidence_qa": cfg.evidence_qa,
                 "evidence_blockers": cfg.evidence_blockers,

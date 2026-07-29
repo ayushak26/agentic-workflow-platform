@@ -12,6 +12,7 @@ export type LLMModelInfo = {
   display_name: string;
   provider: string;
   local: boolean;
+  automatic?: boolean;
   enabled: boolean;
   configured: boolean;
   tool_calling: boolean;
@@ -19,6 +20,7 @@ export type LLMModelInfo = {
   reasoning_efforts: string[];
   platform_modalities: string[];
   upstream_url?: string | null;
+  description?: string | null;
 };
 
 export type WorkflowSummary = {

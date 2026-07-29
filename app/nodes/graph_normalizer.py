@@ -33,7 +33,21 @@ from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import (
-    CallRequirement, Claim, Objective, OpenQuestion, Partner, Status, WorkPackage,
+    CallRequirement,
+    Claim,
+    ComplianceObject,
+    Impact,
+    Innovation,
+    KPI,
+    Objective,
+    OpenQuestion,
+    Outcome,
+    Partner,
+    Result,
+    Risk,
+    Status,
+    Task,
+    WorkPackage,
 )
 from app.proposal_graph.state import proposal_graph_state_update
 
@@ -71,8 +85,16 @@ class GraphExtraction(BaseModel):
 
     call_requirements: list[CallRequirement] = Field(default_factory=list)
     objectives: list[Objective] = Field(default_factory=list)
+    innovations: list[Innovation] = Field(default_factory=list)
+    results: list[Result] = Field(default_factory=list)
+    outcomes: list[Outcome] = Field(default_factory=list)
+    impacts: list[Impact] = Field(default_factory=list)
     work_packages: list[WorkPackage] = Field(default_factory=list)
+    tasks: list[Task] = Field(default_factory=list)
     partners: list[Partner] = Field(default_factory=list)
+    kpis: list[KPI] = Field(default_factory=list)
+    risks: list[Risk] = Field(default_factory=list)
+    compliance: list[ComplianceObject] = Field(default_factory=list)
     claims: list[Claim] = Field(default_factory=list)
     open_questions: list[OpenQuestion] = Field(default_factory=list)
 
@@ -88,8 +110,16 @@ Return a single JSON object with these keys (all arrays; empty if none found):
 
 "call_requirements": [{"id":"CR-EO1","text":"...","kind":"expected_outcome|scope|hard_eligibility|must_address|optional"}]
 "objectives":        [{"id":"OBJ-GEN|OBJ-SO1...","text":"...","is_general":true|false,"measurable_ambition":"...|null","work_package_ids":["WP-3"]}]
-"work_packages":     [{"id":"WP-1","number":1,"title":"...","start_month":1|null,"end_month":18|null,"lead_partner_id":"PRT-HAW|null","partner_ids":["PRT-PI"],"objective_ids":["OBJ-SO1"]}]
-"partners":          [{"id":"PRT-HAW","acronym":"HAW","legal_name":null,"country":null,"role":"...|null","is_end_user":true|false}]
+"innovations":       [{"id":"INNO-1","name":"...","existing_approach":"...|null","limitation":"...|null","proposed_advance":"...|null","degree":"...|null","demonstration":"...|null","evidence_claim_ids":["CL-1"]}]
+"results":           [{"id":"RES-1","name":"...","description":"...|null","from_objective_ids":["OBJ-SO1"]}]
+"outcomes":          [{"id":"OUT-1","text":"...","call_requirement_id":"CR-EO1|null","from_result_ids":["RES-1"],"adoption_mechanism":"...|null"}]
+"impacts":           [{"id":"IMP-1","text":"...","horizon":"short|medium|long","from_outcome_ids":["OUT-1"]}]
+"work_packages":     [{"id":"WP-1","number":1,"title":"...","start_month":1|null,"end_month":18|null,"lead_partner_id":"PRT-HAW|null","partner_ids":["PRT-PI"],"objective_ids":["OBJ-SO1"],"task_ids":["TSK-1.1"]}]
+"tasks":             [{"id":"TSK-1.1","work_package_id":"WP-1","title":"...","lead_partner_id":"PRT-HAW|null","output":"...|null"}]
+"partners":          [{"id":"PRT-HAW","acronym":"HAW","legal_name":"...|null","country":"...|null","role":"...|null","is_end_user":true|false,"person_months":12.5|null}]
+"kpis":              [{"id":"KPI-1","name":"...","definition":"...|null","baseline":"...|null","target":"...|null","unit":"...|null","measurement_source":"...|null","owner_partner_id":"PRT-HAW|null","target_date":"M36|null","linked_outcome_id":"OUT-1|null"}]
+"risks":             [{"id":"RSK-1","description":"...","work_package_id":"WP-1|null","likelihood":"low|medium|high|null","impact":"...|null","mitigation":"...|null","owner_partner_id":"PRT-HAW|null"}]
+"compliance":        [{"id":"CMP-GENDER","dimension":"gender|ssh|open_science|ethics|dnsh","status":"ADDRESSED|PARTIAL|MISSING","detail":{},"gaps":["..."]}]
 "claims":            [{"id":"CL-1","text":"the specific state-of-the-art / problem / impact assertion","claim_type":"state_of_art|problem|impact|method","proposal_section":"1.2|null"}]
 "open_questions":    [{"id":"OQ-1","text":"what is missing (e.g. partner legal names, KPI targets, 5th pilot region)","blocks_submission":true|false}]
 
@@ -115,6 +145,17 @@ Rules:
 - WorkPackage lead_partner_id / partner_ids must be PRT- ids that also appear in
   "partners". If a WP lead is unclear in the text, set lead_partner_id null and
   add an open_question.
+- Extract the full delivery chain when it is present:
+  objective -> result -> outcome -> impact, and objective -> work package ->
+  task. Preserve only explicit IDs or create stable sequential IDs when the
+  source names an object without giving an ID.
+- An expected-outcome CallRequirement may be linked from an Outcome only when
+  the source makes that contribution credible. Do not guess the mapping.
+- KPI baseline, target, unit, owner and target date are separate fields. Never
+  turn an aspirational statement into a quantified target.
+- Extract one ComplianceObject per dimension that the source actually
+  addresses. Use PARTIAL/MISSING plus actionable gaps when the supplied text is
+  incomplete; do not label generic assurances as ADDRESSED.
 - Objectives must list the work_package_ids that deliver them if the text makes
   that mapping; if not, leave work_package_ids empty (the checker will flag it —
   do NOT guess a mapping).
@@ -133,8 +174,16 @@ CONCEPT NOTE:
 _MODEL_BY_KEY = {
     "call_requirements": CallRequirement,
     "objectives": Objective,
+    "innovations": Innovation,
+    "results": Result,
+    "outcomes": Outcome,
+    "impacts": Impact,
     "work_packages": WorkPackage,
+    "tasks": Task,
     "partners": Partner,
+    "kpis": KPI,
+    "risks": Risk,
+    "compliance": ComplianceObject,
     "claims": Claim,
     "open_questions": OpenQuestion,
 }
@@ -142,8 +191,16 @@ _MODEL_BY_KEY = {
 _COLLECTION_BY_KEY = {
     "call_requirements": "call_requirements",
     "objectives": "objectives",
+    "innovations": "innovations",
+    "results": "results",
+    "outcomes": "outcomes",
+    "impacts": "impacts",
     "work_packages": "work_packages",
+    "tasks": "tasks",
     "partners": "partners",
+    "kpis": "kpis",
+    "risks": "risks",
+    "compliance": "compliance",
     "claims": "claims",
     "open_questions": "open_questions",
 }

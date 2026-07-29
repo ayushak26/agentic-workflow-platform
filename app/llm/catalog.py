@@ -20,11 +20,27 @@ class ModelDefinition:
     reasoning_efforts: tuple[str, ...] = ()
     platform_modalities: tuple[str, ...] = ("text",)
     upstream_url: str | None = None
+    # Which data classes this model may process. Empty tuple = unrestricted
+    # (all existing models keep prior behaviour). A non-empty tuple is an
+    # allowlist enforced at the gateway boundary. The two hosted China-region
+    # models are restricted to public data only — see docs/adr/ADR-0001.
+    allowed_data_classes: tuple[str, ...] = ()
+
+    def permits_data_class(self, data_class: str | None) -> bool:
+        # No restriction configured -> allow anything (back-compat).
+        if not self.allowed_data_classes:
+            return True
+        # A caller that declares no data class cannot be proven safe against a
+        # restricted model -> deny (fail closed).
+        if data_class is None:
+            return False
+        return data_class in self.allowed_data_classes
 
     def as_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value["reasoning_efforts"] = list(self.reasoning_efforts)
         value["platform_modalities"] = list(self.platform_modalities)
+        value["allowed_data_classes"] = list(self.allowed_data_classes)
         return value
 
 
@@ -66,6 +82,7 @@ MODEL_CATALOG: tuple[ModelDefinition, ...] = (
         local=True,
         reasoning_efforts=("low", "high", "max"),
         upstream_url="https://github.com/MoonshotAI/Kimi-K3",
+        allowed_data_classes=("public",),
     ),
     ModelDefinition(
         name="local-glm-5",
@@ -74,6 +91,7 @@ MODEL_CATALOG: tuple[ModelDefinition, ...] = (
         local=True,
         reasoning_efforts=("high", "max"),
         upstream_url="https://github.com/zai-org/GLM-5",
+        allowed_data_classes=("public",),
     ),
 )
 
