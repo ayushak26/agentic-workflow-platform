@@ -119,7 +119,7 @@ async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
         if name.startswith("llm:local-") and callable(probe)
     )
     skill_catalog = services.get("scientific_skill_catalog")
-    if settings.scientific_skills_enabled or skill_catalog is not None:
+    if skill_catalog is not None:
         probes.append(
             (
                 "scientific_skills",
@@ -154,7 +154,7 @@ async def _health_payload(request: Request) -> tuple[dict[str, Any], bool]:
     )
     enabled_research = (
         ("scientific_skills",)
-        if settings.scientific_skills_enabled
+        if services.get("scientific_skill_catalog") is not None
         else ()
     )
     required_local_models = (

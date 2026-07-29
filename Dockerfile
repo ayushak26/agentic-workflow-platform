@@ -31,9 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxslt1.1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock ./
 COPY app ./app
-RUN python -m pip install .
+RUN python -m pip install uv \
+    && uv sync --frozen --no-dev
 
 COPY workflows ./workflows
 COPY --from=scientific-skills \
@@ -41,9 +42,9 @@ COPY --from=scientific-skills \
     /opt/scientific-agent-skills/skills
 
 RUN groupadd --system app \
-    && useradd --system --gid app --home-dir /app app \
+    && useradd --system --uid 10001 --gid app --home-dir /app app \
     && chown -R app:app /app /opt/scientific-agent-skills
 
 USER app
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

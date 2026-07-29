@@ -240,7 +240,13 @@ class Settings(BaseSettings):
             or _is_placeholder(self.redis_url)
         ):
             problems.append("REDIS_URL must include authentication")
-
+        if not self.semantic_cache_enabled:
+            problems.append("SEMANTIC_CACHE_ENABLED must be true in production")
+        if not self.rate_limit_enabled:
+            problems.append("RATE_LIMIT_ENABLED must be true in production")
+        if not self.guardrails_enabled:
+            problems.append("GUARDRAILS_ENABLED must be true in production")
+            
         origins = self.allowed_cors_origins
         if not origins:
             problems.append("CORS_ALLOWED_ORIGINS must contain an HTTPS origin")

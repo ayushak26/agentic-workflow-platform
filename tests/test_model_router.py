@@ -142,7 +142,7 @@ async def test_registry_auto_selection_is_visible_in_events(monkeypatch):
         },
     )
     bus = RunEventBus()
-    queue = await bus.subscribe("run-1")
+    queue = await bus.subscribe("run-1", "user-1")
     gateway = RegistryLLMGateway().with_context(
         run_id="run-1",
         session_id="user-1",

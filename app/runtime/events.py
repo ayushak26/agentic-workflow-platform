@@ -38,10 +38,7 @@ class RunEvent:
     error: str | None = None
     ts: str = ""
     event_id: int | None = None
-    output_preview: str | None = None
     token: str | None = None
-    context: dict[str, Any] | None = None
-
     def __post_init__(self) -> None:
         if not self.ts:
             self.ts = datetime.now(timezone.utc).isoformat()
