@@ -361,6 +361,12 @@ def _record_usage(intended: str, resolved: str, resp) -> None:
             metrics.LLM_TOKENS.labels(model=resolved, direction="prompt").inc(in_tok)
         if out_tok:
             metrics.LLM_TOKENS.labels(model=resolved, direction="completion").inc(out_tok)
+        cache_write = getattr(resp, "cache_creation_input_tokens", 0) or 0
+        cache_read  = getattr(resp, "cache_read_input_tokens",  0) or 0
+        if cache_write:
+            metrics.LLM_CACHE_TOKENS.labels(model=resolved, direction="write").inc(cache_write)
+        if cache_read:
+            metrics.LLM_CACHE_TOKENS.labels(model=resolved, direction="read").inc(cache_read)
     except Exception:
         pass
 
@@ -695,18 +701,26 @@ class RegistryLLMGateway(LLMGateway):
             return
         try:
             from app.observability.cost_ledger import CostLedger, LedgerEntry
+            input_tokens = getattr(resp, "input_tokens", 0) or 0
+            output_tokens = getattr(resp, "output_tokens", 0) or 0
+            cache_creation = getattr(resp, "cache_creation_input_tokens", 0) or 0
+            cache_read = getattr(resp, "cache_read_input_tokens", 0) or 0
             entry = LedgerEntry(
                 run_id=self._run_id or "unknown",
                 session_id=self._session_id or "unknown",
                 node_id=self._node_id or "unknown",
                 model=resolved,
                 intended_model=intended,          # audit: what the YAML asked for
-                input_tokens=getattr(resp, "input_tokens",  0) or 0,
-                output_tokens=getattr(resp, "output_tokens", 0) or 0,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_creation_input_tokens=cache_creation,
+                cache_read_input_tokens=cache_read,
                 cost_usd=CostLedger.calculate(
                     resolved,
-                    getattr(resp, "input_tokens",  0) or 0,
-                    getattr(resp, "output_tokens", 0) or 0,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_input_tokens=cache_creation,
+                    cache_read_input_tokens=cache_read,
                 ),
             )
             self._ledger.record(entry)

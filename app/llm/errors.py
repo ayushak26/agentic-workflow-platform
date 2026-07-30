@@ -17,3 +17,11 @@ class LLMInputLimitError(ValueError):
 
 class LLMProviderUnavailableError(RuntimeError):
     """No configured provider can serve the requested model/fallback chain."""
+
+
+class BatchTimeoutError(RuntimeError):
+    """A submitted batch did not reach a terminal state within the deadline.
+
+    Not retryable in the usual sense -- the batch may still finish later.
+    Callers should re-poll with the same batch_id rather than resubmitting.
+    """

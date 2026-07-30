@@ -84,6 +84,14 @@ LLM_FAILOVERS = Counter(
     labelnames=("from_model", "to_model"),
 )
 
+LLM_CACHE_TOKENS = Counter(
+    "awp_llm_cache_tokens_total",
+    "Prompt-cache tokens, partitioned by model and direction. "
+    "'write' is Anthropic-only (cache_creation_input_tokens); 'read' covers "
+    "both Anthropic cache hits and OpenAI's automatic prompt-cache hits.",
+    labelnames=("model", "direction"),  # direction: write | read
+)
+
 # ── HTTP layer (middleware) ──────────────────────────────────────────────────
 
 HTTP_REQUESTS = Counter(

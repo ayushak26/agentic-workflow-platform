@@ -22,6 +22,18 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "text-embedding-3-small": (0.00002, 0.0),
 }
 
+# Cache-token price multipliers, applied to a model's input price.
+# Anthropic: cache_creation_input_tokens and cache_read_input_tokens are
+# reported separately from input_tokens (the uncached remainder) -- see
+# shared/prompt-caching.md. Write premium is TTL-dependent; we always use
+# the 1h rate here since settings.anthropic_prompt_cache_ttl defaults to
+# "1h" (update this if that default changes).
+_ANTHROPIC_CACHE_WRITE_MULTIPLIER = 2.0
+_ANTHROPIC_CACHE_READ_MULTIPLIER = 0.1
+# OpenAI's automatic prompt caching only ever produces read hits (no
+# separate write cost) and bills them at half the standard input price.
+_OPENAI_CACHE_READ_MULTIPLIER = 0.5
+
 
 @dataclass
 class LedgerEntry:
@@ -33,6 +45,8 @@ class LedgerEntry:
     input_tokens:   int
     output_tokens:  int
     cost_usd:       float
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens:     int = 0
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -41,9 +55,24 @@ class CostLedger:
         self._col = db["cost_ledger"] if db is not None else None
 
     @staticmethod
-    def calculate(model: str, input_tokens: int, output_tokens: int) -> float:
+    def calculate(
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        *,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
+    ) -> float:
         p_in, p_out = MODEL_PRICING.get(model, (0.005, 0.015))
-        return round((input_tokens * p_in + output_tokens * p_out) / 1000, 6)
+        cost = input_tokens * p_in + output_tokens * p_out
+        if model.startswith("claude"):
+            cost += cache_creation_input_tokens * p_in * _ANTHROPIC_CACHE_WRITE_MULTIPLIER
+            cost += cache_read_input_tokens * p_in * _ANTHROPIC_CACHE_READ_MULTIPLIER
+        else:
+            # Non-Anthropic models never report cache_creation (no write
+            # concept); cache_read here is OpenAI's automatic-cache hit count.
+            cost += cache_read_input_tokens * p_in * _OPENAI_CACHE_READ_MULTIPLIER
+        return round(cost / 1000, 6)
 
     def record(self, entry: LedgerEntry) -> None:
         if self._col is not None:
@@ -55,6 +84,8 @@ class CostLedger:
                 "intended_model": entry.intended_model,
                 "input_tokens":   entry.input_tokens,
                 "output_tokens":  entry.output_tokens,
+                "cache_creation_input_tokens": entry.cache_creation_input_tokens,
+                "cache_read_input_tokens":     entry.cache_read_input_tokens,
                 "cost_usd":       entry.cost_usd,
                 "ts":             entry.ts,
             })
@@ -65,6 +96,8 @@ class CostLedger:
             model=entry.model,
             intended_model=entry.intended_model,
             cost_usd=entry.cost_usd,
+            cache_creation_input_tokens=entry.cache_creation_input_tokens,
+            cache_read_input_tokens=entry.cache_read_input_tokens,
         )
 
     def run_summary(self, run_id: str, session_id: str | None = None) -> dict:

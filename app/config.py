@@ -102,6 +102,13 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
 
+    # Ephemeral cache_control TTL applied to every AnthropicGateway request
+    # (system prompt + tools + the growing multi-turn message history in
+    # chat_with_tools). "1h" costs a 2x cache-write premium vs 5m's 1.25x,
+    # but survives gaps between LLM calls within a long-running proposal
+    # workflow -- worth it once turns are more than ~5 minutes apart.
+    anthropic_prompt_cache_ttl: Literal["5m", "1h"] = "1h"
+
     # Live web search: Tavily (dedicated search API), OpenAI (Responses API
     # web_search tool), or Kimi/Moonshot ($web_search builtin function).
     # "auto" tries them in that order, per whichever credentials are set —

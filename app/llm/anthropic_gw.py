@@ -18,6 +18,15 @@ client `timeout` does not help). We therefore issue every request via
 non-streamed response, so all downstream extraction (text blocks, tool_use
 blocks, usage) is unchanged. This is the SDK's recommended path for long
 generations.
+
+Prompt caching: every call marks the system prompt (which, per Anthropic's
+render order tools -> system -> messages, also covers any tools declared on
+the same request) with an ephemeral cache_control breakpoint, and
+chat_with_tools additionally marks the last content block of the outgoing
+message list so the growing multi-turn history caches across turns. This is
+unconditional -- prompts under the model's minimum cacheable prefix (512-4096
+tokens depending on model) simply don't cache; there's no error and no
+required opt-in. See settings.anthropic_prompt_cache_ttl for the TTL.
 """
 from __future__ import annotations
 
@@ -43,6 +52,63 @@ _NO_TEMPERATURE = {
 def _supports_temperature(model: str) -> bool:
     """Return True if the model accepts a non-default temperature."""
     return model not in _NO_TEMPERATURE
+
+
+def _cacheable_system(system: str) -> str | list[dict]:
+    """Turn a plain system string into a cache-marked content-block list.
+
+    Anthropic's system param accepts a plain string or a list of content
+    blocks; cache_control only attaches to a block, so a non-empty system
+    prompt is rendered as a single text block carrying the breakpoint. An
+    empty system prompt is passed through unchanged (some call sites rely on
+    "" meaning "no system prompt").
+    """
+    if not system:
+        return system
+    return [{
+        "type": "text",
+        "text": system,
+        "cache_control": {
+            "type": "ephemeral",
+            "ttl": settings.anthropic_prompt_cache_ttl,
+        },
+    }]
+
+
+def _mark_last_block_cacheable(messages: list[dict]) -> None:
+    """Add a cache breakpoint to the last content block of the last message.
+
+    Mutates `messages` in place. Each request's growing history reuses the
+    entire prior conversation prefix once the previous request's marked
+    prefix matches byte-for-byte -- see prompt-caching placement guidance for
+    multi-turn conversations. No-op on an empty message list or a message
+    whose content isn't a block list (plain-string user content, which none
+    of our chat_with_tools translations produce).
+    """
+    if not messages:
+        return
+    content = messages[-1].get("content")
+    if not isinstance(content, list) or not content:
+        return
+    content[-1] = {
+        **content[-1],
+        "cache_control": {
+            "type": "ephemeral",
+            "ttl": settings.anthropic_prompt_cache_ttl,
+        },
+    }
+
+
+def _cache_usage_fields(usage) -> dict[str, int]:
+    """Extract cache_creation/cache_read counts off a Message.usage object."""
+    return {
+        "cache_creation_input_tokens": getattr(
+            usage, "cache_creation_input_tokens", 0
+        ) or 0,
+        "cache_read_input_tokens": getattr(
+            usage, "cache_read_input_tokens", 0
+        ) or 0,
+    }
 
 
 class AnthropicGateway(LLMGateway):
@@ -94,7 +160,7 @@ class AnthropicGateway(LLMGateway):
     ) -> LLMResponse:
         kwargs = {
             "model": model,
-            "system": system,
+            "system": _cacheable_system(system),
             "messages": [{"role": "user", "content": user}],
             "max_tokens": max_tokens,
         }
@@ -109,6 +175,7 @@ class AnthropicGateway(LLMGateway):
             input_tokens=resp.usage.input_tokens,
             output_tokens=resp.usage.output_tokens,
             stop_reason=resp.stop_reason,
+            **_cache_usage_fields(resp.usage),
         )
 
     async def complete_structured(
@@ -129,7 +196,7 @@ class AnthropicGateway(LLMGateway):
 
         kwargs = {
             "model": model,
-            "system": system,
+            "system": _cacheable_system(system),
             "messages": [{"role": "user", "content": user}],
             "max_tokens": max_tokens,
             "tools": [{
@@ -173,6 +240,7 @@ class AnthropicGateway(LLMGateway):
             input_tokens=resp.usage.input_tokens,
             output_tokens=resp.usage.output_tokens,
             model=resp.model,
+            **_cache_usage_fields(resp.usage),
         )
 
     async def chat_with_tools(
@@ -185,12 +253,18 @@ class AnthropicGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> LLMToolUseResponse:
-        # Translate neutral messages -> Anthropic content-block format
+        # Translate neutral messages -> Anthropic content-block format.
+        # User content is always rendered as a block list (not a bare
+        # string) so a cache_control breakpoint can attach to it below
+        # regardless of which role ends the conversation.
         anthropic_messages: list[dict] = []
         for m in messages:
             role = m["role"]
             if role == "user":
-                anthropic_messages.append({"role": "user", "content": m["content"]})
+                anthropic_messages.append({
+                    "role": "user",
+                    "content": [{"type": "text", "text": m["content"]}],
+                })
             elif role == "assistant":
                 blocks: list[dict] = []
                 if m.get("content"):
@@ -223,9 +297,11 @@ class AnthropicGateway(LLMGateway):
             for t in tools
         ]
 
+        _mark_last_block_cacheable(anthropic_messages)
+
         kwargs = {
             "model": model,
-            "system": system,
+            "system": _cacheable_system(system),
             "messages": anthropic_messages,
             "tools": anthropic_tools,
             "max_tokens": max_tokens,
@@ -254,4 +330,5 @@ class AnthropicGateway(LLMGateway):
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
             stop_reason=response.stop_reason,
+            **_cache_usage_fields(response.usage),
         )

@@ -15,6 +15,7 @@ as response_format -- never free-text JSON parsing.
 from __future__ import annotations
 
 from typing import Awaitable, Callable, Type, TypeVar
+import hashlib
 import json
 
 import structlog
@@ -39,6 +40,8 @@ class StructuredResult:
     input_tokens: int
     output_tokens: int
     model: str
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 
 # GPT-5 family quirks ---------------------------------------------------
@@ -68,14 +71,80 @@ def _completion_tokens_for(model: str, requested: int) -> int:
     return requested
 
 
-def _system_messages(system: str) -> list[dict]:
+def _cached_tokens_from_usage(usage: Any) -> int:
+    """Read OpenAI's automatic-prompt-cache hit count off a usage payload.
+
+    OpenAI caches repeated prefixes (>=1024 tokens) automatically -- no
+    cache_control needed. The hit count surfaces at
+    usage.prompt_tokens_details.cached_tokens; older SDK/model responses may
+    omit prompt_tokens_details entirely, so every step is optional.
+    """
+    if usage is None:
+        return 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    if details is None:
+        return 0
+    return getattr(details, "cached_tokens", 0) or 0
+
+
+def _prompt_cache_key(model: str, cacheable_prefix: str) -> str:
+    """Stable prompt_cache_key so requests sharing a static prefix (same
+    model + system prompt) route to the same cache-holding backend --
+    OpenAI's own recommendation for boosting cache hit rates. Derived from
+    content rather than session/run id, since the concrete gateways don't
+    receive that context (it lives on RegistryLLMGateway) -- this still
+    gives every call site a consistent key without changing the
+    LLMGateway interface.
+
+    OpenAI advises ~15 requests/minute per key; if one system prompt sees
+    enough concurrent traffic to exceed that, shard by mixing a session id
+    into `cacheable_prefix` at the call site.
+    """
+    digest = hashlib.sha256(f"{model}:{cacheable_prefix}".encode("utf-8")).hexdigest()
+    return f"awp-{digest[:32]}"
+
+
+def _prompt_cache_retention_kwargs(model: str) -> dict:
+    """Extended (24h) cache retention for pre-GPT-5.6 models, at the same
+    cost as the default in-memory (5-10 min) window per OpenAI's prompt
+    caching guide -- a free win for workflows with gaps between calls.
+    GPT-5.6+ deprecates this field in favour of prompt_cache_options.ttl,
+    which currently only supports its 30m default, so there's nothing to
+    set there beyond the explicit breakpoint added in _system_content().
+    """
+    if model.startswith(_GPT56_FAMILY_PREFIXES):
+        return {}
+    return {"prompt_cache_retention": "24h"}
+
+
+def _system_content(text: str, model: str | None) -> str | list[dict]:
+    """Render system-prompt text as a bare string, or (gpt-5.6+ only) as a
+    text content-part carrying an explicit prompt_cache_breakpoint.
+
+    gpt-5.6+ already gets one implicit breakpoint automatically; adding an
+    explicit one right after the system prompt guarantees that stable
+    prefix is cached the same way AnthropicGateway marks its system block,
+    independent of whatever the implicit breakpoint ends up covering.
+    """
+    if model is not None and model.startswith(_GPT56_FAMILY_PREFIXES):
+        return [{
+            "type": "text",
+            "text": text,
+            "prompt_cache_breakpoint": {"mode": "explicit"},
+        }]
+    return text
+
+
+def _system_messages(system: str, *, model: str | None = None) -> list[dict]:
     """Build the leading system message, omitting it when empty.
 
     Some OpenAI-compatible endpoints (e.g. Moonshot's hosted Kimi K3) reject
     a request whose system message has empty content with a 400 error, so an
     unset system prompt must drop the message rather than send "".
     """
-    return [{"role": "system", "content": system}] if system else []
+    if not system:
+        return []
+    return [{"role": "system", "content": _system_content(system, model)}]
 
 
 def _chat_tool_reasoning_effort(model: str) -> str | None:
@@ -125,10 +194,12 @@ class OpenAIGateway(LLMGateway):
         call_kwargs: dict = {
             "model": model,
             "messages": [
-                *_system_messages(system),
+                *_system_messages(system, model=model),
                 {"role": "user", "content": user},
             ],
             "max_completion_tokens": _completion_tokens_for(model, max_tokens),
+            "prompt_cache_key": _prompt_cache_key(model, system),
+            **_prompt_cache_retention_kwargs(model),
         }
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
@@ -142,6 +213,7 @@ class OpenAIGateway(LLMGateway):
                 input_tokens=resp.usage.prompt_tokens,
                 output_tokens=resp.usage.completion_tokens,
                 stop_reason=choice.finish_reason,
+                cache_read_input_tokens=_cached_tokens_from_usage(resp.usage),
             )
 
         stream = await self._client.chat.completions.create(
@@ -152,6 +224,7 @@ class OpenAIGateway(LLMGateway):
         parts: list[str] = []
         input_tokens = 0
         output_tokens = 0
+        cached_tokens = 0
         stop_reason = None
         response_model = model
         async for chunk in stream:
@@ -159,6 +232,7 @@ class OpenAIGateway(LLMGateway):
             if chunk.usage is not None:
                 input_tokens = chunk.usage.prompt_tokens
                 output_tokens = chunk.usage.completion_tokens
+                cached_tokens = _cached_tokens_from_usage(chunk.usage)
             for choice in chunk.choices:
                 if choice.finish_reason is not None:
                     stop_reason = choice.finish_reason
@@ -172,6 +246,7 @@ class OpenAIGateway(LLMGateway):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             stop_reason=stop_reason,
+            cache_read_input_tokens=cached_tokens,
         )
 
     async def complete_structured(
@@ -198,11 +273,13 @@ class OpenAIGateway(LLMGateway):
         call_kwargs: dict = {
             "model": model,
             "messages": [
-                {"role": "system", "content": system_with_schema},
+                {"role": "system", "content": _system_content(system_with_schema, model)},
                 {"role": "user", "content": user},
             ],
             "response_format": {"type": "json_object"},
             "max_completion_tokens": _completion_tokens_for(model, max_tokens),
+            "prompt_cache_key": _prompt_cache_key(model, system_with_schema),
+            **_prompt_cache_retention_kwargs(model),
         }
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
@@ -224,6 +301,7 @@ class OpenAIGateway(LLMGateway):
             input_tokens=getattr(usage, "prompt_tokens", 0) if usage else 0,
             output_tokens=getattr(usage, "completion_tokens", 0) if usage else 0,
             model=resp.model,
+            cache_read_input_tokens=_cached_tokens_from_usage(usage),
         )
 
     
@@ -240,7 +318,7 @@ class OpenAIGateway(LLMGateway):
         import json  # local import keeps module-level imports lean
 
         # Translate neutral messages → OpenAI format
-        openai_messages: list[dict] = _system_messages(system)
+        openai_messages: list[dict] = _system_messages(system, model=model)
         for m in messages:
             role = m["role"]
             if role == "user":
@@ -284,6 +362,8 @@ class OpenAIGateway(LLMGateway):
             "messages": openai_messages,
             "tools": openai_tools,
             "max_completion_tokens": _completion_tokens_for(model, max_tokens),
+            "prompt_cache_key": _prompt_cache_key(model, system),
+            **_prompt_cache_retention_kwargs(model),
         }
         reasoning_effort = _chat_tool_reasoning_effort(model)
         if reasoning_effort is not None:
@@ -313,4 +393,5 @@ class OpenAIGateway(LLMGateway):
             input_tokens=response.usage.prompt_tokens,
             output_tokens=response.usage.completion_tokens,
             stop_reason=choice.finish_reason,
+            cache_read_input_tokens=_cached_tokens_from_usage(response.usage),
         )

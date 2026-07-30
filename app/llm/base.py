@@ -22,6 +22,12 @@ class LLMResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     stop_reason: str | None = None
+    # Prompt-cache accounting. Anthropic reports both; input_tokens is the
+    # uncached remainder (total prompt = input_tokens + cache_creation +
+    # cache_read). OpenAI's automatic caching only ever populates
+    # cache_read_input_tokens (no write-side concept).
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 
 class ToolCall(BaseModel):
@@ -46,6 +52,8 @@ class LLMToolUseResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     stop_reason: str | None = None
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 class LLMGateway(ABC):
     """Abstract base for all LLM providers.
