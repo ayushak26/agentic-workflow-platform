@@ -21,14 +21,10 @@ inputs:
     type: json
     required: true
     description: "[LIVE] evidence stage's proposal_blueprint.parsed — the locked single source of truth every draft must agree with."
-  scientific_synthesis:
-    type: json
-    required: true
-    description: "[LIVE] evidence stage's scientific_synthesis output — .answer is the proposal-engineering evidence synthesis given to every draft."
   verify_evidence:
     type: json
     required: true
-    description: "[LIVE] evidence stage's verify_evidence output — .citation_registry is given to draft_1_1 and draft_1_2 so they only use verified citation IDs."
+    description: "[LIVE] evidence stage's verify_evidence output — .proposal_ready_cited_markdown is the verified-evidence narrative given to every draft; .citation_registry is given to draft_1_1 and draft_1_2 so they only use verified citation IDs."
   call_intelligence:
     type: json
     required: false
@@ -80,7 +76,7 @@ nodes:
         {{inputs.proposal_blueprint}}
 
         VERIFIED EVIDENCE:
-        {{inputs.scientific_synthesis.answer}}
+        {{inputs.verify_evidence.proposal_ready_cited_markdown}}
 
         CITATION REGISTRY:
         {{inputs.verify_evidence.citation_registry}}
@@ -121,7 +117,7 @@ nodes:
         {{inputs.proposal_blueprint}}
 
         VERIFIED EVIDENCE:
-        {{inputs.scientific_synthesis.answer}}
+        {{inputs.verify_evidence.proposal_ready_cited_markdown}}
 
         CITATION REGISTRY:
         {{inputs.verify_evidence.citation_registry}}
@@ -166,7 +162,7 @@ nodes:
         {{inputs.call_intelligence.expected_outcomes}}
 
         VERIFIED EVIDENCE:
-        {{inputs.scientific_synthesis.answer}}
+        {{inputs.verify_evidence.proposal_ready_cited_markdown}}
 
   - id: draft_2_2_measures_and_2_3_summary
     type: TransformAgent

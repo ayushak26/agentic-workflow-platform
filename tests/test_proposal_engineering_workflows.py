@@ -36,8 +36,10 @@ def test_autonomous_workflow_has_no_human_pause_and_only_docx_export():
     # revise_implementation, plus research_documentation (citation/web-search
     # audit trail). compile_v1 and final_revision keep their ids but are now
     # TextAssemblerAgent (deterministic, non-LLM join) nodes instead of
-    # TransformAgent.
-    assert len(node_types) == 39
+    # TransformAgent. -1 for the removed scientific_synthesis node
+    # (ScientificSkillAgent); downstream drafts now source verified-evidence
+    # narrative directly from verify_evidence.proposal_ready_cited_markdown.
+    assert len(node_types) == 38
     assert "HumanInLoopAgent" not in node_types
     assert node_types.count("HorizonDOCXProposalRenderer") == 1
     assert "HorizonHTMLProposalRenderer" not in node_types
@@ -49,8 +51,9 @@ def test_human_reviewed_workflow_has_four_gates_and_only_pdf_export():
     node_types = _types(HITL)
 
     # 37 original nodes + 7 added by the same compile/revise split described
-    # above (see test_autonomous_workflow_has_no_human_pause_and_only_docx_export).
-    assert len(node_types) == 44
+    # above (see test_autonomous_workflow_has_no_human_pause_and_only_docx_export),
+    # -1 for the removed scientific_synthesis node (same reason as above).
+    assert len(node_types) == 43
     assert node_types.count("HumanInLoopAgent") == 4
     assert node_types.count("HorizonHTMLProposalRenderer") == 1
     assert "HorizonDOCXProposalRenderer" not in node_types

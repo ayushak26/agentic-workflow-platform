@@ -203,8 +203,10 @@ nodes:
 
         Remove duplication between 1.1 and 1.2, align terminology, keep
         every valid citation identifier and every [INPUT NEEDED] marker, and
-        add no facts. Aim for a full, evaluator-dense 1.1+1.2. Start with
-        the "# 1. Excellence" heading.
+        add no facts. Preserve every `[[IMAGE PROMPT: ...]]` marker exactly
+        as it appears, verbatim, on its own line - never paraphrase,
+        reformat, or drop it. Aim for a full, evaluator-dense 1.1+1.2. Start
+        with the "# 1. Excellence" heading.
 
         LOCKED BLUEPRINT:
         {{ inputs.proposal_blueprint }}
@@ -240,8 +242,10 @@ nodes:
         headings and that every mandatory requirement is present.
 
         Remove duplication, align terminology, keep every valid citation
-        identifier and every [INPUT NEEDED] marker, and add no facts. Aim
-        for a full, evaluator-dense 2.1+2.2(+2.3). Start with the "# 2.
+        identifier and every [INPUT NEEDED] marker, and add no facts.
+        Preserve every `[[IMAGE PROMPT: ...]]` marker exactly as it appears,
+        verbatim, on its own line - never paraphrase, reformat, or drop it.
+        Aim for a full, evaluator-dense 2.1+2.2(+2.3). Start with the "# 2.
         Impact" heading.
 
         LOCKED BLUEPRINT:
@@ -281,9 +285,11 @@ nodes:
         Remove duplication, align WPs/tasks/deliverables/milestones/risks/
         KPIs/partners, keep every valid citation identifier, every [INPUT
         NEEDED] marker and the official Tables 3.1a-3.1h as plain text
-        tables, and add no facts. Aim for a full, evaluator-dense 3.1+3.2.
-        Start with the "# 3. Quality and efficiency of the implementation"
-        heading.
+        tables, and add no facts. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line - never
+        paraphrase, reformat, or drop it. Aim for a full, evaluator-dense
+        3.1+3.2. Start with the "# 3. Quality and efficiency of the
+        implementation" heading.
 
         LOCKED BLUEPRINT:
         {{ inputs.proposal_blueprint }}
@@ -416,8 +422,11 @@ nodes:
         evidence. Never fabricate a missing number, partner fact, result,
         source, KPI, TRL, budget or timeline to reach a page count -
         preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
-        citation identifiers intact. Preserve the exact official headings.
-        Return only this section - do not draft Impact or Implementation.
+        citation identifiers intact. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line - never
+        paraphrase, reformat, or drop it. Preserve the exact official
+        headings. Return only this section - do not draft Impact or
+        Implementation.
 
         SECTION DRAFT:
         {{compile_excellence.raw}}
@@ -469,8 +478,10 @@ nodes:
         evidence. Never fabricate a missing number, partner fact, result,
         source, KPI, TRL, budget or timeline to reach a page count -
         preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
-        citation identifiers intact. Preserve the exact official headings.
-        Return only this section - do not draft Excellence or
+        citation identifiers intact. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line - never
+        paraphrase, reformat, or drop it. Preserve the exact official
+        headings. Return only this section - do not draft Excellence or
         Implementation.
 
         SECTION DRAFT:
@@ -525,6 +536,8 @@ nodes:
         source, KPI, TRL, budget or timeline to reach a page count -
         preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
         citation identifiers and the official Tables 3.1a-3.1h intact.
+        Preserve every `[[IMAGE PROMPT: ...]]` marker exactly as it appears,
+        verbatim, on its own line - never paraphrase, reformat, or drop it.
         Preserve the exact official headings. Return only this section - do
         not draft Excellence or Impact.
 

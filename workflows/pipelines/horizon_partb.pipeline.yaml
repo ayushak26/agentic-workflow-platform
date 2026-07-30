@@ -54,9 +54,9 @@ stages:
       The six official Part B subsections, drafted in parallel from the
       locked blueprint, plus three grounded figures generated in parallel
       alongside them.
-    # proposal_blueprint, scientific_synthesis, verify_evidence,
-    # call_intelligence and load_documents all auto-match evidence's node
-    # outputs of the same name.
+    # proposal_blueprint, verify_evidence, call_intelligence and
+    # load_documents all auto-match evidence's node outputs of the same
+    # name.
 
   - id: document
     workflow: horizon_partb_drafts_to_docx
@@ -73,7 +73,7 @@ stages:
       evidence_qa: "{{ evidence.verify_evidence.qa_report }}"
       evidence_blockers: "{{ evidence.verify_evidence.blocking_issues }}"
       verified_claims: "{{ evidence.verify_evidence.verified_claims }}"
-      scientific_synthesis: "{{ evidence.scientific_synthesis.answer }}"
+      scientific_synthesis: "{{ evidence.verify_evidence.proposal_ready_cited_markdown }}"
       normalise_report: "{{ evidence.normalise_source_graph.report }}"
       normalise_warnings: "{{ evidence.normalise_source_graph.warnings }}"
       candidates: "{{ evidence.discover_evidence.candidates }}"

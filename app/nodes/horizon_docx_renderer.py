@@ -35,6 +35,7 @@ class HorizonDOCXProposalRendererConfig(BaseModel):
     include_evidence_annex: bool = False
     page_limit: int | None = Field(default=45, ge=1, le=500)
     enforce_page_limit: bool = False
+    enable_footnotes: bool = False
     max_content_characters: int = Field(
         default=2_000_000,
         ge=1_000,
@@ -128,6 +129,7 @@ class HorizonDOCXProposalRenderer(NodeType):
             include_evidence_annex=cfg.include_evidence_annex,
             page_limit=cfg.page_limit,
             max_embedded_image_bytes=cfg.max_embedded_image_bytes,
+            enable_footnotes=cfg.enable_footnotes,
         )
         if (
             cfg.enforce_page_limit

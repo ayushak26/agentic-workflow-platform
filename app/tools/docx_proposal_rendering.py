@@ -23,15 +23,23 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.opc.packuri import PackURI
+from docx.opc.part import Part
 from docx.shared import Mm, Pt, RGBColor
+from lxml import etree
 import pdfplumber
 
+from app.observability.logging import get_logger
 from app.tools.proposal_rendering import (
     _sanitise_fragment,
     _toc,
     render_horizon_proposal,
 )
+
+
+log = get_logger(__name__)
 
 
 DOCX_CONTENT_TYPE = (
@@ -103,6 +111,10 @@ class _BuildState:
     image_placeholders: int = 0
     body_h1_count: int = 0
     bookmark_id: int = 1
+    footnote_bodies: dict[int, str] = field(default_factory=dict)
+
+
+_CITATION_MARKER_RE = re.compile(r"\[(\d+)\]")
 
 
 def _set_run_font(
@@ -158,6 +170,34 @@ def _set_run_shading(run, fill: str) -> None:
     shading.set(qn("w:color"), "auto")
     shading.set(qn("w:fill"), fill)
     r_pr.append(shading)
+
+
+def _append_styled_text(paragraph, text: str, style: "_InlineStyle") -> None:
+    if not text:
+        return
+    run = paragraph.add_run(text)
+    _set_run_font(
+        run,
+        name="Courier New" if style.code else "Arial",
+        size=8.5 if style.code else None,
+        color=_INPUT_ORANGE if style.input_needed else None,
+        bold=True if style.bold or style.input_needed else None,
+        italic=True if style.italic else None,
+    )
+    if style.underline:
+        run.underline = True
+    if style.strike:
+        run.font.strike = True
+    if style.superscript:
+        run.font.superscript = True
+    if style.subscript:
+        run.font.subscript = True
+    if style.input_needed:
+        _set_run_shading(run, _INPUT_BG)
+    elif style.marked:
+        _set_run_shading(run, "FFF2CC")
+    elif style.code:
+        _set_run_shading(run, "F3F4F6")
 
 
 def _set_paragraph_borders(
@@ -444,6 +484,105 @@ def _add_bookmark(paragraph, name: str, bookmark_id: int) -> None:
     paragraph._p.append(end)
 
 
+def _add_footnote_reference(paragraph, footnote_id: int) -> None:
+    run = paragraph.add_run()
+    r_pr = OxmlElement("w:rPr")
+    r_style = OxmlElement("w:rStyle")
+    r_style.set(qn("w:val"), "FootnoteReference")
+    r_pr.append(r_style)
+    run._r.append(r_pr)
+    reference = OxmlElement("w:footnoteReference")
+    reference.set(qn("w:id"), str(footnote_id))
+    run._r.append(reference)
+
+
+def _footnote_body_text(number: int, citation: dict[str, Any]) -> str:
+    text = (
+        citation.get("formatted_citation")
+        or citation.get("title")
+        or citation.get("citation_id")
+        or "Unformatted citation"
+    )
+    return f"[{number}] {text}"
+
+
+def _build_footnotes_part_xml(footnote_bodies: dict[int, str]) -> bytes:
+    footnotes = OxmlElement("w:footnotes")
+
+    separator = OxmlElement("w:footnote")
+    separator.set(qn("w:id"), "-1")
+    separator.set(qn("w:type"), "separator")
+    separator_p = OxmlElement("w:p")
+    separator_r = OxmlElement("w:r")
+    separator_r.append(OxmlElement("w:separator"))
+    separator_p.append(separator_r)
+    separator.append(separator_p)
+    footnotes.append(separator)
+
+    continuation = OxmlElement("w:footnote")
+    continuation.set(qn("w:id"), "0")
+    continuation.set(qn("w:type"), "continuationSeparator")
+    continuation_p = OxmlElement("w:p")
+    continuation_r = OxmlElement("w:r")
+    continuation_r.append(OxmlElement("w:continuationSeparator"))
+    continuation_p.append(continuation_r)
+    continuation.append(continuation_p)
+    footnotes.append(continuation)
+
+    for footnote_id, body_text in sorted(footnote_bodies.items()):
+        footnote = OxmlElement("w:footnote")
+        footnote.set(qn("w:id"), str(footnote_id))
+        paragraph = OxmlElement("w:p")
+        p_pr = OxmlElement("w:pPr")
+        p_style = OxmlElement("w:pStyle")
+        p_style.set(qn("w:val"), "FootnoteText")
+        p_pr.append(p_style)
+        paragraph.append(p_pr)
+
+        mark_run = OxmlElement("w:r")
+        mark_r_pr = OxmlElement("w:rPr")
+        mark_r_style = OxmlElement("w:rStyle")
+        mark_r_style.set(qn("w:val"), "FootnoteReference")
+        mark_r_pr.append(mark_r_style)
+        mark_run.append(mark_r_pr)
+        mark_run.append(OxmlElement("w:footnoteRef"))
+        paragraph.append(mark_run)
+
+        text_run = OxmlElement("w:r")
+        text_node = OxmlElement("w:t")
+        text_node.set(qn("xml:space"), "preserve")
+        text_node.text = f" {body_text}"
+        text_run.append(text_node)
+        paragraph.append(text_run)
+
+        footnote.append(paragraph)
+        footnotes.append(footnote)
+
+    return etree.tostring(
+        footnotes,
+        xml_declaration=True,
+        encoding="UTF-8",
+        standalone=True,
+    )
+
+
+def _attach_footnotes_part(
+    doc: DocxDocument,
+    footnote_bodies: dict[int, str],
+) -> None:
+    if not footnote_bodies:
+        return
+    document_part = doc.part
+    footnotes_xml = _build_footnotes_part_xml(footnote_bodies)
+    footnotes_part = Part(
+        PackURI("/word/footnotes.xml"),
+        CT.WML_FOOTNOTES,
+        footnotes_xml,
+        document_part.package,
+    )
+    document_part.relate_to(footnotes_part, RT.FOOTNOTES)
+
+
 def _toc_with_pdf_pages(
     entries: list[dict[str, Any]],
     pdf: bytes,
@@ -508,10 +647,21 @@ class _HorizonDocxBuilder:
         *,
         metadata: dict[str, Any],
         max_embedded_image_bytes: int,
+        citation_registry: list[dict[str, Any]] | None = None,
+        enable_footnotes: bool = False,
     ) -> None:
         self.metadata = _normalise_metadata(metadata)
         self.max_embedded_image_bytes = max_embedded_image_bytes
         self.state = _BuildState()
+        self._citation_by_number: dict[int, dict[str, Any]] = {
+            (citation.get("display_number") or index): citation
+            for index, citation in enumerate(
+                citation_registry or [], start=1
+            )
+        }
+        self._footnotes_enabled = enable_footnotes and bool(
+            self._citation_by_number
+        )
         self.doc = Document()
         self._configure_document()
 
@@ -600,6 +750,46 @@ class _HorizonDocxBuilder:
         toc_heading.font.color.rgb = RGBColor.from_string(_EU_BLUE)
         toc_heading.paragraph_format.space_before = Pt(0)
         toc_heading.paragraph_format.space_after = Pt(12)
+
+        if self._footnotes_enabled:
+            try:
+                self._configure_footnote_styles(styles, normal)
+            except Exception:
+                log.warning(
+                    "horizon_docx.footnote_styles_failed",
+                    exc_info=True,
+                )
+                self.state.warnings.append(
+                    "Footnotes could not be enabled for this document; "
+                    "citations remain as bracketed text only."
+                )
+                self._footnotes_enabled = False
+
+    def _configure_footnote_styles(self, styles, normal) -> None:
+        if "Footnote Text" not in styles:
+            footnote_text = styles.add_style(
+                "Footnote Text",
+                WD_STYLE_TYPE.PARAGRAPH,
+                builtin=True,
+            )
+        else:
+            footnote_text = styles["Footnote Text"]
+        footnote_text.base_style = normal
+        footnote_text.font.name = "Arial"
+        footnote_text.font.size = Pt(8.5)
+        footnote_text.font.color.rgb = RGBColor.from_string(_INK)
+        footnote_text.paragraph_format.space_after = Pt(4)
+        footnote_text.paragraph_format.line_spacing = 1.0
+
+        if "Footnote Reference" not in styles:
+            footnote_reference = styles.add_style(
+                "Footnote Reference",
+                WD_STYLE_TYPE.CHARACTER,
+                builtin=True,
+            )
+        else:
+            footnote_reference = styles["Footnote Reference"]
+        footnote_reference.font.superscript = True
 
     def _configure_header_footer(self, section) -> None:
         header = section.header
@@ -925,6 +1115,35 @@ class _HorizonDocxBuilder:
             paragraph = self.doc.add_paragraph()
             self._append_inline(paragraph, node)
 
+    def _append_text_with_footnotes(
+        self,
+        paragraph,
+        text: str,
+        style: _InlineStyle,
+    ) -> None:
+        last_end = 0
+        matched = False
+        for match in _CITATION_MARKER_RE.finditer(text):
+            number = int(match.group(1))
+            citation = self._citation_by_number.get(number)
+            if citation is None:
+                continue
+            matched = True
+            if match.start() > last_end:
+                _append_styled_text(
+                    paragraph, text[last_end:match.start()], style
+                )
+            self.state.footnote_bodies.setdefault(
+                number, _footnote_body_text(number, citation)
+            )
+            _add_footnote_reference(paragraph, number)
+            last_end = match.end()
+        if not matched:
+            _append_styled_text(paragraph, text, style)
+            return
+        if last_end < len(text):
+            _append_styled_text(paragraph, text[last_end:], style)
+
     def _append_inline(
         self,
         paragraph,
@@ -942,29 +1161,15 @@ class _HorizonDocxBuilder:
                 text = str(child)
                 if not text:
                     continue
-                run = paragraph.add_run(text)
-                _set_run_font(
-                    run,
-                    name="Courier New" if style.code else "Arial",
-                    size=8.5 if style.code else None,
-                    color=_INPUT_ORANGE if style.input_needed else None,
-                    bold=True if style.bold or style.input_needed else None,
-                    italic=True if style.italic else None,
-                )
-                if style.underline:
-                    run.underline = True
-                if style.strike:
-                    run.font.strike = True
-                if style.superscript:
-                    run.font.superscript = True
-                if style.subscript:
-                    run.font.subscript = True
-                if style.input_needed:
-                    _set_run_shading(run, _INPUT_BG)
-                elif style.marked:
-                    _set_run_shading(run, "FFF2CC")
-                elif style.code:
-                    _set_run_shading(run, "F3F4F6")
+                if (
+                    self._footnotes_enabled
+                    and not style.code
+                    and not style.input_needed
+                    and _CITATION_MARKER_RE.search(text)
+                ):
+                    self._append_text_with_footnotes(paragraph, text, style)
+                else:
+                    _append_styled_text(paragraph, text, style)
                 continue
             if not isinstance(child, Tag):
                 continue
@@ -1332,6 +1537,8 @@ class _HorizonDocxBuilder:
                 _set_run_font(value_run, size=8.5, color=_INK)
 
     def save(self) -> bytes:
+        if self._footnotes_enabled and self.state.footnote_bodies:
+            _attach_footnotes_part(self.doc, self.state.footnote_bodies)
         buffer = io.BytesIO()
         self.doc.save(buffer)
         return buffer.getvalue()
@@ -1350,6 +1557,7 @@ def render_horizon_proposal_docx(
     include_evidence_annex: bool = False,
     page_limit: int | None = 45,
     max_embedded_image_bytes: int = 10_000_000,
+    enable_footnotes: bool = False,
 ) -> ProposalDocxRenderResult:
     """Create an editable Horizon Part B DOCX from sanitised HTML/Markdown.
 
@@ -1385,6 +1593,8 @@ def render_horizon_proposal_docx(
     builder = _HorizonDocxBuilder(
         metadata=metadata,
         max_embedded_image_bytes=max_embedded_image_bytes,
+        citation_registry=citation_registry,
+        enable_footnotes=enable_footnotes,
     )
     builder.add_cover(evidence_blockers)
     if include_toc and toc:

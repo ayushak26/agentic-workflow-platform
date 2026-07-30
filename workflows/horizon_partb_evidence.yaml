@@ -183,7 +183,7 @@ nodes:
     type: WebSearchAgent
     config:
       query: "{{research_context_query.parsed.query}}"
-      provider: tavily
+      provider: openai
       top_k: 8
       fallback_to_openai: true
 
@@ -255,51 +255,6 @@ nodes:
       rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
       max_passages_per_document: 10
 
-  - id: scientific_synthesis
-    type: ScientificSkillAgent
-    selected_model: auto
-    allowed_models:
-      - claude-opus-5
-      - gpt-5.6-sol
-    model_routing:
-      accuracy_priority: maximum
-    config:
-      model: claude-opus-5
-      skills:
-        - literature-review
-        - scientific-critical-thinking
-        - research-grants
-        - scientific-writing
-      auto_select: false
-      max_skills: 4
-      max_tokens: 16000
-      objective: |
-        Produce a proposal-engineering evidence synthesis using only the
-        verified claim records as evidence. For each scientific proposition
-        state the supported conclusion, boundary conditions, contradiction
-        status, evidence strength, citation IDs, and proposal section where it
-        is safe to use. Separate verified evidence from gaps. Never promote a
-        candidate record, a web-search result, or an image analysis to
-        evidence — they are context, not citable fact.
-
-        VERIFIED CLAIMS:
-        {{verify_evidence.verified_claims}}
-
-        EVIDENCE QA:
-        {{verify_evidence.qa_report}}
-
-        BLOCKING ISSUES:
-        {{verify_evidence.blocking_issues}}
-
-        SUPPLEMENTARY WEB CONTEXT (candidate only — situational awareness,
-        never a citable source; note it separately if it usefully points to
-        an adjacent call, policy document, or comparable funded project):
-        {{web_search.results}}
-
-        SUPPORTING IMAGE ANALYSIS (present only if supporting_image was
-        supplied; treat identically to the web context above):
-        {{understand_supporting_image.analysis}}
-
   - id: call_coverage
     type: CallCoverageMatrixAgent
     config: {}
@@ -368,6 +323,9 @@ nodes:
 
         WEB SEARCH RESULTS:
         {{web_search.results}}
+
+        SUPPORTING IMAGE ANALYSIS:
+        {{understand_supporting_image.analysis}}
 
         EVIDENCE QA:
         {{verify_evidence.qa_report}}
@@ -522,9 +480,9 @@ nodes:
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
-        VERIFIED EVIDENCE (includes supplementary web/image context, clearly
-        separated from verified claims by scientific_synthesis):
-        {{scientific_synthesis.answer}}
+        VERIFIED EVIDENCE (citation-annotated narrative markdown of verified
+        claims):
+        {{verify_evidence.proposal_ready_cited_markdown}}
 
 edges:
   - from: load_concept
@@ -549,15 +507,13 @@ edges:
   - from: acquire_full_text
     to: verify_evidence
   - from: verify_evidence
-    to: scientific_synthesis
-  - from: web_search
-    to: scientific_synthesis
-  - from: understand_supporting_image
-    to: scientific_synthesis
-  - from: scientific_synthesis
     to:
       - call_coverage
       - research_documentation
+  - from: web_search
+    to: research_documentation
+  - from: understand_supporting_image
+    to: research_documentation
   - from: call_coverage
     to: proposal_blueprint
 
@@ -578,8 +534,6 @@ output:
     - node_id: call_coverage
       flatten: false
     - node_id: verify_evidence
-      flatten: false
-    - node_id: scientific_synthesis
       flatten: false
     - node_id: web_search
       flatten: false

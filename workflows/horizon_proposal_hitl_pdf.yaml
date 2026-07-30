@@ -164,7 +164,7 @@ nodes:
     type: WebSearchAgent
     config:
       query: "{{research_context_query.parsed.query}}"
-      provider: tavily
+      provider: openai
       top_k: 8
       fallback_to_openai: true
 
@@ -238,50 +238,6 @@ nodes:
       search_audit: "{{discover_evidence.search_audit}}"
       rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
       max_passages_per_document: 10
-
-  - id: scientific_synthesis
-    type: ScientificSkillAgent
-    selected_model: auto
-    allowed_models:
-      - claude-opus-5
-      - gpt-5.6-sol
-    model_routing:
-      accuracy_priority: maximum
-    config:
-      model: claude-opus-5
-      skills:
-        - literature-review
-        - scientific-critical-thinking
-        - research-grants
-        - scientific-writing
-      auto_select: false
-      max_skills: 4
-      max_tokens: 16000
-      objective: |
-        Synthesize only verified full-text evidence into proposal-safe
-        conclusions. For every conclusion show boundary conditions,
-        contradiction status, evidence strength, citation IDs, and the section
-        where it can be used. Separate evidence gaps and rejected candidates.
-        Never promote a candidate record, a web-search result, or an image
-        analysis to evidence — they are context, not citable fact.
-
-        VERIFIED CLAIMS:
-        {{verify_evidence.verified_claims}}
-
-        EVIDENCE QA:
-        {{verify_evidence.qa_report}}
-
-        BLOCKERS:
-        {{verify_evidence.blocking_issues}}
-
-        SUPPLEMENTARY WEB CONTEXT (candidate only — situational awareness,
-        never a citable source; note it separately if it usefully points to
-        an adjacent call, policy document, or comparable funded project):
-        {{web_search.results}}
-
-        SUPPORTING IMAGE ANALYSIS (present only if supporting_image was
-        supplied; treat identically to the web context above):
-        {{understand_supporting_image.analysis}}
 
   - id: call_coverage
     type: CallCoverageMatrixAgent
@@ -368,10 +324,10 @@ nodes:
         - verify_evidence.blocking_issues
         - verify_evidence.rejected_candidates
         - call_coverage.rows
-        - scientific_synthesis.answer
+        - verify_evidence.proposal_ready_cited_markdown
         - web_search.results
         - understand_supporting_image.analysis
-      editable_content_field: scientific_synthesis.answer
+      editable_content_field: verify_evidence.proposal_ready_cited_markdown
       allowed_actions: [approve, reject, edit]
 
   - id: concept_alternatives
@@ -416,7 +372,7 @@ nodes:
         {{call_coverage}}
 
         APPROVED EVIDENCE SYNTHESIS:
-        {{scientific_synthesis.answer}}
+        {{verify_evidence.proposal_ready_cited_markdown}}
 
   - id: approve_concept
     type: HumanInLoopAgent
@@ -537,9 +493,9 @@ nodes:
         CALL CHECKLIST:
         {{call_intelligence.parsed}}
 
-        APPROVED EVIDENCE (includes supplementary web/image context, clearly
-        separated from verified claims by scientific_synthesis):
-        {{scientific_synthesis.answer}}
+        APPROVED EVIDENCE (verified, citation-annotated narrative from
+        verify_evidence):
+        {{verify_evidence.proposal_ready_cited_markdown}}
 
         CONSORTIUM:
         {{load_consortium.text}}
@@ -631,7 +587,7 @@ nodes:
         Do not draw or describe the diagram yourself; do not omit the marker.
 
         BLUEPRINT: {{proposal_blueprint.parsed}}
-        EVIDENCE: {{scientific_synthesis.answer}}
+        EVIDENCE: {{verify_evidence.proposal_ready_cited_markdown}}
         CITATIONS: {{verify_evidence.citation_registry}}
 
   - id: draft_impact
@@ -667,7 +623,7 @@ nodes:
 
         BLUEPRINT: {{proposal_blueprint.parsed}}
         CALL OUTCOMES: {{call_intelligence.parsed.expected_outcomes}}
-        EVIDENCE: {{scientific_synthesis.answer}}
+        EVIDENCE: {{verify_evidence.proposal_ready_cited_markdown}}
 
   - id: draft_implementation
     type: TransformAgent
@@ -753,7 +709,9 @@ nodes:
         interdisciplinarity, SSH and gender-dimension material from
         CROSS-CUTTING that belongs in Excellence. Remove duplication, align
         identifiers and terminology, retain citations and all [INPUT NEEDED]
-        markers, and do not add facts. Start with the "# 1 Excellence"
+        markers, and do not add facts. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line — never
+        paraphrase, reformat, or drop it. Start with the "# 1 Excellence"
         heading.
 
         EXCELLENCE:
@@ -778,7 +736,9 @@ nodes:
         multi-actor, policy-alignment and practice-abstract material from
         CROSS-CUTTING that belongs in Impact. Remove duplication, align
         identifiers and terminology, retain citations and all [INPUT NEEDED]
-        markers, and do not add facts. Start with the "# 2 Impact" heading.
+        markers, and do not add facts. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line — never
+        paraphrase, reformat, or drop it. Start with the "# 2 Impact" heading.
 
         IMPACT:
         {{draft_impact.raw}}
@@ -803,7 +763,9 @@ nodes:
         standardisation and synergies material from CROSS-CUTTING that
         belongs in Implementation. Remove duplication, align identifiers
         and terminology, retain citations and all [INPUT NEEDED] markers,
-        and do not add facts. Start with the "# 3 Implementation" heading.
+        and do not add facts. Preserve every `[[IMAGE PROMPT: ...]]` marker
+        exactly as it appears, verbatim, on its own line — never paraphrase,
+        reformat, or drop it. Start with the "# 3 Implementation" heading.
 
         IMPLEMENTATION:
         {{draft_implementation.raw}}
@@ -911,7 +873,9 @@ nodes:
         evidence. Improve logic, consistency, specificity and section
         balance. Never fabricate a partner fact, source, number, KPI, TRL,
         result, budget or timeline. Preserve unresolved [INPUT NEEDED]
-        markers and valid citation IDs. Return only the Excellence section -
+        markers and valid citation IDs. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line — never
+        paraphrase, reformat, or drop it. Return only the Excellence section -
         do not draft Impact or Implementation.
 
         HUMAN-APPROVED DRAFT (full document - extract and revise only
@@ -948,7 +912,9 @@ nodes:
         evidence. Improve logic, consistency, specificity and section
         balance. Never fabricate a partner fact, source, number, KPI, TRL,
         result, budget or timeline. Preserve unresolved [INPUT NEEDED]
-        markers and valid citation IDs. Return only the Impact section - do
+        markers and valid citation IDs. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line — never
+        paraphrase, reformat, or drop it. Return only the Impact section - do
         not draft Excellence or Implementation.
 
         HUMAN-APPROVED DRAFT (full document - extract and revise only
@@ -985,7 +951,9 @@ nodes:
         evidence. Improve logic, consistency, specificity and section
         balance. Never fabricate a partner fact, source, number, KPI, TRL,
         result, budget or timeline. Preserve unresolved [INPUT NEEDED]
-        markers and valid citation IDs. Return only the Implementation
+        markers and valid citation IDs. Preserve every `[[IMAGE PROMPT: ...]]`
+        marker exactly as it appears, verbatim, on its own line — never
+        paraphrase, reformat, or drop it. Return only the Implementation
         section - do not draft Excellence or Impact.
 
         HUMAN-APPROVED DRAFT (full document - extract and revise only
@@ -1117,15 +1085,15 @@ edges:
   - from: acquire_full_text
     to: verify_evidence
   - from: verify_evidence
-    to: scientific_synthesis
-  - from: web_search
-    to: scientific_synthesis
-  - from: understand_supporting_image
-    to: scientific_synthesis
-  - from: scientific_synthesis
     to:
       - call_coverage
       - research_documentation
+  - from: web_search
+    to:
+      - research_documentation
+      - approve_evidence
+  - from: understand_supporting_image
+    to: approve_evidence
   - from: call_coverage
     to: approve_evidence
   - from: approve_evidence

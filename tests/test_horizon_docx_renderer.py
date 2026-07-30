@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import re
 from io import BytesIO
 from zipfile import ZipFile
 
 from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from PIL import Image
 
 from app.nodes.horizon_docx_renderer import HorizonDOCXProposalRenderer
@@ -117,6 +119,67 @@ def test_docx_renderer_builds_native_word_structure_and_sanitises_html():
     assert " NUMPAGES " in footer_xml
     assert "w:tblHeader" in document_xml
     assert 'w:type="fixed"' in document_xml
+
+
+def test_docx_renderer_builds_real_word_footnotes_when_enabled():
+    citation_registry = [
+        {
+            "display_number": 1,
+            "citation_id": "CIT-0001",
+            "formatted_citation": "Researcher A. Verified source. 2025.",
+        },
+        {
+            "display_number": 2,
+            "citation_id": "CIT-0002",
+            "formatted_citation": "Researcher B. Web source. 2024.",
+        },
+    ]
+    result = render_horizon_proposal_docx(
+        content=(
+            "# 1. Excellence\n\n"
+            "Grounded claim from a paper [1] and a web source [2]. "
+            "A numbered aside with no matching citation [9] stays literal.\n"
+        ),
+        content_format="markdown",
+        metadata={"proposal_title": "Footnote Test", "acronym": "FN"},
+        citation_registry=citation_registry,
+        include_toc=False,
+        include_bibliography=True,
+        page_limit=None,
+        enable_footnotes=True,
+    )
+
+    assert result.docx.startswith(b"PK")
+    assert not any("footnote" in warning.lower() for warning in result.warnings)
+
+    with ZipFile(BytesIO(result.docx)) as archive:
+        names = archive.namelist()
+        assert "word/footnotes.xml" in names
+        content_types = archive.read("[Content_Types].xml").decode("utf-8")
+        rels = archive.read("word/_rels/document.xml.rels").decode("utf-8")
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+        footnotes_xml = archive.read("word/footnotes.xml").decode("utf-8")
+
+    assert "wordprocessingml.footnotes+xml" in content_types
+    assert "relationships/footnotes" in rels
+
+    body_ids = set(re.findall(r'w:footnoteReference w:id="(\d+)"', document_xml))
+    part_ids = set(re.findall(r'w:footnote w:id="(-?\d+)"', footnotes_xml))
+    assert body_ids == {"1", "2"}
+    assert body_ids <= part_ids
+    assert {"-1", "0"} <= part_ids
+    assert "w:footnoteReference" not in document_xml.replace(
+        'w:footnoteReference w:id="1"', ""
+    ).replace('w:footnoteReference w:id="2"', "")
+
+    plain_text = re.sub(r"<[^>]+>", "", document_xml)
+    assert "[9]" in plain_text  # unmatched marker stays literal, not hijacked
+
+    # Reopening with python-docx must not raise, and the injected part must
+    # be rediscoverable via the standard relationship graph.
+    reopened = Document(BytesIO(result.docx))
+    footnotes_rel = reopened.part.part_related_by(RT.FOOTNOTES)
+    assert footnotes_rel.partname == "/word/footnotes.xml"
 
 
 async def test_horizon_docx_node_stores_docx_and_sanitised_source():
