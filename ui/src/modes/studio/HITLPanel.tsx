@@ -216,7 +216,7 @@ export function HITLPanel({
           <div className="text-xs font-medium text-ink-700">
             {wordCount.toLocaleString()} words
           </div>
-          <div className={`text-[11px] ${charCount > maxEditChars ? 'text-bad' : 'text-ink-300'}`}>
+          <div className={`text-[11px] ${charCount > maxEditChars ? 'text-bad' : 'text-ink-500'}`}>
             {charCount.toLocaleString()} / {maxEditChars.toLocaleString()} chars
           </div>
         </div>
@@ -226,7 +226,7 @@ export function HITLPanel({
         <div className="mb-2 flex items-center justify-between gap-3">
           <div>
             <div className="text-xs font-medium text-ink-700">Review content</div>
-            <div className="text-[11px] text-ink-300">
+            <div className="text-[11px] text-ink-500">
               {canEdit
                 ? editorFormat === 'json'
                   ? 'Exact structured content. Keep the JSON valid so downstream fields preserve their types.'

@@ -387,6 +387,7 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         "ExcelTableExtractor",
         "PowerPointProposalSlides",
         "WorkflowFileLoader",
+        "KimiVisionAgent",
     }:
         required.add("object_store")
     if (
@@ -394,6 +395,14 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         and config.get("allow_document_override", True)
     ):
         required.add("object_store")
+    if node_type == "WebSearchAgent":
+        required.add("web_search")
+    if node_type == "OpenAIImageGenerationAgent" and config.get(
+        "backend", "openai"
+    ) != "disabled":
+        required.update({"image_generator", "object_store"})
+    if node_type == "KimiVisionAgent":
+        required.add("kimi_vision")
     for _, model in _iter_model_values(config):
         service_name = local_service_name(model)
         if service_name:
@@ -1293,6 +1302,18 @@ async def _probe_services(
                     path=f"nodes.{node.id}.config.tool",
                 )
 
+    web_search = services.get("web_search")
+    if "web_search" in required and web_search is not None:
+        _probe_web_search_nodes(spec, web_search, report)
+
+    image_generator = services.get("image_generator")
+    if "image_generator" in required and image_generator is not None:
+        _probe_image_generation_nodes(spec, image_generator, report)
+
+    kimi_vision = services.get("kimi_vision")
+    if "kimi_vision" in required and kimi_vision is not None:
+        _probe_kimi_vision_nodes(spec, kimi_vision, report)
+
     llm = services.get("llm")
     if "llm" in required and llm is not None:
         await _probe_workflow_model_access(spec, llm, report)
@@ -1302,6 +1323,106 @@ async def _probe_services(
         "required_services",
         before,
         f"{len(required)} required service(s) checked without an LLM call.",
+    )
+
+
+def _probe_web_search_nodes(
+    spec: WorkflowSpec,
+    service: Any,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Zero-token: WebSearchService.resolve_provider does a settings check
+    only, no HTTP request — see app/tools/web_io.py."""
+
+    before = len(report.issues)
+    for node in spec.nodes:
+        if node.type != "WebSearchAgent":
+            continue
+        provider = node.effective_config().get("provider", "auto")
+        try:
+            service.resolve_provider(provider)
+        except Exception as exc:
+            _issue(
+                report,
+                "WEB_SEARCH_PROVIDER_UNAVAILABLE",
+                f"WebSearchAgent {node.id!r} cannot resolve provider "
+                f"{provider!r}: {exc}",
+                node_id=node.id,
+                path=f"nodes.{node.id}.config.provider",
+                suggestion=(
+                    "Configure TAVILY_API_KEY, OPENAI_API_KEY, or "
+                    "LOCAL_KIMI_API_KEY, or choose a different provider."
+                ),
+            )
+    _add_check(
+        report,
+        "web_search_credentials",
+        before,
+        "Web-search provider availability checked without a live request.",
+    )
+
+
+def _probe_image_generation_nodes(
+    spec: WorkflowSpec,
+    service: Any,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Zero-token: OpenAIImageGenerationService.available() checks settings
+    only — see app/tools/image_io.py."""
+
+    before = len(report.issues)
+    for node in spec.nodes:
+        if node.type != "OpenAIImageGenerationAgent":
+            continue
+        if node.effective_config().get("backend", "openai") == "disabled":
+            continue
+        if not service.available():
+            _issue(
+                report,
+                "IMAGE_GENERATION_UNAVAILABLE",
+                f"OpenAIImageGenerationAgent {node.id!r} has no configured "
+                "image-generation backend.",
+                node_id=node.id,
+                path=f"nodes.{node.id}.config.backend",
+                suggestion=(
+                    "Set OPENAI_API_KEY and IMAGE_GENERATION_BACKEND=openai, "
+                    "or set this node's backend to 'disabled'."
+                ),
+            )
+    _add_check(
+        report,
+        "image_generation_credentials",
+        before,
+        "Image-generation credentials checked without a live request.",
+    )
+
+
+def _probe_kimi_vision_nodes(
+    spec: WorkflowSpec,
+    service: Any,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Zero-token: KimiVisionService.available() checks settings only —
+    see app/tools/vision_io.py."""
+
+    before = len(report.issues)
+    for node in spec.nodes:
+        if node.type != "KimiVisionAgent":
+            continue
+        if not service.available():
+            _issue(
+                report,
+                "KIMI_VISION_UNAVAILABLE",
+                f"KimiVisionAgent {node.id!r} has no configured Moonshot "
+                "credentials.",
+                node_id=node.id,
+                suggestion="Set LOCAL_KIMI_API_KEY.",
+            )
+    _add_check(
+        report,
+        "kimi_vision_credentials",
+        before,
+        "Kimi vision credentials checked without a live request.",
     )
 
 

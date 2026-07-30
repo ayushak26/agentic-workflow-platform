@@ -83,7 +83,7 @@ function VariableSection({
         <div className="text-[11px] text-ink-400">{note}</div>
       </div>
       {entries.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-ink-300">
+        <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-ink-500">
           None available.
         </div>
       ) : (
@@ -170,7 +170,7 @@ export function WorkflowVariablesPanel({
           </div>
         </div>
         {outputEntries.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-ink-300">
+          <div className="rounded-lg border border-dashed border-slate-200 px-3 py-3 text-xs text-ink-500">
             {live ? 'No node has completed yet.' : 'No outputs were recorded.'}
           </div>
         ) : (

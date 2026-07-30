@@ -1,0 +1,363 @@
+name: Horizon Europe Part B - Drafts (Stage 2 of 3)
+description: >-
+  Second stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence
+  -> drafts -> document; see workflows/pipelines/horizon_partb.pipeline.yaml).
+  Every artifact the evidence stage produces is declared as an input, so this
+  file is Import-inputs-from-JSON compatible with "Copy run as workflow
+  inputs" from Run History, or auto-matched by name from the pipeline. Drafts
+  the six official Part B subsections in parallel from the locked blueprint,
+  and generates three grounded figures (objective-result-outcome-impact
+  chain, impact pathways, work-plan structure) in parallel alongside them.
+  Each figure-eligible draft is instructed to emit a stable
+  "[[IMAGE PROMPT: marker]]" placeholder at the point the figure belongs;
+  the document stage's FigureEmbedder later splices the real image in. This
+  workflow does not compile, evaluate or render — see
+  horizon_partb_drafts_to_docx.yaml.
+version: "3.0"
+use_case: eu_proposal
+
+inputs:
+  proposal_blueprint:
+    type: json
+    required: true
+    description: "[LIVE] evidence stage's proposal_blueprint.parsed — the locked single source of truth every draft must agree with."
+  scientific_synthesis:
+    type: json
+    required: true
+    description: "[LIVE] evidence stage's scientific_synthesis output — .answer is the proposal-engineering evidence synthesis given to every draft."
+  verify_evidence:
+    type: json
+    required: true
+    description: "[LIVE] evidence stage's verify_evidence output — .citation_registry is given to draft_1_1 and draft_1_2 so they only use verified citation IDs."
+  call_intelligence:
+    type: json
+    required: false
+    description: "[LIVE] evidence stage's call_intelligence output — .expected_outcomes is given to draft_2_1; the whole object to draft_2_2."
+  load_documents:
+    type: json
+    required: false
+    description: "[LIVE] evidence stage's load_documents output — .text is given to draft_2_2, draft_3_1 and draft_3_2 for source fidelity."
+
+nodes:
+  - id: start
+    type: Literal
+    config:
+      value: true
+
+  - id: draft_1_1_objectives_ambition
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft only official subsection "1.1 Objectives and ambition" in polished
+        proposal-ready Markdown, targeting 4 pages. Define measurable,
+        verifiable and realistically achievable objectives and show their
+        pertinence to the topic. Compare the project with the state of the art
+        and available solutions, identify the precise advance and ambition, and
+        state R&I maturity or start/end TRLs only when grounded. Use only
+        verified citation IDs. Preserve missing facts as
+        [INPUT NEEDED: exact item]. Do not draft methodology or create 1.3.
+
+        Where the objective -> result -> outcome -> impact chain diagram
+        belongs, insert exactly this marker on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 1 - Objective-Result-Outcome-Impact Chain]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
+
+        BLUEPRINT:
+        {{inputs.proposal_blueprint}}
+
+        VERIFIED EVIDENCE:
+        {{inputs.scientific_synthesis.answer}}
+
+        CITATION REGISTRY:
+        {{inputs.verify_evidence.citation_registry}}
+
+  - id: draft_1_2_methodology
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft only official subsection "1.2 Methodology" in proposal-ready
+        Markdown, targeting 13 pages. Present the overall methodology as a
+        coherent narrative, not a repetition of work packages. Explain
+        concepts, models, assumptions, methods, data, validation, uncertainty,
+        methodological challenges and mitigation; how relevant national or
+        international R&I results feed the project; interdisciplinarity; SSH
+        integration where required; the gender dimension in R&I content; open
+        science, FAIR research-output management and stakeholder/end-user
+        engagement. Integrate the multi-actor approach where the call requires
+        it. Use only verified citations and supplied facts. Preserve missing
+        details as [INPUT NEEDED: exact item].
+
+        BLUEPRINT:
+        {{inputs.proposal_blueprint}}
+
+        VERIFIED EVIDENCE:
+        {{inputs.scientific_synthesis.answer}}
+
+        CITATION REGISTRY:
+        {{inputs.verify_evidence.citation_registry}}
+
+  - id: draft_2_1_pathways
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft only official subsection "2.1 Project's pathways towards impact"
+        in proposal-ready Markdown, targeting 3 pages. Give a concise causal
+        narrative from specific needs through project results, target groups and
+        uptake mechanisms to every expected topic outcome and wider destination
+        impact. Provide quantified estimates only when meaningful and grounded.
+        Identify external requirements, assumptions and barriers, how they may
+        evolve, and mitigation within or beyond the project. Do not place
+        implementation risks here. Every number must have a baseline, target,
+        unit, source, owner and time horizon or remain
+        [INPUT NEEDED: exact item].
+
+        Where the impact-pathways diagram belongs, insert exactly this marker
+        on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 2 - Impact Pathways]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
+
+        BLUEPRINT:
+        {{inputs.proposal_blueprint}}
+
+        CALL OUTCOMES:
+        {{inputs.call_intelligence.expected_outcomes}}
+
+        VERIFIED EVIDENCE:
+        {{inputs.scientific_synthesis.answer}}
+
+  - id: draft_2_2_measures_and_2_3_summary
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft official subsection "2.2 Measures to maximise impact –
+        Dissemination, exploitation and communication" in proposal-ready
+        Markdown, targeting 3 pages. Provide the first plan for dissemination,
+        exploitation and communication with differentiated objectives, target
+        groups, messages, measures, channels, timing, ownership and KPIs.
+        Cover post-project uptake, policy feedback, standardisation, result
+        ownership, IP protection and access rights where relevant. Do not mix
+        open-science methodology with communication.
+
+        Add official optional subsection "2.3 Summary" only when it improves
+        evaluator comprehension. If used, keep it to one page as a compact
+        impact canvas covering specific needs, expected results, D/E/C measures,
+        target groups, outcomes and impacts. If it cannot fit the working page
+        target, omit it completely. Preserve missing facts as
+        [INPUT NEEDED: exact item].
+
+        CALL CHECKLIST:
+        {{inputs.call_intelligence}}
+
+        BLUEPRINT:
+        {{inputs.proposal_blueprint}}
+
+        SUPPORTING DOCUMENTS:
+        {{inputs.load_documents.text}}
+
+  - id: draft_3_1_workplan_resources
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      prompt_template: |
+        Draft only official subsection "3.1 Work plan and resources" in
+        proposal-ready Markdown, targeting 16 pages including all tables.
+        Include: work-plan logic; timing; a Gantt placeholder; a PERT/dependency
+        placeholder; WP/task descriptions with quantified activities,
+        participants, effort and resources; governance and decision controls;
+        quality assurance; data management; dissemination/exploitation/
+        communication implementation; milestones; implementation risks and
+        mitigations; and lump-sum resource coherence.
+
+        Produce the official tables exactly as applicable:
+        3.1a list of work packages; 3.1b description of each work package;
+        3.1c deliverables; 3.1d milestones; 3.1e critical risks; 3.1f staff
+        effort; 3.1g subcontracting costs; and 3.1h major equipment purchase
+        costs above the applicable threshold. Preserve exact identifiers and
+        numbers from the documents. Missing leads, dates, person-months, costs,
+        owners or quantities remain [INPUT NEEDED: exact item]. Never fabricate
+        a balanced budget or partner allocation.
+
+        Where the work-package structure diagram belongs (after the WP list,
+        before 3.1b), insert exactly this marker on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 3 - Work Package Structure]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
+
+        BLUEPRINT:
+        {{inputs.proposal_blueprint}}
+
+        SUPPORTING DOCUMENTS:
+        {{inputs.load_documents.text}}
+
+  - id: draft_3_2_consortium
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      prompt_template: |
+        Draft only official subsection "3.2 Capacity of participants and
+        consortium as a whole" in proposal-ready Markdown, targeting 3 pages.
+        Do not repeat the Part A organisation descriptions. Demonstrate how the
+        consortium collectively matches the objectives, combines disciplinary
+        and interdisciplinary expertise, covers SSH/open science/gender
+        capabilities where relevant, accesses critical infrastructure, covers
+        the value chain and target groups, and assigns complementary roles.
+        Explain any affiliated entities, associated partners or international
+        participants only when documented. Integrate multi-actor co-creation
+        capacity when required by the call. Preserve absent partner or facility
+        facts as [INPUT NEEDED: exact item].
+
+        BLUEPRINT:
+        {{inputs.proposal_blueprint}}
+
+        SUPPORTING DOCUMENTS:
+        {{inputs.load_documents.text}}
+
+  - id: generate_figure_oro_chain
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the causal chain from project objectives
+        through results and outcomes to wider impact, using ONLY this grounded
+        content — do not invent additional boxes, labels or numbers:
+
+        {{inputs.proposal_blueprint.objective_result_outcome_chain}}
+
+  - id: generate_figure_impact_pathways
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the pathway from project results to outcomes to
+        the topic's expected impacts, using ONLY this grounded content — do
+        not invent additional boxes, labels or numbers:
+
+        {{inputs.proposal_blueprint.impact_pathways_and_kpis}}
+
+  - id: generate_figure_workplan
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the work-package structure and dependencies
+        (boxes and arrows only, no dates/Gantt bars unless explicitly present
+        below), using ONLY this grounded content — do not invent additional
+        work packages, labels or numbers:
+
+        {{inputs.proposal_blueprint.work_packages_tasks_deliverables}}
+
+edges:
+  - from: start
+    to:
+      - draft_1_1_objectives_ambition
+      - draft_1_2_methodology
+      - draft_2_1_pathways
+      - draft_2_2_measures_and_2_3_summary
+      - draft_3_1_workplan_resources
+      - draft_3_2_consortium
+      - generate_figure_oro_chain
+      - generate_figure_impact_pathways
+      - generate_figure_workplan
+
+entry: start
+exit:
+  - draft_1_1_objectives_ambition
+  - draft_1_2_methodology
+  - draft_2_1_pathways
+  - draft_2_2_measures_and_2_3_summary
+  - draft_3_1_workplan_resources
+  - draft_3_2_consortium
+  - generate_figure_oro_chain
+  - generate_figure_impact_pathways
+  - generate_figure_workplan
+
+output:
+  include_input: false
+  nodes:
+    - node_id: draft_1_1_objectives_ambition
+      flatten: false
+    - node_id: draft_1_2_methodology
+      flatten: false
+    - node_id: draft_2_1_pathways
+      flatten: false
+    - node_id: draft_2_2_measures_and_2_3_summary
+      flatten: false
+    - node_id: draft_3_1_workplan_resources
+      flatten: false
+    - node_id: draft_3_2_consortium
+      flatten: false
+    - node_id: generate_figure_oro_chain
+      flatten: false
+    - node_id: generate_figure_impact_pathways
+      flatten: false
+    - node_id: generate_figure_workplan
+      flatten: false

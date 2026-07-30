@@ -5,6 +5,11 @@ import type {
   HorizonEvaluation,
   LLMModelInfo,
   NodeTypeManifest,
+  PipelinePreflightReport,
+  PipelineRunDetail,
+  PipelineRunSummary,
+  PipelineStageOutcome,
+  PipelineSummary,
   ProposalApproval,
   ProposalRenderRequest,
   ProposalRenderResult,
@@ -289,6 +294,48 @@ export const api = {
         reused_node_count: number;
       };
     }>),
+
+  // ---- pipelines (chain saved workflows: one's outputs become the next's inputs)
+  listPipelines: () =>
+    afetch(`${API}/pipelines`, { headers: authHeaders() }).then(j<PipelineSummary[]>),
+  getPipeline: (name: string) =>
+    afetch(`${API}/pipelines/by-name/${name}`, { headers: authHeaders() })
+      .then(j<{ name: string; yaml: string }>),
+  savePipeline: (name: string, yaml: string) =>
+    afetch(`${API}/pipelines/save`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ name, yaml }),
+    }).then(j<{ ok: true; name: string }>),
+  validatePipeline: (pipeline_yaml: string, inputs?: Record<string, unknown>) =>
+    afetch(`${API}/pipelines/validate`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ pipeline_yaml, inputs }),
+    }).then(j<PipelinePreflightReport>),
+  runPipeline: (
+    pipeline_yaml: string,
+    inputs: Record<string, unknown>,
+    session_id?: string,
+    pipeline_run_id?: string,
+  ) =>
+    afetch(`${API}/pipelines/run`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ pipeline_yaml, inputs, session_id, pipeline_run_id }),
+    }).then(j<PipelineStageOutcome>),
+  advancePipeline: (pipeline_run_id: string, session_id?: string) =>
+    afetch(`${API}/pipelines/${pipeline_run_id}/advance`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ session_id }),
+    }).then(j<PipelineStageOutcome>),
+  pipelineRuns: () =>
+    afetch(`${API}/pipelines/mine`, { headers: authHeaders() })
+      .then(j<{ count: number; runs: PipelineRunSummary[] }>),
+  pipelineRunDetail: (pipeline_run_id: string) =>
+    afetch(`${API}/pipelines/mine/${pipeline_run_id}`, { headers: authHeaders() })
+      .then(j<PipelineRunDetail>),
 
   proposalReview: (run_id: string) =>
     afetch(`${API}/proposals/runs/${run_id}/review`, {

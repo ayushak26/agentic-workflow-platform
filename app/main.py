@@ -30,6 +30,7 @@ from app.llm.registry import configured_local_model_probes, get_llm_gateway
 from app.runtime.events import RunEventBus
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
+from app.workflow.pipeline_history import ensure_pipeline_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 
 from app.api import health
@@ -44,6 +45,7 @@ from app.api import proposals as proposals_api
 from app.api import research as research_api
 from app.api import workflow_files as workflow_files_api
 from app.api import llm_providers as llm_providers_api
+from app.api import pipelines as pipelines_api
 
 from app.db.mongo import DB_NAME
 
@@ -78,6 +80,7 @@ async def lifespan(app: FastAPI):
         services["audit_db"] = services["mongo"]._ensure_client()[DB_NAME]
         try:
             await ensure_run_indexes(services["audit_db"])
+            await ensure_pipeline_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
                 services["audit_db"],
                 None,
@@ -176,6 +179,23 @@ async def lifespan(app: FastAPI):
     services["llm"] = get_llm_gateway()
     services.update(configured_local_model_probes())
     logger.info("llm_gateway.ready")
+
+    # ── Web search / image generation / Kimi vision ───────────────────────────
+    # Each service is a thin, credential-aware client wrapper (see
+    # app/tools/{web_io,image_io,vision_io}.py) — it always constructs, even
+    # with no credentials configured, and only raises when actually called.
+    # Missing credentials surface as a zero-token preflight issue instead
+    # (app/runtime/preflight.py), not a startup failure.
+    from app.tools.web_io import get_web_search_service
+    from app.tools.image_io import get_image_generation_service
+    from app.tools.vision_io import get_kimi_vision_service
+
+    services["web_search"] = get_web_search_service()
+    services["image_generator"] = get_image_generation_service()
+    services["kimi_vision"] = get_kimi_vision_service()
+    logger.info("web_search.ready")
+    logger.info("image_generator.ready")
+    logger.info("kimi_vision.ready")
 
     # ── Scientific Agent Skills ──────────────────────────────────────────────
     if settings.scientific_skills_enabled:
@@ -311,3 +331,4 @@ app.include_router(proposals_api.router)
 app.include_router(research_api.router)
 app.include_router(workflow_files_api.router)
 app.include_router(llm_providers_api.router)
+app.include_router(pipelines_api.router)

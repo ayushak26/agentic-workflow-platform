@@ -11,6 +11,28 @@ export type WorkflowInputSpec = {
   max_files?: number;
 };
 
+// Values copied from Run History's "Copy run as workflow inputs" (or a
+// pipeline stage's auto-matched output) often carry the TransformAgent
+// envelope ({ raw, parsed }) rather than the bare structured value a `json`
+// input expects. These workflows already document that convention (e.g. an
+// input described as "proposal_blueprint.parsed - the locked single source
+// of truth"), so unwrap it here rather than requiring a manual `.parsed`
+// edit on every reuse. Shared by RunDialog (workflow inputs) and the
+// pipeline launch dialog (pipeline inputs) so the heuristic can't drift
+// between the two.
+export function valueForJsonInput(value: unknown): unknown {
+  if (
+    value !== null
+    && typeof value === 'object'
+    && !Array.isArray(value)
+    && 'parsed' in (value as Record<string, unknown>)
+    && 'raw' in (value as Record<string, unknown>)
+  ) {
+    return (value as Record<string, unknown>).parsed;
+  }
+  return value;
+}
+
 export type ModelRoutingPolicy = {
   accuracy_priority?: 'maximum' | 'balanced' | 'economy';
   max_estimated_cost_usd?: number | null;

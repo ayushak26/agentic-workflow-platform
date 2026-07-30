@@ -1,0 +1,445 @@
+name: Horizon Europe Part B - Evidence (Stage 1 of 3)
+description: >-
+  First stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence ->
+  drafts -> document; see workflows/pipelines/horizon_partb.pipeline.yaml).
+  Converts a concept note and supporting documents into: renderer metadata, an
+  atomic call checklist, a normalised source graph, scholarly evidence
+  discovered, acquired in full text and verified into citation-grounded
+  claims, a proposal-engineering synthesis of that evidence (enriched with
+  supplementary live-web context and an optional supporting image's
+  analysis), a call-coverage matrix, and the locked master blueprint every
+  later section is drafted against. Produces no proposal prose itself.
+version: "3.0"
+use_case: eu_proposal
+
+inputs:
+  concept_note:
+    type: file
+    description: The selected project concept note. This is the concept to develop; the workflow does not replace it with alternative concepts.
+    required: true
+    multiple: true
+    max_files: 5
+    accept: [pdf, document, markdown, presentation]
+  documents:
+    type: file
+    description: >-
+      Supporting proposal documents in any mixture: official call/topic text,
+      the downloaded Part B template, consortium profiles, work plan, budget,
+      pilot information, prior research, technical material, and guidance.
+    required: true
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+  supporting_image:
+    type: file
+    description: >-
+      Optional single image worth understanding on its own — a diagram,
+      scanned certificate/letter of support, org chart, or photo a partner
+      supplied outside the main documents. Leave empty if none applies;
+      nothing downstream depends on it being present.
+    required: false
+    multiple: false
+    accept: [image]
+
+nodes:
+  - id: load_concept
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.concept_note}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: load_documents
+    type: WorkflowFileLoader
+    config:
+      files: "{{inputs.documents}}"
+      max_chars_per_file: 500000
+      fail_on_unreadable: true
+
+  - id: understand_supporting_image
+    type: KimiVisionAgent
+    config:
+      image: "{{inputs.supporting_image}}"
+      prompt: >-
+        Describe this image and extract anything relevant to a Horizon Europe
+        Part B proposal: diagrams (architecture, methodology, work packages),
+        organisation charts, data/results visualisations, certificates,
+        letters of support, or similar. Separate what you observe directly
+        from any inference. If the image carries no proposal-relevant
+        information, say so plainly.
+      vision_model: kimi-k3
+
+  - id: partb_metadata
+    type: TransformAgent
+    selected_model: gpt-5-mini
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - gpt-5-mini
+      - claude-opus-5
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: economy
+      prefer_low_latency: true
+      quality_scores:
+        gpt-5-mini: 0.95
+        claude-sonnet-4-5: 0.70
+        gpt-5: 0.60
+        gpt-5.6-sol: 0.25
+    config:
+      model: gpt-5-mini
+      max_tokens: 4000
+      output_schema:
+        proposal_title: str
+        acronym: str
+        call_id: str
+        action_type: str
+        funding_model: str
+        consortium_name: str
+        part_label: str
+        version: str
+        unresolved_metadata: list
+      prompt_template: |
+        Extract renderer metadata from the concept note and supporting
+        documents. Use only explicit facts. Use an empty string for an unknown
+        display field and list the exact missing item in unresolved_metadata.
+        part_label must be "Part B – Technical Description". Do not invent a
+        title, acronym, call identifier, action type, consortium or version.
+
+        CONCEPT NOTE:
+        {{load_concept.text}}
+
+        SUPPORTING DOCUMENTS:
+        {{load_documents.text}}
+
+  - id: call_intelligence
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - gpt-5-mini
+      - claude-opus-5
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: balanced
+    config:
+      model: gpt-5
+      max_tokens: 12000
+      output_schema:
+        call_identity: object
+        expected_outcomes: list
+        scope_requirements: list
+        mandatory_conditions: list
+        evaluation_priorities: list
+        exclusions: list
+        page_and_format_rules: object
+        unresolved_call_questions: list
+      prompt_template: |
+        Identify the authoritative call/topic and template material within the
+        supporting documents, then extract an atomic, traceable Horizon Europe
+        checklist. Separate expected outcomes, scope, admissibility or
+        eligibility conditions, evaluator priorities, exclusions, and
+        page/format rules. Label the source and locator for every requirement.
+        Do not treat concept-note claims or partner documents as call rules.
+        Put absent or ambiguous authoritative information in
+        unresolved_call_questions. For a lump-sum RIA/IA, apply 45 pages only
+        when the supplied official template or topic conditions support it.
+
+        SUPPORTING DOCUMENTS:
+        {{load_documents.text}}
+
+  - id: research_context_query
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5
+      - gpt-5-mini
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: economy
+      prefer_low_latency: true
+    config:
+      model: gpt-5-mini
+      max_tokens: 500
+      output_schema:
+        query: str
+      prompt_template: |
+        Write exactly one concise, high-signal web search query (plain text,
+        no quotes, no boolean operators) to find recent, publicly available
+        context for this Horizon Europe proposal that scholarly databases are
+        unlikely to surface well: things like adjacent open calls, relevant
+        EU policy or strategy documents, funded projects working on a similar
+        problem, or recent sector news. Base it on the actual topic below, not
+        a generic template.
+
+        CONCEPT NOTE:
+        {{load_concept.text}}
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+  - id: web_search
+    type: WebSearchAgent
+    config:
+      query: "{{research_context_query.parsed.query}}"
+      provider: auto
+      top_k: 8
+      fallback_to_openai: true
+
+  - id: normalise_source_graph
+    type: GraphNormalizer
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - claude-opus-5
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 32000
+      concept_note: |
+        CONCEPT NOTE:
+        {{load_concept.text}}
+
+        SUPPORTING DOCUMENTS:
+        {{load_documents.text}}
+      call_facts: |
+        SUPPORTING DOCUMENTS:
+        {{load_documents.text}}
+
+        ATOMIC CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+  - id: discover_evidence
+    type: ScholarlyCandidateDiscoveryAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5
+      - gpt-5-mini
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: balanced
+      prefer_low_latency: true
+    config:
+      model: gpt-5
+      max_results_per_source: 3
+      max_candidates_per_claim: 10
+      max_claims: 30
+      claim_types: [state_of_art, problem, impact, method]
+      require_contradiction_search: true
+
+  - id: acquire_full_text
+    type: FullTextEvidenceAcquirer
+    config:
+      candidates: "{{discover_evidence.candidates}}"
+      fail_when_none_acquired: false
+
+  - id: verify_evidence
+    type: ProposalEvidenceFactoryAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5.6-sol
+      - gpt-5
+      - claude-opus-5
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      candidates: "{{discover_evidence.candidates}}"
+      documents: "{{acquire_full_text.documents}}"
+      search_audit: "{{discover_evidence.search_audit}}"
+      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
+      max_passages_per_document: 10
+
+  - id: scientific_synthesis
+    type: ScientificSkillAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      skills:
+        - literature-review
+        - scientific-critical-thinking
+        - research-grants
+        - scientific-writing
+      auto_select: false
+      max_skills: 4
+      max_tokens: 16000
+      objective: |
+        Produce a proposal-engineering evidence synthesis using only the
+        verified claim records as evidence. For each scientific proposition
+        state the supported conclusion, boundary conditions, contradiction
+        status, evidence strength, citation IDs, and proposal section where it
+        is safe to use. Separate verified evidence from gaps. Never promote a
+        candidate record, a web-search result, or an image analysis to
+        evidence — they are context, not citable fact.
+
+        VERIFIED CLAIMS:
+        {{verify_evidence.verified_claims}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
+        BLOCKING ISSUES:
+        {{verify_evidence.blocking_issues}}
+
+        SUPPLEMENTARY WEB CONTEXT (candidate only — situational awareness,
+        never a citable source; note it separately if it usefully points to
+        an adjacent call, policy document, or comparable funded project):
+        {{web_search.results}}
+
+        SUPPORTING IMAGE ANALYSIS (present only if supporting_image was
+        supplied; treat identically to the web context above):
+        {{understand_supporting_image.analysis}}
+
+  - id: call_coverage
+    type: CallCoverageMatrixAgent
+    config: {}
+
+  - id: proposal_blueprint
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - local-kimi-k3
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 20000
+      output_schema:
+        proposal_identity: object
+        source_hierarchy_and_fact_ledger: object
+        official_partb_structure: object
+        hard_page_limit: int
+        working_page_target: int
+        section_page_budget: object
+        objective_result_outcome_chain: object
+        state_of_art_and_innovations: object
+        methodology_and_validation: object
+        impact_pathways_and_kpis: object
+        work_packages_tasks_deliverables: object
+        consortium_and_resources: object
+        risks_and_mitigations: object
+        cross_cutting_compliance: object
+        figure_and_table_plan: object
+        unresolved_inputs: list
+      prompt_template: |
+        Treat the supplied concept note as the selected project concept. Create
+        the master blueprint only for the Horizon Europe RIA/IA Part B technical
+        description. Follow the official 2026 headings exactly:
+        1.1 Objectives and ambition; 1.2 Methodology; 2.1 Project's pathways
+        towards impact; 2.2 Measures to maximise impact – dissemination,
+        exploitation and communication; optional 2.3 Summary; 3.1 Work plan and
+        resources; 3.2 Capacity of participants and consortium as a whole.
+        Do not create sections 1.3, 3.3, 3.4, Part A, ethics forms, security
+        forms, budget forms or submission instructions.
+
+        Use a hard limit of 45 pages for a verified lump-sum topic and a working
+        target of 44 pages, including title, participant list, tables, figures
+        and references. Use this starting budget: front matter 1; 1.1 = 4;
+        1.2 = 13; 2.1 = 3; 2.2 = 3; optional 2.3 = 1; 3.1 = 16; 3.2 = 3.
+        Retain one page of safety against rendering variation. If section 2.3 is
+        omitted, reallocate its page only where evaluator value is highest.
+
+        In figure_and_table_plan, for each planned figure give a short stable
+        slug (used later to match a generated image to its slot) and the exact
+        evaluator-relevant content it must show. Plan only evaluator-useful
+        figures — never decoration.
+
+        Map every call requirement to a Part B subsection, result, owner,
+        evidence claim, KPI, WP, task, deliverable, milestone and risk where
+        grounded. Build an explicit objective -> result -> outcome -> impact chain.
+        Use [INPUT NEEDED: exact item] for missing facts; never invent partner,
+        budget, KPI, TRL, timeline, pilot, source or evidence details.
+
+        CONCEPT NOTE:
+        {{load_concept.text}}
+
+        PROPOSAL METADATA:
+        {{partb_metadata.parsed}}
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+        CALL COVERAGE:
+        {{call_coverage}}
+
+        NORMALISED SOURCE:
+        {{normalise_source_graph.report}}
+        {{normalise_source_graph.warnings}}
+
+        SUPPORTING DOCUMENTS:
+        {{load_documents.text}}
+
+        VERIFIED EVIDENCE (includes supplementary web/image context, clearly
+        separated from verified claims by scientific_synthesis):
+        {{scientific_synthesis.answer}}
+
+edges:
+  - from: load_concept
+    to: load_documents
+  - from: load_documents
+    to:
+      - partb_metadata
+      - call_intelligence
+      - understand_supporting_image
+  - from: call_intelligence
+    to:
+      - normalise_source_graph
+      - research_context_query
+  - from: partb_metadata
+    to: normalise_source_graph
+  - from: research_context_query
+    to: web_search
+  - from: normalise_source_graph
+    to: discover_evidence
+  - from: discover_evidence
+    to: acquire_full_text
+  - from: acquire_full_text
+    to: verify_evidence
+  - from: verify_evidence
+    to: scientific_synthesis
+  - from: web_search
+    to: scientific_synthesis
+  - from: understand_supporting_image
+    to: scientific_synthesis
+  - from: scientific_synthesis
+    to: call_coverage
+  - from: call_coverage
+    to: proposal_blueprint
+
+entry: load_concept
+exit: proposal_blueprint
+
+output:
+  include_input: false
+  nodes:
+    - node_id: partb_metadata
+      flatten: false
+    - node_id: call_intelligence
+      flatten: false
+    - node_id: normalise_source_graph
+      flatten: false
+    - node_id: call_coverage
+      flatten: false
+    - node_id: verify_evidence
+      flatten: false
+    - node_id: scientific_synthesis
+      flatten: false
+    - node_id: web_search
+      flatten: false
+    - node_id: understand_supporting_image
+      flatten: false
+    - node_id: proposal_blueprint
+      flatten: false

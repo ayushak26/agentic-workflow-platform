@@ -4,7 +4,18 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { CopyButton } from '../../components/CopyButton';
+import { artifactLabel } from './file-artifact';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
+
+// Colour-code each artifact chip by file type so a run with both a PDF and
+// a DOCX reads at a glance instead of two identically-styled buttons.
+const EXTENSION_STYLE: Record<string, string> = {
+    pdf: 'bg-red-50 text-red-700 border-red-200',
+    docx: 'bg-blue-50 text-blue-700 border-blue-200',
+    pptx: 'bg-orange-50 text-orange-700 border-orange-200',
+    xlsx: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    html: 'bg-slate-100 text-ink-700 border-slate-200',
+};
 
 export function OutputViewer({
     state,
@@ -85,6 +96,16 @@ export function OutputViewer({
     );
     const pageCount = pageCountOutput?.page_count;
     const pageCountEstimated = Boolean(pageCountOutput?.page_count_basis);
+
+    // Renderer nodes (Horizon DOCX/PDF) report their own submission_ready
+    // verdict. Surface it as a single badge rather than making someone dig
+    // through warnings to notice a proposal still has open blockers.
+    const submissionReadyFlags = rendererEntries
+        .map(([, output]: [string, any]) => output?.submission_ready)
+        .filter((v: unknown): v is boolean => typeof v === 'boolean');
+    const submissionReady = submissionReadyFlags.length > 0
+        ? submissionReadyFlags.every(Boolean)
+        : null;
 
     const evidenceOutput: any = Object.values(nodeOutputs).find(
         (output: any) => Array.isArray(output?.citation_registry) && output?.qa_report,
@@ -380,49 +401,86 @@ export function OutputViewer({
 
     return (
         <div className="h-full flex flex-col">
-            <header className="px-6 py-3 border-b border-slate-200 flex items-center justify-between bg-white">
-                <div>
-                    <h2 className="font-semibold">{workflowName ?? 'Proposal'} — completed</h2>
-                    <div className="text-xs text-ink-500">
-                        {doc.template_used ? `Template: ${doc.template_used} · ` : ''}
-                        {typeof pageCount === 'number'
-                            ? `${pageCountEstimated ? 'approximately ' : ''}${pageCount} pages · `
-                            : ''}
-                        {typeof doc.byte_size === 'number' ? `${(doc.byte_size / 1024).toFixed(0)} KB · ` : ''}
-                        {fileKinds || 'FILE'}
-                    </div>
-                    {rendererWarnings.length > 0 && (
-                        <div className="text-xs text-amber-700 mt-1">
-                            {rendererWarnings.join(' · ')}
+            <header className="px-6 py-4 border-b border-slate-200 bg-white">
+                <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <h2 className="text-lg font-semibold text-ink-900">{workflowName ?? 'Proposal'}</h2>
+                            <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                                Completed
+                            </span>
+                            {submissionReady === true && (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">
+                                    Submission ready
+                                </span>
+                            )}
+                            {submissionReady === false && (
+                                <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">
+                                    Needs input
+                                </span>
+                            )}
                         </div>
-                    )}
-                </div>
-                <div className="flex gap-2">
-                    {artifacts.map((artifact, index) => (
-                        <a
-                            key={artifact.key}
-                            href={api.fileUrl(artifact.key, true)}
-                            className={`px-4 py-2 rounded-md text-sm ${
-                                index === 0
-                                    ? 'bg-accent-600 text-white'
-                                    : 'border border-slate-300 hover:bg-slate-50'
-                            }`}
-                        >
-                            Download {artifact.extension.toUpperCase()}
-                        </a>
-                    ))}
-                    {previewArtifact && viewUrl && (
-                        <a href={viewUrl} target="_blank" rel="noreferrer"
-                            className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
-                            Open in new tab
-                        </a>
-                    )}
+                        <div className="text-xs text-ink-500 mt-1.5">
+                            {doc.template_used ? `Template: ${doc.template_used} · ` : ''}
+                            {typeof pageCount === 'number'
+                                ? `${pageCountEstimated ? 'approximately ' : ''}${pageCount} pages · `
+                                : ''}
+                            {typeof doc.byte_size === 'number' ? `${(doc.byte_size / 1024).toFixed(0)} KB · ` : ''}
+                            {fileKinds || 'FILE'}
+                        </div>
+                        {rendererWarnings.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                {rendererWarnings.map((warning, index) => (
+                                    <span
+                                        key={index}
+                                        className="text-[11px] px-2 py-1 rounded border border-amber-200 bg-amber-50 text-amber-800"
+                                    >
+                                        {warning}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                     <button
                         onClick={() => navigate('/library')}
-                        className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
+                        className="flex-none px-3 py-1.5 rounded-md border border-slate-300 text-sm text-ink-700 hover:bg-slate-50"
                     >
                         Back
                     </button>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-stretch gap-2">
+                    {artifacts.map((artifact, index) => (
+                        <div
+                            key={artifact.key}
+                            className={`flex items-center gap-3 rounded-md border px-3 py-2 ${
+                                EXTENSION_STYLE[artifact.extension] ?? 'bg-slate-50 text-ink-700 border-slate-200'
+                            }`}
+                        >
+                            <div className="min-w-0">
+                                <div className="text-xs font-bold uppercase tracking-wide">{artifact.extension}</div>
+                                <div className="text-[11px] opacity-80 whitespace-nowrap">
+                                    {artifactLabel(artifact.output, artifact.key, { includeExtension: false })}
+                                </div>
+                            </div>
+                            <a
+                                href={api.fileUrl(artifact.key, true)}
+                                className={`flex-none px-3 py-1.5 rounded-md text-xs font-semibold ${
+                                    index === 0
+                                        ? 'bg-accent-600 text-white hover:bg-accent-500'
+                                        : 'bg-white border border-slate-300 text-ink-700 hover:bg-slate-50'
+                                }`}
+                            >
+                                Download
+                            </a>
+                        </div>
+                    ))}
+                    {previewArtifact && viewUrl && (
+                        <a href={viewUrl} target="_blank" rel="noreferrer"
+                            className="self-center px-3 py-2 rounded-md border border-slate-300 text-sm text-ink-700 hover:bg-slate-50">
+                            Open in new tab
+                        </a>
+                    )}
                 </div>
             </header>
 
@@ -442,9 +500,9 @@ export function OutputViewer({
                                         <a
                                             key={artifact.key}
                                             href={api.fileUrl(artifact.key, true)}
-                                            className="inline-block px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
+                                            className="inline-block px-4 py-2 rounded-md bg-accent-600 text-white text-sm font-medium"
                                         >
-                                            Download {artifact.extension.toUpperCase()}
+                                            Download {artifactLabel(artifact.output, artifact.key)}
                                         </a>
                                     ))}
                                 </div>

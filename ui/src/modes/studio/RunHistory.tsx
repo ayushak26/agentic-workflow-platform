@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api,rehydrate } from '../../api/client';
 import { CopyButton } from '../../components/CopyButton';
+import { artifactLabel, fileKey } from './file-artifact';
 import type {
   AuditEvent,
   EventType,
@@ -25,6 +26,29 @@ const STATUS_DOT: Record<string, string> = {
   rejected: 'bg-amber-500',
   failed: 'bg-red-500',
 };
+// Colour-coded status pill — a flat gray label reads the same for every
+// outcome, which makes "failed" and "successful" equally easy to miss when
+// scanning a long run list. Colour does the work uppercase alone can't.
+const STATUS_PILL: Record<string, string> = {
+  running: 'bg-blue-50 text-blue-700',
+  paused: 'bg-amber-50 text-amber-800',
+  completed: 'bg-emerald-50 text-emerald-700',
+  reused: 'bg-cyan-50 text-cyan-700',
+  rejected: 'bg-amber-50 text-amber-800',
+  failed: 'bg-red-50 text-red-700',
+};
+
+function StatusPill({ status, label }: { status: string; label: string }) {
+  return (
+    <span
+      className={`inline-block text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${
+        STATUS_PILL[status] ?? 'bg-slate-100 text-ink-700'
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
 
 // Node-type colour coding. Each agent type gets a tint + dot + label.
 // Falls back to neutral gray when the type is unknown (e.g. resume-path runs).
@@ -144,28 +168,6 @@ function FileInputValue({ value }: { value: unknown }) {
   );
 }
 
-// Detect a downloadable file key inside a node's output.
-// Looks for object-store keys (workflows/...) in *_key / pdf_key / file_key fields
-// or any string value that looks like a workflow-scoped key.
-function fileKey(output: unknown): string | null {
-  if (output == null) return null;
-  if (typeof output === 'string') {
-    return output.startsWith('workflows/') ? output : null;
-  }
-  if (typeof output === 'object') {
-    const obj = output as Record<string, unknown>;
-    for (const key of ['pdf_key', 'file_key', 'output_key', 'key', 'minio_key']) {
-      const v = obj[key];
-      if (typeof v === 'string' && v.startsWith('workflows/')) return v;
-    }
-    // Any value that looks like a workflow key.
-    for (const v of Object.values(obj)) {
-      if (typeof v === 'string' && v.startsWith('workflows/')) return v;
-    }
-  }
-  return null;
-}
-
 // --- Node card --------------------------------------------------------------
 function NodeCard({
   nodeId, typeName, value, nodeRun, open, onToggle,
@@ -184,15 +186,24 @@ function NodeCard({
   const lastModelSelection = modelSelections.at(-1);
   return (
     <div className="border border-slate-200 rounded-lg overflow-hidden">
-      <button
+      {/* A <div role="button">, not a <button> — it wraps the per-node
+          Download <button>, and nested <button>s are invalid HTML (React
+          warns of a hydration mismatch and some browsers mis-handle the
+          click). Keyboard behaviour is preserved via tabIndex + onKeyDown. */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onToggle}
-        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
+        }}
+        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition-colors cursor-pointer"
       >
         <div className="flex items-center gap-2.5 min-w-0">
           <span className={`h-2.5 w-2.5 rounded-full flex-none ${ts.dot}`} />
           <span className="font-mono text-sm text-ink-900 truncate">{nodeId}</span>
           <span className={`text-[10px] px-1.5 py-0.5 rounded flex-none ${ts.chip}`}>{ts.label}</span>
-          <span className="text-[10px] uppercase tracking-wide text-ink-300">{status}</span>
+          <StatusPill status={status} label={status} />
           {lastModelSelection && (
             <span className="text-[10px] rounded bg-accent-50 px-1.5 py-0.5 text-accent-700">
               {lastModelSelection.actual_model}
@@ -207,14 +218,15 @@ function NodeCard({
                 e.stopPropagation();
                 void api.downloadArtifact(key);
               }}
-              className="text-xs text-accent-600 hover:underline"
+              className="text-xs text-accent-600 hover:underline whitespace-nowrap"
+              title={key.split('/').pop()}
             >
-              Download
+              Download <span className="text-ink-500">({artifactLabel(value, key)})</span>
             </button>
           )}
-          <span className="text-ink-300 text-xs">{open ? 'Hide' : 'View'}</span>
+          <span className="text-ink-500 text-xs">{open ? 'Hide' : 'View'}</span>
         </div>
-      </button>
+      </div>
       {open && (
         <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 space-y-4">
           {nodeRun?.error && (
@@ -224,7 +236,7 @@ function NodeCard({
           )}
           {modelSelections.length > 0 && (
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-ink-300 mb-1">
+              <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">
                 LLM selection
               </div>
               <div className="space-y-2">
@@ -253,7 +265,7 @@ function NodeCard({
           )}
           <div>
             <div className="flex items-center justify-between mb-1">
-              <div className="text-[11px] uppercase tracking-wide text-ink-300">
+              <div className="text-[11px] uppercase tracking-wide text-ink-500">
                 Node input
               </div>
               {nodeRun && (
@@ -266,7 +278,7 @@ function NodeCard({
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
-              <div className="text-[11px] uppercase tracking-wide text-ink-300">
+              <div className="text-[11px] uppercase tracking-wide text-ink-500">
                 Node output
               </div>
               {value != null && (
@@ -392,6 +404,21 @@ export function RunHistory() {
     ]),
   );
 
+  // Everything needed to feed this run into a *different* workflow's inputs:
+  // the run's own top-level inputs plus every node's output, flattened and
+  // keyed by node id so it matches the {inputName: value} shape RunDialog's
+  // "Import inputs from JSON" already expects. Nodes that never produced
+  // output (not yet run, or failed before returning anything) are omitted —
+  // they'd contribute nothing but a misleading `null`.
+  function buildReusableInputsJson(): string {
+    const nodeOutputs = Object.fromEntries(
+      nodeIds
+        .map((id) => [id, nodeRunById[id]?.output ?? outputs[id]])
+        .filter(([, value]) => value != null),
+    );
+    return JSON.stringify({ ...inputs, ...nodeOutputs }, null, 2);
+  }
+
   function retryFailedRun() {
     if (!detail || detail.run.status !== 'failed') return;
     if (!detail.run.retry_available || !detail.run.workflow_yaml) {
@@ -421,7 +448,7 @@ export function RunHistory() {
           </div>
         )}
         {!listErr && runs.length === 0 && (
-          <div className="p-6 text-center text-ink-300 text-sm">No runs recorded yet.</div>
+          <div className="p-6 text-center text-ink-500 text-sm">No runs recorded yet.</div>
         )}
         {runs.map((r) => {
           const on = r.run_id === runId;
@@ -436,12 +463,12 @@ export function RunHistory() {
                 <span className="text-sm text-ink-900 font-medium truncate">{r.workflow_name}</span>
                 <span className={`h-2 w-2 rounded-full flex-none ${STATUS_DOT[r.status] ?? 'bg-slate-300'}`} />
               </div>
-              <div className="font-mono text-[11px] text-ink-300 mt-1 truncate">{r.run_id}</div>
-              <div className="text-[11px] text-ink-300 mt-0.5">
+              <div className="font-mono text-[11px] text-ink-500 mt-1 truncate">{r.run_id}</div>
+              <div className="text-[11px] text-ink-500 mt-0.5">
                 {clock(r.started_at ?? r.created_at)} · {r.completed_node_count ?? 0}/{r.node_count ?? 0} nodes
               </div>
-              <div className="text-[10px] uppercase tracking-wide mt-1 text-ink-500">
-                {STATUS_LABEL[r.status] ?? r.status}
+              <div className="mt-1.5">
+                <StatusPill status={r.status} label={STATUS_LABEL[r.status] ?? r.status} />
               </div>
             </button>
           );
@@ -454,14 +481,14 @@ export function RunHistory() {
             {detailErr.includes('404') ? 'Run not found.' : `Couldn't load this run. ${detailErr}`}
           </div>
         )}
-        {!detail && !detailErr && <div className="text-ink-300 text-sm">Select a run to view its detail.</div>}
+        {!detail && !detailErr && <div className="text-ink-500 text-sm">Select a run to view its detail.</div>}
 
         {detail && (
           <>
             <div className="flex items-baseline justify-between gap-3 flex-wrap">
               <div>
                 <div className="text-lg font-medium text-ink-900">{detail.run.workflow_name}</div>
-                <div className="font-mono text-xs text-ink-300 mt-0.5">
+                <div className="font-mono text-xs text-ink-500 mt-0.5">
                   {detail.run.run_id} · started {clock(detail.run.started_at ?? detail.run.created_at)}
                 </div>
                 {(detail.run.attempt ?? 1) > 1 && (
@@ -476,13 +503,20 @@ export function RunHistory() {
                   </div>
                 )}
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={() => navigate(`/proposal-review/${detail.run.run_id}`)}
                   className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
                 >
                   Open proposal review
                 </button>
+                {nodeIds.length > 0 && (
+                  <CopyButton
+                    text={buildReusableInputsJson()}
+                    label="Copy run as workflow inputs"
+                    copiedLabel="Copied"
+                  />
+                )}
                 {detail.run.status === 'failed' && (
                   <button
                     onClick={retryFailedRun}
@@ -495,8 +529,14 @@ export function RunHistory() {
             </div>
 
             <div className="grid grid-cols-4 gap-2.5 my-5">
+              <div className="bg-slate-50 rounded-lg px-3 py-2.5">
+                <div className="text-[11px] text-ink-500 mb-1.5">Status</div>
+                <StatusPill
+                  status={detail.run.status}
+                  label={STATUS_LABEL[detail.run.status] ?? detail.run.status}
+                />
+              </div>
               {[
-                { l: 'Status', v: STATUS_LABEL[detail.run.status] ?? detail.run.status },
                 { l: 'Duration', v: detail.run.duration_s != null ? `${detail.run.duration_s.toFixed(1)}s` : '—' },
                 {
                   l: 'Nodes',
@@ -510,7 +550,7 @@ export function RunHistory() {
                 { l: 'Events', v: String(detail.audit.length) },
               ].map((m) => (
                 <div key={m.l} className="bg-slate-50 rounded-lg px-3 py-2.5">
-                  <div className="text-[11px] text-ink-300 mb-1">{m.l}</div>
+                  <div className="text-[11px] text-ink-500 mb-1">{m.l}</div>
                   <div className="text-sm font-medium text-ink-900">{m.v}</div>
                 </div>
               ))}
@@ -568,7 +608,7 @@ export function RunHistory() {
               </div>
               <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
                 {Object.entries(inputs).length === 0 ? (
-                  <div className="px-4 py-2.5 text-xs text-ink-300">—</div>
+                  <div className="px-4 py-2.5 text-xs text-ink-500">—</div>
                 ) : (
                   Object.entries(inputs).map(([k, v]) => (
                     <div key={k} className="px-4 py-2.5">
@@ -582,11 +622,11 @@ export function RunHistory() {
 
             <div className="mb-5">
               <div className="text-xs font-medium text-ink-500 mb-2">
-                Node outputs <span className="text-ink-300 font-normal">· colour = agent type · click to view</span>
+                Node outputs <span className="text-ink-500 font-normal">· colour = agent type · click to view</span>
               </div>
               <div className="space-y-2">
                 {nodeIds.length === 0 ? (
-                  <div className="text-xs text-ink-300">
+                  <div className="text-xs text-ink-500">
                     No nodes have started yet.
                   </div>
                 ) : (
@@ -610,11 +650,11 @@ export function RunHistory() {
 
             <div className="text-xs font-medium text-ink-500 mb-2 flex items-center gap-2">
               Audit trail
-              <span className="text-[11px] text-ink-300 font-normal">· highlighted rows are human decisions</span>
+              <span className="text-[11px] text-ink-500 font-normal">· highlighted rows are human decisions</span>
             </div>
             <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 overflow-hidden">
               {detail.audit.length === 0 ? (
-                <div className="px-4 py-2.5 text-xs text-ink-300">No events recorded.</div>
+                <div className="px-4 py-2.5 text-xs text-ink-500">No events recorded.</div>
               ) : (
                 detail.audit.map((a, i) => {
                   const e = EVENT_META[a.event_type];
@@ -626,17 +666,17 @@ export function RunHistory() {
                       className={`grid grid-cols-[64px_170px_1fr] gap-3 items-start px-3 py-2 ${e.human ? 'border-l-2 border-l-pink-500 bg-pink-50' : 'border-l-2 border-l-transparent'
                         }`}
                     >
-                      <span className="font-mono text-[11px] text-ink-300">{clock(a.ts)}</span>
+                      <span className="font-mono text-[11px] text-ink-500">{clock(a.ts)}</span>
                       <span className="flex items-center gap-2 text-xs">
                         <span className={`h-1.5 w-1.5 rounded-full ${e.dot}`} />
                         <span className={e.human ? 'text-ink-900 font-medium' : 'text-ink-500'}>{e.label}</span>
-                        {node && <span className="font-mono text-[11px] text-ink-300 truncate">{node}</span>}
+                        {node && <span className="font-mono text-[11px] text-ink-500 truncate">{node}</span>}
                       </span>
                       <span className="text-[11px]">
-                        <span className={a.actor === 'system' ? 'text-ink-300' : 'text-accent-600 font-medium'}>
+                        <span className={a.actor === 'system' ? 'text-ink-500' : 'text-accent-600 font-medium'}>
                           {a.actor}
                         </span>
-                        {reason && <span className="text-ink-300"> — {reason}</span>}
+                        {reason && <span className="text-ink-500"> — {reason}</span>}
                       </span>
                     </div>
                   );
@@ -644,7 +684,7 @@ export function RunHistory() {
               )}
             </div>
 
-            <p className="text-[11px] text-ink-300 mt-6">
+            <p className="text-[11px] text-ink-500 mt-6">
               Audit payloads record shape only — never prompt or proposal content. Records are append-only and scoped to
               your session.
             </p>

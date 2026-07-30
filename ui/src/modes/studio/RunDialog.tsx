@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { api } from '../../api/client';
 import type { WorkflowFileCapabilities, WorkflowFileReference } from '../../api/types';
-import type { WorkflowInputSpec } from './yaml-bridge';
+import { valueForJsonInput, type WorkflowInputSpec } from './yaml-bridge';
 
 function isFileReferenceLike(value: unknown): value is WorkflowFileReference {
   return (
@@ -324,9 +324,12 @@ export function RunDialog({
         }
         continue;
       }
-      nextValues[key] = typeof rawValue === 'string'
-        ? rawValue
-        : JSON.stringify(rawValue, null, 2);
+      const effectiveValue = spec.type === 'json'
+        ? valueForJsonInput(rawValue)
+        : rawValue;
+      nextValues[key] = typeof effectiveValue === 'string'
+        ? effectiveValue
+        : JSON.stringify(effectiveValue, null, 2);
       applied.push(key);
     }
 
@@ -506,9 +509,12 @@ export function RunDialog({
               </button>
               {!importOpen && (
                 <p className="mt-1 text-xs text-ink-500">
-                  Paste or upload a run&apos;s inputs JSON (e.g. from &quot;Copy
-                  as JSON&quot; in Run History) to refill this form — handy
-                  after a crashed run.
+                  Paste or upload JSON from Run History &mdash; &quot;Copy as
+                  JSON&quot; (this run&apos;s inputs) or &quot;Copy run as
+                  workflow inputs&quot; (every node&apos;s output, keyed by
+                  node id) &mdash; to refill this form. Only keys matching this
+                  workflow&apos;s declared inputs are used; everything else is
+                  skipped and reported below.
                 </p>
               )}
               {importOpen && (

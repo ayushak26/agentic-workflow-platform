@@ -5,8 +5,14 @@ description: >-
   documents into an evidence-verified, independently evaluated, editable DOCX.
   It follows the official 2026 Part B headings and the 45-page limit applicable
   to lump-sum topics. Missing facts remain visible and prevent the proposal
-  from being marked submission-ready.
-version: "2.0"
+  from being marked submission-ready. Evidence is enriched with supplementary
+  live web search and an optional supporting image's analysis; three
+  evaluator-relevant figures are generated and embedded in the rendered DOCX.
+  See workflows/horizon_partb_evidence.yaml, horizon_partb_drafts.yaml and
+  horizon_partb_drafts_to_docx.yaml (chained by
+  workflows/pipelines/horizon_partb.pipeline.yaml) for the same pipeline
+  staged so each phase is independently inspectable and retryable.
+version: "3.0"
 use_case: eu_proposal
 inputs:
   concept_note:
@@ -26,6 +32,15 @@ inputs:
     multiple: true
     max_files: 20
     accept: [pdf, document, markdown, presentation, spreadsheet]
+  supporting_image:
+    type: file
+    description: >-
+      Optional single image worth understanding on its own — a diagram,
+      scanned certificate/letter of support, org chart, or partner photo.
+      Leave empty if none applies; nothing downstream depends on it.
+    required: false
+    multiple: false
+    accept: [image]
 nodes:
   - id: load_concept
     type: WorkflowFileLoader
@@ -40,6 +55,19 @@ nodes:
       files: "{{inputs.documents}}"
       max_chars_per_file: 500000
       fail_on_unreadable: true
+
+  - id: understand_supporting_image
+    type: KimiVisionAgent
+    config:
+      image: "{{inputs.supporting_image}}"
+      prompt: >-
+        Describe this image and extract anything relevant to a Horizon Europe
+        Part B proposal: diagrams (architecture, methodology, work packages),
+        organisation charts, data/results visualisations, certificates,
+        letters of support, or similar. Separate what you observe directly
+        from any inference. If the image carries no proposal-relevant
+        information, say so plainly.
+      vision_model: kimi-k3
 
   - id: partb_metadata
     type: TransformAgent
@@ -120,6 +148,44 @@ nodes:
 
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
+
+  - id: research_context_query
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - gpt-5
+      - gpt-5-mini
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: economy
+      prefer_low_latency: true
+    config:
+      model: gpt-5-mini
+      max_tokens: 500
+      output_schema:
+        query: str
+      prompt_template: |
+        Write exactly one concise, high-signal web search query (plain text,
+        no quotes, no boolean operators) to find recent, publicly available
+        context for this Horizon Europe proposal that scholarly databases are
+        unlikely to surface well: things like adjacent open calls, relevant
+        EU policy or strategy documents, funded projects working on a similar
+        problem, or recent sector news. Base it on the actual topic below, not
+        a generic template.
+
+        CONCEPT NOTE:
+        {{load_concept.text}}
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+  - id: web_search
+    type: WebSearchAgent
+    config:
+      query: "{{research_context_query.parsed.query}}"
+      provider: auto
+      top_k: 8
+      fallback_to_openai: true
 
   - id: normalise_source_graph
     type: GraphNormalizer
@@ -210,11 +276,12 @@ nodes:
       max_tokens: 16000
       objective: |
         Produce a proposal-engineering evidence synthesis using only the
-        verified claim records. For each scientific proposition state the
-        supported conclusion, boundary conditions, contradiction status,
-        evidence strength, citation IDs, and proposal section where it is safe
-        to use. Separate verified evidence from gaps. Never promote a candidate
-        record or abstract to evidence.
+        verified claim records as evidence. For each scientific proposition
+        state the supported conclusion, boundary conditions, contradiction
+        status, evidence strength, citation IDs, and proposal section where it
+        is safe to use. Separate verified evidence from gaps. Never promote a
+        candidate record, a web-search result, or an image analysis to
+        evidence — they are context, not citable fact.
 
         VERIFIED CLAIMS:
         {{verify_evidence.verified_claims}}
@@ -224,6 +291,15 @@ nodes:
 
         BLOCKING ISSUES:
         {{verify_evidence.blocking_issues}}
+
+        SUPPLEMENTARY WEB CONTEXT (candidate only — situational awareness,
+        never a citable source; note it separately if it usefully points to
+        an adjacent call, policy document, or comparable funded project):
+        {{web_search.results}}
+
+        SUPPORTING IMAGE ANALYSIS (present only if supporting_image was
+        supplied; treat identically to the web context above):
+        {{understand_supporting_image.analysis}}
 
   - id: call_coverage
     type: CallCoverageMatrixAgent
@@ -276,11 +352,15 @@ nodes:
         Retain one page of safety against rendering variation. If section 2.3 is
         omitted, reallocate its page only where evaluator value is highest.
 
+        In figure_and_table_plan, for each planned figure give a short stable
+        slug (used later to match a generated image to its slot) and the exact
+        evaluator-relevant content it must show. Plan only evaluator-useful
+        figures — never decoration.
+
         Map every call requirement to a Part B subsection, result, owner,
         evidence claim, KPI, WP, task, deliverable, milestone and risk where
         grounded. Build an explicit objective -> result -> outcome -> impact chain.
-        Plan only evaluator-useful tables and figures. Use
-        [INPUT NEEDED: exact item] for missing facts; never invent partner,
+        Use [INPUT NEEDED: exact item] for missing facts; never invent partner,
         budget, KPI, TRL, timeline, pilot, source or evidence details.
 
         CONCEPT NOTE:
@@ -302,8 +382,61 @@ nodes:
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
-        VERIFIED EVIDENCE:
+        VERIFIED EVIDENCE (includes supplementary web/image context, clearly
+        separated from verified claims by scientific_synthesis):
         {{scientific_synthesis.answer}}
+
+  - id: generate_figure_oro_chain
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the causal chain from project objectives
+        through results and outcomes to wider impact, using ONLY this grounded
+        content — do not invent additional boxes, labels or numbers:
+
+        {{proposal_blueprint.parsed.objective_result_outcome_chain}}
+
+  - id: generate_figure_impact_pathways
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the pathway from project results to outcomes to
+        the topic's expected impacts, using ONLY this grounded content — do
+        not invent additional boxes, labels or numbers:
+
+        {{proposal_blueprint.parsed.impact_pathways_and_kpis}}
+
+  - id: generate_figure_workplan
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the work-package structure and dependencies
+        (boxes and arrows only, no dates/Gantt bars unless explicitly present
+        below), using ONLY this grounded content — do not invent additional
+        work packages, labels or numbers:
+
+        {{proposal_blueprint.parsed.work_packages_tasks_deliverables}}
 
   - id: draft_1_1_objectives_ambition
     type: TransformAgent
@@ -326,6 +459,11 @@ nodes:
         state R&I maturity or start/end TRLs only when grounded. Use only
         verified citation IDs. Preserve missing facts as
         [INPUT NEEDED: exact item]. Do not draft methodology or create 1.3.
+
+        Where the objective -> result -> outcome -> impact chain diagram
+        belongs, insert exactly this marker on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 1 - Objective-Result-Outcome-Impact Chain]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
 
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
@@ -393,6 +531,11 @@ nodes:
         implementation risks here. Every number must have a baseline, target,
         unit, source, owner and time horizon or remain
         [INPUT NEEDED: exact item].
+
+        Where the impact-pathways diagram belongs, insert exactly this marker
+        on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 2 - Impact Pathways]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
 
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
@@ -471,6 +614,11 @@ nodes:
         numbers from the documents. Missing leads, dates, person-months, costs,
         owners or quantities remain [INPUT NEEDED: exact item]. Never fabricate
         a balanced budget or partner allocation.
+
+        Where the work-package structure diagram belongs (after the WP list,
+        before 3.1b), insert exactly this marker on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 3 - Work Package Structure]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
 
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
@@ -667,10 +815,25 @@ nodes:
       require_evaluation_pass: true
       block_on_input_needed: true
 
+  - id: figure_embedder
+    type: FigureEmbedder
+    config:
+      content: "{{final_revision.raw}}"
+      figures:
+        - marker: "Figure 1 - Objective-Result-Outcome-Impact Chain"
+          image: "{{generate_figure_oro_chain}}"
+          alt_text: "Objective-result-outcome-impact chain diagram"
+        - marker: "Figure 2 - Impact Pathways"
+          image: "{{generate_figure_impact_pathways}}"
+          alt_text: "Impact pathways diagram"
+        - marker: "Figure 3 - Work Package Structure"
+          image: "{{generate_figure_workplan}}"
+          alt_text: "Work package structure diagram"
+
   - id: render_submission_docx
     type: HorizonDOCXProposalRenderer
     config:
-      content: "{{final_revision.raw}}"
+      content: "{{figure_embedder.content}}"
       content_format: markdown
       metadata: "{{partb_metadata.parsed}}"
       citation_registry: "{{verify_evidence.citation_registry}}"
@@ -689,10 +852,15 @@ edges:
     to:
       - partb_metadata
       - call_intelligence
+      - understand_supporting_image
   - from: call_intelligence
-    to: normalise_source_graph
+    to:
+      - normalise_source_graph
+      - research_context_query
   - from: partb_metadata
     to: normalise_source_graph
+  - from: research_context_query
+    to: web_search
   - from: normalise_source_graph
     to: discover_evidence
   - from: discover_evidence
@@ -700,6 +868,10 @@ edges:
   - from: acquire_full_text
     to: verify_evidence
   - from: verify_evidence
+    to: scientific_synthesis
+  - from: web_search
+    to: scientific_synthesis
+  - from: understand_supporting_image
     to: scientific_synthesis
   - from: scientific_synthesis
     to: call_coverage
@@ -713,6 +885,9 @@ edges:
       - draft_2_2_measures_and_2_3_summary
       - draft_3_1_workplan_resources
       - draft_3_2_consortium
+      - generate_figure_oro_chain
+      - generate_figure_impact_pathways
+      - generate_figure_workplan
   - from: draft_1_1_objectives_ambition
     to: compile_v1
   - from: draft_1_2_methodology
@@ -742,6 +917,14 @@ edges:
   - from: consistency_gate
     to: submission_gate
   - from: submission_gate
+    to: figure_embedder
+  - from: generate_figure_oro_chain
+    to: figure_embedder
+  - from: generate_figure_impact_pathways
+    to: figure_embedder
+  - from: generate_figure_workplan
+    to: figure_embedder
+  - from: figure_embedder
     to: render_submission_docx
 entry: load_concept
 exit: render_submission_docx

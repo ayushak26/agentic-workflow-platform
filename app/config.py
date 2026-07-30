@@ -72,6 +72,16 @@ class Settings(BaseSettings):
     mcp_startup_timeout_seconds: float = 30.0
     mcp_tool_timeout_seconds: float = 90.0
 
+    # Research API credentials for paper-search-mcp. These never reach the
+    # subprocess by ambient inheritance in local dev (pydantic-settings' own
+    # env_file loading does not populate os.environ) — app/mcp/client.py
+    # passes them explicitly into the launched process's environment, using
+    # the exact names paper_search_mcp.config.get_env() looks for.
+    paper_search_mcp_openalex_api_key: str = ""
+    paper_search_mcp_unpaywall_email: str = ""
+    paper_search_mcp_core_api_key: str = ""
+    paper_search_mcp_semantic_scholar_api_key: str = ""
+
     # Scientific Agent Skills are instruction assets, not an MCP server. Only
     # explicitly approved skills can be loaded into workflow prompts.
     scientific_skills_enabled: bool = False
@@ -91,6 +101,31 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+
+    # Live web search: Tavily (dedicated search API), OpenAI (Responses API
+    # web_search tool), or Kimi/Moonshot ($web_search builtin function).
+    # "auto" tries them in that order, per whichever credentials are set —
+    # see WebSearchService._select_provider in app/tools/web_io.py.
+    web_search_backend: Literal["auto", "tavily", "openai", "kimi", "stub"] = "auto"
+    tavily_api_key: str = ""
+    openai_web_search_model: str = "gpt-5"
+    web_search_max_tool_rounds: int = Field(default=4, ge=1, le=10)
+    kimi_web_search_model: str = "kimi-k3"
+    # Kimi web search and vision authenticate with the same Moonshot account
+    # as the local-model LLM gateway — see the moonshot_api_key and
+    # kimi_api_base_url properties near the bottom of this class, which
+    # alias local_kimi_api_key/local_kimi_base_url rather than duplicating
+    # that credential under a second setting name.
+
+    # OpenAI image generation (app/tools/image_io.py).
+    image_generation_backend: Literal["disabled", "openai"] = "openai"
+    openai_image_model: str = "gpt-image-2-2026-04-21"
+
+    # Kimi K3 vision / image understanding (app/tools/vision_io.py).
+    kimi_vision_model: str = "kimi-k3"
+    kimi_vision_max_image_bytes: int = Field(
+        default=20 * 1024 * 1024, ge=1024,
+    )
 
     # Every outbound call has a finite deadline.
     external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
@@ -288,6 +323,17 @@ class Settings(BaseSettings):
                 "Unsafe production configuration: " + "; ".join(problems)
             )
         return self
+
+    @property
+    def moonshot_api_key(self) -> str:
+        """Kimi web search and vision (app/tools/web_io.py, vision_io.py)
+        authenticate as the same Moonshot account as the LLM-gateway route —
+        one credential, LOCAL_KIMI_API_KEY, not a second parallel setting."""
+        return self.local_kimi_api_key
+
+    @property
+    def kimi_api_base_url(self) -> str:
+        return self.local_kimi_base_url
 
     @property
     def required_readiness_services(self) -> tuple[str, ...]:

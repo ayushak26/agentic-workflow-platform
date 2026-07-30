@@ -10,14 +10,17 @@ description: >-
   coherent Part B, runs an independent evaluation and red-team pass, applies a
   single controlled revision tuned to fill the page budget to a full ~44-page
   proposal within the 45-page hard limit, runs deterministic consistency and
-  submission gates, and renders an editable DOCX. Missing facts stay visible as
-  [INPUT NEEDED] markers and block submission-readiness; nothing is fabricated
-  to fill space.
+  submission gates, splices any generated figures into the three
+  "[[IMAGE PROMPT: ...]]" markers the drafts stage's sections were told to
+  emit (gracefully left as a text placeholder for any figure that's missing
+  or was never generated), and renders an editable DOCX. Missing facts stay
+  visible as [INPUT NEEDED] markers and block submission-readiness; nothing
+  is fabricated to fill space.
   INPUT USAGE: inputs marked [LIVE] are consumed by a node prompt/config below;
   inputs marked [PASSTHROUGH] are declared for checkpoint completeness and
   provenance but are not yet read by any node - wire them into a prompt when a
   node needs them.
-version: 2.0-drafts2docx-full
+version: 3.0-drafts2docx-full
 use_case: eu_proposal
 
 inputs:
@@ -138,6 +141,26 @@ inputs:
     type: text
     required: true
     description: "[LIVE] draft_3_2_consortium.raw - Markdown for '3.2 Capacity of participants and consortium as a whole'."
+
+  # ---- Generated figures ----------------------------------------------------
+  # Auto-matches the drafts stage's OpenAIImageGenerationAgent node ids by
+  # name. Each is optional: image generation can be disabled or fail without
+  # blocking compilation — FigureEmbedder degrades a missing figure to the
+  # existing text placeholder rather than erroring.
+  generate_figure_oro_chain:
+    type: json
+    required: false
+    description: "[LIVE] drafts stage's generate_figure_oro_chain output ({generated, minio_key, content_type, ...}) - embedded in place of the 'Figure 1 - Objective-Result-Outcome-Impact Chain' marker draft_1_1 was told to emit."
+
+  generate_figure_impact_pathways:
+    type: json
+    required: false
+    description: "[LIVE] drafts stage's generate_figure_impact_pathways output - embedded in place of the 'Figure 2 - Impact Pathways' marker draft_2_1 was told to emit."
+
+  generate_figure_workplan:
+    type: json
+    required: false
+    description: "[LIVE] drafts stage's generate_figure_workplan output - embedded in place of the 'Figure 3 - Work Package Structure' marker draft_3_1 was told to emit."
 
 nodes:
   - id: load_concept
@@ -355,10 +378,25 @@ nodes:
       require_evaluation_pass: true
       block_on_input_needed: true
 
+  - id: figure_embedder
+    type: FigureEmbedder
+    config:
+      content: "{{final_revision.raw}}"
+      figures:
+        - marker: "Figure 1 - Objective-Result-Outcome-Impact Chain"
+          image: "{{ inputs.generate_figure_oro_chain }}"
+          alt_text: "Objective-result-outcome-impact chain diagram"
+        - marker: "Figure 2 - Impact Pathways"
+          image: "{{ inputs.generate_figure_impact_pathways }}"
+          alt_text: "Impact pathways diagram"
+        - marker: "Figure 3 - Work Package Structure"
+          image: "{{ inputs.generate_figure_workplan }}"
+          alt_text: "Work package structure diagram"
+
   - id: render_submission_docx
     type: HorizonDOCXProposalRenderer
     config:
-      content: "{{final_revision.raw}}"
+      content: "{{figure_embedder.content}}"
       content_format: markdown
       metadata: "{{ inputs.metadata }}"
       citation_registry: "{{ inputs.citation_registry }}"
@@ -390,6 +428,8 @@ edges:
   - from: consistency_gate
     to: submission_gate
   - from: submission_gate
+    to: figure_embedder
+  - from: figure_embedder
     to: render_submission_docx
 
 entry: load_concept

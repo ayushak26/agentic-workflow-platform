@@ -37,6 +37,7 @@ _DEFAULT_SOURCES = [
     "hal",
     "doaj",
     "pmc",
+    "semantic"
 ]
 
 

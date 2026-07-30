@@ -16,6 +16,7 @@ from typing import Any
 
 from app.observability import metrics
 
+from . import sleep_guard
 from .compiler import compile_workflow
 from .events import RunEvent, RunEventBus
 from .preflight import preflight_workflow_spec, require_preflight
@@ -119,6 +120,7 @@ async def run_workflow(
     bus: RunEventBus | None = run_services.get("event_bus")
 
     start = _time.perf_counter()
+    await sleep_guard.acquire()
     try:
         final_state = await graph.ainvoke(initial_state, config=config)
     except BaseException as e:
@@ -142,6 +144,7 @@ async def run_workflow(
         metrics.WORKFLOW_LATENCY.labels(workflow=workflow_name).observe(
             _time.perf_counter() - start
         )
+        await sleep_guard.release()
 
     if "__interrupt__" in final_state:
         _PAUSED_GRAPHS[run_id] = graph

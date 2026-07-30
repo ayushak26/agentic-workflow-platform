@@ -200,6 +200,69 @@ export interface RunDetail extends RunSummary {
   retryable_node_count?: number;
 }
 
+export type PipelineSummary = {
+  name: string;
+  description: string;
+  version: string;
+  stage_count: number;
+};
+
+export type PipelinePreflightReport = {
+  valid: boolean;
+  pipeline_name?: string | null;
+  stage_count: number;
+  checks: PreflightCheck[];
+  issues: PreflightIssue[];
+};
+
+export type PipelineStageStatus =
+  | 'pending'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'rejected';
+
+export interface PipelineStageResult {
+  id: string;
+  workflow: string;
+  run_id: string | null;
+  status: PipelineStageStatus;
+  error?: string | null;
+}
+
+export type PipelineRunStatus = 'running' | 'gated' | 'completed' | 'failed';
+
+export interface PipelineRunSummary {
+  pipeline_run_id: string;
+  session_id: string;
+  pipeline_name: string;
+  status: PipelineRunStatus;
+  current_stage_index: number;
+  stages: PipelineStageResult[];
+  created_at: string;
+  updated_at: string;
+  ended_at?: string | null;
+}
+
+export interface PipelineRunDetail extends PipelineRunSummary {
+  pipeline_inputs: Record<string, unknown>;
+  pipeline_yaml?: string;
+}
+
+export interface PipelineStageOutcome {
+  pipeline_run_id: string;
+  stage_id: string;
+  stage_run_id: string;
+  stage_result: {
+    status: string;
+    run_id: string;
+    error?: string;
+    state?: unknown;
+  };
+  pipeline: PipelineRunDetail;
+}
+
 export type CoverageStatus = 'ADDRESSED' | 'PARTIAL' | 'MISSING';
 
 export interface CallCoverageRow {

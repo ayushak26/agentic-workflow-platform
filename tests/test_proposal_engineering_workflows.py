@@ -9,8 +9,12 @@ from app.runtime.loader import load_workflow
 from app.runtime.preflight import preflight_workflow_yaml
 
 
+# horizon_proposal_autonomous_docx.yaml was split/renamed to
+# horizon_partb_autonomous_docx.yaml when the Part B pipeline was staged
+# (see workflows/horizon_partb_{evidence,drafts,drafts_to_docx}.yaml and
+# workflows/pipelines/horizon_partb.pipeline.yaml for the staged version).
 AUTONOMOUS = Path(
-    "workflows/horizon_proposal_autonomous_docx.yaml"
+    "workflows/horizon_partb_autonomous_docx.yaml"
 )
 HITL = Path(
     "workflows/horizon_proposal_hitl_pdf.yaml"
@@ -24,7 +28,7 @@ def _types(path: Path) -> list[str]:
 def test_autonomous_workflow_has_no_human_pause_and_only_docx_export():
     node_types = _types(AUTONOMOUS)
 
-    assert len(node_types) == 26
+    assert len(node_types) == 32
     assert "HumanInLoopAgent" not in node_types
     assert node_types.count("HorizonDOCXProposalRenderer") == 1
     assert "HorizonHTMLProposalRenderer" not in node_types
@@ -34,7 +38,7 @@ def test_autonomous_workflow_has_no_human_pause_and_only_docx_export():
 def test_human_reviewed_workflow_has_four_gates_and_only_pdf_export():
     node_types = _types(HITL)
 
-    assert len(node_types) == 30
+    assert len(node_types) == 37
     assert node_types.count("HumanInLoopAgent") == 4
     assert node_types.count("HorizonHTMLProposalRenderer") == 1
     assert "HorizonDOCXProposalRenderer" not in node_types
@@ -58,6 +62,16 @@ def test_proposal_workflows_use_auto_for_generation_and_pass_preflight(
         node
         for node in spec.nodes
         if node.type in llm_node_types
+        # Cheap, near-deterministic extraction/composition steps (renderer
+        # metadata, a one-line search query) are deliberately pinned to a
+        # fast/cheap model rather than routed for accuracy — the same
+        # accuracy_priority: "economy" signal the model router itself uses
+        # to deprioritize cost. "Use auto for generation" means the
+        # generation-heavy steps, not every single TransformAgent.
+        and not (
+            node.model_routing is not None
+            and node.model_routing.accuracy_priority == "economy"
+        )
     ]
 
     assert auto_nodes

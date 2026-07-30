@@ -23,6 +23,7 @@ Design
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from contextlib import AsyncExitStack
 from typing import Any, Mapping
@@ -36,6 +37,43 @@ from app.observability.logging import get_logger
 log = get_logger(__name__)
 
 DEFAULT_SERVER = "eurskem"
+
+
+def _paper_search_mcp_env(app_settings: Settings) -> dict[str, str]:
+    """Research credentials for the paper-search-mcp subprocess.
+
+    Merged onto a copy of the current process environment — pydantic-settings'
+    own env_file loading does not populate os.environ, so in local dev these
+    values only exist inside `settings`, not anything a child process would
+    inherit. Docker's `env_file:` directive does put them in os.environ, but
+    passing them explicitly here keeps behavior identical in both cases
+    rather than depending on which one happens to be true.
+
+    Names match exactly what paper_search_mcp.config.get_env() looks for
+    (its ENV_PREFIX is "PAPER_SEARCH_MCP_"), consumed by
+    app/mcp/paper_search_server.py before it hands off to the upstream server.
+    """
+    env = dict(os.environ)
+    env["PAPER_SEARCH_MCP_OPENALEX_API_KEY"] = (
+        app_settings.paper_search_mcp_openalex_api_key
+    )
+    env["PAPER_SEARCH_MCP_UNPAYWALL_EMAIL"] = (
+        app_settings.paper_search_mcp_unpaywall_email
+    )
+    env["PAPER_SEARCH_MCP_CORE_API_KEY"] = (
+        app_settings.paper_search_mcp_core_api_key
+    )
+    env["PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY"] = (
+        app_settings.paper_search_mcp_semantic_scholar_api_key
+    )
+    # Tells our adapter which upstream module to delegate to (default
+    # "paper_search_mcp.server") — see app/mcp/paper_search_server.py.
+    env["PAPER_SEARCH_MCP_MODULE"] = app_settings.paper_search_mcp_module
+    path = app_settings.resolved_paper_search_mcp_path
+    if path is not None:
+        env["PAPER_SEARCH_MCP_SOURCE_PATH"] = str(path)
+    return env
+
 
 def build_server_specs(
     app_settings: Settings = settings,
@@ -51,29 +89,18 @@ def build_server_specs(
     if not app_settings.paper_search_mcp_enabled:
         return specs
 
-    path = app_settings.resolved_paper_search_mcp_path
-    if path is None:
-        # Production/Docker path: the package is installed in the API image.
-        command = app_settings.paper_search_mcp_command.strip() or sys.executable
-        if command == "python":
-            command = sys.executable
-        args = ["-m", app_settings.paper_search_mcp_module]
-    else:
-        # Optional source-checkout path for upstream development.
-        command = app_settings.paper_search_mcp_command.strip() or "uv"
-        if command == "python":
-            command = "uv"
-        args = [
-            "run",
-            "--directory",
-            str(path),
-            "-m",
-            app_settings.paper_search_mcp_module,
-        ]
+    # Always launch OUR adapter (app/mcp/paper_search_server.py), never the
+    # upstream module directly — it injects the OpenAlex api_key into the
+    # searcher's session before delegating to paper_search_mcp.server.main(),
+    # and that injection only runs if it is the actual entry point.
+    command = app_settings.paper_search_mcp_command.strip() or sys.executable
+    if command == "python":
+        command = sys.executable
 
     specs["paper-search-mcp"] = StdioServerParameters(
         command=command,
-        args=args,
+        args=["-m", "app.mcp.paper_search_server"],
+        env=_paper_search_mcp_env(app_settings),
     )
     return specs
 

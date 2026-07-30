@@ -133,12 +133,17 @@ def test_paper_search_server_path_is_configuration_driven():
             _env_file=None,
             paper_search_mcp_enabled=True,
             paper_search_mcp_path="/srv/paper-search-mcp",
-            paper_search_mcp_command="uv",
         )
     )
-    args = enabled["paper-search-mcp"].args
-    assert "/srv/paper-search-mcp" in args
-    assert not any("/Users/ayushkhandelwal" in item for item in args)
+    spec = enabled["paper-search-mcp"]
+    # The launch target is always our adapter, so a source-checkout path
+    # never appears in argv (which every process on the host can read via
+    # `ps aux`) — it flows through PAPER_SEARCH_MCP_SOURCE_PATH instead,
+    # which app/mcp/paper_search_server.py's _prepare_source_checkout()
+    # inserts onto sys.path before importing paper_search_mcp.
+    assert spec.args == ["-m", "app.mcp.paper_search_server"]
+    assert spec.env["PAPER_SEARCH_MCP_SOURCE_PATH"] == "/srv/paper-search-mcp"
+    assert not any("/Users/ayushkhandelwal" in item for item in spec.args)
 
 
 def test_upload_contract_only_advertises_real_text_extractors():

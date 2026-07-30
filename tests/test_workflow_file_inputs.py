@@ -137,6 +137,20 @@ async def test_run_validation_normalizes_file_references_and_checks_scope():
         )
 
 
+async def test_absent_optional_input_normalizes_to_none_not_a_missing_key():
+    """A workflow node that references {{inputs.<name>}} for a declared,
+    optional, never-supplied input must see None, not hit "Template path
+    not resolvable" — see the comment in validate_workflow_inputs."""
+    specs = {
+        "maybe_image": WorkflowInputSpec(type="file", required=False),
+        "maybe_note": WorkflowInputSpec(type="text", required=False),
+    }
+    normalized = await validate_workflow_inputs(
+        specs, {}, session_id="ayush", object_store=None,
+    )
+    assert normalized == {"maybe_image": None, "maybe_note": None}
+
+
 async def test_run_validation_rejects_unaccepted_category():
     store = MemoryObjectStore()
     ref = reference(

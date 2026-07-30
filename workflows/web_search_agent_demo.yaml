@@ -1,0 +1,32 @@
+name: Web Search Agent Demo
+description: >-
+  Searches the live public web using the selected provider. Results remain
+  candidate-only until a separate evidence-verification workflow validates
+  source text.
+version: "1.0"
+use_case: generic
+
+inputs:
+  query:
+    type: text
+    description: What should the agent search for?
+    required: true
+
+nodes:
+  - id: web_search
+    type: WebSearchAgent
+    config:
+      query: "{{inputs.query}}"
+      provider: auto
+      top_k: 8
+      fallback_to_openai: true
+
+edges: []
+entry: web_search
+exit: web_search
+
+output:
+  include_input: false
+  nodes:
+    - node_id: web_search
+      flatten: false

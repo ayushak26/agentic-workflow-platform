@@ -4,6 +4,7 @@ const tabs = [
   { to: 'library', label: 'Library' },
   { to: 'builder', label: 'Builder' },
   { to: 'history', label: 'Run history' },
+  { to: 'pipelines', label: 'Pipelines' },
   { to: 'proposal-review', label: 'Proposal review' },
 ];
 

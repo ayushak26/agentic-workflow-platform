@@ -32,8 +32,8 @@ FILE_CATEGORY_EXTENSIONS: dict[str, tuple[str, ...]] = {
         ".vue", ".xml", ".yaml", ".yml",
     ),
     "image": (
-        ".bmp", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".svg", ".tif",
-        ".tiff", ".webp",
+        ".bmp", ".gif", ".heic", ".heif", ".jpeg", ".jpg", ".png", ".svg",
+        ".tif", ".tiff", ".webp",
     ),
 }
 
@@ -208,6 +208,14 @@ async def validate_workflow_inputs(
                 raise WorkflowFileInputError(
                     f"Required workflow input {input_name!r} is missing"
                 )
+            # A declared-but-unsupplied optional input must still exist in
+            # state as None. Leaving the key out entirely means any node
+            # config that references {{inputs.<name>}} crashes at runtime
+            # with "Template path not resolvable" instead of resolving to
+            # nothing — every node touching an optional input would have to
+            # be skipped/routed around at the graph level just to avoid a
+            # KeyError, which this runtime has no primitive for.
+            normalized[input_name] = None
             continue
 
         if spec.type != "file":

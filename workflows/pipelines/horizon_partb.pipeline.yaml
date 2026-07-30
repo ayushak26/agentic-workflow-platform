@@ -1,0 +1,86 @@
+name: Horizon Europe Part B - Staged Pipeline
+description: >-
+  Chains the three staged Horizon Europe RIA/IA Part B workflows so each
+  phase is independently inspectable, retryable, and gated: evidence
+  (horizon_partb_evidence.yaml) -> drafts (horizon_partb_drafts.yaml) ->
+  document (horizon_partb_drafts_to_docx.yaml). Per the platform's pipeline
+  design, advancing to the next stage is a separate, explicit step after you
+  review the current stage's output — nothing here spends tokens on drafting
+  before you've checked the evidence, or on compiling before you've checked
+  the drafts.
+version: "1.0"
+
+inputs:
+  concept_note:
+    type: file
+    description: The selected project concept note. This is the concept to develop; the pipeline does not replace it with alternative concepts.
+    required: true
+    multiple: true
+    max_files: 5
+    accept: [pdf, document, markdown, presentation]
+  documents:
+    type: file
+    description: >-
+      Supporting proposal documents in any mixture: official call/topic text,
+      the downloaded Part B template, consortium profiles, work plan, budget,
+      pilot information, prior research, technical material, and guidance.
+    required: true
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+  supporting_image:
+    type: file
+    description: >-
+      Optional single image worth understanding on its own (diagram, scanned
+      certificate/letter of support, org chart, partner photo). Leave empty
+      if none applies.
+    required: false
+    multiple: false
+    accept: [image]
+
+stages:
+  - id: evidence
+    workflow: horizon_partb_evidence
+    description: >-
+      Metadata, call checklist, source graph, verified scholarly evidence
+      (enriched with supplementary web search and optional image analysis),
+      evidence synthesis, call coverage, and the locked blueprint.
+    # concept_note, documents and supporting_image all auto-match this
+    # pipeline's own inputs of the same name — no explicit mapping needed.
+
+  - id: drafts
+    workflow: horizon_partb_drafts
+    description: >-
+      The six official Part B subsections, drafted in parallel from the
+      locked blueprint, plus three grounded figures generated in parallel
+      alongside them.
+    # proposal_blueprint, scientific_synthesis, verify_evidence,
+    # call_intelligence and load_documents all auto-match evidence's node
+    # outputs of the same name.
+
+  - id: document
+    workflow: horizon_partb_drafts_to_docx
+    description: >-
+      Compiles the six drafts, evaluates and red-teams the result, applies
+      one controlled revision, runs deterministic gates, embeds any
+      generated figures in place of their markers, and renders the DOCX.
+    inputs:
+      # Renamed or nested-field mappings — everything else (call_intelligence,
+      # call_coverage, proposal_blueprint, concept_note, documents, and the
+      # three generate_figure_* image nodes) auto-matches by name already.
+      metadata: "{{ evidence.partb_metadata.parsed }}"
+      citation_registry: "{{ evidence.verify_evidence.citation_registry }}"
+      evidence_qa: "{{ evidence.verify_evidence.qa_report }}"
+      evidence_blockers: "{{ evidence.verify_evidence.blocking_issues }}"
+      verified_claims: "{{ evidence.verify_evidence.verified_claims }}"
+      scientific_synthesis: "{{ evidence.scientific_synthesis.answer }}"
+      normalise_report: "{{ evidence.normalise_source_graph.report }}"
+      normalise_warnings: "{{ evidence.normalise_source_graph.warnings }}"
+      candidates: "{{ evidence.discover_evidence.candidates }}"
+      search_audit: "{{ evidence.discover_evidence.search_audit }}"
+      draft_1_1: "{{ drafts.draft_1_1_objectives_ambition.raw }}"
+      draft_1_2: "{{ drafts.draft_1_2_methodology.raw }}"
+      draft_2_1: "{{ drafts.draft_2_1_pathways.raw }}"
+      draft_2_2_2_3: "{{ drafts.draft_2_2_measures_and_2_3_summary.raw }}"
+      draft_3_1: "{{ drafts.draft_3_1_workplan_resources.raw }}"
+      draft_3_2: "{{ drafts.draft_3_2_consortium.raw }}"

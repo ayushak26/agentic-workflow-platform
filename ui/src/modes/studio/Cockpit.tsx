@@ -17,6 +17,7 @@ import { useRunEvents } from '../../hooks/useRunEvents';
 import { CopyButton } from '../../components/CopyButton';
 import { Spinner } from '../../components/Spinner';
 import { CockpitNode } from './CockpitNode';
+import { artifactLabel, fileKey } from './file-artifact';
 import { HITLPanel } from './HITLPanel';
 import { OutputViewer } from './OutputViewer';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
@@ -499,6 +500,32 @@ useEffect(() => {
                 <div className="text-xs uppercase tracking-wide text-ink-500">{selectedNode.data.typeName}</div>
                 <div className="font-semibold text-lg mt-1">{selectedNode.data.nodeId}</div>
                 <div className="mt-2 text-xs text-ink-500">Status: {selectedNode.data.status}</div>
+
+                {(() => {
+                  const nodeOutput = liveRun?.outputs?.[selectedNode.data.nodeId]
+                    ?? liveRun?.node_runs?.[selectedNode.data.nodeId]?.output;
+                  const key = fileKey(nodeOutput);
+                  if (!key) return null;
+                  return (
+                    <div className="mt-3 flex items-center justify-between gap-3 rounded-md border border-accent-200 bg-accent-50 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-accent-800">
+                          {artifactLabel(nodeOutput, key)}
+                        </div>
+                        <div className="text-[11px] text-ink-500 truncate font-mono">
+                          {key.split('/').pop()}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void api.downloadArtifact(key)}
+                        className="flex-none px-3 py-1.5 rounded-md bg-accent-600 text-white text-xs font-medium hover:bg-accent-500"
+                      >
+                        Download
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 <div className="flex items-center justify-between mt-6 mb-2">
                   <h3 className="text-sm font-medium text-ink-700">Output preview</h3>
