@@ -4,8 +4,8 @@ description: >-
   It starts strictly after evidence verification: every artifact the evidence
   stage produces (metadata, call intelligence, normalised source graph,
   discovery candidates, search audit, concept/document text, optional
-  supporting-image analysis, optional supplementary web search, the verified
-  evidence package, and the deterministic call coverage matrix) is supplied as
+  supplementary web search, the verified evidence package, and the
+  deterministic call coverage matrix) is supplied as
   a workflow input rather than recomputed here — this workflow never calls
   web search or re-verifies evidence itself. From there it maps the call,
   locks a blueprint, drafts the six official Part B subsections in parallel
@@ -65,11 +65,6 @@ inputs:
     type: file
     required: true
     description: "[LIVE] evidence stage's load_documents output — .parseable_text is given to proposal_blueprint, draft_2_2, draft_3_1 and draft_3_2 for source fidelity."
-
-  understand_supporting_image:
-    type: json
-    required: false
-    description: "[LIVE] evidence stage's understand_supporting_image output — .analysis is given to research_documentation as supplementary context. Leave empty if no supporting image was supplied upstream."
 
   web_search:
     type: json
@@ -156,9 +151,6 @@ nodes:
 
         WEB SEARCH RESULTS:
         {{ inputs.web_search.results }}
-
-        SUPPORTING IMAGE ANALYSIS:
-        {{ inputs.understand_supporting_image.analysis }}
 
         EVIDENCE QA:
         {{inputs.verify_evidence.qa_report}}
