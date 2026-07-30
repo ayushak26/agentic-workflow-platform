@@ -8,9 +8,12 @@ import type {
   PipelineRunSummary,
   PipelineStageStatus,
   PipelineSummary,
+  WorkflowFileReference,
 } from '../../api/types';
 import { Spinner } from '../../components/Spinner';
 import { CopyButton } from '../../components/CopyButton';
+import { FileInputField } from './FileInputField';
+import { FALLBACK_FILE_CAPABILITIES, fileReferencesFrom } from './fileInputUtils';
 import { valueForJsonInput, type WorkflowInputSpec } from './yaml-bridge';
 
 type YamlPipeline = {
@@ -55,12 +58,26 @@ function PipelineLaunchDialog({
 }) {
   const navigate = useNavigate();
   const [values, setValues] = useState<Record<string, string>>({});
+  const [fileValues, setFileValues] = useState<Record<string, File[]>>({});
+  const [fileRefValues, setFileRefValues] = useState<
+    Record<string, WorkflowFileReference[]>
+  >({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [launching, setLaunching] = useState(false);
+  const [launchStage, setLaunchStage] = useState<string | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState(FALLBACK_FILE_CAPABILITIES);
   const [importOpen, setImportOpen] = useState(false);
   const [importText, setImportText] = useState('');
   const [importMessage, setImportMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.workflowFileCapabilities()
+      .then(setCapabilities)
+      .catch(() => {
+        // The picker remains usable with the same conservative local defaults.
+      });
+  }, []);
 
   const keys = Object.keys(inputs);
 
@@ -80,9 +97,25 @@ function PipelineLaunchDialog({
     const applied: string[] = [];
     const skipped: string[] = [];
     const next = { ...values };
+    const nextFileRefs = { ...fileRefValues };
     for (const key of keys) {
       if (!(key in record)) continue;
       const spec = inputs[key];
+      if (spec.type === 'file') {
+        const refs = fileReferencesFrom(record[key]);
+        if (refs) {
+          nextFileRefs[key] = refs;
+          setFileValues(current => {
+            const nextFiles = { ...current };
+            delete nextFiles[key];
+            return nextFiles;
+          });
+          applied.push(key);
+        } else {
+          skipped.push(`${key} (needs an already-uploaded file reference)`);
+        }
+        continue;
+      }
       const effective = spec.type === 'json' ? valueForJsonInput(record[key]) : record[key];
       next[key] = typeof effective === 'string' ? effective : JSON.stringify(effective, null, 2);
       applied.push(key);
@@ -91,6 +124,7 @@ function PipelineLaunchDialog({
       if (!(key in inputs)) skipped.push(key);
     }
     setValues(next);
+    setFileRefValues(nextFileRefs);
     setImportMessage(
       applied.length
         ? `Loaded ${applied.length} input(s): ${applied.join(', ')}.`
@@ -104,6 +138,14 @@ function PipelineLaunchDialog({
     const runInputs: Record<string, unknown> = {};
     for (const key of keys) {
       const spec = inputs[key];
+      if (spec.type === 'file') {
+        const selected = fileValues[key] ?? [];
+        const loaded = fileRefValues[key] ?? [];
+        if (spec.required && selected.length === 0 && loaded.length === 0) {
+          nextErrors[key] = 'Add at least one file.';
+        }
+        continue;
+      }
       const raw = values[key] ?? '';
       if (spec.required && !raw.trim()) {
         nextErrors[key] = 'This input is required.';
@@ -126,8 +168,24 @@ function PipelineLaunchDialog({
     }
 
     setLaunching(true);
+    setLaunchStage('Uploading files…');
     setLaunchError(null);
     try {
+      for (const key of keys) {
+        const spec = inputs[key];
+        if (spec.type !== 'file') continue;
+        const loaded = fileRefValues[key] ?? [];
+        if (loaded.length > 0) {
+          runInputs[key] = spec.multiple ? loaded : loaded[0];
+          continue;
+        }
+        const selected = fileValues[key] ?? [];
+        if (selected.length === 0) continue;
+        const uploaded = await api.uploadWorkflowFiles(selected);
+        runInputs[key] = spec.multiple ? uploaded.files : uploaded.files[0];
+      }
+
+      setLaunchStage('Checking pipeline…');
       const preflight = await api.validatePipeline(pipelineYaml, runInputs);
       if (!preflight.valid) {
         const msgs = preflight.issues
@@ -136,6 +194,7 @@ function PipelineLaunchDialog({
           .map(i => `${i.code}${i.node_id ? ` (${i.node_id})` : ''}: ${i.message}`);
         setLaunchError(`Pipeline blocked before running. ${msgs.join(' · ')}`);
         setLaunching(false);
+        setLaunchStage(null);
         return;
       }
       const pipelineRunId = crypto.randomUUID();
@@ -144,6 +203,7 @@ function PipelineLaunchDialog({
     } catch (e: unknown) {
       setLaunchError(e instanceof Error ? e.message : String(e));
       setLaunching(false);
+      setLaunchStage(null);
     }
   }
 
@@ -162,8 +222,38 @@ function PipelineLaunchDialog({
           {keys.length === 0 && (
             <div className="text-sm text-ink-500">This pipeline declares no inputs.</div>
           )}
-          {keys.map(key => {
+          {keys.map((key, index) => {
             const spec = inputs[key];
+            if (spec.type === 'file') {
+              return (
+                <FileInputField
+                  key={key}
+                  inputId={`pipeline-file-${index}`}
+                  inputName={key}
+                  spec={spec}
+                  files={fileValues[key] ?? []}
+                  loadedRefs={fileRefValues[key] ?? []}
+                  onClearLoaded={() => {
+                    setFileRefValues(current => {
+                      const next = { ...current };
+                      delete next[key];
+                      return next;
+                    });
+                  }}
+                  capabilities={capabilities}
+                  error={errors[key]}
+                  onChange={(nextFiles, nextError) => {
+                    setFileValues(current => ({ ...current, [key]: nextFiles }));
+                    setErrors(current => {
+                      const next = { ...current };
+                      if (nextError) next[key] = nextError;
+                      else delete next[key];
+                      return next;
+                    });
+                  }}
+                />
+              );
+            }
             return (
               <div key={key}>
                 <label className="block text-sm font-medium text-ink-900">
@@ -173,21 +263,13 @@ function PipelineLaunchDialog({
                 {spec.description && (
                   <p className="text-xs text-ink-500 mb-1">{spec.description}</p>
                 )}
-                {spec.type === 'file' ? (
-                  <p className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1.5">
-                    File inputs aren't uploadable here yet — use "Import
-                    inputs from JSON" below with an already-uploaded file
-                    reference (e.g. copied from a workflow run's inputs).
-                  </p>
-                ) : (
-                  <textarea
-                    rows={spec.type === 'json' ? 6 : 3}
-                    value={values[key] ?? ''}
-                    onChange={e => setValues(v => ({ ...v, [key]: e.target.value }))}
-                    className="mt-1 block w-full rounded-md border-slate-300 text-sm py-2 px-3 border font-mono"
-                    placeholder={spec.type === 'json' ? '{ }' : ''}
-                  />
-                )}
+                <textarea
+                  rows={spec.type === 'json' ? 6 : 3}
+                  value={values[key] ?? ''}
+                  onChange={e => setValues(v => ({ ...v, [key]: e.target.value }))}
+                  className="mt-1 block w-full rounded-md border-slate-300 text-sm py-2 px-3 border font-mono"
+                  placeholder={spec.type === 'json' ? '{ }' : ''}
+                />
                 {errors[key] && <p className="text-xs text-red-600 mt-1">{errors[key]}</p>}
               </div>
             );
@@ -250,7 +332,7 @@ function PipelineLaunchDialog({
             disabled={launching}
             className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
           >
-            {launching ? 'Running stage 1…' : 'Run pipeline'}
+            {launching ? (launchStage ?? 'Running stage 1…') : 'Run pipeline'}
           </button>
         </div>
       </div>
