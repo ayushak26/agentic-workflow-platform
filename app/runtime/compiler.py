@@ -358,7 +358,18 @@ def _wire_edges(
 
         graph.add_conditional_edges(hitl_id, _hitl_router, [*uniq, END])
 
-    # 3. Wire everything else edge-by-edge (routers, plain edges, fan-outs).
+    # 3. Wire everything else (routers, plain edges, fan-outs).
+    #
+    # Plain edges into the SAME target are collected and wired with one
+    # add_edge(sources, target) call instead of one add_edge() per source.
+    # LangGraph only treats multiple predecessors as an AND-join (wait for
+    # ALL of them) when they're passed together as a list in a single call.
+    # N separate add_edge(source_i, target) calls instead each act as an
+    # independent OR-trigger, so a fan-in node with predecessors at unequal
+    # distances (e.g. one 1-hop upstream, another 4 hops upstream) fires as
+    # soon as the FIRST of them completes — with the rest of its inputs
+    # still missing — instead of waiting for the last one.
+    plain_targets: dict[str, list[str]] = {}
     for edge in edges:
         sources.add(edge.from_)
 
@@ -376,11 +387,15 @@ def _wire_edges(
                     )
                 return decision
             graph.add_conditional_edges(edge.from_, _router, edge.branches)
-        elif isinstance(edge.to, list):
-            for target in edge.to:
-                graph.add_edge(edge.from_, target)
-        elif edge.to:
-            graph.add_edge(edge.from_, edge.to)
+            continue
+
+        targets = edge.to if isinstance(edge.to, list) else ([edge.to] if edge.to else [])
+        for target in targets:
+            plain_targets.setdefault(target, []).append(edge.from_)
+
+    for target, srcs in plain_targets.items():
+        uniq_srcs = list(dict.fromkeys(srcs))  # dedup, preserve order
+        graph.add_edge(uniq_srcs if len(uniq_srcs) > 1 else uniq_srcs[0], target)
 
     return sources
 

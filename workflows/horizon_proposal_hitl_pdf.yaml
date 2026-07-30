@@ -107,7 +107,6 @@ nodes:
       - gpt-5-mini
       - claude-opus-5
       - claude-sonnet-4-5
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -165,7 +164,7 @@ nodes:
     type: WebSearchAgent
     config:
       query: "{{research_context_query.parsed.query}}"
-      provider: auto
+      provider: tavily
       top_k: 8
       fallback_to_openai: true
 
@@ -177,7 +176,6 @@ nodes:
       - gpt-5
       - claude-opus-5
       - claude-sonnet-4-5
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -206,7 +204,6 @@ nodes:
       - gpt-5
       - gpt-5-mini
       - claude-sonnet-4-5
-      - local-glm-5
     model_routing:
       accuracy_priority: balanced
       prefer_low_latency: true
@@ -232,7 +229,6 @@ nodes:
       - gpt-5
       - claude-opus-5
       - claude-sonnet-4-5
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -249,8 +245,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -293,6 +287,74 @@ nodes:
     type: CallCoverageMatrixAgent
     config: {}
 
+  - id: research_documentation
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      output_schema:
+        cited_sources: list
+        bibliography_formatted: str
+        web_search_references: list
+        candidate_sources_considered: list
+        citation_coverage_summary: object
+      prompt_template: |
+        Produce a standalone, audit-ready research-documentation record for
+        this proposal run. This is not proposal text — it is the evidence
+        paper trail: every research source cited, every web link consulted,
+        and what was found but not used. Never invent a source, URL, DOI, or
+        detail not present in the supplied records.
+
+        cited_sources: one entry per citation ID in the verified citation
+        registry — id, title, authors (if known), year, source type
+        (official/peer_reviewed/standard/dataset/project/market/partner),
+        URL or DOI, exact locator used, verification status, and the exact
+        Part B subsection(s) it supports. Use [UNKNOWN] for any missing
+        bibliographic field rather than guessing.
+
+        bibliography_formatted: a clean, numbered reference list built only
+        from cited_sources, ready to paste into an evidence annex.
+
+        web_search_references: one entry per web-search result actually
+        surfaced in the supplementary web context — the query that found it,
+        title, URL, why it was consulted, and whether it ended up informing
+        the proposal. Label these clearly as situational/contextual, never
+        as citable evidence.
+
+        candidate_sources_considered: discovery candidates that were found
+        but never promoted to verified evidence, each with a rejection
+        reason (unverified, contradicted, superseded, off-topic, duplicate).
+        If more than ~40 candidates were considered, group by rejection
+        reason with representative examples instead of listing every one.
+
+        citation_coverage_summary: counts of candidates discovered,
+        acquired in full text, verified, cited in the final citation
+        registry, rejected, and web-search-only references.
+
+        CITATION REGISTRY:
+        {{verify_evidence.citation_registry}}
+
+        VERIFIED CLAIMS:
+        {{verify_evidence.verified_claims}}
+
+        DISCOVERY CANDIDATES:
+        {{discover_evidence.candidates}}
+
+        SEARCH AUDIT:
+        {{discover_evidence.search_audit}}
+
+        WEB SEARCH RESULTS:
+        {{web_search.results}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
   - id: approve_evidence
     type: HumanInLoopAgent
     config:
@@ -318,8 +380,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -332,8 +392,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -380,13 +438,11 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
       model: claude-opus-5
-      max_tokens: 20000
+      max_tokens: 34000
       output_schema:
         identity_and_narrative: object
         objective_result_outcome_chain: object
@@ -400,13 +456,75 @@ nodes:
         section_page_budget: object
         figure_and_table_plan: object
         unresolved_inputs: list
+        specific_objectives_table: object
+        ambitions: object
+        pilot_strategy: object
+        linked_research_activities: object
+        ssh_integration: object
+        gender_dimension: object
+        data_management_open_science: object
+        pestel_analysis: object
+        dissemination_communication_plan: object
+        post_project_dissemination: object
+        exploitation_strategy: object
+        policy_impact_strategy: object
+        impact_summary: object
+        work_plan_timing: object
       prompt_template: |
         Build the master Horizon Part B blueprint for the human-approved
         concept. Map each call requirement to sections, results, owners,
         verified evidence, KPIs, work packages, tasks, deliverables,
-        milestones, dependencies and risks where grounded. Allocate a
-        45-page narrative budget and plan evaluator-useful tables and figures.
-        Mark missing facts [INPUT NEEDED: exact item].
+        milestones, dependencies and risks where grounded. Plan
+        evaluator-useful tables and figures. Mark missing facts
+        [INPUT NEEDED: exact item].
+
+        Determine the hard page limit from the call metadata, not by
+        default: a confirmed lump-sum RIA/IA topic gets a 45-page hard limit
+        with a 44-page working target; a standard (non-lump-sum) full
+        proposal gets the normal 40-page hard limit with a 39-page working
+        target. If the funding model cannot be confirmed, default to the
+        stricter 40-page profile and record the ambiguity in
+        unresolved_inputs.
+
+        Cover every one of these subsections explicitly — each maps to the
+        output field named after it, and none may be silently skipped:
+        1.1.1 one row per approved objective — never force the count to
+        match a template's blank SO1-SO5 placeholders — each giving SO id,
+        specific objective, target outcome, KPI, baseline, target value,
+        verification route and the call requirement it answers ->
+        specific_objectives_table. 1.1.2 ambitions: the central ambition,
+        state of the art, and what goes beyond it -> ambitions. 1.2.2 pilot
+        strategy -> pilot_strategy. 1.2.4 linked research and innovation
+        activities this project builds on -> linked_research_activities.
+        1.2.5 interdisciplinary approach and SSH integration ->
+        ssh_integration. 1.2.6 gender dimension -> gender_dimension: treat
+        gender relevance in research content (variables, disaggregation,
+        bias controls) as its own topic, separate from workforce/team
+        balance. 1.2.7 data management and open science practices (data
+        types, FAIR handling, open-access routes) ->
+        data_management_open_science. 2.1.3 requirements and potential
+        barriers beyond the project's scope: a concrete PESTEL (Political,
+        Economic, Social, Technological, Environmental, Legal) analysis
+        specific to this call, never generic boilerplate -> pestel_analysis,
+        with each barrier carrying a category, the external condition,
+        likelihood, consequence, project response and a responsible monitor
+        — these are external conditions beyond the project's control, never
+        to be restated as an internal implementation risk in
+        risks_and_mitigations, and vice versa. 2.2.1-2.2.2 dissemination
+        strategy, measures and communication strategy ->
+        dissemination_communication_plan. 2.2.3 activities after the project
+        ends -> post_project_dissemination. 2.2.4 exploitation strategy ->
+        exploitation_strategy: one key exploitable result (KER) per row,
+        each with an owner, target users, value proposition, protection/IPR
+        route, exploitation route and time to uptake. 2.2.5 multi-level
+        policy impact strategy -> policy_impact_strategy, closing with a
+        short summary of impact -> impact_summary. 3.1.1 timing of work
+        packages -> work_plan_timing.
+
+        Treat any blank placeholder label (e.g. an empty "SO1"/"A1" slot) or
+        example/template project name found in a supplied document as a
+        structural cue only, never as approved content — do not let either
+        leak into the blueprint.
 
         In figure_and_table_plan, for each planned figure give a short stable
         slug (used later to match a generated image to its slot) and the exact
@@ -487,8 +605,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -497,9 +613,17 @@ nodes:
       prompt_template: |
         Draft proposal-ready Markdown for the full Excellence section:
         objectives and ambition, relation to the work programme, state of the
-        art and advances, and detailed methodology. Use only verified citation
+        art and advances, and detailed methodology. Build the objective table
+        directly from proposal_blueprint.parsed.specific_objectives_table
+        (columns: SO | Specific objective | Target outcome | KPI | Baseline |
+        Target value | Verification | Call requirement) — one row per
+        approved objective; never force the count to match blank SO1-SO5
+        placeholders in any supplied template. Use only verified citation
         IDs. Cover interdisciplinarity, validation, open science, SSH and the
-        gender dimension where relevant. Preserve [INPUT NEEDED] markers.
+        gender dimension where relevant — treat the gender dimension as
+        research-content relevance (variables, disaggregation, bias
+        controls), a separate topic from workforce or team gender balance.
+        Preserve [INPUT NEEDED] markers.
 
         Where the objective -> result -> outcome -> impact chain diagram
         belongs, insert exactly this marker on its own line, unmodified:
@@ -516,8 +640,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -527,8 +649,16 @@ nodes:
         Draft proposal-ready Markdown for the full Impact section: credible
         pathways to every call outcome, scale and significance, KPIs,
         barriers and assumptions, dissemination, exploitation, communication,
-        IP and uptake. Each quantitative KPI needs baseline, target, unit,
-        source, owner and date or [INPUT NEEDED].
+        IP and uptake. Ground the barriers analysis in
+        proposal_blueprint.parsed.pestel_analysis (the six-category PESTEL
+        record: political, economic, social, technological, environmental,
+        legal) — these are external conditions only; never restate one as an
+        internal implementation risk (those belong solely in the
+        Implementation section). For exploitation, give each key exploitable
+        result (KER) in proposal_blueprint.parsed.exploitation_strategy its
+        own owner, target users, value proposition, protection/IPR route and
+        exploitation route. Each quantitative KPI needs baseline, target,
+        unit, source, owner and date or [INPUT NEEDED].
 
         Where the impact-pathways diagram belongs, insert exactly this marker
         on its own line, unmodified:
@@ -545,8 +675,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -556,8 +684,11 @@ nodes:
         Draft proposal-ready Markdown for the full Implementation section:
         work plan, WPs, tasks, deliverables, milestones, dependencies, critical
         path, consortium complementarity, resources, lump-sum coherence,
-        governance, quality, data and risk. Preserve exact partner and numeric
-        facts. Add readable tables. Missing facts remain [INPUT NEEDED].
+        governance, quality, data and risk. These implementation risks must
+        be distinct from the external PESTEL barriers already captured in
+        the Impact section — do not duplicate them. Preserve exact partner
+        and numeric facts. Add readable tables. Missing facts remain
+        [INPUT NEEDED].
 
         Where the work-package structure diagram belongs (after the WP list),
         insert exactly this marker on its own line, unmodified:
@@ -574,8 +705,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
@@ -585,43 +714,111 @@ nodes:
         Draft the cross-cutting material to integrate into the three scored
         sections: multi-actor approach, gender, SSH, open science/FAIR, DMP,
         ethics, GDPR, security, DNSH, standardisation, synergies, policy
-        alignment, and practice abstracts where the call requires them.
+        alignment, and practice abstracts where the call requires them. Treat
+        gender as research-content relevance (variables, disaggregation, bias
+        controls), a separate topic from workforce or team gender balance.
         Missing evidence or implementation detail remains [INPUT NEEDED].
 
         CALL CHECKLIST: {{call_intelligence.parsed}}
         BLUEPRINT: {{proposal_blueprint.parsed}}
         SOURCE WARNINGS: {{normalise_source_graph.warnings}}
 
-  - id: compile_v1
+  # ---- Compilation is split by evaluated criterion (Excellence / Impact /
+  # Implementation) instead of one monolithic pass. A ~40-45 page proposal
+  # is realistically 30,000-45,000+ output tokens once tables and figures
+  # are counted, which exceeds what a single TransformAgent call can safely
+  # emit without silent truncation (TransformAgent has no way to detect a
+  # cut-off response when no output_schema is set). Each compile_*/revise_*
+  # stage below only has to hold its own criterion's page budget (well under
+  # its max_tokens), and the actual "compile_v1"/"final_revision" documents
+  # are produced by TextAssemblerAgent - a deterministic, non-LLM join - so
+  # the full-document assembly step itself can never truncate. The
+  # cross-cutting draft is fanned into all three compiles since its content
+  # (multi-actor, gender, SSH, open science, DMP, ethics, GDPR, security,
+  # DNSH, standardisation, synergies, policy, practice abstracts) belongs
+  # spread across all three criteria, not merged as a fourth section.
+  - id: compile_excellence
     type: TransformAgent
     selected_model: auto
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
       model: claude-opus-5
-      max_tokens: 32000
+      max_tokens: 20000
       prompt_template: |
-        Assemble a single coherent Part B Markdown draft with exact sections
-        1 Excellence, 2 Impact, and 3 Implementation. Remove duplication,
-        align identifiers and terminology, retain citations and all
-        [INPUT NEEDED] markers, and do not add facts.
+        Assemble the coherent "1 Excellence" section only. Fold in the
+        interdisciplinarity, SSH and gender-dimension material from
+        CROSS-CUTTING that belongs in Excellence. Remove duplication, align
+        identifiers and terminology, retain citations and all [INPUT NEEDED]
+        markers, and do not add facts. Start with the "# 1 Excellence"
+        heading.
 
         EXCELLENCE:
         {{draft_excellence.raw}}
 
+        CROSS-CUTTING (use only the parts relevant to Excellence):
+        {{draft_cross_cutting.raw}}
+
+  - id: compile_impact
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 12000
+      prompt_template: |
+        Assemble the coherent "2 Impact" section only. Fold in the
+        multi-actor, policy-alignment and practice-abstract material from
+        CROSS-CUTTING that belongs in Impact. Remove duplication, align
+        identifiers and terminology, retain citations and all [INPUT NEEDED]
+        markers, and do not add facts. Start with the "# 2 Impact" heading.
+
         IMPACT:
         {{draft_impact.raw}}
+
+        CROSS-CUTTING (use only the parts relevant to Impact):
+        {{draft_cross_cutting.raw}}
+
+  - id: compile_implementation
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 20000
+      prompt_template: |
+        Assemble the coherent "3 Implementation" section only. Fold in the
+        open science/FAIR, DMP, ethics, GDPR, security, DNSH,
+        standardisation and synergies material from CROSS-CUTTING that
+        belongs in Implementation. Remove duplication, align identifiers
+        and terminology, retain citations and all [INPUT NEEDED] markers,
+        and do not add facts. Start with the "# 3 Implementation" heading.
 
         IMPLEMENTATION:
         {{draft_implementation.raw}}
 
-        CROSS-CUTTING:
+        CROSS-CUTTING (use only the parts relevant to Implementation):
         {{draft_cross_cutting.raw}}
+
+  - id: compile_v1
+    type: TextAssemblerAgent
+    config:
+      separator: "\n\n"
+      parts:
+        - "{{compile_excellence.raw}}"
+        - "{{compile_impact.raw}}"
+        - "{{compile_implementation.raw}}"
 
   - id: approve_full_draft
     type: HumanInLoopAgent
@@ -632,17 +829,17 @@ nodes:
         ethics, call compliance, and remaining INPUT NEEDED markers before
         independent evaluation?
       context_fields:
-        - compile_v1.raw
+        - compile_v1.text
         - verify_evidence.qa_report
         - call_coverage.blocking_requirement_ids
-      editable_content_field: compile_v1.raw
+      editable_content_field: compile_v1.text
       max_edit_chars: 2000000
       allowed_actions: [approve, reject, edit]
 
   - id: evaluate_v1
     type: HorizonEvaluationAgent
     config:
-      proposal_text: "{{compile_v1.raw}}"
+      proposal_text: "{{compile_v1.text}}"
       generator_model: auto
       evaluator_models:
         - claude-sonnet-4-5
@@ -656,8 +853,6 @@ nodes:
     allowed_models:
       - gpt-5.6-sol
       - claude-opus-5
-      - local-glm-5
-      - local-kimi-k3
     model_routing:
       accuracy_priority: maximum
     config:
@@ -676,49 +871,151 @@ nodes:
         Red-team the human-approved draft. Check call coverage, scientific and
         impact logic, citation fit, partner/WP/task consistency, KPI and budget
         contradictions, deliverables, milestones, risks, ethics, gender, SSH,
-        open science, and page density. Give only actionable corrections.
+        open science, and page density. Confirm PESTEL barriers (Impact
+        section) are never duplicated as implementation risks (Implementation
+        section) and vice versa; confirm every KER has a distinct owner,
+        target users, value proposition and exploitation route; confirm the
+        gender-dimension content addresses research-content relevance, not
+        only team or workforce balance. Give only actionable corrections. Tag
+        each finding to its owning criterion so it lands in the matching
+        *_risks list (excellence_risks, impact_risks, implementation_risks) -
+        cross-cutting findings that do not belong to one criterion (evidence,
+        numerical, page-budget) go in their own dedicated lists instead.
 
-        DRAFT: {{compile_v1.raw}}
+        DRAFT: {{compile_v1.text}}
         COVERAGE: {{call_coverage}}
         EVIDENCE QA: {{verify_evidence.qa_report}}
 
-  - id: final_revision
+  # ---- Revision is likewise split per criterion. Each stage sees the whole
+  # human-approved/edited draft (compile_v1.text, patched in place by
+  # approve_full_draft if the human edited it) so no edit is lost, but is
+  # instructed to return only its own section - so no single LLM call has to
+  # hold the entire final ~40-45 page document in its output. final_revision
+  # then deterministically joins the three revised sections.
+  - id: revise_excellence
     type: TransformAgent
     selected_model: auto
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
-      - local-glm-5
     model_routing:
       accuracy_priority: maximum
     config:
       model: claude-opus-5
-      max_tokens: 32000
+      max_tokens: 20000
       prompt_template: |
-        Produce the final Part B submission candidate. Apply independent
-        evaluator and red-team recommendations only when grounded in the
-        approved draft, source documents, or verified evidence. Improve logic,
-        consistency, specificity and section balance. Never fabricate a
-        partner fact, source, number, KPI, TRL, result, budget or timeline.
-        Preserve unresolved [INPUT NEEDED] markers and valid citation IDs.
+        From the human-approved draft below, produce the final submission
+        candidate for ONLY the "1 Excellence" section. Apply independent
+        evaluator and red-team recommendations relevant to this section only
+        when grounded in the approved draft, source documents, or verified
+        evidence. Improve logic, consistency, specificity and section
+        balance. Never fabricate a partner fact, source, number, KPI, TRL,
+        result, budget or timeline. Preserve unresolved [INPUT NEEDED]
+        markers and valid citation IDs. Return only the Excellence section -
+        do not draft Impact or Implementation.
 
-        HUMAN-APPROVED DRAFT:
-        {{compile_v1.raw}}
+        HUMAN-APPROVED DRAFT (full document - extract and revise only
+        Excellence):
+        {{compile_v1.text}}
 
         EVALUATION:
         {{evaluate_v1}}
 
-        RED TEAM:
+        RED TEAM (full report - apply only the excellence_risks,
+        evidence_and_citation_risks, numerical_inconsistencies and
+        page_budget_actions entries relevant to Excellence):
         {{red_team_v1.parsed}}
 
         CITATIONS:
         {{verify_evidence.citation_registry}}
 
+  - id: revise_impact
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 12000
+      prompt_template: |
+        From the human-approved draft below, produce the final submission
+        candidate for ONLY the "2 Impact" section. Apply independent
+        evaluator and red-team recommendations relevant to this section only
+        when grounded in the approved draft, source documents, or verified
+        evidence. Improve logic, consistency, specificity and section
+        balance. Never fabricate a partner fact, source, number, KPI, TRL,
+        result, budget or timeline. Preserve unresolved [INPUT NEEDED]
+        markers and valid citation IDs. Return only the Impact section - do
+        not draft Excellence or Implementation.
+
+        HUMAN-APPROVED DRAFT (full document - extract and revise only
+        Impact):
+        {{compile_v1.text}}
+
+        EVALUATION:
+        {{evaluate_v1}}
+
+        RED TEAM (full report - apply only the impact_risks,
+        evidence_and_citation_risks, numerical_inconsistencies and
+        page_budget_actions entries relevant to Impact):
+        {{red_team_v1.parsed}}
+
+        CITATIONS:
+        {{verify_evidence.citation_registry}}
+
+  - id: revise_implementation
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 20000
+      prompt_template: |
+        From the human-approved draft below, produce the final submission
+        candidate for ONLY the "3 Implementation" section. Apply independent
+        evaluator and red-team recommendations relevant to this section only
+        when grounded in the approved draft, source documents, or verified
+        evidence. Improve logic, consistency, specificity and section
+        balance. Never fabricate a partner fact, source, number, KPI, TRL,
+        result, budget or timeline. Preserve unresolved [INPUT NEEDED]
+        markers and valid citation IDs. Return only the Implementation
+        section - do not draft Excellence or Impact.
+
+        HUMAN-APPROVED DRAFT (full document - extract and revise only
+        Implementation):
+        {{compile_v1.text}}
+
+        EVALUATION:
+        {{evaluate_v1}}
+
+        RED TEAM (full report - apply only the implementation_risks,
+        evidence_and_citation_risks, numerical_inconsistencies and
+        page_budget_actions entries relevant to Implementation):
+        {{red_team_v1.parsed}}
+
+        CITATIONS:
+        {{verify_evidence.citation_registry}}
+
+  - id: final_revision
+    type: TextAssemblerAgent
+    config:
+      separator: "\n\n"
+      parts:
+        - "{{revise_excellence.raw}}"
+        - "{{revise_impact.raw}}"
+        - "{{revise_implementation.raw}}"
+
   - id: evaluate_final
     type: HorizonEvaluationAgent
     config:
-      proposal_text: "{{final_revision.raw}}"
+      proposal_text: "{{final_revision.text}}"
       generator_model: auto
       evaluator_models:
         - claude-sonnet-4-5
@@ -734,7 +1031,7 @@ nodes:
   - id: submission_gate
     type: ProposalSubmissionGate
     config:
-      proposal_text: "{{final_revision.raw}}"
+      proposal_text: "{{final_revision.text}}"
       evidence_blockers: "{{verify_evidence.blocking_issues}}"
       consistency_gate: "{{consistency_gate.gate}}"
       consistency_findings: "{{consistency_gate.findings}}"
@@ -754,18 +1051,18 @@ nodes:
         remaining warnings. Approve, reject, or edit the final content before
         the submission PDF is generated?
       context_fields:
-        - final_revision.raw
+        - final_revision.text
         - submission_gate.report
         - evaluate_final.criteria
         - verify_evidence.qa_report
-      editable_content_field: final_revision.raw
+      editable_content_field: final_revision.text
       max_edit_chars: 2000000
       allowed_actions: [approve, reject, edit]
 
   - id: figure_embedder
     type: FigureEmbedder
     config:
-      content: "{{final_revision.raw}}"
+      content: "{{final_revision.text}}"
       figures:
         - marker: "Figure 1 - Objective-Result-Outcome-Impact Chain"
           image: "{{generate_figure_oro_chain}}"
@@ -826,7 +1123,9 @@ edges:
   - from: understand_supporting_image
     to: scientific_synthesis
   - from: scientific_synthesis
-    to: call_coverage
+    to:
+      - call_coverage
+      - research_documentation
   - from: call_coverage
     to: approve_evidence
   - from: approve_evidence
@@ -847,12 +1146,21 @@ edges:
       - generate_figure_impact_pathways
       - generate_figure_workplan
   - from: draft_excellence
-    to: compile_v1
-  - from: draft_impact
-    to: compile_v1
-  - from: draft_implementation
-    to: compile_v1
+    to: compile_excellence
   - from: draft_cross_cutting
+    to:
+      - compile_excellence
+      - compile_impact
+      - compile_implementation
+  - from: draft_impact
+    to: compile_impact
+  - from: draft_implementation
+    to: compile_implementation
+  - from: compile_excellence
+    to: compile_v1
+  - from: compile_impact
+    to: compile_v1
+  - from: compile_implementation
     to: compile_v1
   - from: compile_v1
     to: approve_full_draft
@@ -861,8 +1169,20 @@ edges:
       - evaluate_v1
       - red_team_v1
   - from: evaluate_v1
-    to: final_revision
+    to:
+      - revise_excellence
+      - revise_impact
+      - revise_implementation
   - from: red_team_v1
+    to:
+      - revise_excellence
+      - revise_impact
+      - revise_implementation
+  - from: revise_excellence
+    to: final_revision
+  - from: revise_impact
+    to: final_revision
+  - from: revise_implementation
     to: final_revision
   - from: final_revision
     to:
@@ -885,13 +1205,17 @@ edges:
   - from: figure_embedder
     to: render_submission_pdf
 entry: load_concept
-exit: render_submission_pdf
+exit:
+  - render_submission_pdf
+  - research_documentation
 output:
   include_input: false
   nodes:
     - node_id: call_coverage
       flatten: false
     - node_id: verify_evidence
+      flatten: false
+    - node_id: research_documentation
       flatten: false
     - node_id: evaluate_final
       flatten: false

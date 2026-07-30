@@ -17,7 +17,7 @@ nodes:
     type: WebSearchAgent
     config:
       query: "{{inputs.query}}"
-      provider: auto
+      provider: tavily
       top_k: 8
       fallback_to_openai: true
 

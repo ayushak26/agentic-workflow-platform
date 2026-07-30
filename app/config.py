@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     secret_key: str = "insecure-dev-secret-change-me"
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 60
+    access_token_expire_minutes: int = 120
     jwt_issuer: str = "eurskem-ai"
     jwt_audience: str = "eurskem-ai-ui"
     environment: str = "development"

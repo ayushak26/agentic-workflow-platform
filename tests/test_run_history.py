@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -205,8 +207,17 @@ async def test_private_checkpoint_keeps_exact_replayable_node_result():
     assert saved["extra_state"]["domain_state"]["eu_proposal"]["title"] == "Draft"
 
 
+def _spawn_and_reap_dead_pid() -> int:
+    """Return a pid guaranteed not to exist: spawn a trivial subprocess and
+    wait for it to exit. Deterministic across platforms, unlike guessing a
+    large integer."""
+    proc = subprocess.Popen(["true"])
+    proc.wait()
+    return proc.pid
+
+
 @pytest.mark.asyncio
-async def test_stale_running_run_is_marked_failed_on_read():
+async def test_stale_running_run_with_dead_owner_process_is_marked_failed():
     db = FakeDB()
     stale_updated_at = datetime.now(timezone.utc) - timedelta(
         seconds=settings.stale_run_after_seconds + 60
@@ -217,12 +228,13 @@ async def test_stale_running_run_is_marked_failed_on_read():
         "status": "running",
         "updated_at": stale_updated_at,
         "active_nodes": ["compile_v1"],
+        "owner_pid": _spawn_and_reap_dead_pid(),
     }
 
     run = await get_run(db, "user@example.com", "run-stale")
 
     assert run["status"] == "failed"
-    assert "no progress" in run["error"]
+    assert "no longer running" in run["error"]
     assert run["active_nodes"] == []
 
     _, history_update = db["run_history"].update_one.await_args.args
@@ -231,6 +243,30 @@ async def test_stale_running_run_is_marked_failed_on_read():
 
     _, checkpoint_update = db["run_checkpoints"].update_one.await_args.args
     assert checkpoint_update["$set"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_running_run_with_live_owner_process_is_left_alone():
+    """A single long LLM call can leave `updated_at` untouched for far longer
+    than stale_run_after_seconds while the owning process is very much
+    alive — this must not be auto-failed just because time passed."""
+    db = FakeDB()
+    stale_updated_at = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.stale_run_after_seconds + 3600
+    )
+    db["run_history"].find_one.return_value = {
+        "run_id": "run-still-going",
+        "session_id": "user@example.com",
+        "status": "running",
+        "updated_at": stale_updated_at,
+        "active_nodes": ["scientific_synthesis"],
+        "owner_pid": os.getpid(),
+    }
+
+    run = await get_run(db, "user@example.com", "run-still-going")
+
+    assert run["status"] == "running"
+    db["run_history"].update_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,112 @@ def test_paper_search_server_passes_research_credentials_without_leaking_them():
     assert "paper-search-mcp" not in disabled
 
 
+def test_openaire_legacy_fallback_uses_supported_keywords_param():
+    """paper-search-mcp 0.1.4's OpenAIRE legacy fallback (`/search/publications`)
+    sends the query under a `query` param that endpoint has never supported —
+    it 400s even for a plain query. Our launcher patches `_get` to rename it
+    to `keywords`, the parameter OpenAIRE's own error message says is
+    supported."""
+    from app.mcp.paper_search_server import patch_openaire_query_param
+    from paper_search_mcp.academic_platforms.openaire import OpenAiresearcher
+
+    patch_openaire_query_param()
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+    searcher = OpenAiresearcher()
+
+    def fake_session_get(url, **kwargs):
+        seen["url"] = url
+        seen["params"] = kwargs.get("params")
+        return FakeResponse()
+
+    searcher.session.get = fake_session_get
+    searcher._get(f"{searcher.BASE_URL}/search/publications", params={"query": "test", "size": 3})
+
+    assert "keywords" in seen["params"]
+    assert seen["params"]["keywords"] == "test"
+    assert "query" not in seen["params"]
+
+
+def test_openaire_query_patch_leaves_other_endpoints_untouched():
+    from app.mcp.paper_search_server import patch_openaire_query_param
+    from paper_search_mcp.academic_platforms.openaire import OpenAiresearcher
+
+    patch_openaire_query_param()
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+    searcher = OpenAiresearcher()
+    searcher.session.get = lambda url, **kwargs: (seen.update(params=kwargs.get("params")), FakeResponse())[1]
+    searcher._get(f"{searcher.BASE_URL}/search/researchProducts", params={"keywords": "test"})
+
+    assert seen["params"] == {"keywords": "test"}
+
+
+def test_semantic_scholar_empty_results_do_not_raise():
+    """The Semantic Scholar Graph API omits the `data` key entirely (not an
+    empty list) when a query's total is 0. The vendored connector does
+    `response.json()["data"]` unconditionally, which raises a KeyError for a
+    perfectly normal zero-result query. Our launcher patches
+    `request_api` so `.json()` always has a `data` key."""
+    from app.mcp.paper_search_server import patch_semantic_scholar_empty_results
+    from paper_search_mcp.academic_platforms.semantic import SemanticSearcher
+
+    patch_semantic_scholar_empty_results(min_interval_seconds=0)
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"total": 0, "offset": 0}  # real S2 shape: no "data" key
+
+        def raise_for_status(self):
+            pass
+
+    searcher = SemanticSearcher()
+    searcher.session.get = lambda *a, **k: FakeResponse()
+
+    papers = searcher.search("a query with zero matches", max_results=5)
+    assert papers == []
+
+
+def test_semantic_scholar_requests_are_paced_to_the_rate_limit():
+    """Our keyed Semantic Scholar tier is capped at 1 request/second,
+    cumulative across all endpoints. Bursting past it 429s every call after
+    the first, so requests must be paced proactively rather than only
+    reacting to a 429 after it happens."""
+    import time as time_module
+
+    from app.mcp.paper_search_server import patch_semantic_scholar_empty_results
+    from paper_search_mcp.academic_platforms.semantic import SemanticSearcher
+
+    patch_semantic_scholar_empty_results(min_interval_seconds=0.2)
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"total": 0, "offset": 0}
+
+        def raise_for_status(self):
+            pass
+
+    searcher = SemanticSearcher()
+    searcher.session.get = lambda *a, **k: FakeResponse()
+
+    started = time_module.monotonic()
+    searcher.search("first call", max_results=1)
+    searcher.search("second call", max_results=1)
+    elapsed = time_module.monotonic() - started
+
+    assert elapsed >= 0.2
+
+
 @pytest.mark.asyncio
 async def test_mcp_tool_timeout_has_actionable_error():
     class SlowSession:

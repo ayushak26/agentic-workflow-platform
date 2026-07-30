@@ -183,7 +183,7 @@ nodes:
     type: WebSearchAgent
     config:
       query: "{{research_context_query.parsed.query}}"
-      provider: auto
+      provider: tavily
       top_k: 8
       fallback_to_openai: true
 
@@ -261,7 +261,6 @@ nodes:
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
     model_routing:
       accuracy_priority: maximum
     config:
@@ -305,18 +304,85 @@ nodes:
     type: CallCoverageMatrixAgent
     config: {}
 
+  - id: research_documentation
+    type: TransformAgent
+    selected_model: auto
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      max_tokens: 16000
+      output_schema:
+        cited_sources: list
+        bibliography_formatted: str
+        web_search_references: list
+        candidate_sources_considered: list
+        citation_coverage_summary: object
+      prompt_template: |
+        Produce a standalone, audit-ready research-documentation record for
+        this proposal run. This is not proposal text — it is the evidence
+        paper trail: every research source cited, every web link consulted,
+        and what was found but not used. Never invent a source, URL, DOI, or
+        detail not present in the supplied records.
+
+        cited_sources: one entry per citation ID in the verified citation
+        registry — id, title, authors (if known), year, source type
+        (official/peer_reviewed/standard/dataset/project/market/partner),
+        URL or DOI, exact locator used, verification status, and the exact
+        Part B subsection(s) it supports. Use [UNKNOWN] for any missing
+        bibliographic field rather than guessing.
+
+        bibliography_formatted: a clean, numbered reference list built only
+        from cited_sources, ready to paste into an evidence annex.
+
+        web_search_references: one entry per web-search result actually
+        surfaced in the supplementary web context — the query that found it,
+        title, URL, why it was consulted, and whether it ended up informing
+        the proposal. Label these clearly as situational/contextual, never
+        as citable evidence.
+
+        candidate_sources_considered: discovery candidates that were found
+        but never promoted to verified evidence, each with a rejection
+        reason (unverified, contradicted, superseded, off-topic, duplicate).
+        If more than ~40 candidates were considered, group by rejection
+        reason with representative examples instead of listing every one.
+
+        citation_coverage_summary: counts of candidates discovered,
+        acquired in full text, verified, cited in the final citation
+        registry, rejected, and web-search-only references.
+
+        CITATION REGISTRY:
+        {{verify_evidence.citation_registry}}
+
+        VERIFIED CLAIMS:
+        {{verify_evidence.verified_claims}}
+
+        DISCOVERY CANDIDATES:
+        {{discover_evidence.candidates}}
+
+        SEARCH AUDIT:
+        {{discover_evidence.search_audit}}
+
+        WEB SEARCH RESULTS:
+        {{web_search.results}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
   - id: proposal_blueprint
     type: TransformAgent
     selected_model: auto
     allowed_models:
       - claude-opus-5
       - gpt-5.6-sol
-      - local-kimi-k3
     model_routing:
       accuracy_priority: maximum
     config:
       model: claude-opus-5
-      max_tokens: 20000
+      max_tokens: 34000
       output_schema:
         proposal_identity: object
         source_hierarchy_and_fact_ledger: object
@@ -334,23 +400,97 @@ nodes:
         cross_cutting_compliance: object
         figure_and_table_plan: object
         unresolved_inputs: list
+        specific_objectives_table: object
+        ambitions: object
+        pilot_strategy: object
+        linked_research_activities: object
+        ssh_integration: object
+        gender_dimension: object
+        data_management_open_science: object
+        pestel_analysis: object
+        dissemination_communication_plan: object
+        post_project_dissemination: object
+        exploitation_strategy: object
+        policy_impact_strategy: object
+        impact_summary: object
+        work_plan_timing: object
       prompt_template: |
         Treat the supplied concept note as the selected project concept. Create
         the master blueprint only for the Horizon Europe RIA/IA Part B technical
-        description. Follow the official 2026 headings exactly:
-        1.1 Objectives and ambition; 1.2 Methodology; 2.1 Project's pathways
-        towards impact; 2.2 Measures to maximise impact – dissemination,
-        exploitation and communication; optional 2.3 Summary; 3.1 Work plan and
-        resources; 3.2 Capacity of participants and consortium as a whole.
+        description. Follow the official 2026 headings exactly, down to every
+        numbered subsection below — each maps to the output field named after
+        it, and none may be silently skipped:
+        1.1 Objectives and ambition
+          1.1.1 Overall project objective: one row per approved objective —
+          never force the count to match a template's blank SO1-SO5
+          placeholders — each giving SO id, specific objective, target
+          outcome, KPI, baseline, target value, verification route and the
+          call requirement it answers -> specific_objectives_table
+          (the causal objective -> result -> outcome -> impact chain itself
+          still belongs in objective_result_outcome_chain).
+          1.1.2 Ambitions: the central ambition (A1), state of the art, and
+          what goes beyond it -> ambitions.
+        1.2 Methodology
+          1.2.1 Concept, 1.2.2 pilot strategy -> pilot_strategy, and
+          1.2.3 overall methodology and approach all belong in
+          methodology_and_validation. 1.2.4 linked research and innovation
+          activities this project builds on -> linked_research_activities.
+          1.2.5 interdisciplinary approach and SSH integration ->
+          ssh_integration. 1.2.6 gender dimension -> gender_dimension: treat
+          gender relevance in research content (variables, disaggregation,
+          bias controls) as its own topic, separate from workforce/team
+          balance.
+          1.2.7 data management and open science practices ->
+          data_management_open_science (cover data types, FAIR handling and
+          planned open-access routes).
+        2.1 Project's pathways towards impact
+          2.1.1-2.1.2 contribution to expected outcomes and impacts belong in
+          impact_pathways_and_kpis. 2.1.3 requirements and potential barriers
+          beyond the project's scope: run a concrete PESTEL (Political,
+          Economic, Social, Technological, Environmental, Legal) analysis
+          naming factors specific to this call and domain, never generic
+          boilerplate -> pestel_analysis. Give each barrier a category, the
+          external condition, likelihood, consequence, project response and a
+          responsible monitor. These are external conditions beyond the
+          project's control; never restate one as an internal implementation
+          risk in risks_and_mitigations, and vice versa.
+        2.2 Measures to maximise impact – dissemination, exploitation and
+        communication
+          2.2.1 dissemination strategy and measures and 2.2.2 communication
+          strategy -> dissemination_communication_plan. 2.2.3 dissemination
+          and communication activities after the project ends ->
+          post_project_dissemination. 2.2.4 exploitation strategy ->
+          exploitation_strategy: one key exploitable result (KER) per row,
+          each with an owner, target users, value proposition,
+          protection/IPR route, exploitation route and time to uptake.
+          2.2.5 multi-level policy impact strategy -> policy_impact_strategy.
+          Close section 2 with a short summary of impact -> impact_summary.
+        optional 2.3 Summary
+        3.1 Work plan and resources
+          3.1.1 timing of work packages -> work_plan_timing. 3.1.2 overall
+          structure of the work package set and 3.1.3 detailed work
+          description both belong in work_packages_tasks_deliverables.
+        3.2 Capacity of participants and consortium as a whole ->
+        consortium_and_resources.
         Do not create sections 1.3, 3.3, 3.4, Part A, ethics forms, security
-        forms, budget forms or submission instructions.
+        forms, budget forms or submission instructions. Treat any blank
+        placeholder label (e.g. an empty "SO1"/"A1" slot) or example/template
+        project name found in a supplied document as a structural cue only,
+        never as approved content — do not let either leak into the
+        blueprint.
 
-        Use a hard limit of 45 pages for a verified lump-sum topic and a working
-        target of 44 pages, including title, participant list, tables, figures
-        and references. Use this starting budget: front matter 1; 1.1 = 4;
-        1.2 = 13; 2.1 = 3; 2.2 = 3; optional 2.3 = 1; 3.1 = 16; 3.2 = 3.
-        Retain one page of safety against rendering variation. If section 2.3 is
-        omitted, reallocate its page only where evaluator value is highest.
+        Determine the hard page limit from the call metadata and template,
+        not by default: a confirmed lump-sum RIA/IA topic gets a 45-page hard
+        limit with a 44-page working target (front matter 1; 1.1 = 4; 1.2 =
+        13; 2.1 = 3; 2.2 = 3; optional 2.3 = 1; 3.1 = 16; 3.2 = 3). A standard
+        (non-lump-sum) full proposal gets the normal 40-page hard limit with
+        a 39-page working target (front matter 1; 1.1 = 5; 1.2 = 12; 2.1 =
+        4.5; 2.2 = 3; optional 2.3 = 0.5; 3.1 = 11.5; 3.2 = 2.5). If the
+        funding model cannot be confirmed from the supplied call documents,
+        default to the stricter 40-page profile and record the ambiguity in
+        unresolved_inputs. Retain one page of safety against rendering
+        variation. If section 2.3 is omitted, reallocate its page only where
+        evaluator value is highest.
 
         In figure_and_table_plan, for each planned figure give a short stable
         slug (used later to match a generated image to its slot) and the exact
@@ -415,12 +555,16 @@ edges:
   - from: understand_supporting_image
     to: scientific_synthesis
   - from: scientific_synthesis
-    to: call_coverage
+    to:
+      - call_coverage
+      - research_documentation
   - from: call_coverage
     to: proposal_blueprint
 
 entry: load_concept
-exit: proposal_blueprint
+exit:
+  - proposal_blueprint
+  - research_documentation
 
 output:
   include_input: false
@@ -440,6 +584,8 @@ output:
     - node_id: web_search
       flatten: false
     - node_id: understand_supporting_image
+      flatten: false
+    - node_id: research_documentation
       flatten: false
     - node_id: proposal_blueprint
       flatten: false

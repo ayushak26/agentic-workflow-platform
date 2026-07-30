@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from app.evidence.models import CandidateSource, FullTextDocument
 from app.evidence.retrieval import candidate_from_paper, utc_now
-from app.nodes.evidence_agent import ScholarlyCandidateDiscoveryAgent
+from app.nodes.evidence_agent import ScholarlyCandidateDiscoveryAgent, _sanitize_query
 from app.nodes.full_text_evidence_acquirer import FullTextEvidenceAcquirer
 from app.nodes.proposal_evidence_factory import (
     PairVerdict,
@@ -100,6 +101,68 @@ async def test_candidate_discovery_never_changes_claim_verification():
         "discovery",
         "contradiction",
     }
+
+
+def test_sanitize_query_strips_boolean_syntax():
+    # OpenAIRE's search API 400s or mis-tokenizes quoted/parenthesized
+    # boolean expressions; queries must reach it as plain keywords.
+    raw = "('agricultural residues' OR 'crop residues') AND ('secondary biomass')"
+    assert _sanitize_query(raw) == "agricultural residues crop residues secondary biomass"
+    assert _sanitize_query("plain keywords already") == "plain keywords already"
+    assert _sanitize_query("  extra   spaces  ") == "extra spaces"
+
+
+async def test_candidate_discovery_hands_off_partial_results_past_time_budget():
+    graph = ProposalGraph(
+        claims={
+            "CL-1": Claim(
+                id="CL-1",
+                text="Remote sensing improves agricultural residue estimates.",
+                claim_type="state_of_art",
+            ),
+            "CL-2": Claim(
+                id="CL-2",
+                text="Circular bioeconomy value chains reduce emissions.",
+                claim_type="impact",
+            ),
+        }
+    )
+    node = ScholarlyCandidateDiscoveryAgent(
+        "discover",
+        {
+            "sources": ["openalex"],
+            "max_results_per_source": 1,
+            "max_candidates_per_claim": 4,
+            "max_duration_seconds": 1800,
+        },
+        services={
+            "llm": DiscoveryLLM(),
+            "mcp_client": DiscoveryMCP(),
+        },
+    )
+
+    call_count = {"n": 0}
+
+    def fake_monotonic():
+        call_count["n"] += 1
+        # First call computes the deadline (t=0 + max_duration_seconds).
+        # Every call after that reports far in the future, so the very
+        # first per-claim check already finds the budget exhausted.
+        return 0.0 if call_count["n"] == 1 else 1_000_000.0
+
+    with patch("app.nodes.evidence_agent.time.monotonic", side_effect=fake_monotonic):
+        result = await node.run(
+            proposal_graph_state_update(graph),
+            node.config.model_dump(),
+        )
+
+    assert result["timed_out"] is True
+    assert result["claims_searched"] == 0
+    assert result["candidates_found"] == 0
+    assert "time budget" in result["report"]
+    # Nothing here changes claim verification, timed out or not.
+    assert graph.claims["CL-1"].verification == Status.MISSING
+    assert graph.claims["CL-2"].verification == Status.MISSING
 
 
 async def test_full_text_acquirer_stores_immutable_pdf_and_pages():

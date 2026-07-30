@@ -12,6 +12,7 @@ credentials are redacted before node inputs are stored.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -251,6 +252,11 @@ async def record_node_started(
         "duration_s": None,
         "error": None,
     }
+    # `owner_pid` records which OS process is actually executing this node
+    # right now. It is the liveness signal _reconcile_if_stale uses to tell
+    # "the owning process died" (pid on the doc no longer exists / doesn't
+    # match this process) apart from "this node is just slow" (pid still
+    # matches — the process is demonstrably still alive and working).
     try:
         await db["run_history"].update_one(
             {"run_id": run_id, "session_id": session_id},
@@ -259,6 +265,7 @@ async def record_node_started(
                     f"node_runs.{key}": record,
                     "status": "running",
                     "updated_at": now,
+                    "owner_pid": os.getpid(),
                 },
                 "$addToSet": {"active_nodes": node_id},
             },
@@ -696,15 +703,50 @@ def _as_aware_utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
+def _process_is_alive(pid: int | None) -> bool:
+    """Best-effort same-host liveness check for a run's owning process.
+
+    ``os.kill(pid, 0)`` sends no signal — it only asks the OS whether a
+    process with this pid currently exists. This is a real liveness signal
+    (unlike a "no progress" timer): a single node awaiting one long LLM call
+    legitimately produces no state writes for many minutes, but the process
+    running it is still there the whole time.
+
+    Caveats, by design rather than oversight: this only means something on
+    the host that wrote ``owner_pid`` — it can't distinguish "hung forever
+    but technically alive" from genuinely healthy, and it isn't meaningful
+    across a multi-host/multi-pod deployment (a pid on another host is a
+    coincidence, not evidence). It exists to catch the concrete case this
+    platform actually hits: a dev server (``uvicorn --reload``) restarting
+    mid-run and leaving a "running" row nothing will ever finish.
+    """
+    if pid is None:
+        return True  # unknown owner — never guess it's dead
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, just owned by a different user
+    except OSError:
+        return True  # ambiguous — don't fail a run on an unrelated OS error
+    return True
+
+
 async def _reconcile_if_stale(db, doc: dict[str, Any] | None) -> dict[str, Any] | None:
     """Flip an orphaned "running" run to "failed" the moment it is read.
 
     A run can be left stuck at status="running" forever if the process
     executing it dies or restarts mid-node (e.g. a dev server reload) —
     nothing is left to write the failure. Rather than run a background
-    sweep, every read lazily checks staleness: no write to this run in over
-    `stale_run_after_seconds` while it claims to be running means the
-    executing task is gone, not just slow.
+    sweep, every read lazily checks staleness — but staleness is decided by
+    whether the owning OS process (`owner_pid`, stamped per node start by
+    record_node_started) still exists, not by elapsed time alone. A long
+    LLM call can legitimately leave `updated_at` untouched for many minutes
+    with the process very much alive; only a dead owner_pid means the run is
+    actually orphaned. `stale_run_after_seconds` is kept as a grace period
+    before the first check (a run that's mere seconds old shouldn't be
+    judged at all), not as the failure trigger itself.
     """
 
     if doc is None or doc.get("status") != "running":
@@ -718,13 +760,16 @@ async def _reconcile_if_stale(db, doc: dict[str, Any] | None) -> dict[str, Any] 
     if age_seconds < settings.stale_run_after_seconds:
         return doc
 
+    owner_pid = doc.get("owner_pid")
+    if _process_is_alive(owner_pid):
+        return doc
+
     run_id = doc["run_id"]
     session_id = doc["session_id"]
-    stale_minutes = int(settings.stale_run_after_seconds // 60)
     error_message = (
-        "Run marked failed automatically: no progress for over "
-        f"{stale_minutes} minute(s). The process executing this run likely "
-        "restarted or crashed mid-execution."
+        f"Run marked failed automatically: the process executing it "
+        f"(pid={owner_pid}) is no longer running. It crashed or the server "
+        "restarted mid-execution."
     )
 
     fields: dict[str, Any] = {
@@ -761,6 +806,7 @@ async def _reconcile_if_stale(db, doc: dict[str, Any] | None) -> dict[str, Any] 
         "run_history.stale_run_marked_failed",
         run_id=run_id,
         age_seconds=age_seconds,
+        owner_pid=owner_pid,
     )
     doc.update(
         {

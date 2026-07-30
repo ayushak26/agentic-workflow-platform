@@ -10,6 +10,7 @@ drafter may use a citation.
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -46,6 +47,24 @@ class ClaimSearchPlan(BaseModel):
     contradiction_queries: list[str] = Field(default_factory=list, max_length=2)
 
 
+_BOOLEAN_QUERY_CHARS = str.maketrans({c: " " for c in "()\"'"})
+
+
+def _sanitize_query(text: str) -> str:
+    """Strip boolean/advanced-search syntax from a generated query.
+
+    Several downstream providers (OpenAIRE's search API in particular) only
+    accept plain keywords: quoted phrases and parenthesized AND/OR groups
+    either 400 outright or get mis-tokenized by their query parser. The
+    system prompt already asks the model for plain keywords, but this is a
+    second, unconditional line of defense in case it doesn't comply.
+    """
+    cleaned = text.translate(_BOOLEAN_QUERY_CHARS)
+    for op in (" AND ", " OR ", " and ", " or "):
+        cleaned = cleaned.replace(op, " ")
+    return " ".join(cleaned.split())
+
+
 class ScholarlyCandidateDiscoveryInput(BaseModel):
     pass
 
@@ -67,6 +86,14 @@ class ScholarlyCandidateDiscoveryConfig(BaseModel):
     )
     require_contradiction_search: bool = True
     model: str | None = "claude-sonnet-4-5"
+    # Hard wall-clock ceiling for the whole discovery loop (all claims x all
+    # queries). Each individual MCP call already has its own per-call
+    # timeout (mcp_tool_timeout_seconds), but nothing previously bounded the
+    # loop as a whole — up to max_claims x 6 queries, each allowed up to that
+    # per-call timeout, could run for hours. Once this elapses, discovery
+    # stops claiming new work and hands off whatever candidates it already
+    # found, rather than blocking the rest of the workflow indefinitely.
+    max_duration_seconds: float = Field(default=1800.0, gt=0)
 
 
 class ScholarlyCandidateDiscoveryOutput(BaseModel):
@@ -75,6 +102,9 @@ class ScholarlyCandidateDiscoveryOutput(BaseModel):
     candidates: list[CandidateSource] = Field(default_factory=list)
     search_audit: list[SearchAuditRecord] = Field(default_factory=list)
     report: str = ""
+    # True when max_duration_seconds was hit and the loop handed off early
+    # with a partial candidate set, rather than searching every claim.
+    timed_out: bool = False
     # Backwards-compatible display fields. Candidate discovery does not add
     # verified sources or link claims, so these remain zero by design.
     sources_added: int = 0
@@ -117,8 +147,15 @@ class _ScholarlyCandidateDiscovery(NodeType):
         audit: list[SearchAuditRecord] = []
         report_lines: list[str] = []
         sources_arg = ",".join(cfg.sources)
+        deadline = time.monotonic() + cfg.max_duration_seconds
+        claims_processed = 0
+        timed_out = False
 
         for claim in targets:
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            claims_processed += 1
             plan = await self._search_plan(llm, claim, cfg.model)
             queries = [
                 ("discovery", query)
@@ -132,6 +169,9 @@ class _ScholarlyCandidateDiscovery(NodeType):
 
             claim_candidates: list[CandidateSource] = []
             for purpose, query in queries:
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    break
                 searched_at = utc_now()
                 error: str | None = None
                 papers: list[dict[str, Any]] = []
@@ -203,6 +243,15 @@ class _ScholarlyCandidateDiscovery(NodeType):
                 f"[{claim.id}] retained {len(retained)} candidate records; "
                 "zero verified citations"
             )
+            if timed_out:
+                break
+
+        if timed_out:
+            report_lines.append(
+                f"Discovery time budget ({cfg.max_duration_seconds:.0f}s) "
+                f"exceeded after {claims_processed} of {len(targets)} "
+                "claims — handing off with the candidates found so far."
+            )
 
         candidates = deduplicate_candidates(candidates)
         display_sources = [
@@ -219,7 +268,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
         ]
         return {
             "candidates_found": len(candidates),
-            "claims_searched": len(targets),
+            "claims_searched": claims_processed,
             "candidates": [
                 item.model_dump(mode="json") for item in candidates
             ],
@@ -231,6 +280,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
                 "to claims and did not change verification status.\n"
                 + "\n".join(report_lines)
             ),
+            "timed_out": timed_out,
             "sources_added": 0,
             "claims_linked": 0,
             "sources": display_sources,
@@ -250,7 +300,17 @@ class _ScholarlyCandidateDiscovery(NodeType):
                     "proposal claim. Do not answer the claim and do not invent "
                     "sources. Provide three complementary discovery queries and "
                     "one query designed to find negative, null, conflicting, or "
-                    "boundary-condition evidence. Queries must be concise."
+                    "boundary-condition evidence. Queries must be concise.\n\n"
+                    "Each query is sent verbatim to multiple academic search "
+                    "APIs (OpenAIRE, OpenAlex, Semantic Scholar, arXiv, and "
+                    "others) fanned out in parallel. Several of them do not "
+                    "support boolean/advanced query syntax — write each query "
+                    "as plain natural-language keywords only: no quoted "
+                    "phrases, no AND/OR, no parentheses. Prefer 3-6 bare "
+                    "keywords over a boolean expression (e.g. "
+                    "'agricultural residue secondary biomass regional "
+                    "bioeconomy', not \"('agricultural residues' OR 'crop "
+                    "residues') AND ('secondary biomass' OR ...)\")."
                 ),
                 user=f"CLAIM:\n{claim.text}",
                 response_model=ClaimSearchPlan,
@@ -258,12 +318,12 @@ class _ScholarlyCandidateDiscovery(NodeType):
                 max_tokens=700,
             )
             discovery = [
-                item.strip()[:180]
+                _sanitize_query(item)[:180]
                 for item in result.discovery_queries
                 if item.strip()
             ]
             contradiction = [
-                item.strip()[:180]
+                _sanitize_query(item)[:180]
                 for item in result.contradiction_queries
                 if item.strip()
             ]
@@ -277,7 +337,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
             # gateways that do not implement structured completion.
             pass
 
-        base = " ".join(claim.text.split())[:150]
+        base = _sanitize_query(claim.text)[:150]
         return ClaimSearchPlan(
             discovery_queries=[
                 base,

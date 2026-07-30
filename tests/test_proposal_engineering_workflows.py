@@ -28,20 +28,33 @@ def _types(path: Path) -> list[str]:
 def test_autonomous_workflow_has_no_human_pause_and_only_docx_export():
     node_types = _types(AUTONOMOUS)
 
-    assert len(node_types) == 32
+    # 32 original nodes + 7 added when compile/revise were split per
+    # criterion (Excellence/Impact/Implementation) to avoid a single
+    # TransformAgent call having to hold a ~40-44 page document within its
+    # max_tokens output: compile_excellence, compile_impact,
+    # compile_implementation, revise_excellence, revise_impact,
+    # revise_implementation, plus research_documentation (citation/web-search
+    # audit trail). compile_v1 and final_revision keep their ids but are now
+    # TextAssemblerAgent (deterministic, non-LLM join) nodes instead of
+    # TransformAgent.
+    assert len(node_types) == 39
     assert "HumanInLoopAgent" not in node_types
     assert node_types.count("HorizonDOCXProposalRenderer") == 1
     assert "HorizonHTMLProposalRenderer" not in node_types
+    assert node_types.count("TextAssemblerAgent") == 2
     assert node_types[-1] == "HorizonDOCXProposalRenderer"
 
 
 def test_human_reviewed_workflow_has_four_gates_and_only_pdf_export():
     node_types = _types(HITL)
 
-    assert len(node_types) == 37
+    # 37 original nodes + 7 added by the same compile/revise split described
+    # above (see test_autonomous_workflow_has_no_human_pause_and_only_docx_export).
+    assert len(node_types) == 44
     assert node_types.count("HumanInLoopAgent") == 4
     assert node_types.count("HorizonHTMLProposalRenderer") == 1
     assert "HorizonDOCXProposalRenderer" not in node_types
+    assert node_types.count("TextAssemblerAgent") == 2
     assert node_types[-1] == "HorizonHTMLProposalRenderer"
 
 
