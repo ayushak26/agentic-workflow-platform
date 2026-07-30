@@ -37,7 +37,7 @@ inputs:
     description: call_intelligence.parsed (atomic call checklist).
 
   normalise_report:
-    type: json
+    type: text
     required: true
     description: normalise_source_graph.report.
 
@@ -57,14 +57,14 @@ inputs:
     description: discover_evidence.search_audit.
 
   load_concept:
-    type: json
+    type: file
     required: true
-    description: "[LIVE] evidence stage's load_concept output — .text is the concept note text given to proposal_blueprint."
+    description: "[LIVE] evidence stage's load_concept output — .parseable_text is the concept note text given to proposal_blueprint."
 
   load_documents:
-    type: json
+    type: file
     required: true
-    description: "[LIVE] evidence stage's load_documents output — .text is given to proposal_blueprint, draft_2_2, draft_3_1 and draft_3_2 for source fidelity."
+    description: "[LIVE] evidence stage's load_documents output — .parseable_text is given to proposal_blueprint, draft_2_2, draft_3_1 and draft_3_2 for source fidelity."
 
   understand_supporting_image:
     type: json
@@ -300,7 +300,7 @@ nodes:
         timeline, pilot, source or evidence detail from nothing.
 
         CONCEPT NOTE:
-        {{ inputs.load_concept.text }}
+        {{ inputs.load_concept.parseable_text }}
 
         PROPOSAL METADATA:
         {{ inputs.metadata }}
@@ -316,7 +316,7 @@ nodes:
         {{ inputs.normalise_warnings }}
 
         SUPPORTING DOCUMENTS:
-        {{ inputs.load_documents.text }}
+        {{ inputs.load_documents.parseable_text }}
 
         VERIFIED EVIDENCE (citation-annotated narrative markdown of the
         verified claims):
@@ -602,7 +602,7 @@ nodes:
         {{proposal_blueprint.parsed}}
 
         SUPPORTING DOCUMENTS:
-        {{ inputs.load_documents.text }}
+        {{ inputs.load_documents.parseable_text }}
 
   - id: draft_3_1_workplan_resources
     type: TransformAgent
@@ -657,7 +657,7 @@ nodes:
         {{proposal_blueprint.parsed}}
 
         SUPPORTING DOCUMENTS:
-        {{ inputs.load_documents.text }}
+        {{ inputs.load_documents.parseable_text }}
 
   - id: draft_3_2_consortium
     type: TransformAgent
@@ -689,7 +689,7 @@ nodes:
         {{proposal_blueprint.parsed}}
 
         SUPPORTING DOCUMENTS:
-        {{ inputs.load_documents.text }}
+        {{ inputs.load_documents.parseable_text }}
 
   # ---- Compilation is split by evaluated criterion (Excellence / Impact /
   # Implementation) instead of one monolithic pass. A ~40-44 page proposal

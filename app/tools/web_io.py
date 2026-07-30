@@ -229,7 +229,7 @@ class WebSearchService:
         client = self._openai_client or AsyncOpenAI(
             api_key=key,
             max_retries=0,
-            timeout=self.settings.external_request_timeout_seconds,
+            timeout=self.settings.llm_request_timeout_seconds,
         )
         response = await client.responses.create(
             model=self.settings.openai_web_search_model,
