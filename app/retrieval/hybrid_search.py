@@ -80,6 +80,7 @@ async def hybrid_search(
     chunks = [
         RetrievedChunk(
             chunk_id=str(obj.properties.get("chunk_id", obj.uuid)),
+            display_number=obj.properties.get("display_number"),
             doc_id=obj.properties.get("source_path", ""),
             doc_title=obj.properties.get("source_path", "").split("/")[-1],
             doc_type=obj.properties.get("doc_type", ""),

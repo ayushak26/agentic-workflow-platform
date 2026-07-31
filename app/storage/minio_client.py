@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import boto3
 from botocore.client import Config
@@ -189,6 +189,30 @@ class ObjectStore:
             if e.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
                 return False
             raise
+
+    # ---- Listing ---------------------------------------------------------
+
+    def list_objects(self, prefix: str) -> list[dict[str, Any]]:
+        """List objects under a key prefix. Returns [{key, size, last_modified}].
+
+        Paginated so it works past the 1000-object response cap.
+        """
+        paginator = self.client.get_paginator("list_objects_v2")
+        out: list[dict[str, Any]] = []
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in page.get("Contents", []) or []:
+                out.append(
+                    {
+                        "key": obj["Key"],
+                        "size": int(obj.get("Size") or 0),
+                        "last_modified": (
+                            obj["LastModified"].isoformat()
+                            if obj.get("LastModified")
+                            else None
+                        ),
+                    }
+                )
+        return out
 
     # ---- Presigned URLs ------------------------------------------------------
 

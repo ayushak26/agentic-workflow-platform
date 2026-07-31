@@ -42,7 +42,8 @@ SCHEMA_PROPERTIES = [
     Property(name="language", data_type=DataType.TEXT, index_filterable=True),
     Property(name="session_id", data_type=DataType.TEXT, index_filterable=True),
     Property(name="collection_id", data_type=DataType.TEXT, index_filterable=True),
-    Property(name="ingested_at", data_type=DataType.DATE),                             
+    Property(name="display_number", data_type=DataType.INT, index_filterable=True),
+    Property(name="ingested_at", data_type=DataType.DATE),
 ]
 
 

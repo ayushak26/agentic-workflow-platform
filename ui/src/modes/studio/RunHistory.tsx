@@ -578,6 +578,12 @@ export function RunHistory() {
                 >
                   Open proposal review
                 </button>
+                <button
+                  onClick={() => navigate(`/candidates/${detail.run.run_id}`)}
+                  className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
+                >
+                  View evidence
+                </button>
                 {nodeIds.length > 0 && (
                   <CopyButton
                     text={buildReusableInputsJson()}

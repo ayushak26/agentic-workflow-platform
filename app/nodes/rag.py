@@ -40,6 +40,7 @@ class Citation(BaseModel):
     chunk_id: str
     source_doc: str
     snippet: str
+    display_number: int | None = None           # global registry [N]
 
 
 class RAGOutput(BaseModel):
@@ -47,6 +48,7 @@ class RAGOutput(BaseModel):
     citations: list[Citation]
     retrievals: list[dict]                      # full RetrievedChunk dump for the Cockpit
     rewritten_query: str | None
+    grounding_for_drafter: str = ""
 
 
 CITATION_RE = re.compile(r"\[(\d+)\]")
@@ -111,6 +113,7 @@ class RAGAgent(NodeType):
                 label=label,
                 chunk_id=result.chunks[label - 1].chunk_id,
                 source_doc=result.chunks[label - 1].doc_title,
+                display_number=result.chunks[label - 1].display_number,
                 snippet=(result.chunks[label - 1].text[:200] + "...")
                         if len(result.chunks[label - 1].text) > 200
                         else result.chunks[label - 1].text,
@@ -119,9 +122,17 @@ class RAGAgent(NodeType):
             if label in valid_labels
         ]
 
+        grounding_for_drafter = "\n\n".join(
+            f"[{c.display_number}] (source: {c.doc_title})\n"
+            f"{c.compressed_text or c.text}"
+            for c in result.chunks
+            if c.display_number is not None
+        )
+
         return {
             "answer": answer,
             "citations": [c.model_dump() for c in citations],
             "retrievals": [c.model_dump() for c in result.chunks],
             "rewritten_query": result.rewritten_query,
+            "grounding_for_drafter": grounding_for_drafter,
         }

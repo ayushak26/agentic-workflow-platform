@@ -529,8 +529,9 @@ async def stream_run_events(
 @router.get("/files")
 def get_file(key: str, request: Request, download: bool = False):
     """Stream a file from object storage by key (used by the Output Viewer).
-    POC: serves any workflow-scoped key. Phase 11 adds session-scoped access."""
-    if not key.startswith("workflows/"):
+    POC: serves any workflow- or evidence-scoped key. Phase 11 adds
+    session-scoped access."""
+    if not (key.startswith("workflows/") or key.startswith("evidence/")):
         raise HTTPException(status_code=400, detail="only workflow-scoped keys are served")
     store = getattr(request.app.state, "services", {}).get("object_store")
     if store is None:

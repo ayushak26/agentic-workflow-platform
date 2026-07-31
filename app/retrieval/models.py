@@ -62,6 +62,7 @@ class RetrievedChunk(BaseModel):
     """
 
     chunk_id: str
+    display_number: Optional[int] = None   # global citation [N] stamped at ingestion
     doc_id: str
     doc_title: str
     doc_type: str

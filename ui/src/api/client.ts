@@ -42,6 +42,14 @@ export type ExampleResult = {
   generated_answer: string;
   scores: CriterionScore[];
 };
+export type RunCandidate = {
+  source_id: string;
+  version_id: string;
+  key: string;
+  size: number;
+  last_modified: string | null;
+  pdf_url: string;
+};
 export type Scorecard = {
   workflow_name: string;
   judge_model: string;
@@ -268,6 +276,9 @@ export const api = {
   runDetail: (run_id: string) =>
     afetch(`${API}/runs/mine/${run_id}`, { headers: authHeaders() })
       .then(j<{ run: RunDetail; audit: AuditEvent[] }>),
+  runCandidates: (run_id: string) =>
+    afetch(`${API}/candidates/${run_id}`, { headers: authHeaders() })
+      .then(j<{ run_id: string; count: number; candidates: RunCandidate[] }>),
   researchSkills: () =>
     afetch(`${API}/research/skills`, { headers: authHeaders() })
       .then(j<{

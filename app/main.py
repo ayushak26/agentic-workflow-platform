@@ -46,6 +46,7 @@ from app.api import research as research_api
 from app.api import workflow_files as workflow_files_api
 from app.api import llm_providers as llm_providers_api
 from app.api import pipelines as pipelines_api
+from app.api import candidates as candidates_api
 
 from app.db.mongo import DB_NAME
 
@@ -253,6 +254,10 @@ async def lifespan(app: FastAPI):
                 embedder=_embedder,
                 collection_registry=_registry,
             )
+            # Write path for evidence ingestion (MinIOEvidenceIngestion node).
+            services["evidence_indexer"] = lambda chunks, vectors: (
+                _wv.upsert_chunks(chunks, vectors)
+            )
             logger.info("retriever.ready")
         except Exception as exc:
             logger.warning(
@@ -339,3 +344,4 @@ app.include_router(research_api.router)
 app.include_router(workflow_files_api.router)
 app.include_router(llm_providers_api.router)
 app.include_router(pipelines_api.router)
+app.include_router(candidates_api.router)
