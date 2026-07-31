@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.observability.logging import get_logger
+from app.tools.content_length import narrative_char_count
 from app.tools.proposal_rendering import render_horizon_proposal
 
 
@@ -97,7 +98,7 @@ class HorizonHTMLProposalRenderer(NodeType):
             raise RuntimeError(
                 "HorizonHTMLProposalRenderer requires object_store"
             )
-        if len(cfg.content) > cfg.max_content_characters:
+        if narrative_char_count(cfg.content) > cfg.max_content_characters:
             raise ValueError(
                 f"proposal content exceeds {cfg.max_content_characters} characters"
             )

@@ -12,9 +12,13 @@ credentials are redacted before node inputs are stored.
 """
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.config import settings
 from app.observability.logging import get_logger
@@ -22,6 +26,106 @@ from app.observability.logging import get_logger
 logger = get_logger(__name__)
 
 TERMINAL_STATUSES = {"completed", "rejected", "failed"}
+
+# A run_history/run_checkpoints document holds one map entry per node for the
+# lifetime of the run. Mongo caps any single document at 16MB, so a value that
+# is individually large (a full LLM completion, a red-team transcript) is
+# moved into GridFS instead of embedded inline; only a small pointer stays in
+# the map entry. This is a per-value threshold, not a document-size check —
+# it exists specifically to stop the handful of large fields from ever
+# accumulating toward the 16MB cap, so it must stay well below it.
+_INLINE_VALUE_LIMIT_BYTES = 200_000
+_BLOB_BUCKET_NAME = "run_history_blobs"
+
+_SIZE_ERROR_MARKERS = ("BSONObj size", "DocumentTooLarge", "too large")
+
+
+def _is_document_size_error(exc: Exception) -> bool:
+    text = str(exc)
+    return any(marker in text for marker in _SIZE_ERROR_MARKERS)
+
+
+async def _externalize_if_large(
+    db,
+    *,
+    run_id: str,
+    node_id: str,
+    field: str,
+    value: Any,
+    force: bool = False,
+) -> Any:
+    """Return `value` unchanged, or a small GridFS pointer if it's too big.
+
+    `_inflate_value` reverses this on read. Values that already are a pointer
+    (e.g. re-externalizing on a size-error retry) are returned unchanged.
+    """
+    if value is None or (isinstance(value, dict) and value.get("_externalized")):
+        return value
+    try:
+        encoded = json.dumps(value, default=str).encode("utf-8")
+    except (TypeError, ValueError):
+        return value
+    if not force and len(encoded) <= _INLINE_VALUE_LIMIT_BYTES:
+        return value
+
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name=_BLOB_BUCKET_NAME)
+    file_id = await bucket.upload_from_stream(
+        f"{run_id}:{node_id}:{field}",
+        encoded,
+        metadata={"run_id": run_id, "node_id": node_id, "field": field},
+    )
+    return {
+        "_externalized": True,
+        "blob_id": str(file_id),
+        "size_bytes": len(encoded),
+        "preview": encoded[:2000].decode("utf-8", errors="replace"),
+    }
+
+
+async def _inflate_value(db, value: Any) -> Any:
+    """Reverse `_externalize_if_large`: fetch and decode a GridFS pointer."""
+
+    if not isinstance(value, dict) or not value.get("_externalized"):
+        return value
+    bucket = AsyncIOMotorGridFSBucket(db, bucket_name=_BLOB_BUCKET_NAME)
+    try:
+        stream = await bucket.open_download_stream(ObjectId(value["blob_id"]))
+        raw = await stream.read()
+        return json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        logger.error(
+            "run_history_blob_read_failed",
+            error=str(exc),
+            blob_id=value.get("blob_id"),
+        )
+        return value
+
+
+async def _inflate_run_document(
+    db, doc: dict[str, Any] | None
+) -> dict[str, Any] | None:
+    """Transparently resolve GridFS pointers so callers see the original shape."""
+
+    if doc is None:
+        return doc
+    outputs = doc.get("outputs")
+    if isinstance(outputs, dict):
+        if outputs.get("_externalized"):
+            doc["outputs"] = await _inflate_value(db, outputs)
+        else:
+            doc["outputs"] = {
+                key: await _inflate_value(db, value) for key, value in outputs.items()
+            }
+    node_runs = doc.get("node_runs")
+    if isinstance(node_runs, dict):
+        for record in node_runs.values():
+            if not isinstance(record, dict):
+                continue
+            if "output" in record:
+                record["output"] = await _inflate_value(db, record["output"])
+            if "input" in record:
+                record["input"] = await _inflate_value(db, record["input"])
+    return doc
 
 _REDACTED_KEYS = {
     "api_key",
@@ -150,6 +254,16 @@ async def upsert_run(
     _require_session(session_id)
     now = datetime.now(timezone.utc)
 
+    stored_outputs = None
+    if outputs is not None:
+        stored_outputs = await _externalize_if_large(
+            db,
+            run_id=run_id,
+            node_id="_run",
+            field="outputs",
+            value=redact_for_history(outputs),
+        )
+
     fields: dict[str, Any] = {"updated_at": now}
     optional_fields = {
         "workflow_name": workflow_name,
@@ -161,7 +275,7 @@ async def upsert_run(
             if variables is not None
             else None
         ),
-        "outputs": redact_for_history(outputs) if outputs is not None else None,
+        "outputs": stored_outputs,
         "workflow_yaml": workflow_yaml,
         "started_at": started_at,
         "ended_at": ended_at,
@@ -223,7 +337,27 @@ async def upsert_run(
             upsert=True,
         )
     except Exception as exc:
-        logger.error("run_history_write_failed", error=str(exc), run_id=run_id)
+        if not _is_document_size_error(exc) or outputs is None:
+            logger.error("run_history_write_failed", error=str(exc), run_id=run_id)
+            return
+        fields["outputs"] = await _externalize_if_large(
+            db,
+            run_id=run_id,
+            node_id="_run",
+            field="outputs",
+            value=redact_for_history(outputs),
+            force=True,
+        )
+        try:
+            await db["run_history"].update_one(
+                {"run_id": run_id, "session_id": session_id},
+                {"$set": fields, "$setOnInsert": set_on_insert},
+                upsert=True,
+            )
+        except Exception as retry_exc:
+            logger.error(
+                "run_history_write_failed", error=str(retry_exc), run_id=run_id
+            )
 
 
 async def record_node_started(
@@ -241,11 +375,15 @@ async def record_node_started(
     _require_session(session_id)
     key = _node_key(node_id)
     now = datetime.now(timezone.utc)
+    safe_input = redact_for_history(node_input)
+    stored_input = await _externalize_if_large(
+        db, run_id=run_id, node_id=node_id, field="input", value=safe_input
+    )
     record = {
         "node_id": node_id,
         "type_name": type_name,
         "status": "running",
-        "input": redact_for_history(node_input),
+        "input": stored_input,
         "output": None,
         "started_at": started_at,
         "ended_at": None,
@@ -257,26 +395,43 @@ async def record_node_started(
     # "the owning process died" (pid on the doc no longer exists / doesn't
     # match this process) apart from "this node is just slow" (pid still
     # matches — the process is demonstrably still alive and working).
+    update = {
+        "$set": {
+            f"node_runs.{key}": record,
+            "status": "running",
+            "updated_at": now,
+            "owner_pid": os.getpid(),
+        },
+        "$addToSet": {"active_nodes": node_id},
+    }
     try:
         await db["run_history"].update_one(
-            {"run_id": run_id, "session_id": session_id},
-            {
-                "$set": {
-                    f"node_runs.{key}": record,
-                    "status": "running",
-                    "updated_at": now,
-                    "owner_pid": os.getpid(),
-                },
-                "$addToSet": {"active_nodes": node_id},
-            },
+            {"run_id": run_id, "session_id": session_id}, update
         )
     except Exception as exc:
-        logger.error(
-            "run_history_node_start_failed",
-            error=str(exc),
-            run_id=run_id,
-            node_id=node_id,
+        if not _is_document_size_error(exc):
+            logger.error(
+                "run_history_node_start_failed",
+                error=str(exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
+            return
+        record["input"] = await _externalize_if_large(
+            db, run_id=run_id, node_id=node_id, field="input", value=safe_input, force=True
         )
+        update["$set"][f"node_runs.{key}"] = record
+        try:
+            await db["run_history"].update_one(
+                {"run_id": run_id, "session_id": session_id}, update
+            )
+        except Exception as retry_exc:
+            logger.error(
+                "run_history_node_start_failed",
+                error=str(retry_exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
 
 
 async def record_node_completed(
@@ -296,34 +451,60 @@ async def record_node_completed(
     key = _node_key(node_id)
     now = datetime.now(timezone.utc)
     safe_output = redact_for_history(output)
+
+    async def _build_set(force: bool) -> dict[str, Any]:
+        stored_output = await _externalize_if_large(
+            db, run_id=run_id, node_id=node_id, field="output", value=safe_output, force=force
+        )
+        return {
+            f"node_runs.{key}.status": "completed",
+            f"node_runs.{key}.output": stored_output,
+            f"node_runs.{key}.model_selections": (
+                redact_for_history(model_selections or [])
+            ),
+            f"node_runs.{key}.ended_at": ended_at,
+            f"node_runs.{key}.duration_s": duration_s,
+            f"outputs.{key}": stored_output,
+            "last_completed_node": node_id,
+            "updated_at": now,
+        }
+
     try:
         await db["run_history"].update_one(
             {"run_id": run_id, "session_id": session_id},
             {
-                "$set": {
-                    f"node_runs.{key}.status": "completed",
-                    f"node_runs.{key}.output": safe_output,
-                    f"node_runs.{key}.model_selections": (
-                        redact_for_history(model_selections or [])
-                    ),
-                    f"node_runs.{key}.ended_at": ended_at,
-                    f"node_runs.{key}.duration_s": duration_s,
-                    f"outputs.{key}": safe_output,
-                    "last_completed_node": node_id,
-                    "updated_at": now,
-                },
+                "$set": await _build_set(force=False),
                 "$pull": {"active_nodes": node_id},
                 "$addToSet": {"completed_nodes": node_id},
                 "$inc": {"completed_node_count": 1},
             },
         )
     except Exception as exc:
-        logger.error(
-            "run_history_node_complete_failed",
-            error=str(exc),
-            run_id=run_id,
-            node_id=node_id,
-        )
+        if not _is_document_size_error(exc):
+            logger.error(
+                "run_history_node_complete_failed",
+                error=str(exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
+            return
+        try:
+            await db["run_history"].update_one(
+                {"run_id": run_id, "session_id": session_id},
+                {
+                    "$set": await _build_set(force=True),
+                    "$pull": {"active_nodes": node_id},
+                    "$addToSet": {"completed_nodes": node_id},
+                    "$inc": {"completed_node_count": 1},
+                },
+            )
+        except Exception as retry_exc:
+            logger.error(
+                "run_history_node_complete_failed",
+                error=str(retry_exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
 
 
 async def record_node_reused(
@@ -344,49 +525,70 @@ async def record_node_reused(
     key = _node_key(node_id)
     now = datetime.now(timezone.utc)
     safe_output = redact_for_history(output)
-    record = {
-        "node_id": node_id,
-        "type_name": type_name,
-        "status": "reused",
-        "input": {
+
+    async def _build_set(force: bool) -> dict[str, Any]:
+        stored_output = await _externalize_if_large(
+            db, run_id=run_id, node_id=node_id, field="output", value=safe_output, force=force
+        )
+        record = {
+            "node_id": node_id,
+            "type_name": type_name,
+            "status": "reused",
+            "input": {
+                "source_run_id": source_run_id,
+                "note": "Output reused; provider was not called.",
+            },
+            "output": stored_output,
+            "started_at": ended_at - duration_s,
+            "ended_at": ended_at,
+            "duration_s": duration_s,
+            "error": None,
             "source_run_id": source_run_id,
-            "note": "Output reused; provider was not called.",
+        }
+        return {
+            f"node_runs.{key}": record,
+            f"outputs.{key}": stored_output,
+            "last_completed_node": node_id,
+            "updated_at": now,
+        }
+
+    update_tail = {
+        "$pull": {"active_nodes": node_id},
+        "$addToSet": {
+            "completed_nodes": node_id,
+            "reused_nodes": node_id,
         },
-        "output": safe_output,
-        "started_at": ended_at - duration_s,
-        "ended_at": ended_at,
-        "duration_s": duration_s,
-        "error": None,
-        "source_run_id": source_run_id,
+        "$inc": {
+            "completed_node_count": 1,
+            "reused_node_count": 1,
+        },
     }
     try:
         await db["run_history"].update_one(
             {"run_id": run_id, "session_id": session_id},
-            {
-                "$set": {
-                    f"node_runs.{key}": record,
-                    f"outputs.{key}": safe_output,
-                    "last_completed_node": node_id,
-                    "updated_at": now,
-                },
-                "$pull": {"active_nodes": node_id},
-                "$addToSet": {
-                    "completed_nodes": node_id,
-                    "reused_nodes": node_id,
-                },
-                "$inc": {
-                    "completed_node_count": 1,
-                    "reused_node_count": 1,
-                },
-            },
+            {"$set": await _build_set(force=False), **update_tail},
         )
     except Exception as exc:
-        logger.error(
-            "run_history_node_reuse_failed",
-            error=str(exc),
-            run_id=run_id,
-            node_id=node_id,
-        )
+        if not _is_document_size_error(exc):
+            logger.error(
+                "run_history_node_reuse_failed",
+                error=str(exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
+            return
+        try:
+            await db["run_history"].update_one(
+                {"run_id": run_id, "session_id": session_id},
+                {"$set": await _build_set(force=True), **update_tail},
+            )
+        except Exception as retry_exc:
+            logger.error(
+                "run_history_node_reuse_failed",
+                error=str(retry_exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
 
 
 async def record_node_paused(
@@ -531,34 +733,61 @@ async def record_checkpoint_node_completed(
 
     _require_session(session_id)
     key = _node_key(node_id)
+
+    async def _build_set(force: bool) -> dict[str, Any]:
+        return {
+            f"node_results.{key}": {
+                "node_id": node_id,
+                "output": await _externalize_if_large(
+                    db, run_id=run_id, node_id=node_id, field="output", value=output, force=force
+                ),
+                "extra_state": await _externalize_if_large(
+                    db,
+                    run_id=run_id,
+                    node_id=node_id,
+                    field="extra_state",
+                    value=extra_state,
+                    force=force,
+                ),
+            },
+            "status": "running",
+            "updated_at": datetime.now(timezone.utc),
+        }
+
+    update_tail = {
+        "$unset": {
+            "paused_node_id": "",
+            "pause_context": "",
+            "paused_at": "",
+        },
+        "$addToSet": {"completed_nodes": node_id},
+    }
     try:
         await db["run_checkpoints"].update_one(
             {"run_id": run_id, "session_id": session_id},
-            {
-                "$set": {
-                    f"node_results.{key}": {
-                        "node_id": node_id,
-                        "output": output,
-                        "extra_state": extra_state,
-                    },
-                    "status": "running",
-                    "updated_at": datetime.now(timezone.utc),
-                },
-                "$unset": {
-                    "paused_node_id": "",
-                    "pause_context": "",
-                    "paused_at": "",
-                },
-                "$addToSet": {"completed_nodes": node_id},
-            },
+            {"$set": await _build_set(force=False), **update_tail},
         )
     except Exception as exc:
-        logger.error(
-            "run_checkpoint_node_write_failed",
-            error=str(exc),
-            run_id=run_id,
-            node_id=node_id,
-        )
+        if not _is_document_size_error(exc):
+            logger.error(
+                "run_checkpoint_node_write_failed",
+                error=str(exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
+            return
+        try:
+            await db["run_checkpoints"].update_one(
+                {"run_id": run_id, "session_id": session_id},
+                {"$set": await _build_set(force=True), **update_tail},
+            )
+        except Exception as retry_exc:
+            logger.error(
+                "run_checkpoint_node_write_failed",
+                error=str(retry_exc),
+                run_id=run_id,
+                node_id=node_id,
+            )
 
 
 async def record_checkpoint_paused(
@@ -676,8 +905,8 @@ async def get_retry_checkpoint(
         node_id = result.get("node_id")
         if node_id:
             reusable_results[node_id] = {
-                "output": result.get("output") or {},
-                "extra_state": result.get("extra_state") or {},
+                "output": await _inflate_value(db, result.get("output")) or {},
+                "extra_state": await _inflate_value(db, result.get("extra_state")) or {},
             }
 
     document["reusable_results"] = reusable_results
@@ -827,7 +1056,8 @@ async def get_run(db, session_id: str, run_id: str) -> dict[str, Any] | None:
         {"session_id": session_id, "run_id": run_id},
         {"_id": 0},
     )
-    return await _reconcile_if_stale(db, doc)
+    doc = await _reconcile_if_stale(db, doc)
+    return await _inflate_run_document(db, doc)
 
 
 async def list_runs(
