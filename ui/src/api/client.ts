@@ -294,6 +294,37 @@ export const api = {
         reused_node_count: number;
       };
     }>),
+  pauseRun: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/pause`, {
+      method: 'POST',
+      headers: authHeaders(),
+    }).then(j<{ run_id: string; pause_requested: boolean; message: string }>),
+  resumePausedRun: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/resume`, {
+      method: 'POST',
+      headers: authHeaders(),
+    }).then(j<{
+      run_id: string;
+      status: string;
+      state?: unknown;
+      error?: string;
+    }>),
+  restartRun: (source_run_id: string, run_id: string) =>
+    afetch(`${API}/runs/mine/${source_run_id}/restart`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ run_id }),
+    }).then(j<{
+      run_id: string;
+      status: string;
+      state?: unknown;
+      error?: string;
+    }>),
+  deleteRun: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then(j<{ run_id: string; deleted: boolean }>),
 
   // ---- pipelines (chain saved workflows: one's outputs become the next's inputs)
   listPipelines: () =>

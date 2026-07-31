@@ -598,8 +598,18 @@ async def record_node_paused(
     session_id: str,
     node_id: str,
     paused_at: float,
+    pause_kind: str = "hitl_gate",
 ) -> None:
-    """Mark a HITL node and the overall run as paused."""
+    """Mark a node and the overall run as paused.
+
+    ``pause_kind`` distinguishes a HITL gate's own interrupt ("hitl_gate",
+    the default — resumed with an approve/reject/edit decision) from a
+    cooperative pause requested from run history ("user_requested" — resumed
+    with a plain continue, at whatever node boundary the run happened to
+    reach). Both go through the same LangGraph interrupt/resume machinery;
+    this field only changes how the resume payload is validated and how the
+    UI labels the pause.
+    """
 
     _require_session(session_id)
     key = _node_key(node_id)
@@ -611,6 +621,7 @@ async def record_node_paused(
                     f"node_runs.{key}.status": "paused",
                     f"node_runs.{key}.paused_at": paused_at,
                     "status": "paused",
+                    "pause_kind": pause_kind,
                     "updated_at": datetime.now(timezone.utc),
                 },
                 "$pull": {"active_nodes": node_id},
@@ -623,6 +634,51 @@ async def record_node_paused(
             run_id=run_id,
             node_id=node_id,
         )
+
+
+async def request_pause(db, *, run_id: str, session_id: str) -> bool:
+    """Ask a running workflow to pause at its next node boundary.
+
+    Best-effort and asynchronous: this only sets a flag the executor checks
+    between node invocations (see app/runtime/compiler.py) — it cannot
+    interrupt a node that is already mid-execution (e.g. an in-flight LLM
+    call). Returns whether a currently-"running" run matched.
+    """
+
+    _require_session(session_id)
+    result = await db["run_history"].update_one(
+        {"run_id": run_id, "session_id": session_id, "status": "running"},
+        {
+            "$set": {
+                "pause_requested": True,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    return result.matched_count > 0
+
+
+async def clear_pause_request(db, *, run_id: str, session_id: str) -> None:
+    _require_session(session_id)
+    await db["run_history"].update_one(
+        {"run_id": run_id, "session_id": session_id},
+        {
+            "$set": {
+                "pause_requested": False,
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+
+
+async def is_pause_requested(db, *, run_id: str, session_id: str) -> bool:
+    """Cheap per-node check — the executor calls this before every node."""
+
+    doc = await db["run_history"].find_one(
+        {"run_id": run_id, "session_id": session_id},
+        {"pause_requested": 1},
+    )
+    return bool(doc and doc.get("pause_requested"))
 
 
 async def record_node_failed(
@@ -797,8 +853,12 @@ async def record_checkpoint_paused(
     session_id: str,
     node_id: str,
     pause_context: Any,
+    pause_kind: str = "hitl_gate",
 ) -> None:
-    """Persist enough information to resume a HITL run after process restart."""
+    """Persist enough information to resume a paused run after process restart.
+
+    See ``record_node_paused`` for what ``pause_kind`` means.
+    """
 
     _require_session(session_id)
     try:
@@ -809,6 +869,7 @@ async def record_checkpoint_paused(
                     "status": "paused",
                     "paused_node_id": node_id,
                     "pause_context": redact_for_history(pause_context),
+                    "pause_kind": pause_kind,
                     "paused_at": datetime.now(timezone.utc),
                     "updated_at": datetime.now(timezone.utc),
                 }
@@ -1083,3 +1144,51 @@ async def list_runs(
     )
     docs = [doc async for doc in cursor]
     return [await _reconcile_if_stale(db, doc) for doc in docs]
+
+
+async def _delete_run_blobs(db, *, run_id: str) -> None:
+    """Remove every GridFS blob externalized for this run (see
+    ``_externalize_if_large``). Best-effort end to end — deleting the run
+    record itself must not be blocked by any GridFS failure, including
+    bucket construction or listing, not just an individual blob delete."""
+
+    try:
+        bucket = AsyncIOMotorGridFSBucket(db, bucket_name=_BLOB_BUCKET_NAME)
+        cursor = db[f"{_BLOB_BUCKET_NAME}.files"].find(
+            {"metadata.run_id": run_id}, {"_id": 1}
+        )
+        async for file_doc in cursor:
+            try:
+                await bucket.delete(file_doc["_id"])
+            except Exception as exc:
+                logger.error(
+                    "run_history_blob_delete_failed",
+                    error=str(exc),
+                    run_id=run_id,
+                    blob_id=str(file_doc["_id"]),
+                )
+    except Exception as exc:
+        logger.error(
+            "run_history_blob_cleanup_failed",
+            error=str(exc),
+            run_id=run_id,
+        )
+
+
+async def delete_run(db, *, run_id: str, session_id: str) -> bool:
+    """Permanently remove a run's history, checkpoint, and externalized blobs.
+
+    Returns whether a matching run_history document existed. Callers are
+    responsible for checking the run isn't a live pipeline stage first (see
+    app/workflow/pipeline_history.py) — this function only deletes.
+    """
+
+    _require_session(session_id)
+    await _delete_run_blobs(db, run_id=run_id)
+    checkpoint_result = await db["run_checkpoints"].delete_one(
+        {"run_id": run_id, "session_id": session_id}
+    )
+    history_result = await db["run_history"].delete_one(
+        {"run_id": run_id, "session_id": session_id}
+    )
+    return history_result.deleted_count > 0 or checkpoint_result.deleted_count > 0

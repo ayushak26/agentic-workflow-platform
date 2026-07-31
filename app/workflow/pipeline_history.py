@@ -123,6 +123,32 @@ async def list_pipeline_runs(
     return [doc async for doc in cursor]
 
 
+TERMINAL_PIPELINE_STATUSES = {"completed", "failed"}
+
+
+async def find_active_pipeline_stage(
+    db, *, run_id: str, session_id: str,
+) -> dict[str, Any] | None:
+    """Return the pipeline_runs doc if run_id is a stage of a non-terminal
+    pipeline (status "running" or "gated"), else None.
+
+    Used to block deleting a run that a pipeline still points at — deleting
+    it out from under an in-progress pipeline would leave that stage's
+    ``run_id`` referencing nothing, and a later advance/reconcile would only
+    find it missing after the fact.
+    """
+    if not session_id:
+        return None
+    return await db["pipeline_runs"].find_one(
+        {
+            "session_id": session_id,
+            "stages.run_id": run_id,
+            "status": {"$nin": list(TERMINAL_PIPELINE_STATUSES)},
+        },
+        {"_id": 0},
+    )
+
+
 def _stage_outcome_status(run_status: str) -> str:
     """Map an underlying workflow run's status onto a pipeline stage status."""
     if run_status in {"completed"}:

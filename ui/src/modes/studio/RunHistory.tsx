@@ -316,6 +316,10 @@ export function RunHistory() {
   const [listErr, setListErr] = useState<string | null>(null);
   const [detailErr, setDetailErr] = useState<string | null>(null);
   const [retryErr, setRetryErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<
+    'pause' | 'resume' | 'restart' | 'delete' | null
+  >(null);
   const [openNode, setOpenNode] = useState<string | null>(null);
 
   useEffect(() => {
@@ -369,6 +373,7 @@ export function RunHistory() {
     setDetail(null);
     setDetailErr(null);
     setRetryErr(null);
+    setActionErr(null);
     setOpenNode(null);
     const load = () => {
       api.runDetail(runId)
@@ -437,6 +442,69 @@ export function RunHistory() {
         retrySourceRunId: detail.run.run_id,
       },
     });
+  }
+
+  async function pauseRun() {
+    if (!detail || detail.run.status !== 'running') return;
+    setActionErr(null);
+    setActionBusy('pause');
+    try {
+      await api.pauseRun(detail.run.run_id);
+    } catch (error) {
+      setActionErr(String(error));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function resumeRun() {
+    if (!detail || detail.run.status !== 'paused') return;
+    setActionErr(null);
+    setActionBusy('resume');
+    try {
+      await api.resumePausedRun(detail.run.run_id);
+    } catch (error) {
+      setActionErr(String(error));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function restartRun() {
+    if (!detail) return;
+    setActionErr(null);
+    setActionBusy('restart');
+    try {
+      const newRunId = crypto.randomUUID();
+      await api.restartRun(detail.run.run_id, newRunId);
+      navigate(`/history/${newRunId}`);
+    } catch (error) {
+      setActionErr(String(error));
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
+  async function deleteRun() {
+    if (!detail) return;
+    if (!window.confirm(
+      `Delete this run permanently? This can't be undone.`,
+    )) {
+      return;
+    }
+    setActionErr(null);
+    setActionBusy('delete');
+    try {
+      const deletedRunId = detail.run.run_id;
+      await api.deleteRun(deletedRunId);
+      setRuns((prev) => prev.filter((r) => r.run_id !== deletedRunId));
+      setDetail(null);
+      navigate('/history', { replace: true });
+    } catch (error) {
+      setActionErr(String(error));
+    } finally {
+      setActionBusy(null);
+    }
   }
 
   return (
@@ -525,6 +593,38 @@ export function RunHistory() {
                     Retry from failure
                   </button>
                 )}
+                {detail.run.status === 'running' && (
+                  <button
+                    onClick={pauseRun}
+                    disabled={actionBusy !== null}
+                    className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {actionBusy === 'pause' ? 'Pausing…' : 'Pause'}
+                  </button>
+                )}
+                {detail.run.status === 'paused' && detail.run.pause_kind === 'user_requested' && (
+                  <button
+                    onClick={resumeRun}
+                    disabled={actionBusy !== null}
+                    className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
+                  >
+                    {actionBusy === 'resume' ? 'Resuming…' : 'Resume'}
+                  </button>
+                )}
+                <button
+                  onClick={restartRun}
+                  disabled={actionBusy !== null}
+                  className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {actionBusy === 'restart' ? 'Restarting…' : 'Restart'}
+                </button>
+                <button
+                  onClick={deleteRun}
+                  disabled={actionBusy !== null}
+                  className="px-4 py-2 rounded-md border border-red-200 text-red-700 text-sm hover:bg-red-50 disabled:opacity-50"
+                >
+                  {actionBusy === 'delete' ? 'Deleting…' : 'Delete'}
+                </button>
               </div>
             </div>
 
@@ -583,6 +683,19 @@ export function RunHistory() {
             {retryErr && (
               <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                 {retryErr}
+              </div>
+            )}
+
+            {actionErr && (
+              <div className="mb-5 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {actionErr}
+              </div>
+            )}
+
+            {detail.run.status === 'paused' && detail.run.pause_kind !== 'user_requested' && (
+              <div className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Paused at a human-review gate — resume it from the proposal
+                review screen, not from here.
               </div>
             )}
 

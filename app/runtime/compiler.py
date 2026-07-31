@@ -25,6 +25,7 @@ import time
 from typing import Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt
 
 from app.nodes.registry import NodeRegistry
 from app.observability import metrics
@@ -39,6 +40,8 @@ from app.security.audit import (
 )
 from app.workflow.run_history import (
     build_node_input,
+    clear_pause_request,
+    is_pause_requested,
     record_checkpoint_node_completed,
     record_checkpoint_paused,
     record_node_completed,
@@ -179,6 +182,14 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         if audit is not None and run_id:
             await write_audit_event(audit, run_id, session_id, node_id, NODE_START)
 
+        # Cooperative pause: a run-history "pause" action just sets a flag
+        # (app/workflow/run_history.py:request_pause) — nothing can interrupt
+        # a node that is already mid-execution (e.g. an in-flight LLM call),
+        # so this is the next node boundary reached, checked once up front.
+        # If set, park here via the same interrupt()/resume machinery HITL
+        # gates use, but tagged "user_requested" so resume doesn't require an
+        # approve/reject/edit decision (see app/runtime/hitl.py).
+        user_pause_triggered = False
         try:
             with metrics.track_node(type_name):
                 resolved = resolve(instance.config.model_dump(), state)
@@ -192,6 +203,38 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         node_input=build_node_input(state, resolved),
                         started_at=started,
                     )
+                # A restart-safe resume with no persistent LangGraph
+                # checkpointer configured rebuilds the run from scratch and
+                # replays it (see resume_workflow_durable's Mongo-fallback
+                # path) — that is a brand-new graph invocation, not
+                # Command(resume=...), so LangGraph's own interrupt/resume
+                # matching does not apply. That path already injects the
+                # paused node's resume decision into
+                # services["hitl_resume_decisions"] (the same map
+                # HumanInLoopAgent checks) precisely to skip past it; a
+                # cooperative pause must honor that marker exactly the same
+                # way, or it would re-pause instead of continuing.
+                durable_resume_decisions = (
+                    services.get("hitl_resume_decisions") or {}
+                )
+                if node_id not in durable_resume_decisions and (
+                    audit is not None and run_id and await is_pause_requested(
+                        audit, run_id=run_id, session_id=session_id,
+                    )
+                ):
+                    user_pause_triggered = True
+                    # First pass: raises (pause). On an in-process or
+                    # persistent-checkpointer resume, the checkpointed call
+                    # returns instead of raising — the flag must not be
+                    # cleared beforehand, or this call would happen zero
+                    # times on replay instead of matching the paused call,
+                    # which LangGraph's resume matching requires. Clearing it
+                    # here (only reached once actually resumed) also stops it
+                    # from re-triggering at the next node.
+                    interrupt({"kind": "user_requested_pause", "node_id": node_id})
+                    await clear_pause_request(
+                        audit, run_id=run_id, session_id=session_id,
+                    )
                 output = await instance.run(state, resolved)
                 extra_state = output.pop("__state__", {}) if isinstance(output, dict) else {}
                 instance.output_schema(**output)
@@ -202,8 +245,9 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
             # Server-side logging must not depend on a client being connected.
             # Interrupts are control flow (HITL pause), not errors — info only.
             if is_graph_interrupt(e):
+                pause_kind = "user_requested" if user_pause_triggered else "hitl_gate"
                 log.info("node_paused", node_id=node_id, type_name=type_name,
-                         run_id=run_id)
+                         run_id=run_id, pause_kind=pause_kind)
                 if audit is not None and run_id:
                     await record_node_paused(
                         audit,
@@ -211,6 +255,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         session_id=session_id,
                         node_id=node_id,
                         paused_at=time.time(),
+                        pause_kind=pause_kind,
                     )
                     await record_checkpoint_paused(
                         audit,
@@ -222,6 +267,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                                 getattr(e, "args", None)
                             )
                         },
+                        pause_kind=pause_kind,
                     )
             else:
                 log.error("node_failed", node_id=node_id, type_name=type_name,

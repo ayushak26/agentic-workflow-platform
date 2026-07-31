@@ -127,6 +127,8 @@ export type EventType =
   | 'hitl_reject'
   | 'hitl_edit';
 
+export type PauseKind = 'hitl_gate' | 'user_requested';
+
 export interface RunSummary {
   run_id: string;
   session_id: string;
@@ -147,6 +149,11 @@ export interface RunSummary {
   error: string | null;
   created_at: string;
   updated_at: string;
+  // Present only while status === 'paused'. Distinguishes a cooperative
+  // pause requested from run history ('user_requested', resumable with no
+  // decision) from a HITL gate's own pause ('hitl_gate', resumed from the
+  // review screen with an approve/reject/edit decision instead).
+  pause_kind?: PauseKind;
 }
 
 export type NodeRunStatus =

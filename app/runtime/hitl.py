@@ -14,6 +14,7 @@ from langgraph.types import Command
 from app.runtime.compiler import compile_workflow
 from app.runtime.loader import load_workflow_from_string
 from app.workflow.run_history import (
+    clear_pause_request,
     get_resume_checkpoint,
     record_checkpoint_approval,
 )
@@ -45,6 +46,12 @@ def _validate_saved_decision(
     checkpoint: dict[str, Any],
     decision: dict[str, Any],
 ) -> None:
+    if checkpoint.get("pause_kind") == "user_requested":
+        # A cooperative pause requested from run history, not a HITL gate —
+        # any resume payload just continues execution past it. There is no
+        # allowed_actions list to validate against because the paused node
+        # need not be a HumanInLoopAgent at all.
+        return
     action = decision.get("decision")
     paused_node_id = checkpoint.get("paused_node_id")
     spec = load_workflow_from_string(checkpoint["workflow_yaml"])
@@ -148,6 +155,18 @@ async def resume_workflow_durable(
 
         # Backward-compatible fallback for deployments that have Mongo replay
         # records but have not enabled the Redis LangGraph checkpointer yet.
+        # This path skips the paused node via hitl_resume_decisions below
+        # rather than through interrupt()/Command(resume=...), so a
+        # cooperative pause's own flag-clear (app/runtime/compiler.py, right
+        # after its interrupt() call returns) never runs here. Without this,
+        # pause_requested would stay set and re-pause every later node.
+        if (
+            db is not None
+            and session_id
+            and checkpoint.get("pause_kind") == "user_requested"
+        ):
+            await clear_pause_request(db, run_id=run_id, session_id=session_id)
+
         result = await run_workflow(
             spec,
             checkpoint.get("inputs") or {},
