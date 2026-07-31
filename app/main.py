@@ -217,6 +217,13 @@ async def lifespan(app: FastAPI):
             errors=len(skill_catalog.load_errors),
         )
 
+    # ── Bounded OpenAI Deep Research ─────────────────────────────────────────
+    if settings.deep_research_enabled:
+        from app.research.deep_research import get_deep_research_service
+
+        services["deep_research"] = get_deep_research_service()
+        logger.info("deep_research.ready")
+
     # ── MCP client ───────────────────────────────────────────────────────────
     # Launches the MCP server as a stdio subprocess and keeps one session open
     # for the app's lifetime. The MCPAgent node calls list_tools()/call_tool().

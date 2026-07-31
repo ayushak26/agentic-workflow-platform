@@ -94,6 +94,12 @@ class Settings(BaseSettings):
     )
     scientific_skills_max_prompt_chars: int = 30000
 
+    # OpenAI Deep Research (Responses API, built-in web_search_preview tool).
+    # Endpoint-specific — never selectable through the generic LLM router.
+    deep_research_enabled: bool = False
+    deep_research_timeout_seconds: float = Field(default=3600.0, gt=0, le=7200)
+    deep_research_poll_interval_seconds: float = Field(default=2.0, gt=0, le=60)
+
     # SSE is the authenticated, one-way run-event transport.
     sse_heartbeat_seconds: float = 15.0
     sse_replay_events_per_run: int = 1000

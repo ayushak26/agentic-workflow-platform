@@ -76,6 +76,31 @@ MODEL_CATALOG: tuple[ModelDefinition, ...] = (
         provider="openai",
     ),
     ModelDefinition(
+        name="gpt-5.6-terra",
+        display_name="GPT-5.6 Terra",
+        provider="openai",
+    ),
+    ModelDefinition(
+        name="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
+        provider="openai",
+    ),
+    ModelDefinition(
+        name="gpt-4o-mini",
+        display_name="GPT-4o Mini",
+        provider="openai",
+    ),
+    ModelDefinition(
+        name="o3",
+        display_name="o3",
+        provider="openai",
+    ),
+    ModelDefinition(
+        name="o4-mini",
+        display_name="o4-mini",
+        provider="openai",
+    ),
+    ModelDefinition(
         name="local-kimi-k3",
         display_name="Kimi K3 (Local)",
         provider="moonshot-local",

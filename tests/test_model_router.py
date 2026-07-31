@@ -40,7 +40,7 @@ def test_simple_extraction_uses_an_economy_model():
     assert decision.mode == "auto"
     assert decision.complexity == "simple"
     assert decision.task_kind == "extraction"
-    assert decision.selected_model == "claude-haiku-4-5"
+    assert decision.selected_model == "gpt-4o-mini"
 
 
 def test_complex_proposal_writing_uses_writing_strength():
@@ -81,7 +81,7 @@ def test_complex_structured_request_uses_structured_strength():
     )
 
     assert decision.task_kind == "structured"
-    assert decision.selected_model == "gpt-5.6-sol"
+    assert decision.selected_model == "o3"
 
 
 def test_offline_quality_scores_override_generic_policy():
@@ -154,11 +154,11 @@ def test_enabled_local_models_participate_in_auto_routing():
 
 
 def test_maximum_accuracy_priority_prefers_hosted_over_free_local_tie():
-    # Same tier ("premium") and same "writing" strength as claude-opus-5, but
-    # $0-metered -> would otherwise win every cost tie-break. Under
-    # accuracy_priority: maximum, cost should not decide between
-    # equal-quality models; hosted providers should win the tie instead,
-    # since local infra doesn't carry the same reliability guarantees.
+    # local-kimi-k3/local-glm-5 are $0-metered -> would otherwise win every
+    # cost tie-break. Under accuracy_priority: maximum, cost should not
+    # decide between equal-quality models; a hosted premium-tier model should
+    # win instead, since local infra doesn't carry the same reliability
+    # guarantees.
     decision = ModelRouter().select(
         method_name="complete",
         kwargs={
@@ -173,7 +173,8 @@ def test_maximum_accuracy_priority_prefers_hosted_over_free_local_tie():
         policy={"accuracy_priority": "maximum"},
     )
 
-    assert decision.selected_model == "claude-opus-5"
+    assert decision.selected_model not in {"local-kimi-k3", "local-glm-5"}
+    assert decision.selected_model == "gpt-5.6-sol"
 
 
 class RecordingGateway:
@@ -335,12 +336,12 @@ async def test_registry_auto_selection_is_visible_in_events(monkeypatch):
     assert event.type == "model_selected"
     assert event.context is not None
     assert event.context["requested_model"] == AUTO_MODEL
-    assert event.context["actual_model"] == "claude-haiku-4-5"
+    assert event.context["actual_model"] == "gpt-4o-mini"
     assert gateway.selection_history[-1]["actual_model"] == (
-        "claude-haiku-4-5"
+        "gpt-4o-mini"
     )
-    assert anthropic.calls == ["claude-haiku-4-5"]
-    assert openai.calls == []
+    assert openai.calls == ["gpt-4o-mini"]
+    assert anthropic.calls == []
 
 
 @pytest.mark.asyncio
@@ -381,8 +382,8 @@ async def test_registry_auto_selection_applies_to_structured_calls(monkeypatch):
     assert event.type == "model_selected"
     assert event.context is not None
     assert event.context["task_kind"] == "structured"
-    assert event.context["actual_model"] == "gpt-5.6-sol"
-    assert openai.calls == ["gpt-5.6-sol"]
+    assert event.context["actual_model"] == "o3"
+    assert openai.calls == ["o3"]
     assert anthropic.calls == []
 
 
@@ -697,8 +698,8 @@ async def test_registry_auto_selection_applies_to_tool_calls(monkeypatch):
     assert event.type == "model_selected"
     assert event.context is not None
     assert event.context["task_kind"] == "tool_use"
-    assert event.context["actual_model"] == "gpt-5.6-sol"
-    assert openai.calls == ["gpt-5.6-sol"]
+    assert event.context["actual_model"] == "o3"
+    assert openai.calls == ["o3"]
     assert anthropic.calls == []
 
 
@@ -744,5 +745,5 @@ exit: extract
 
     selections = result["state"]["model_selections"]
     assert selections[-1]["requested_model"] == AUTO_MODEL
-    assert selections[-1]["actual_model"] == "claude-haiku-4-5"
+    assert selections[-1]["actual_model"] == "gpt-4o-mini"
     assert selections[-1]["reason"]

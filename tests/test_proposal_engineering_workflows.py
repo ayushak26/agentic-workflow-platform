@@ -39,7 +39,12 @@ def test_autonomous_workflow_has_no_human_pause_and_only_docx_export():
     # TransformAgent. -1 for the removed scientific_synthesis node
     # (ScientificSkillAgent); downstream drafts now source verified-evidence
     # narrative directly from verify_evidence.proposal_ready_cited_markdown.
-    assert len(node_types) == 38
+    # +1 for scientific_peer_review (ScientificSkillAgent), reinstated as a
+    # dedicated node once the bounded Deep Research / truth-graph machinery
+    # (ScientificResearchPlannerAgent, BoundedDeepResearchAgent,
+    # ResearchSourceAcquirer, ProposalTruthGraphAgent) replaced
+    # scientific_synthesis's old evidence path.
+    assert len(node_types) == 39
     assert "HumanInLoopAgent" not in node_types
     assert node_types.count("HorizonDOCXProposalRenderer") == 1
     assert "HorizonHTMLProposalRenderer" not in node_types
@@ -91,7 +96,20 @@ def test_proposal_workflows_use_auto_for_generation_and_pass_preflight(
     ]
 
     assert auto_nodes
-    assert all(node.selected_model == "auto" for node in auto_nodes)
+    # horizon_partb_autonomous_docx.yaml deliberately pins the model per task
+    # to the scientific_deep_research_pipeline.md routing table (gpt-5.6-sol
+    # for final drafting/revision/blueprint, gpt-5.6-terra for planning/call
+    # synthesis/compilation, o3 for evidence verification/peer review/red
+    # team) instead of letting the generic router decide via "auto".
+    pinned_routing_table_models = {"gpt-5.6-sol", "gpt-5.6-terra", "o3"}
+    if path == AUTONOMOUS:
+        assert all(
+            node.selected_model == "auto"
+            or node.selected_model in pinned_routing_table_models
+            for node in auto_nodes
+        )
+    else:
+        assert all(node.selected_model == "auto" for node in auto_nodes)
     assert all(
         node.model_routing is not None
         for node in auto_nodes

@@ -60,13 +60,31 @@ _PREFIX_ROUTES: list[tuple[str, type[LLMGateway]]] = [
     ("o4-",     OpenAIGateway),
 ]
 
-# Legacy provider fallbacks are retained for backward compatibility.
+# Legacy provider fallbacks are retained for backward compatibility. The
+# same-tier OpenAI equivalent leads each chain -- see _TIER_PEER below, which
+# is the authoritative statement of these pairings and is also used to keep
+# "auto" mode's degradation deterministic.
 _LEGACY_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
     "claude-opus-5": ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5"),
     "claude-sonnet-4-5": ("gpt-5.6-terra", "gpt-5", "gpt-5-mini"),
     "claude-haiku-4-5": ("gpt-5.6-luna", "gpt-5-mini", "gpt-4o-mini"),
     "claude-opus-4-7": ("gpt-5.6-terra", "gpt-5"),
     "claude-opus-4-8": ("gpt-5.6-terra", "gpt-5"),
+    # OpenAI -> Anthropic. A same-provider fallback alone is useless during a
+    # full OpenAI outage, so the same-tier Claude model leads before the
+    # existing OpenAI same-family degradation chain.
+    "gpt-5.6-sol": (
+        "claude-opus-5",
+        *OPENAI_LLM_FALLBACK_CHAINS["gpt-5.6-sol"],
+    ),
+    "gpt-5.6-terra": (
+        "claude-sonnet-4-5",
+        *OPENAI_LLM_FALLBACK_CHAINS["gpt-5.6-terra"],
+    ),
+    "gpt-5.6-luna": (
+        "claude-haiku-4-5",
+        *OPENAI_LLM_FALLBACK_CHAINS["gpt-5.6-luna"],
+    ),
 }
 
 # Complete ordered chains are used both after provider exhaustion and when a
@@ -82,6 +100,52 @@ _FALLBACK_MODEL: dict[str, str] = {
     for model, chain in _FALLBACK_CHAINS.items()
     if chain
 }
+
+# Same-tier cross-provider equivalents ("gpt-5.6 is similar to Claude Opus/
+# Sonnet/Haiku"). Used to promote each model's documented peer to the slot
+# immediately after it in any runtime candidate list -- auto mode's own
+# task-scoring already picks the best model irrespective of provider, but a
+# provider-wide outage means "whatever scores next" is not a safe bet; the
+# same-tier peer on the OTHER provider is.
+_TIER_PEER: dict[str, str] = {
+    "claude-opus-5": "gpt-5.6-sol",
+    "gpt-5.6-sol": "claude-opus-5",
+    "claude-sonnet-4-5": "gpt-5.6-terra",
+    "gpt-5.6-terra": "claude-sonnet-4-5",
+    "claude-haiku-4-5": "gpt-5.6-luna",
+    "gpt-5.6-luna": "claude-haiku-4-5",
+}
+
+
+def _promote_tier_peers(requested: list[str]) -> list[str]:
+    """Move each model's documented cross-provider peer to directly follow it.
+
+    Only reorders -- never adds or removes a candidate -- so a peer that
+    isn't already permitted (not in allowed_models / not available) is left
+    untouched. Each pair is settled once: since _TIER_PEER is symmetric,
+    processing both directions would otherwise flip an already-adjacent,
+    correctly-ordered pair back and forth.
+    """
+
+    result = list(requested)
+    handled: set[frozenset[str]] = set()
+    for model in requested:
+        peer = _TIER_PEER.get(model)
+        if peer is None or peer not in result:
+            continue
+        pair_key = frozenset((model, peer))
+        if pair_key in handled:
+            continue
+        handled.add(pair_key)
+        model_index = result.index(model)
+        peer_index = result.index(peer)
+        if peer_index <= model_index + 1:
+            # Already adjacent in the right order, or the peer already
+            # ranks earlier/better -- don't demote it.
+            continue
+        result.remove(peer)
+        result.insert(result.index(model) + 1, peer)
+    return result
 
 # Gateway classes that are stubbed (not live).
 _STUB_GATEWAYS: set[type[LLMGateway]] = set()
@@ -775,6 +839,7 @@ class RegistryLLMGateway(LLMGateway):
             for static_fallback in _FALLBACK_CHAINS.get(intended, ()):
                 if static_fallback not in requested:
                     requested.append(static_fallback)
+        requested = _promote_tier_peers(requested)
 
         allowed = (
             set(self._allowed_models)

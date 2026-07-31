@@ -35,7 +35,72 @@ class ModelProfile:
     output_usd_per_1k: float
 
 
+# Non-OpenAI providers have no entry in OPENAI_MODEL_REGISTRY, so their
+# routing/cost profiles are hand-maintained here.
+_NON_OPENAI_PROFILES: tuple[ModelProfile, ...] = (
+    ModelProfile(
+        name="claude-opus-5",
+        provider="anthropic",
+        tier="premium",
+        speed_rank=1,
+        strengths=frozenset({"writing", "reasoning", "long_context"}),
+        input_usd_per_1k=0.005,
+        output_usd_per_1k=0.025,
+    ),
+    ModelProfile(
+        name="claude-sonnet-4-5",
+        provider="anthropic",
+        tier="standard",
+        speed_rank=2,
+        strengths=frozenset({"writing", "reasoning", "general"}),
+        input_usd_per_1k=0.003,
+        output_usd_per_1k=0.015,
+    ),
+    ModelProfile(
+        name="claude-haiku-4-5",
+        provider="anthropic",
+        tier="economy",
+        speed_rank=3,
+        strengths=frozenset({"classification", "extraction", "summarization"}),
+        input_usd_per_1k=0.00025,
+        output_usd_per_1k=0.00125,
+    ),
+    ModelProfile(
+        name="local-kimi-k3",
+        provider="moonshot-local",
+        tier="premium",
+        speed_rank=1,
+        strengths=frozenset(
+            {"writing", "reasoning", "tool_use", "long_context"}
+        ),
+        # API-metered cost is zero. Infrastructure cost is accounted for
+        # separately by the private deployment.
+        input_usd_per_1k=0.0,
+        output_usd_per_1k=0.0,
+    ),
+    ModelProfile(
+        name="local-glm-5",
+        provider="zai-local",
+        tier="premium",
+        speed_rank=1,
+        strengths=frozenset(
+            {"reasoning", "structured", "tool_use", "coding"}
+        ),
+        input_usd_per_1k=0.0,
+        output_usd_per_1k=0.0,
+    ),
+)
+
+_NON_OPENAI_LABELS = {
+    "claude-opus-5": "Claude Opus 5",
+    "claude-sonnet-4-5": "Claude Sonnet 4.5",
+    "claude-haiku-4-5": "Claude Haiku 4.5",
+    "local-kimi-k3": "Kimi K3 (Local)",
+    "local-glm-5": "GLM-5 (Local)",
+}
+
 MODEL_PROFILES: tuple[ModelProfile, ...] = (
+    *_NON_OPENAI_PROFILES,
     *(
         ModelProfile(
             name=model.name,
@@ -56,6 +121,7 @@ DEFAULT_LLM_MODELS = [profile.name for profile in MODEL_PROFILES]
 MODEL_SELECTION_OPTIONS = [AUTO_MODEL, *DEFAULT_LLM_MODELS]
 MODEL_OPTION_LABELS = {
     AUTO_MODEL: AUTO_MODEL_LABEL,
+    **_NON_OPENAI_LABELS,
     **{
         model.name: model.display_name
         for model in OPENAI_MODEL_REGISTRY

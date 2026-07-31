@@ -374,8 +374,14 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         "FullTextEvidenceAcquirer",
     }:
         required.add("mcp_client")
-    if node_type == "ScientificSkillAgent":
+    if node_type in {"ScientificSkillAgent", "ScientificResearchPlannerAgent"}:
         required.add("scientific_skill_catalog")
+    if node_type == "ScientificResearchPlannerAgent":
+        required.update({"llm", "cost_ledger"})
+    if node_type == "BoundedDeepResearchAgent":
+        required.update({"deep_research", "scientific_skill_catalog", "cost_ledger"})
+    if node_type == "ResearchSourceAcquirer":
+        required.add("object_store")
     if node_type in {
         "PDFTextExtractor",
         "PDFProposalRenderer",
