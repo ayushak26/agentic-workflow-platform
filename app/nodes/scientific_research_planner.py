@@ -44,12 +44,13 @@ class ScientificResearchPlannerConfig(BaseModel):
     standard_tool_calls: int = Field(default=7, ge=2, le=25)
     critical_tool_calls: int = Field(default=11, ge=2, le=40)
     standard_research_model: Literal[
-        "o4-mini-deep-research"
+        "o4-mini-deep-research",
+        "o3-deep-research",
     ] = "o4-mini-deep-research"
     critical_research_model: Literal[
         "o4-mini-deep-research",
-        "o4-mini-deep-research-2025-06-26",
-    ] = "o4-mini-deep-research-2025-06-26"
+        "o3-deep-research",
+    ] = "o3-deep-research"
     max_skills_per_brief: int = Field(default=4, ge=1, le=5)
 
 

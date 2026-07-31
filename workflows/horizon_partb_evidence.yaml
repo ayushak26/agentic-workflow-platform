@@ -197,7 +197,7 @@ nodes:
       standard_tool_calls: 7
       critical_tool_calls: 11
       standard_research_model: o4-mini-deep-research
-      critical_research_model: o4-mini-deep-research-2025-06-26
+      critical_research_model: o3-deep-research
       max_skills_per_brief: 4
 
   - id: deep_research

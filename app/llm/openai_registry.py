@@ -279,6 +279,19 @@ OPENAI_MODEL_REGISTRY: tuple[OpenAIModelDefinition, ...] = (
         deprecated=True,
     ),
     OpenAIModelDefinition(
+        name="o3-deep-research",
+        display_name="o3 Deep Research",
+        kind="deep_research",
+        tier="specialized",
+        strengths=frozenset(
+            {"deep_research", "web_research", "synthesis", "reasoning"}
+        ),
+        speed_rank=1,
+        input_usd_per_1k=0.010,
+        output_usd_per_1k=0.040,
+        image_input=True,
+    ),
+    OpenAIModelDefinition(
         name="o4-mini-deep-research",
         display_name="o4-mini Deep Research",
         kind="deep_research",
@@ -405,11 +418,15 @@ OPENAI_EMBEDDING_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
 }
 
 OPENAI_DEEP_RESEARCH_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
+    "o3-deep-research": (
+        "o4-mini-deep-research",
+    ),
     "o4-mini-deep-research": (
-        "o4-mini-deep-research-2025-06-26",
+        "o3-deep-research",
     ),
     "o4-mini-deep-research-2025-06-26": (
         "o4-mini-deep-research",
+        "o3-deep-research",
     ),
 }
 

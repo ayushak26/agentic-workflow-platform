@@ -45,7 +45,6 @@ class ResearchBrief(BaseModel):
     research_model: Literal[
         "o3-deep-research",
         "o4-mini-deep-research",
-        "o4-mini-deep-research-2025-06-26",
     ] = "o4-mini-deep-research"
     max_tool_calls: int = Field(default=8, ge=2, le=40)
 
