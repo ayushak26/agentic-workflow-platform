@@ -1,0 +1,88 @@
+name: Horizon Europe Part B - Scientific Deep Research Pipeline
+description: >-
+  Gated three-stage Horizon Europe RIA/IA Part B pipeline. Stage 1 applies
+  curated K-Dense Scientific Agent Skills to proposal-aware research briefs,
+  runs bounded OpenAI Deep Research, acquires immutable source versions,
+  verifies exact passages, and freezes an integrity-stamped truth graph.
+  Stage 2 drafts only after explicit human approval of that evidence stage.
+  Stage 3 performs skill-guided scientific peer review, evaluator review,
+  red-teaming, controlled revision, deterministic gates, and DOCX rendering.
+  A stage never advances automatically, and raw Deep Research dossiers are
+  never drafting authority.
+version: "2.0"
+
+inputs:
+  concept_note:
+    type: file
+    description: The selected project concept note; research may test its assumptions but never silently replace it.
+    required: true
+    multiple: true
+    max_files: 5
+    accept: [pdf, document, markdown, presentation]
+  documents:
+    type: file
+    description: >-
+      Official call/topic text, Part B template, consortium profiles, work
+      plan, budget, pilots, prior research, technical material and guidance.
+    required: true
+    multiple: true
+    max_files: 20
+    accept: [pdf, document, markdown, presentation, spreadsheet]
+  supporting_image:
+    type: file
+    description: Optional diagram, scan, certificate, organisation chart or other proposal-relevant image.
+    required: false
+    multiple: false
+    accept: [image]
+
+stages:
+  - id: evidence
+    workflow: horizon_partb_evidence
+    description: >-
+      Bounded scientific research, immutable source acquisition, passage-level
+      verification, contradiction audit, proposal truth graph, call coverage
+      and locked blueprint. Review and approve the truth graph and human-review
+      queue before advancing.
+
+  - id: drafts
+    workflow: horizon_partb_drafts
+    description: >-
+      Six official Part B subsections and three grounded figures, generated
+      from the approved truth graph, verified evidence and locked blueprint.
+    inputs:
+      proposal_blueprint: "{{ evidence.proposal_blueprint.parsed }}"
+      verify_evidence: "{{ evidence.verify_evidence }}"
+      truth_graph: "{{ evidence.truth_graph }}"
+      call_intelligence: "{{ evidence.call_intelligence.parsed }}"
+      load_documents: "{{ evidence.load_documents }}"
+
+  - id: document
+    workflow: horizon_partb_drafts_to_docx
+    description: >-
+      Criterion-level compilation, K-Dense-guided scientific peer review,
+      independent evaluation, red-team review, one controlled revision,
+      deterministic submission gates, figure embedding and DOCX rendering.
+    inputs:
+      metadata: "{{ evidence.partb_metadata.parsed }}"
+      citation_registry: "{{ evidence.verify_evidence.citation_registry }}"
+      evidence_qa: "{{ evidence.verify_evidence.qa_report }}"
+      evidence_blockers: "{{ evidence.verify_evidence.blocking_issues }}"
+      verified_claims: "{{ evidence.verify_evidence.verified_claims }}"
+      scientific_synthesis: "{{ evidence.verify_evidence.proposal_ready_cited_markdown }}"
+      call_intelligence: "{{ evidence.call_intelligence.parsed }}"
+      call_coverage: "{{ evidence.call_coverage }}"
+      proposal_blueprint: "{{ evidence.proposal_blueprint.parsed }}"
+      truth_graph: "{{ evidence.truth_graph }}"
+      normalise_report: "{{ evidence.normalise_source_graph.report }}"
+      normalise_warnings: "{{ evidence.normalise_source_graph.warnings }}"
+      candidates: "{{ evidence.deep_research.candidates }}"
+      search_audit: "{{ evidence.deep_research.search_audit }}"
+      draft_1_1: "{{ drafts.draft_1_1_objectives_ambition.raw }}"
+      draft_1_2: "{{ drafts.draft_1_2_methodology.raw }}"
+      draft_2_1: "{{ drafts.draft_2_1_pathways.raw }}"
+      draft_2_2_2_3: "{{ drafts.draft_2_2_measures_and_2_3_summary.raw }}"
+      draft_3_1: "{{ drafts.draft_3_1_workplan_resources.raw }}"
+      draft_3_2: "{{ drafts.draft_3_2_consortium.raw }}"
+      generate_figure_oro_chain: "{{ drafts.generate_figure_oro_chain }}"
+      generate_figure_impact_pathways: "{{ drafts.generate_figure_impact_pathways }}"
+      generate_figure_workplan: "{{ drafts.generate_figure_workplan }}"

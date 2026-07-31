@@ -1,8 +1,9 @@
 """Resolve a model name to the right gateway instance.
 
-Architectural default is Claude (Anthropic) per the Eurskem proposal —
-flagship workflow YAMLs commit to claude-* models. The build currently
-runs OpenAI live; Anthropic is a documented stub.
+The active workflow catalog uses the approved OpenAI model registry. Optional
+Anthropic and private OpenAI-compatible gateways remain available for legacy
+or deployment-specific workflows, but automatic task routing only considers
+capability-compatible OpenAI text-generation models.
 
 The fallback layer decouples *intent* (what the YAML asks for) from
 *runtime* (what's actually available). When the intended provider is
@@ -11,6 +12,7 @@ stubbed, we resolve to the closest live equivalent via a documented map.
 Providers in scope:
   - Anthropic                                  — claude-*
   - OpenAI                                     — gpt-*
+  - OpenAI reasoning                           — o3 / o4-mini*
   - Private Moonshot-compatible endpoint       — local-kimi-*
   - Private Z.ai-compatible endpoint           — local-glm-*
 """
@@ -38,6 +40,10 @@ from app.llm.local_openai_gw import (
 from app.llm.model_catalog import AUTO_MODEL, MODEL_PROFILE_BY_NAME
 from app.llm.model_router import ModelRouter
 from app.llm.openai_gw import OpenAIGateway
+from app.llm.openai_registry import (
+    OPENAI_LLM_FALLBACK_CHAINS,
+    OPENAI_MODEL_BY_NAME,
+)
 from app.llm.errors import LLMProviderUnavailableError, StructuredOutputError
 from app.observability import metrics
 from app.runtime.events import RunEvent
@@ -50,16 +56,31 @@ _PREFIX_ROUTES: list[tuple[str, type[LLMGateway]]] = [
     ("local-glm-",  GLM5LocalGateway),
     ("claude-", AnthropicGateway),
     ("gpt-",    OpenAIGateway),
+    ("o3",      OpenAIGateway),
+    ("o4-",     OpenAIGateway),
 ]
 
-# Runtime fallback — when an intended model resolves to a stubbed provider,
-# rewrite to the closest live equivalent.
+# Legacy provider fallbacks are retained for backward compatibility.
+_LEGACY_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
+    "claude-opus-5": ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5"),
+    "claude-sonnet-4-5": ("gpt-5.6-terra", "gpt-5", "gpt-5-mini"),
+    "claude-haiku-4-5": ("gpt-5.6-luna", "gpt-5-mini", "gpt-4o-mini"),
+    "claude-opus-4-7": ("gpt-5.6-terra", "gpt-5"),
+    "claude-opus-4-8": ("gpt-5.6-terra", "gpt-5"),
+}
+
+# Complete ordered chains are used both after provider exhaustion and when a
+# model-access failure (403/404/model_not_found) proves a candidate unusable.
+_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
+    **OPENAI_LLM_FALLBACK_CHAINS,
+    **_LEGACY_FALLBACK_CHAINS,
+}
+
+# Compatibility view for callers/tests that need the immediate fallback.
 _FALLBACK_MODEL: dict[str, str] = {
-    "claude-opus-5":     "gpt-5.6-sol",
-    "claude-sonnet-4-5": "gpt-5",
-    "claude-haiku-4-5":  "gpt-5-mini",
-    "claude-opus-4-7":   "gpt-5",
-    "claude-opus-4-8":   "gpt-5",
+    model: chain[0]
+    for model, chain in _FALLBACK_CHAINS.items()
+    if chain
 }
 
 # Gateway classes that are stubbed (not live).
@@ -271,6 +292,13 @@ def get_gateway(model_name: str) -> tuple[LLMGateway, str]:
 
 
 def _gateway_class_for(model_name: str) -> type[LLMGateway]:
+    definition = OPENAI_MODEL_BY_NAME.get(model_name)
+    if definition is not None and definition.kind != "llm":
+        raise ValueError(
+            f"OpenAI model {model_name!r} is registered for the "
+            f"{definition.kind!r} endpoint and cannot be routed through "
+            "the generic LLM gateway"
+        )
     for prefix, gw_cls in _PREFIX_ROUTES:
         if model_name.startswith(prefix):
             return gw_cls
@@ -744,9 +772,9 @@ class RegistryLLMGateway(LLMGateway):
         if intended not in requested:
             requested.insert(0, intended)
         if candidate_models is None:
-            static_fallback = _FALLBACK_MODEL.get(intended)
-            if static_fallback and static_fallback not in requested:
-                requested.append(static_fallback)
+            for static_fallback in _FALLBACK_CHAINS.get(intended, ()):
+                if static_fallback not in requested:
+                    requested.append(static_fallback)
 
         allowed = (
             set(self._allowed_models)

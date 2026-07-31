@@ -1,11 +1,12 @@
 name: Horizon Europe Part B - Drafts (Stage 2 of 3)
 description: >-
   Second stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence
-  -> drafts -> document; see workflows/pipelines/horizon_partb.pipeline.yaml).
+  -> drafts -> document; see workflows/pipelines/pipeline.yaml).
   Every artifact the evidence stage produces is declared as an input, so this
   file is Import-inputs-from-JSON compatible with "Copy run as workflow
   inputs" from Run History, or auto-matched by name from the pipeline. Drafts
-  the six official Part B subsections in parallel from the locked blueprint,
+  the six official Part B subsections in parallel from the human-approved,
+  integrity-stamped truth graph and locked blueprint,
   and generates three grounded figures (objective-result-outcome-impact
   chain, impact pathways, work-plan structure) in parallel alongside them.
   Each figure-eligible draft is instructed to emit a stable
@@ -13,7 +14,7 @@ description: >-
   the document stage's FigureEmbedder later splices the real image in. This
   workflow does not compile, evaluate or render — see
   horizon_partb_drafts_to_docx.yaml.
-version: "3.0"
+version: "4.0"
 use_case: eu_proposal
 
 inputs:
@@ -25,6 +26,10 @@ inputs:
     type: json
     required: true
     description: "[LIVE] evidence stage's verify_evidence output — .proposal_ready_cited_markdown is the verified-evidence narrative given to every draft; .citation_registry is given to draft_1_1 and draft_1_2 so they only use verified citation IDs."
+  truth_graph:
+    type: json
+    required: true
+    description: "[GATED] evidence stage's truth_graph output. Human approval is required before this workflow runs; only .truth_graph claims are external factual drafting authority."
   call_intelligence:
     type: json
     required: false
@@ -42,14 +47,15 @@ nodes:
 
   - id: draft_1_1_objectives_ambition
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft only official subsection "1.1 Objectives and ambition" in polished
@@ -75,6 +81,13 @@ nodes:
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
 
+        APPROVED TRUTH GRAPH:
+        {{inputs.truth_graph.truth_graph}}
+
+        Use external factual claims only when they are present in the truth
+        graph. Preserve qualifications. Raw research dossiers are not
+        drafting inputs.
+
         VERIFIED EVIDENCE:
         {{inputs.verify_evidence.proposal_ready_cited_markdown}}
 
@@ -83,14 +96,15 @@ nodes:
 
   - id: draft_1_2_methodology
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 32000
       prompt_template: |
         Draft only official subsection "1.2 Methodology" in proposal-ready
@@ -116,6 +130,13 @@ nodes:
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
 
+        APPROVED TRUTH GRAPH:
+        {{inputs.truth_graph.truth_graph}}
+
+        Use external factual claims only when they are present in the truth
+        graph. Preserve qualifications. Raw research dossiers are not
+        drafting inputs.
+
         VERIFIED EVIDENCE:
         {{inputs.verify_evidence.proposal_ready_cited_markdown}}
 
@@ -124,14 +145,15 @@ nodes:
 
   - id: draft_2_1_pathways
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft only official subsection "2.1 Project's pathways towards impact"
@@ -158,6 +180,13 @@ nodes:
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
 
+        APPROVED TRUTH GRAPH:
+        {{inputs.truth_graph.truth_graph}}
+
+        Use external factual claims only when they are present in the truth
+        graph. Preserve qualifications. Raw research dossiers are not
+        drafting inputs.
+
         CALL OUTCOMES:
         {{inputs.call_intelligence.expected_outcomes}}
 
@@ -166,14 +195,15 @@ nodes:
 
   - id: draft_2_2_measures_and_2_3_summary
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft official subsection "2.2 Measures to maximise impact –
@@ -204,19 +234,27 @@ nodes:
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
 
+        APPROVED TRUTH GRAPH:
+        {{inputs.truth_graph.truth_graph}}
+
+        Use external factual claims only when they are present in the truth
+        graph. Preserve qualifications. Raw research dossiers are not
+        drafting inputs.
+
         SUPPORTING DOCUMENTS:
         {{inputs.load_documents.text}}
 
   - id: draft_3_1_workplan_resources
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 32000
       prompt_template: |
         Draft only official subsection "3.1 Work plan and resources" in
@@ -247,19 +285,27 @@ nodes:
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
 
+        APPROVED TRUTH GRAPH:
+        {{inputs.truth_graph.truth_graph}}
+
+        Use external factual claims only when they are present in the truth
+        graph. Preserve qualifications. Raw research dossiers are not
+        drafting inputs.
+
         SUPPORTING DOCUMENTS:
         {{inputs.load_documents.text}}
 
   - id: draft_3_2_consortium
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft only official subsection "3.2 Capacity of participants and
@@ -276,6 +322,13 @@ nodes:
 
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
+
+        APPROVED TRUTH GRAPH:
+        {{inputs.truth_graph.truth_graph}}
+
+        Use external factual claims only when they are present in the truth
+        graph. Preserve qualifications. Raw research dossiers are not
+        drafting inputs.
 
         SUPPORTING DOCUMENTS:
         {{inputs.load_documents.text}}

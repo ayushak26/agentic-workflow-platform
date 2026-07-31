@@ -1,15 +1,15 @@
 name: Horizon Europe Part B - Evidence (Stage 1 of 3)
 description: >-
   First stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence ->
-  drafts -> document; see workflows/pipelines/horizon_partb.pipeline.yaml).
+  drafts -> document; see workflows/pipelines/pipeline.yaml).
   Converts a concept note and supporting documents into: renderer metadata, an
-  atomic call checklist, a normalised source graph, scholarly evidence
-  discovered, acquired in full text and verified into citation-grounded
-  claims, a proposal-engineering synthesis of that evidence (enriched with
-  supplementary live-web context and an optional supporting image's
-  analysis), a call-coverage matrix, and the locked master blueprint every
-  later section is drafted against. Produces no proposal prose itself.
-version: "3.0"
+  atomic call checklist, a normalised source graph, bounded scientific
+  research dossiers, immutable source versions, citation-grounded verified
+  claims, an integrity-stamped proposal truth graph, an audit record, a
+  call-coverage matrix, and the locked master blueprint every later section
+  is drafted against. Raw research is never drafting authority. Produces no
+  proposal prose itself.
+version: "4.0"
 use_case: eu_proposal
 
 inputs:
@@ -73,17 +73,20 @@ nodes:
     type: TransformAgent
     selected_model: gpt-5-mini
     allowed_models:
-      - gpt-5.6-sol
-      - gpt-5
       - gpt-5-mini
-      - claude-opus-5
-      - claude-sonnet-4-5
+      - gpt-5.6-luna
+      - gpt-4o-mini
+      - gpt-5.6-terra
+      - gpt-5
+      - gpt-5.6-sol
     model_routing:
       accuracy_priority: economy
       prefer_low_latency: true
       quality_scores:
         gpt-5-mini: 0.95
-        claude-sonnet-4-5: 0.70
+        gpt-5.6-luna: 0.90
+        gpt-4o-mini: 0.85
+        gpt-5.6-terra: 0.70
         gpt-5: 0.60
         gpt-5.6-sol: 0.25
     config:
@@ -114,17 +117,17 @@ nodes:
 
   - id: call_intelligence
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
+      - gpt-5.6-terra
+      - o4-mini
       - gpt-5.6-sol
       - gpt-5
       - gpt-5-mini
-      - claude-opus-5
-      - claude-sonnet-4-5
     model_routing:
       accuracy_priority: balanced
     config:
-      model: gpt-5
+      model: gpt-5.6-terra
       max_tokens: 12000
       output_schema:
         call_identity: object
@@ -149,56 +152,18 @@ nodes:
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
-  - id: research_context_query
-    type: TransformAgent
-    selected_model: auto
-    allowed_models:
-      - gpt-5
-      - gpt-5-mini
-      - claude-sonnet-4-5
-    model_routing:
-      accuracy_priority: economy
-      prefer_low_latency: true
-    config:
-      model: gpt-5-mini
-      max_tokens: 500
-      output_schema:
-        query: str
-      prompt_template: |
-        Write exactly one concise, high-signal web search query (plain text,
-        no quotes, no boolean operators) to find recent, publicly available
-        context for this Horizon Europe proposal that scholarly databases are
-        unlikely to surface well: things like adjacent open calls, relevant
-        EU policy or strategy documents, funded projects working on a similar
-        problem, or recent sector news. Base it on the actual topic below, not
-        a generic template.
-
-        CONCEPT NOTE:
-        {{load_concept.text}}
-
-        CALL CHECKLIST:
-        {{call_intelligence.parsed}}
-
-  - id: web_search
-    type: WebSearchAgent
-    config:
-      query: "{{research_context_query.parsed.query}}"
-      provider: openai
-      top_k: 8
-      fallback_to_openai: true
-
   - id: normalise_source_graph
     type: GraphNormalizer
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
+      - gpt-5.6-terra
+      - o4-mini
       - gpt-5.6-sol
       - gpt-5
-      - claude-opus-5
-      - claude-sonnet-4-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 32000
       concept_note: |
         CONCEPT NOTE:
@@ -213,47 +178,78 @@ nodes:
         ATOMIC CALL CHECKLIST:
         {{call_intelligence.parsed}}
 
-  - id: discover_evidence
-    type: ScholarlyCandidateDiscoveryAgent
-    selected_model: auto
+  - id: research_plan
+    type: ScientificResearchPlannerAgent
+    selected_model: gpt-5.6-terra
     allowed_models:
+      - gpt-5.6-terra
+      - o4-mini
+      - gpt-5.6-sol
       - gpt-5
-      - gpt-5-mini
-      - claude-sonnet-4-5
     model_routing:
-      accuracy_priority: balanced
-      prefer_low_latency: true
+      accuracy_priority: maximum
     config:
-      model: gpt-5
-      max_results_per_source: 3
-      max_candidates_per_claim: 10
-      max_claims: 30
-      claim_types: [state_of_art, problem, impact, method]
-      require_contradiction_search: true
+      model: gpt-5.6-terra
+      call_context: "{{call_intelligence.parsed}}"
+      concept_context: "{{load_concept.text}}"
+      max_briefs: 8
+      max_total_tool_calls: 72
+      standard_tool_calls: 7
+      critical_tool_calls: 11
+      standard_research_model: o4-mini-deep-research
+      critical_research_model: o4-mini-deep-research-2025-06-26
+      max_skills_per_brief: 4
 
-  - id: acquire_full_text
-    type: FullTextEvidenceAcquirer
+  - id: deep_research
+    type: BoundedDeepResearchAgent
     config:
-      candidates: "{{discover_evidence.candidates}}"
+      research_briefs: "{{research_plan.research_briefs}}"
+      max_jobs: 8
+      max_parallel_jobs: 2
+      max_total_tool_calls: 72
+      max_tool_calls_per_job: 16
+      max_citations_per_brief: 20
+      max_candidates_per_claim: 12
+      enable_code_interpreter: false
+      background: true
+
+  - id: acquire_research_sources
+    type: ResearchSourceAcquirer
+    config:
+      candidates: "{{deep_research.candidates}}"
+      max_concurrent_requests: 6
+      max_sources_per_claim: 4
+      max_total_sources: 60
+      request_timeout_seconds: 45
+      max_redirects: 4
       fail_when_none_acquired: false
 
   - id: verify_evidence
     type: ProposalEvidenceFactoryAgent
-    selected_model: auto
+    selected_model: o3
     allowed_models:
+      - o3
+      - o4-mini
+      - gpt-5.6-terra
       - gpt-5.6-sol
       - gpt-5
-      - claude-opus-5
-      - claude-sonnet-4-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
-      candidates: "{{discover_evidence.candidates}}"
-      documents: "{{acquire_full_text.documents}}"
-      search_audit: "{{discover_evidence.search_audit}}"
-      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
+      model: o3
+      candidates: "{{deep_research.candidates}}"
+      documents: "{{acquire_research_sources.documents}}"
+      search_audit: "{{deep_research.search_audit}}"
+      rejected_candidates: "{{acquire_research_sources.rejected_candidates}}"
       max_passages_per_document: 10
+
+  - id: truth_graph
+    type: ProposalTruthGraphAgent
+    config:
+      verified_claims: "{{verify_evidence.verified_claims}}"
+      evidence_gaps: "{{verify_evidence.evidence_gaps}}"
+      blocking_issues: "{{verify_evidence.blocking_issues}}"
+      research_manifest: "{{deep_research.research_manifest}}"
 
   - id: call_coverage
     type: CallCoverageMatrixAgent
@@ -261,27 +257,30 @@ nodes:
 
   - id: research_documentation
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
-      - claude-opus-5
-      - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5.6-luna
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 16000
       output_schema:
         cited_sources: list
         bibliography_formatted: str
-        web_search_references: list
+        bounded_research_dossiers: list
         candidate_sources_considered: list
         citation_coverage_summary: object
       prompt_template: |
         Produce a standalone, audit-ready research-documentation record for
         this proposal run. This is not proposal text — it is the evidence
-        paper trail: every research source cited, every web link consulted,
-        and what was found but not used. Never invent a source, URL, DOI, or
-        detail not present in the supplied records.
+        paper trail: every bounded research question, skill bundle, cited
+        source, verification result, qualification, rejection, and unresolved
+        gap. Never invent a source, URL, DOI, or detail not present in the
+        supplied records. A Deep Research dossier is candidate analysis, not
+        verified evidence.
 
         cited_sources: one entry per citation ID in the verified citation
         registry — id, title, authors (if known), year, source type
@@ -293,11 +292,12 @@ nodes:
         bibliography_formatted: a clean, numbered reference list built only
         from cited_sources, ready to paste into an evidence annex.
 
-        web_search_references: one entry per web-search result actually
-        surfaced in the supplementary web context — the query that found it,
-        title, URL, why it was consulted, and whether it ended up informing
-        the proposal. Label these clearly as situational/contextual, never
-        as citable evidence.
+        bounded_research_dossiers: one entry per research brief — brief ID,
+        track, question, selected K-Dense Scientific Agent Skills, Deep
+        Research model, maximum and actual tool calls, source count, and
+        whether acquisition and verification produced usable evidence.
+        Summarise limitations without copying dossier assertions into the
+        proposal truth graph.
 
         candidate_sources_considered: discovery candidates that were found
         but never promoted to verified evidence, each with a rejection
@@ -307,7 +307,8 @@ nodes:
 
         citation_coverage_summary: counts of candidates discovered,
         acquired in full text, verified, cited in the final citation
-        registry, rejected, and web-search-only references.
+        registry, rejected, qualified, contradicted, excluded from the truth
+        graph, and left for human review.
 
         CITATION REGISTRY:
         {{verify_evidence.citation_registry}}
@@ -315,14 +316,26 @@ nodes:
         VERIFIED CLAIMS:
         {{verify_evidence.verified_claims}}
 
-        DISCOVERY CANDIDATES:
-        {{discover_evidence.candidates}}
+        BOUNDED RESEARCH PLAN:
+        {{research_plan}}
 
-        SEARCH AUDIT:
-        {{discover_evidence.search_audit}}
+        DEEP RESEARCH DOSSIERS (CANDIDATE ANALYSIS ONLY):
+        {{deep_research.dossiers}}
 
-        WEB SEARCH RESULTS:
-        {{web_search.results}}
+        CANDIDATE SOURCES:
+        {{deep_research.candidates}}
+
+        SEARCH AND CONTRADICTION AUDIT:
+        {{deep_research.search_audit}}
+
+        ACQUISITION REJECTIONS:
+        {{acquire_research_sources.rejected_candidates}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        HUMAN REVIEW QUEUE:
+        {{truth_graph.human_review_queue}}
 
         SUPPORTING IMAGE ANALYSIS:
         {{understand_supporting_image.analysis}}
@@ -332,14 +345,15 @@ nodes:
 
   - id: proposal_blueprint
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 34000
       output_schema:
         proposal_identity: object
@@ -484,6 +498,17 @@ nodes:
         claims):
         {{verify_evidence.proposal_ready_cited_markdown}}
 
+        APPROVED DRAFTING SOURCE — PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        TRUTH-GRAPH INTEGRITY SHA-256:
+        {{truth_graph.integrity_sha256}}
+
+        Raw Deep Research dossiers are deliberately unavailable as drafting
+        authority. Use only truth-graph claims and supplied authoritative
+        project/call facts. Preserve every qualification and
+        [INPUT NEEDED] item.
+
 edges:
   - from: load_concept
     to: load_documents
@@ -493,27 +518,29 @@ edges:
       - call_intelligence
       - understand_supporting_image
   - from: call_intelligence
-    to:
-      - normalise_source_graph
-      - research_context_query
+    to: normalise_source_graph
   - from: partb_metadata
     to: normalise_source_graph
-  - from: research_context_query
-    to: web_search
   - from: normalise_source_graph
-    to: discover_evidence
-  - from: discover_evidence
-    to: acquire_full_text
-  - from: acquire_full_text
+    to: research_plan
+  - from: research_plan
+    to: deep_research
+  - from: deep_research
+    to: acquire_research_sources
+  - from: acquire_research_sources
     to: verify_evidence
   - from: verify_evidence
     to:
       - call_coverage
-      - research_documentation
-  - from: web_search
+      - truth_graph
+  - from: deep_research
     to: research_documentation
   - from: understand_supporting_image
     to: research_documentation
+  - from: truth_graph
+    to:
+      - research_documentation
+      - proposal_blueprint
   - from: call_coverage
     to: proposal_blueprint
 
@@ -525,17 +552,27 @@ exit:
 output:
   include_input: false
   nodes:
+    - node_id: load_concept
+      flatten: false
+    - node_id: load_documents
+      flatten: false
     - node_id: partb_metadata
       flatten: false
     - node_id: call_intelligence
       flatten: false
     - node_id: normalise_source_graph
       flatten: false
+    - node_id: research_plan
+      flatten: false
+    - node_id: deep_research
+      flatten: false
+    - node_id: acquire_research_sources
+      flatten: false
     - node_id: call_coverage
       flatten: false
     - node_id: verify_evidence
       flatten: false
-    - node_id: web_search
+    - node_id: truth_graph
       flatten: false
     - node_id: understand_supporting_image
       flatten: false

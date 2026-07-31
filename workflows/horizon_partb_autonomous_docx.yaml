@@ -5,14 +5,16 @@ description: >-
   documents into an evidence-verified, independently evaluated, editable DOCX.
   It follows the official 2026 Part B headings and the 45-page limit applicable
   to lump-sum topics. Missing facts remain visible and prevent the proposal
-  from being marked submission-ready. Evidence is enriched with supplementary
-  live web search and an optional supporting image's analysis; three
-  evaluator-relevant figures are generated and embedded in the rendered DOCX.
+  from being marked submission-ready. Curated Scientific Agent Skills guide
+  bounded Deep Research, canonical sources are acquired and verified, and
+  only the integrity-stamped proposal truth graph becomes drafting authority.
+  An optional supporting image is analysed and three evaluator-relevant
+  figures are generated and embedded in the rendered DOCX.
   See workflows/horizon_partb_evidence.yaml, horizon_partb_drafts.yaml and
   horizon_partb_drafts_to_docx.yaml (chained by
-  workflows/pipelines/horizon_partb.pipeline.yaml) for the same pipeline
+  workflows/pipelines/pipeline.yaml) for the recommended gated pipeline
   staged so each phase is independently inspectable and retryable.
-version: "3.0"
+version: "4.0"
 use_case: eu_proposal
 inputs:
   concept_note:
@@ -73,17 +75,20 @@ nodes:
     type: TransformAgent
     selected_model: gpt-5-mini
     allowed_models:
-      - gpt-5.6-sol
-      - gpt-5
       - gpt-5-mini
-      - claude-opus-5
-      - claude-sonnet-4-5
+      - gpt-5.6-luna
+      - gpt-4o-mini
+      - gpt-5.6-terra
+      - gpt-5
+      - gpt-5.6-sol
     model_routing:
       accuracy_priority: economy
       prefer_low_latency: true
       quality_scores:
         gpt-5-mini: 0.95
-        claude-sonnet-4-5: 0.70
+        gpt-5.6-luna: 0.90
+        gpt-4o-mini: 0.85
+        gpt-5.6-terra: 0.70
         gpt-5: 0.60
         gpt-5.6-sol: 0.25
     config:
@@ -114,17 +119,17 @@ nodes:
 
   - id: call_intelligence
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
+      - gpt-5.6-terra
+      - o4-mini
       - gpt-5.6-sol
       - gpt-5
       - gpt-5-mini
-      - claude-opus-5
-      - claude-sonnet-4-5
     model_routing:
       accuracy_priority: balanced
     config:
-      model: gpt-5
+      model: gpt-5.6-terra
       max_tokens: 12000
       output_schema:
         call_identity: object
@@ -149,56 +154,18 @@ nodes:
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
-  - id: research_context_query
-    type: TransformAgent
-    selected_model: auto
-    allowed_models:
-      - gpt-5
-      - gpt-5-mini
-      - claude-sonnet-4-5
-    model_routing:
-      accuracy_priority: economy
-      prefer_low_latency: true
-    config:
-      model: gpt-5-mini
-      max_tokens: 500
-      output_schema:
-        query: str
-      prompt_template: |
-        Write exactly one concise, high-signal web search query (plain text,
-        no quotes, no boolean operators) to find recent, publicly available
-        context for this Horizon Europe proposal that scholarly databases are
-        unlikely to surface well: things like adjacent open calls, relevant
-        EU policy or strategy documents, funded projects working on a similar
-        problem, or recent sector news. Base it on the actual topic below, not
-        a generic template.
-
-        CONCEPT NOTE:
-        {{load_concept.text}}
-
-        CALL CHECKLIST:
-        {{call_intelligence.parsed}}
-
-  - id: web_search
-    type: WebSearchAgent
-    config:
-      query: "{{research_context_query.parsed.query}}"
-      provider: openai
-      top_k: 8
-      fallback_to_openai: true
-
   - id: normalise_source_graph
     type: GraphNormalizer
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
+      - gpt-5.6-terra
+      - o4-mini
       - gpt-5.6-sol
       - gpt-5
-      - claude-opus-5
-      - claude-sonnet-4-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 32000
       concept_note: |
         CONCEPT NOTE:
@@ -213,47 +180,78 @@ nodes:
         ATOMIC CALL CHECKLIST:
         {{call_intelligence.parsed}}
 
-  - id: discover_evidence
-    type: ScholarlyCandidateDiscoveryAgent
-    selected_model: auto
+  - id: research_plan
+    type: ScientificResearchPlannerAgent
+    selected_model: gpt-5.6-terra
     allowed_models:
+      - gpt-5.6-terra
+      - o4-mini
+      - gpt-5.6-sol
       - gpt-5
-      - gpt-5-mini
-      - claude-sonnet-4-5
     model_routing:
-      accuracy_priority: balanced
-      prefer_low_latency: true
+      accuracy_priority: maximum
     config:
-      model: gpt-5
-      max_results_per_source: 3
-      max_candidates_per_claim: 10
-      max_claims: 30
-      claim_types: [state_of_art, problem, impact, method]
-      require_contradiction_search: true
+      model: gpt-5.6-terra
+      call_context: "{{call_intelligence.parsed}}"
+      concept_context: "{{load_concept.text}}"
+      max_briefs: 8
+      max_total_tool_calls: 72
+      standard_tool_calls: 7
+      critical_tool_calls: 11
+      standard_research_model: o4-mini-deep-research
+      critical_research_model: o4-mini-deep-research-2025-06-26
+      max_skills_per_brief: 4
 
-  - id: acquire_full_text
-    type: FullTextEvidenceAcquirer
+  - id: deep_research
+    type: BoundedDeepResearchAgent
     config:
-      candidates: "{{discover_evidence.candidates}}"
+      research_briefs: "{{research_plan.research_briefs}}"
+      max_jobs: 8
+      max_parallel_jobs: 2
+      max_total_tool_calls: 72
+      max_tool_calls_per_job: 16
+      max_citations_per_brief: 20
+      max_candidates_per_claim: 12
+      enable_code_interpreter: false
+      background: true
+
+  - id: acquire_research_sources
+    type: ResearchSourceAcquirer
+    config:
+      candidates: "{{deep_research.candidates}}"
+      max_concurrent_requests: 6
+      max_sources_per_claim: 4
+      max_total_sources: 60
+      request_timeout_seconds: 45
+      max_redirects: 4
       fail_when_none_acquired: false
 
   - id: verify_evidence
     type: ProposalEvidenceFactoryAgent
-    selected_model: auto
+    selected_model: o3
     allowed_models:
+      - o3
+      - o4-mini
+      - gpt-5.6-terra
       - gpt-5.6-sol
       - gpt-5
-      - claude-opus-5
-      - claude-sonnet-4-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
-      candidates: "{{discover_evidence.candidates}}"
-      documents: "{{acquire_full_text.documents}}"
-      search_audit: "{{discover_evidence.search_audit}}"
-      rejected_candidates: "{{acquire_full_text.rejected_candidates}}"
+      model: o3
+      candidates: "{{deep_research.candidates}}"
+      documents: "{{acquire_research_sources.documents}}"
+      search_audit: "{{deep_research.search_audit}}"
+      rejected_candidates: "{{acquire_research_sources.rejected_candidates}}"
       max_passages_per_document: 10
+
+  - id: truth_graph
+    type: ProposalTruthGraphAgent
+    config:
+      verified_claims: "{{verify_evidence.verified_claims}}"
+      evidence_gaps: "{{verify_evidence.evidence_gaps}}"
+      blocking_issues: "{{verify_evidence.blocking_issues}}"
+      research_manifest: "{{deep_research.research_manifest}}"
 
   - id: call_coverage
     type: CallCoverageMatrixAgent
@@ -261,27 +259,29 @@ nodes:
 
   - id: research_documentation
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
-      - claude-opus-5
-      - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5.6-luna
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 16000
       output_schema:
         cited_sources: list
         bibliography_formatted: str
-        web_search_references: list
+        bounded_research_dossiers: list
         candidate_sources_considered: list
         citation_coverage_summary: object
       prompt_template: |
         Produce a standalone, audit-ready research-documentation record for
         this proposal run. This is not proposal text — it is the evidence
-        paper trail: every research source cited, every web link consulted,
-        and what was found but not used. Never invent a source, URL, DOI, or
-        detail not present in the supplied records.
+        paper trail: every bounded research question, skill bundle, source,
+        verification result, qualification, rejection and unresolved gap.
+        Never invent a source, URL, DOI or detail not present in the supplied
+        records. A Deep Research dossier is candidate analysis, not evidence.
 
         cited_sources: one entry per citation ID in the verified citation
         registry — id, title, authors (if known), year, source type
@@ -293,11 +293,9 @@ nodes:
         bibliography_formatted: a clean, numbered reference list built only
         from cited_sources, ready to paste into an evidence annex.
 
-        web_search_references: one entry per web-search result actually
-        surfaced in the supplementary web context — the query that found it,
-        title, URL, why it was consulted, and whether it ended up informing
-        the proposal. Label these clearly as situational/contextual, never
-        as citable evidence.
+        bounded_research_dossiers: one entry per research brief — brief ID,
+        track, question, selected K-Dense Scientific Agent Skills, model,
+        maximum and actual tool calls, source count and verification outcome.
 
         candidate_sources_considered: discovery candidates that were found
         but never promoted to verified evidence, each with a rejection
@@ -307,7 +305,8 @@ nodes:
 
         citation_coverage_summary: counts of candidates discovered,
         acquired in full text, verified, cited in the final citation
-        registry, rejected, and web-search-only references.
+        registry, rejected, qualified, contradicted, excluded from the truth
+        graph and left for human review.
 
         CITATION REGISTRY:
         {{verify_evidence.citation_registry}}
@@ -315,14 +314,26 @@ nodes:
         VERIFIED CLAIMS:
         {{verify_evidence.verified_claims}}
 
-        DISCOVERY CANDIDATES:
-        {{discover_evidence.candidates}}
+        BOUNDED RESEARCH PLAN:
+        {{research_plan}}
 
-        SEARCH AUDIT:
-        {{discover_evidence.search_audit}}
+        DEEP RESEARCH DOSSIERS (CANDIDATE ANALYSIS ONLY):
+        {{deep_research.dossiers}}
 
-        WEB SEARCH RESULTS:
-        {{web_search.results}}
+        CANDIDATE SOURCES:
+        {{deep_research.candidates}}
+
+        SEARCH AND CONTRADICTION AUDIT:
+        {{deep_research.search_audit}}
+
+        ACQUISITION REJECTIONS:
+        {{acquire_research_sources.rejected_candidates}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        HUMAN REVIEW QUEUE:
+        {{truth_graph.human_review_queue}}
 
         SUPPORTING IMAGE ANALYSIS:
         {{understand_supporting_image.analysis}}
@@ -332,14 +343,15 @@ nodes:
 
   - id: proposal_blueprint
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 34000
       output_schema:
         proposal_identity: object
@@ -480,9 +492,18 @@ nodes:
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
-        VERIFIED EVIDENCE (citation-annotated narrative, clearly separated
-        from unverified supplementary context):
+        VERIFIED EVIDENCE (citation-annotated narrative):
         {{verify_evidence.proposal_ready_cited_markdown}}
+
+        APPROVED DRAFTING SOURCE — PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        TRUTH-GRAPH INTEGRITY SHA-256:
+        {{truth_graph.integrity_sha256}}
+
+        Raw Deep Research dossiers are deliberately unavailable as drafting
+        authority. Use only truth-graph claims and authoritative project/call
+        facts. Preserve qualifications and [INPUT NEEDED] items.
 
   - id: generate_figure_oro_chain
     type: OpenAIImageGenerationAgent
@@ -538,14 +559,15 @@ nodes:
 
   - id: draft_1_1_objectives_ambition
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft only official subsection "1.1 Objectives and ambition" in polished
@@ -571,6 +593,12 @@ nodes:
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        Use external factual claims only when present in the truth graph.
+        Preserve qualifications; raw research dossiers are not drafting input.
+
         VERIFIED EVIDENCE:
         {{verify_evidence.proposal_ready_cited_markdown}}
 
@@ -579,14 +607,15 @@ nodes:
 
   - id: draft_1_2_methodology
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 32000
       prompt_template: |
         Draft only official subsection "1.2 Methodology" in proposal-ready
@@ -610,6 +639,12 @@ nodes:
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        Use external factual claims only when present in the truth graph.
+        Preserve qualifications; raw research dossiers are not drafting input.
+
         VERIFIED EVIDENCE:
         {{verify_evidence.proposal_ready_cited_markdown}}
 
@@ -618,14 +653,15 @@ nodes:
 
   - id: draft_2_1_pathways
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft only official subsection "2.1 Project's pathways towards impact"
@@ -651,6 +687,12 @@ nodes:
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        Use external factual claims only when present in the truth graph.
+        Preserve qualifications; raw research dossiers are not drafting input.
+
         CALL OUTCOMES:
         {{call_intelligence.parsed.expected_outcomes}}
 
@@ -659,14 +701,15 @@ nodes:
 
   - id: draft_2_2_measures_and_2_3_summary
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft official subsection "2.2 Measures to maximise impact –
@@ -697,19 +740,26 @@ nodes:
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        Use external factual claims only when present in the truth graph.
+        Preserve qualifications; raw research dossiers are not drafting input.
+
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
   - id: draft_3_1_workplan_resources
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 32000
       prompt_template: |
         Draft only official subsection "3.1 Work plan and resources" in
@@ -740,19 +790,26 @@ nodes:
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        Use external factual claims only when present in the truth graph.
+        Preserve qualifications; raw research dossiers are not drafting input.
+
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
   - id: draft_3_2_consortium
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 16000
       prompt_template: |
         Draft only official subsection "3.2 Capacity of participants and
@@ -770,6 +827,12 @@ nodes:
         BLUEPRINT:
         {{proposal_blueprint.parsed}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        Use external factual claims only when present in the truth graph.
+        Preserve qualifications; raw research dossiers are not drafting input.
+
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
@@ -785,14 +848,15 @@ nodes:
   # join - so the full-document assembly step itself can never truncate.
   - id: compile_excellence
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 20000
       prompt_template: |
         Assemble the coherent "1. Excellence" section (1.1 and 1.2 only) of
@@ -804,6 +868,12 @@ nodes:
         exactly as it appears, verbatim, on its own line — never paraphrase,
         reformat, or drop it. Start with the "# 1. Excellence" heading.
 
+        LOCKED BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
         1.1:
         {{draft_1_1_objectives_ambition.raw}}
 
@@ -812,14 +882,15 @@ nodes:
 
   - id: compile_impact
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 12000
       prompt_template: |
         Assemble the coherent "2. Impact" section (2.1, 2.2 and optional 2.3
@@ -831,6 +902,12 @@ nodes:
         its own line — never paraphrase, reformat, or drop it. Start with the
         "# 2. Impact" heading.
 
+        LOCKED BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
         2.1:
         {{draft_2_1_pathways.raw}}
 
@@ -839,14 +916,15 @@ nodes:
 
   - id: compile_implementation
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-terra
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-terra
       max_tokens: 20000
       prompt_template: |
         Assemble the coherent "3. Quality and efficiency of the
@@ -859,6 +937,12 @@ nodes:
         `[[IMAGE PROMPT: ...]]` marker exactly as it appears, verbatim, on
         its own line — never paraphrase, reformat, or drop it. Start with the
         "# 3. Quality and efficiency of the implementation" heading.
+
+        LOCKED BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
 
         3.1:
         {{draft_3_1_workplan_resources.raw}}
@@ -875,27 +959,78 @@ nodes:
         - "{{compile_impact.raw}}"
         - "{{compile_implementation.raw}}"
 
+  - id: scientific_peer_review
+    type: ScientificSkillAgent
+    selected_model: o3
+    allowed_models:
+      - o3
+      - o4-mini
+      - gpt-5.6-sol
+      - gpt-5.6-terra
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: o3
+      skills:
+        - peer-review
+        - scientific-critical-thinking
+        - research-grants
+        - scientific-writing
+      auto_select: false
+      max_skills: 4
+      temperature: 0.0
+      max_tokens: 12000
+      system_prompt: >-
+        Act as a skeptical scientific peer reviewer of a Horizon Europe Part B
+        proposal. Check overstatement, contradictory evidence, causal errors,
+        missing validation or uncertainty, and claims outside the proposal
+        truth graph. Produce actionable findings only; do not rewrite or add
+        facts and citations.
+      objective: |
+        Review the compiled proposal against the proposal truth graph, verified
+        claims, call checklist and evidence QA. Tag every issue to a Part B
+        subsection and distinguish scientific defects, missing inputs,
+        unsupported claims and presentation issues.
+
+        COMPILED PROPOSAL:
+        {{compile_v1.text}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        VERIFIED CLAIMS:
+        {{verify_evidence.verified_claims}}
+
+        CALL CHECKLIST:
+        {{call_intelligence.parsed}}
+
+        EVIDENCE QA:
+        {{verify_evidence.qa_report}}
+
   - id: evaluate_v1
     type: HorizonEvaluationAgent
     config:
       proposal_text: "{{compile_v1.text}}"
       generator_model: auto
       evaluator_models:
-        - claude-sonnet-4-5
-        - gpt-5
+        - o3
+        - gpt-5.6-sol
       criterion_threshold: 4.0
       total_threshold: 12.0
 
   - id: red_team_v1
     type: TransformAgent
-    selected_model: auto
+    selected_model: o3
     allowed_models:
+      - o3
+      - o4-mini
       - gpt-5.6-sol
-      - claude-opus-5
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: gpt-5.6-sol
+      model: o3
       max_tokens: 12000
       output_schema:
         blocking_gaps: list
@@ -929,6 +1064,12 @@ nodes:
         DRAFT:
         {{compile_v1.text}}
 
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
+        K-DENSE-GUIDED SCIENTIFIC PEER REVIEW:
+        {{scientific_peer_review.answer}}
+
         CALL COVERAGE:
         {{call_coverage}}
 
@@ -943,14 +1084,15 @@ nodes:
   # entire ~40-44 page final document in its output.
   - id: revise_excellence
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 20000
       prompt_template: |
         Produce the final submission candidate for ONLY the "1. Excellence"
@@ -969,6 +1111,12 @@ nodes:
         SECTION DRAFT:
         {{compile_excellence.raw}}
 
+        LOCKED BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
         INDEPENDENT EVALUATION:
         {{evaluate_v1}}
 
@@ -982,14 +1130,15 @@ nodes:
 
   - id: revise_impact
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 12000
       prompt_template: |
         Produce the final submission candidate for ONLY the "2. Impact"
@@ -1008,6 +1157,12 @@ nodes:
         SECTION DRAFT:
         {{compile_impact.raw}}
 
+        LOCKED BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
+
         INDEPENDENT EVALUATION:
         {{evaluate_v1}}
 
@@ -1021,14 +1176,15 @@ nodes:
 
   - id: revise_implementation
     type: TransformAgent
-    selected_model: auto
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - claude-opus-5
       - gpt-5.6-sol
+      - gpt-5.6-terra
+      - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: claude-opus-5
+      model: gpt-5.6-sol
       max_tokens: 20000
       prompt_template: |
         Produce the final submission candidate for ONLY the "3. Quality and
@@ -1047,6 +1203,12 @@ nodes:
 
         SECTION DRAFT:
         {{compile_implementation.raw}}
+
+        LOCKED BLUEPRINT:
+        {{proposal_blueprint.parsed}}
+
+        PROPOSAL TRUTH GRAPH:
+        {{truth_graph.truth_graph}}
 
         INDEPENDENT EVALUATION:
         {{evaluate_v1}}
@@ -1074,8 +1236,8 @@ nodes:
       proposal_text: "{{final_revision.text}}"
       generator_model: auto
       evaluator_models:
-        - claude-sonnet-4-5
-        - gpt-5
+        - o3
+        - gpt-5.6-sol
       criterion_threshold: 4.0
       total_threshold: 12.0
 
@@ -1137,27 +1299,29 @@ edges:
       - call_intelligence
       - understand_supporting_image
   - from: call_intelligence
-    to:
-      - normalise_source_graph
-      - research_context_query
+    to: normalise_source_graph
   - from: partb_metadata
     to: normalise_source_graph
-  - from: research_context_query
-    to: web_search
   - from: normalise_source_graph
-    to: discover_evidence
-  - from: discover_evidence
-    to: acquire_full_text
-  - from: acquire_full_text
+    to: research_plan
+  - from: research_plan
+    to: deep_research
+  - from: deep_research
+    to: acquire_research_sources
+  - from: acquire_research_sources
     to: verify_evidence
   - from: verify_evidence
     to:
       - call_coverage
-      - research_documentation
-  - from: web_search
+      - truth_graph
+  - from: deep_research
     to: research_documentation
   - from: understand_supporting_image
     to: research_documentation
+  - from: truth_graph
+    to:
+      - research_documentation
+      - proposal_blueprint
   - from: call_coverage
     to: proposal_blueprint
   - from: proposal_blueprint
@@ -1192,7 +1356,9 @@ edges:
   - from: compile_v1
     to:
       - evaluate_v1
-      - red_team_v1
+      - scientific_peer_review
+  - from: scientific_peer_review
+    to: red_team_v1
   - from: evaluate_v1
     to:
       - revise_excellence
@@ -1234,9 +1400,17 @@ exit:
 output:
   include_input: false
   nodes:
+    - node_id: research_plan
+      flatten: false
+    - node_id: deep_research
+      flatten: false
+    - node_id: acquire_research_sources
+      flatten: false
     - node_id: call_coverage
       flatten: false
     - node_id: verify_evidence
+      flatten: false
+    - node_id: truth_graph
       flatten: false
     - node_id: research_documentation
       flatten: false

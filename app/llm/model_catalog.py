@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from app.llm.openai_registry import OPENAI_MODEL_REGISTRY
+
 
 AUTO_MODEL = "auto"
 AUTO_MODEL_LABEL = "Best possible LLM (Auto)"
@@ -34,89 +36,18 @@ class ModelProfile:
 
 
 MODEL_PROFILES: tuple[ModelProfile, ...] = (
-    ModelProfile(
-        name="claude-opus-5",
-        provider="anthropic",
-        tier="premium",
-        speed_rank=1,
-        strengths=frozenset({"writing", "reasoning", "long_context"}),
-        input_usd_per_1k=0.005,
-        output_usd_per_1k=0.025,
-    ),
-    ModelProfile(
-        name="claude-sonnet-4-5",
-        provider="anthropic",
-        tier="standard",
-        speed_rank=2,
-        strengths=frozenset({"writing", "reasoning", "general"}),
-        input_usd_per_1k=0.003,
-        output_usd_per_1k=0.015,
-    ),
-    ModelProfile(
-        name="claude-haiku-4-5",
-        provider="anthropic",
-        tier="economy",
-        speed_rank=3,
-        strengths=frozenset({"classification", "extraction", "summarization"}),
-        input_usd_per_1k=0.00025,
-        output_usd_per_1k=0.00125,
-    ),
-    ModelProfile(
-        name="gpt-5.6-sol",
-        provider="openai",
-        tier="premium",
-        speed_rank=1,
-        strengths=frozenset(
-            {"reasoning", "structured", "tool_use", "coding"}
-        ),
-        input_usd_per_1k=0.005,
-        output_usd_per_1k=0.030,
-    ),
-    ModelProfile(
-        name="gpt-5",
-        provider="openai",
-        tier="standard",
-        speed_rank=2,
-        strengths=frozenset(
-            {"reasoning", "structured", "tool_use", "general"}
-        ),
-        input_usd_per_1k=0.005,
-        output_usd_per_1k=0.020,
-    ),
-    ModelProfile(
-        name="gpt-5-mini",
-        provider="openai",
-        tier="economy",
-        speed_rank=3,
-        strengths=frozenset(
-            {"classification", "extraction", "structured", "tool_use"}
-        ),
-        input_usd_per_1k=0.0005,
-        output_usd_per_1k=0.0015,
-    ),
-    ModelProfile(
-        name="local-kimi-k3",
-        provider="moonshot-local",
-        tier="premium",
-        speed_rank=1,
-        strengths=frozenset(
-            {"writing", "reasoning", "tool_use", "long_context"}
-        ),
-        # API-metered cost is zero. Infrastructure cost is accounted for
-        # separately by the private deployment.
-        input_usd_per_1k=0.0,
-        output_usd_per_1k=0.0,
-    ),
-    ModelProfile(
-        name="local-glm-5",
-        provider="zai-local",
-        tier="premium",
-        speed_rank=1,
-        strengths=frozenset(
-            {"reasoning", "structured", "tool_use", "coding"}
-        ),
-        input_usd_per_1k=0.0,
-        output_usd_per_1k=0.0,
+    *(
+        ModelProfile(
+            name=model.name,
+            provider="openai",
+            tier=model.tier,
+            speed_rank=model.speed_rank,
+            strengths=model.strengths,
+            input_usd_per_1k=model.input_usd_per_1k,
+            output_usd_per_1k=model.output_usd_per_1k,
+        )
+        for model in OPENAI_MODEL_REGISTRY
+        if model.kind == "llm"
     ),
 )
 
@@ -125,7 +56,11 @@ DEFAULT_LLM_MODELS = [profile.name for profile in MODEL_PROFILES]
 MODEL_SELECTION_OPTIONS = [AUTO_MODEL, *DEFAULT_LLM_MODELS]
 MODEL_OPTION_LABELS = {
     AUTO_MODEL: AUTO_MODEL_LABEL,
-    **{model: model for model in DEFAULT_LLM_MODELS},
+    **{
+        model.name: model.display_name
+        for model in OPENAI_MODEL_REGISTRY
+        if model.kind == "llm"
+    },
 }
 MODEL_PRICING = {
     profile.name: (
