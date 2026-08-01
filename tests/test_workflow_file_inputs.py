@@ -258,7 +258,7 @@ async def test_hitl_document_override_rejects_cross_session_reference():
 
 def test_file_input_demo_compiles_with_templated_file_references():
     workflow = load_workflow_from_string(
-        Path("workflows/file_input_demo.yaml").read_text()
+        Path("workflows/test_fixtures/file_input_demo.yaml").read_text()
     )
     compile_workflow(workflow, services={})
 

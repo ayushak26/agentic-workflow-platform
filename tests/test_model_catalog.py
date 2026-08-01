@@ -89,7 +89,7 @@ def test_new_model_costs():
 
 
 def test_agro_thrive_uses_opus_5():
-    path = Path("workflows/agro_thrive_partb.yaml")
+    path = Path("workflows/test_fixtures/agro_thrive_partb.yaml")
     spec = load_workflow_from_string(path.read_text())
 
     selected = [

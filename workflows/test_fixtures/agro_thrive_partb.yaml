@@ -1,0 +1,410 @@
+name: "AGRO-THRIVE Part B Generation (v2 \u2014 graph-grounded)"
+use_case: eu_proposal
+description: "Generates a Horizon Europe Part B for AGRO-THRIVE (HORIZON-CL6-2026-01-CIRCBIO-09) built\
+  \ on the typed Proposal Knowledge Graph. concept_normalize POPULATES the graph with validated objects\
+  \ (objectives, WPs, partners, claims); the evidence factory keeps search candidates separate, downloads\
+  \ lawful full text, verifies exact page-level passages, searches for contradictions, and releases only\
+  \ citations that pass deterministic gates. A ConsistencyChecker gates the render on structure + compliance.\n"
+version: '3.0'
+inputs:
+  concept_note:
+    type: text
+  call_facts:
+    type: text
+nodes:
+- id: call_intel
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    output_schema:
+      expected_outcomes: list
+      scope_requirements: list
+      mandatory_conditions: list
+      coverage_notes: str
+    prompt_template: 'You are a Horizon Europe proposal analyst. From the CALL FACTS for
+
+      HORIZON-CL6-2026-01-CIRCBIO-09 (RIA, ~EUR 6M/project, 48 months, Lump
+
+      Sum), extract the requirement checklist the proposal MUST cover. Do not
+
+      invent requirements. Produce expected_outcomes (the four scored
+
+      anchors), scope_requirements (multi-actor, SSH, gender, DNSH, FAIR, JRC
+
+      platforms, synergies, practice abstracts), mandatory_conditions, and a
+
+      short coverage_notes on the highest scoring risks.
+
+
+      CALL FACTS:
+
+      {{inputs.call_facts}}
+
+      '
+- id: concept_normalize
+  type: GraphNormalizer
+  config:
+    model: claude-opus-5
+- id: discover_candidates
+  type: ScholarlyCandidateDiscoveryAgent
+  config:
+    mcp_server: paper-search-mcp
+    tool: search_papers
+    sources:
+    - arxiv
+    - openalex
+    - europepmc
+    - crossref
+    max_results_per_source: 2
+    max_candidates_per_claim: 8
+    claim_types:
+    - state_of_art
+    - problem
+    - impact
+    - method
+    model: claude-sonnet-4-5
+- id: acquire_evidence
+  type: ResearchSourceAcquirer
+  config:
+    candidates: '{{ discover_candidates.candidates }}'
+    fail_when_none_acquired: false
+- id: gather_evidence
+  type: ProposalEvidenceFactoryAgent
+  config:
+    model: claude-sonnet-4-5
+    candidates: '{{ discover_candidates.candidates }}'
+    documents: '{{ acquire_evidence.documents }}'
+    search_audit: '{{ discover_candidates.search_audit }}'
+    rejected_candidates: '{{ acquire_evidence.rejected_candidates }}'
+- id: draft_objectives
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: "Write EXCELLENCE sections 1.1 (Objectives & Ambition) and 1.2 (State of the Art\
+      \ & Beyond) of the AGRO-THRIVE RIA Part B. TARGET LENGTH: 6-7 dense A4 pages. Write in full academic\
+      \ prose, not bullet summaries.\n\nDEPTH REQUIREMENTS \u2014 for 1.1: state the overall objective,\
+      \ then for EACH specific objective (SO1..SOn from the graph) write a full paragraph covering (a)\
+      \ rationale, (b) the measurable ambition, (c) how it advances beyond current practice. For 1.2:\
+      \ for EACH key innovation (IARGF, RBOS, Decision Intelligence Engine with MILP + Pareto multi-objective\
+      \ optimisation) write a substantial subsection: current state of the art with cited evidence, its\
+      \ specific limitation, and precisely how AGRO-THRIVE advances beyond it. Cite the retrieved evidence\
+      \ where a state-of-the-art claim is made; never invent a citation.\n\nGROUNDED INPUTS (use ONLY\
+      \ these; mark anything absent as [INPUT NEEDED: ...]):\nCALL OUTCOMES: {{call_intel.parsed.expected_outcomes}}\n\
+      SCOPE REQS:    {{call_intel.parsed.scope_requirements}}\nGRAPH COUNTS:  {{concept_normalize.counts}}\n\
+      EVIDENCE:      {{gather_evidence.report}}\n"
+- id: draft_methodology
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: "Write EXCELLENCE section 1.3 (Methodology) of the AGRO-THRIVE RIA Part B. TARGET\
+      \ LENGTH: 7 dense A4 pages. Full prose.\n\nDEPTH REQUIREMENTS: Present the overall methodological\
+      \ approach, then a detailed subsection PER WORK PACKAGE describing the scientific/technical methodology\
+      \ that WP employs \u2014 the methods, models, data, and how WPs interlock. Include the concept-and-data\
+      \ flow between the pilot regions and the Decision Intelligence Engine. Explain the MILP formulation\
+      \ and the multi-objective/Pareto approach at a technical level. Where a methodological detail is\
+      \ not grounded, insert [INPUT NEEDED: ...] rather than inventing it.\n\nGROUNDED INPUTS (use ONLY\
+      \ these; mark anything absent as [INPUT NEEDED: ...]):\nCALL OUTCOMES: {{call_intel.parsed.expected_outcomes}}\n\
+      SCOPE REQS:    {{call_intel.parsed.scope_requirements}}\nGRAPH COUNTS:  {{concept_normalize.counts}}\n\
+      EVIDENCE:      {{gather_evidence.report}}\n"
+- id: draft_excellence_crosscut
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: "Write EXCELLENCE sections 1.4 (Multi-actor Approach), 1.5 (Gender & SSH integration\
+      \ in the research), and 1.6 (Open Science, FAIR data, JRC platform cooperation) of the AGRO-THRIVE\
+      \ RIA Part B. TARGET LENGTH: 4 dense A4 pages. Full prose.\n\nDEPTH REQUIREMENTS: 1.4 \u2014 explain\
+      \ the multi-actor approach (a BINDING eligibility condition): which actor types are engaged, how,\
+      \ and at which project stages; this must be concrete. 1.5 \u2014 how gender and SSH dimensions are\
+      \ integrated into the research content (not just the consortium). 1.6 \u2014 FAIR data measures,\
+      \ the DMP commitment, and cooperation with the JRC Integrated Natural Capital Accounting platform\
+      \ and the European Soil Observatory (a scoring opportunity \u2014 name them). Mark genuinely absent\
+      \ specifics as [INPUT NEEDED: ...].\n\nGROUNDED INPUTS (use ONLY these; mark anything absent as\
+      \ [INPUT NEEDED: ...]):\nCALL OUTCOMES: {{call_intel.parsed.expected_outcomes}}\nSCOPE REQS:   \
+      \ {{call_intel.parsed.scope_requirements}}\nGRAPH COUNTS:  {{concept_normalize.counts}}\nEVIDENCE:\
+      \      {{gather_evidence.report}}\n"
+- id: draft_impact_pathway
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: "Write IMPACT sections 2.1-2.2 (Impact pathway and expected outcomes) of the AGRO-THRIVE\
+      \ RIA Part B. TARGET LENGTH: 5 dense A4 pages. Under 2026-27 rules the CREDIBILITY of the impact\
+      \ pathway is the single most weighted element \u2014 make it rigorous.\n\nDEPTH REQUIREMENTS: Build\
+      \ the full pathway: project activities -> results -> target users -> adoption mechanisms -> outcomes\
+      \ -> longer-term impacts. Tie EACH of the four call expected outcomes to the specific project results\
+      \ that deliver it, in its own subsection. For every impact claim provide a KPI row: KPI | baseline\
+      \ [INPUT NEEDED] | target [INPUT NEEDED] | unit | source | owner | date. Distinguish scientific,\
+      \ economic/technological, and societal impacts.\n\nGROUNDED INPUTS (use ONLY these; mark anything\
+      \ absent as [INPUT NEEDED: ...]):\nCALL OUTCOMES: {{call_intel.parsed.expected_outcomes}}\nSCOPE\
+      \ REQS:    {{call_intel.parsed.scope_requirements}}\nGRAPH COUNTS:  {{concept_normalize.counts}}\n\
+      EVIDENCE:      {{gather_evidence.report}}\n"
+- id: draft_impact_dec
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: "Write IMPACT sections 2.3 (Barriers & assumptions) and 2.4 (Dissemination, Exploitation\
+      \ & Communication, IP) of the AGRO-THRIVE RIA Part B. TARGET LENGTH: 3 dense A4 pages. Full prose.\n\
+      \nDEPTH REQUIREMENTS: 2.3 \u2014 the concrete barriers to achieving impact and the assumptions the\
+      \ pathway rests on, with mitigations. 2.4 \u2014 the D&E&C plan (map to the dissemination/comms\
+      \ WPs), the IP/ownership approach, EIP-AGRI practice abstracts, target audiences and channels, and\
+      \ synergies with sibling EU projects. Mark absent specifics [INPUT NEEDED: ...].\n\nGROUNDED INPUTS\
+      \ (use ONLY these; mark anything absent as [INPUT NEEDED: ...]):\nCALL OUTCOMES: {{call_intel.parsed.expected_outcomes}}\n\
+      SCOPE REQS:    {{call_intel.parsed.scope_requirements}}\nGRAPH COUNTS:  {{concept_normalize.counts}}\n\
+      EVIDENCE:      {{gather_evidence.report}}\n"
+- id: draft_workplan
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: 'Write IMPLEMENTATION section 3.1 (Work plan and work packages) of the AGRO-THRIVE
+      RIA Part B. TARGET LENGTH: 7 dense A4 pages. Full prose.
+
+
+      DEPTH REQUIREMENTS: Overview of the work-plan structure and logic, then a DETAILED subsection PER
+      WORK PACKAGE containing: objectives, lead partner and participants, start/end months, the constituent
+      tasks with what each delivers, and its deliverables/milestones. Present the deliverables and milestones
+      as tables; where dates/leads/PMs are not grounded, use [INPUT NEEDED: ...]. Reference a Gantt (as
+      [INPUT NEEDED: Gantt chart]). Cover WP interdependencies.
+
+      GRAPH COUNTS:  {{concept_normalize.counts}}
+
+      OPEN QUESTIONS: {{concept_normalize.warnings}}'
+- id: draft_consortium
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: 'Write IMPLEMENTATION section 3.2 (Consortium as a whole) of the AGRO-THRIVE RIA
+      Part B. TARGET LENGTH: 4 dense A4 pages. Full prose.
+
+
+      DEPTH REQUIREMENTS: Explain how the consortium is greater than the sum of its parts. For EACH partner
+      (use the acronyms from the graph) write a paragraph on its role, the expertise it brings, and its
+      contribution to specific WPs. Mark [INPUT NEEDED: legal name + country] where absent. Explicitly
+      flag the missing 5th pilot hub and any consortium composition gaps. Cover the complementarity and
+      the balance of the partnership.
+
+      GRAPH COUNTS:  {{concept_normalize.counts}}
+
+      OPEN QUESTIONS: {{concept_normalize.warnings}}'
+- id: draft_resources_risk
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    max_tokens: 32000
+    prompt_template: "Write IMPLEMENTATION section 3.3 (Resources) and 3.4 (Risk management) of the AGRO-THRIVE\
+      \ RIA Part B. TARGET LENGTH: 3 dense A4 pages. Full prose.\n\nDEPTH REQUIREMENTS: 3.3 \u2014 the\
+      \ person-month allocation per partner (as a table, values [INPUT NEEDED] where absent), other direct\
+      \ costs, and the ~EUR 6M lump-sum structure with justification of resource adequacy. 3.4 \u2014\
+      \ a genuine risk register: at least 8 concrete risks (scientific, technical, consortium, external),\
+      \ each with likelihood, impact, and a specific mitigation, as a table.\nGRAPH COUNTS:  {{concept_normalize.counts}}"
+- id: draft_cross_cutting
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    output_schema:
+      gender: object
+      ssh: object
+      open_science: object
+      ethics: object
+      dnsh: object
+      compliance_summary: str
+    prompt_template: 'Produce the CROSS-CUTTING & COMPLIANCE material as STRUCTURED objects,
+
+      not free prose. HARD RULE - FAIL LOUD: each dimension has status exactly
+
+      ADDRESSED / PARTIAL / MISSING. ADDRESSED only when a specific grounded
+
+      fact exists; otherwise MISSING/PARTIAL with an actionable "gaps" entry.
+
+      Never write a reassuring sentence in place of a missing specific.
+
+
+      Fill gender {status, content_integration, consortium_balance,
+
+      gep_confirmed, gaps}; ssh {status, disciplines, partners, methods,
+
+      tasks, gaps}; open_science {status, fair_measures, dmp_committed,
+
+      eosc_ji_platforms (name JRC Integrated Natural Capital Accounting
+
+      platform + European Soil Observatory - a scoring opportunity), gaps};
+
+      ethics {status, applicable_issues (Decision Intelligence Engine + pilots
+
+      process behavioural/personal data -> GDPR applies), personal_data,
+
+      mitigations, gaps}; dnsh {status, statement, gaps}; and a
+
+      compliance_summary. Also write the proposal-body prose into your text
+
+      output with MISSING items as visible [INPUT NEEDED: ...] placeholders.
+
+
+      SCOPE REQS:   {{ call_intel.parsed.scope_requirements }}
+
+      GRAPH COUNTS: {{concept_normalize.counts}}
+
+      '
+    max_tokens: 32000
+- id: feasibility_check
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    output_schema:
+      critical_gaps: list
+      scoring_risks: list
+      required_human_inputs: list
+    prompt_template: 'Act as an INDEPENDENT Horizon evaluator red-teaming AGRO-THRIVE before
+
+      submission. Per criterion (Excellence / Impact / Implementation) list
+
+      critical_gaps (show-stoppers), scoring_risks (present-but-weak), and a
+
+      prioritised required_human_inputs checklist. Be specific and blunt.
+
+
+      CALL OUTCOMES: {{ call_intel.parsed.expected_outcomes }}
+
+      GRAPH COUNTS:  {{concept_normalize.counts}}
+
+      NORMALIZER WARNINGS: {{concept_normalize.warnings}}
+
+      EVIDENCE: {{gather_evidence.report}}
+
+      '
+    max_tokens: 32000
+- id: consistency_gate
+  type: ConsistencyChecker
+  config:
+    block_on_warn: false
+- id: compile_partb
+  type: TransformAgent
+  config:
+    model: claude-opus-5
+    prompt_template: "Assemble the final AGRO-THRIVE Part B from the drafted sections below. Do NOT rewrite\
+      \ content or add facts \u2014 assemble, order, and enforce cross-section consistency only. Preserve\
+      \ every [INPUT NEEDED: ...] marker verbatim. Produce the full document in order with proper Horizon\
+      \ section numbering.\n\nSTRUCTURE (assemble in this exact order):\nTitle block, then:\n1. EXCELLENCE\n\
+      \  1.1-1.2 (from OBJECTIVES_AND_SOTA)\n  1.3 (from METHODOLOGY)\n  1.4-1.6 (from EXCELLENCE_CROSSCUT)\n\
+      2. IMPACT\n  2.1-2.2 (from IMPACT_PATHWAY)\n  2.3-2.4 (from IMPACT_DEC)\n3. IMPLEMENTATION\n  3.1\
+      \ (from WORKPLAN)\n  3.2 (from CONSORTIUM)\n  3.3-3.4 (from RESOURCES_RISK)\nCross-cutting & compliance\
+      \ annex (from COMPLIANCE)\n\nEnforce consistent WP numbers, partner acronyms, and objective ids\
+      \ across all sections; flag any mismatch as [CONSISTENCY: ...]. Append a \"Pre-submission gap report\"\
+      : (a) the deterministic consistency verdict + findings, (b) a compliance status table, (c) the feasibility\
+      \ red-team output + prioritised human-input checklist. If the consistency verdict is BLOCK, put\
+      \ at the very top: \"NOT SUBMISSION-READY \u2014 see blocking findings.\"\n\n=== OBJECTIVES_AND_SOTA\
+      \ ===\n{{draft_objectives.raw}}\n=== METHODOLOGY ===\n{{draft_methodology.raw}}\n=== EXCELLENCE_CROSSCUT\
+      \ ===\n{{draft_excellence_crosscut.raw}}\n=== IMPACT_PATHWAY ===\n{{draft_impact_pathway.raw}}\n\
+      === IMPACT_DEC ===\n{{draft_impact_dec.raw}}\n=== WORKPLAN ===\n{{draft_workplan.raw}}\n=== CONSORTIUM\
+      \ ===\n{{draft_consortium.raw}}\n=== RESOURCES_RISK ===\n{{draft_resources_risk.raw}}\n=== COMPLIANCE\
+      \ (structured) ===\ngender: {{draft_cross_cutting.parsed.gender}}\nssh: {{draft_cross_cutting.parsed.ssh}}\n\
+      open_science: {{draft_cross_cutting.parsed.open_science}}\nethics: {{draft_cross_cutting.parsed.ethics}}\n\
+      dnsh: {{draft_cross_cutting.parsed.dnsh}}\ncompliance_summary: {{draft_cross_cutting.parsed.compliance_summary}}\n\
+      === DETERMINISTIC CONSISTENCY CHECK ===\nverdict: {{consistency_gate.gate}}\nfindings: {{consistency_gate.findings}}\n\
+      === GAP REPORT INPUTS ===\ncritical_gaps: {{feasibility_check.parsed.critical_gaps}}\nscoring_risks:\
+      \ {{feasibility_check.parsed.scoring_risks}}\nrequired_human_inputs: {{feasibility_check.parsed.required_human_inputs}}\n"
+    max_tokens: 32000
+- id: render_pdf
+  type: HorizonHTMLProposalRenderer
+  config:
+    content: '{{ compile_partb.raw }}'
+    content_format: markdown
+    metadata:
+      proposal_title: "AGRO-THRIVE: Balancing food security, bioeconomy, climate and biodiversity"
+      acronym: AGRO-THRIVE
+      call_id: HORIZON-CL6-2026-01-CIRCBIO-09
+      action_type: Research and Innovation Action (RIA)
+      consortium_name: AGRO-THRIVE Consortium
+      part_label: Part B
+      version: Evidence-verified draft
+    citation_registry: '{{ gather_evidence.citation_registry }}'
+    evidence_qa: '{{ gather_evidence.qa_report }}'
+    evidence_blockers: '{{ gather_evidence.blocking_issues }}'
+    include_toc: true
+    include_bibliography: true
+    include_evidence_annex: true
+    page_limit: 45
+    enforce_page_limit: false
+- id: render_docx
+  type: HorizonDOCXProposalRenderer
+  config:
+    content: '{{ compile_partb.raw }}'
+    content_format: markdown
+    metadata:
+      proposal_title: "AGRO-THRIVE: Balancing food security, bioeconomy, climate and biodiversity"
+      acronym: AGRO-THRIVE
+      call_id: HORIZON-CL6-2026-01-CIRCBIO-09
+      action_type: Research and Innovation Action (RIA)
+      consortium_name: AGRO-THRIVE Consortium
+      part_label: Part B
+      version: Evidence-verified draft
+    citation_registry: '{{ gather_evidence.citation_registry }}'
+    evidence_qa: '{{ gather_evidence.qa_report }}'
+    evidence_blockers: '{{ gather_evidence.blocking_issues }}'
+    include_toc: true
+    include_bibliography: true
+    include_evidence_annex: true
+    page_limit: 45
+    enforce_page_limit: false
+edges:
+- from: call_intel
+  to: concept_normalize
+- from: concept_normalize
+  to: discover_candidates
+- from: discover_candidates
+  to: acquire_evidence
+- from: acquire_evidence
+  to: gather_evidence
+- from: gather_evidence
+  to: draft_objectives
+- from: gather_evidence
+  to: draft_methodology
+- from: gather_evidence
+  to: draft_excellence_crosscut
+- from: gather_evidence
+  to: draft_impact_pathway
+- from: gather_evidence
+  to: draft_impact_dec
+- from: gather_evidence
+  to: draft_workplan
+- from: gather_evidence
+  to: draft_consortium
+- from: gather_evidence
+  to: draft_resources_risk
+- from: gather_evidence
+  to: draft_cross_cutting
+- from: gather_evidence
+  to: feasibility_check
+- from: gather_evidence
+  to: consistency_gate
+- from: draft_objectives
+  to: compile_partb
+- from: draft_methodology
+  to: compile_partb
+- from: draft_excellence_crosscut
+  to: compile_partb
+- from: draft_impact_pathway
+  to: compile_partb
+- from: draft_impact_dec
+  to: compile_partb
+- from: draft_workplan
+  to: compile_partb
+- from: draft_consortium
+  to: compile_partb
+- from: draft_resources_risk
+  to: compile_partb
+- from: draft_cross_cutting
+  to: compile_partb
+- from: feasibility_check
+  to: compile_partb
+- from: consistency_gate
+  to: compile_partb
+- from: compile_partb
+  to: render_pdf
+- from: compile_partb
+  to: render_docx

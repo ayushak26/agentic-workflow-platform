@@ -5,8 +5,8 @@ import app.nodes  # noqa: F401
 from app.runtime.executor import run_workflow
 from app.runtime.loader import load_workflow
 
-HELLO_YAML = Path(__file__).parent.parent / "workflows" / "hello_workflow.yaml"
-PARALLEL_YAML = Path(__file__).parent.parent / "workflows" / "parallel_demo.yaml"
+HELLO_YAML = Path(__file__).parent.parent / "workflows" / "test_fixtures" / "hello_workflow.yaml"
+PARALLEL_YAML = Path(__file__).parent.parent / "workflows" / "test_fixtures" / "parallel_demo.yaml"
 
 
 async def test_hello_workflow_end_to_end():

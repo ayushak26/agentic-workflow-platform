@@ -12,7 +12,7 @@ from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow
 from app.runtime.loader import load_workflow
 
-FLAGSHIP_YAML = Path(__file__).parent.parent / "workflows" / "proposal_generation.yaml"
+FLAGSHIP_YAML = Path(__file__).parent.parent / "workflows" / "test_fixtures" / "proposal_generation.yaml"
 RFP_TEXT = (Path(__file__).parent / "fixtures" / "sample_rfp.txt").read_text()
 
 
