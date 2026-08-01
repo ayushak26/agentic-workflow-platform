@@ -111,6 +111,9 @@ nodes:
       max_tool_calls_per_job: 16
       max_citations_per_brief: 20
       max_candidates_per_claim: 12
+      max_duration_seconds: 1800
+      max_iterations: 15
+      max_cost_per_call_usd: 15
 
   - id: research_documentation
     type: TransformAgent

@@ -1,24 +1,43 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api, type RunCandidate } from '../../api/client';
+import { api, type DiscoveredCandidate, type RunCandidate } from '../../api/client';
+
+const foundByLabel: Record<string, string> = {
+  ScholarlyCandidateDiscoveryAgent: 'Scholarly discovery',
+  BoundedDeepResearchAgent: 'Deep Research',
+};
 
 export function RunCandidates() {
   const { runId } = useParams<{ runId?: string }>();
   const navigate = useNavigate();
   const [candidates, setCandidates] = useState<RunCandidate[] | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredCandidate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
 
   useEffect(() => {
     if (!runId) return;
-    setLoading(true);
-    setError(null);
-    api
-      .runCandidates(runId)
-      .then((res) => setCandidates(res.candidates))
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await api.runCandidates(runId as string);
+        if (!cancelled) {
+          setCandidates(res.candidates);
+          setDiscovered(res.discovered_candidates);
+        }
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [runId]);
 
   const shown = (candidates ?? []).filter((c) =>
@@ -110,6 +129,63 @@ export function RunCandidates() {
             </table>
           </div>
         )}
+
+        <div className="mt-8">
+          <h3 className="text-sm font-semibold text-ink-900">Discovered evidence</h3>
+          <p className="text-xs text-ink-500 mt-1">
+            Every source found by scholarly discovery or Deep Research for this
+            run — web, database, and research-paper URLs alike — deduplicated
+            by candidate id. These are candidates, not verified evidence.
+          </p>
+          {!error && discovered && discovered.length === 0 && (
+            <div className="text-sm text-ink-500 mt-3">
+              No discovery or Deep Research candidates recorded for this run.
+            </div>
+          )}
+          {!error && discovered && discovered.length > 0 && (
+            <div className="border border-slate-200 rounded-md overflow-hidden bg-white mt-3">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-ink-600">
+                  <tr>
+                    <th className="text-left font-medium px-3 py-2">Name</th>
+                    <th className="text-left font-medium px-3 py-2">URL</th>
+                    <th className="text-left font-medium px-3 py-2">Claim</th>
+                    <th className="text-left font-medium px-3 py-2">Found via</th>
+                    <th className="text-left font-medium px-3 py-2">Authority</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {discovered.map((d) => (
+                    <tr key={d.candidate_id} className="border-t border-slate-100 align-top">
+                      <td className="px-3 py-2 max-w-sm">{d.title}</td>
+                      <td className="px-3 py-2 max-w-sm break-all">
+                        {d.url ? (
+                          <a
+                            href={d.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-accent-600 hover:underline"
+                          >
+                            {d.url}
+                          </a>
+                        ) : (
+                          <span className="text-ink-400">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-ink-500">
+                        {d.claim_id || '—'}
+                      </td>
+                      <td className="px-3 py-2">
+                        {foundByLabel[d.found_by_type] ?? d.found_by_type}
+                      </td>
+                      <td className="px-3 py-2">{d.authority || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

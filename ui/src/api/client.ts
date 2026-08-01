@@ -51,6 +51,19 @@ export type RunCandidate = {
   last_modified: string | null;
   pdf_url: string;
 };
+export type DiscoveredCandidate = {
+  candidate_id: string;
+  claim_id: string | null;
+  title: string;
+  url: string | null;
+  doi: string | null;
+  source: string | null;
+  purpose: string | null;
+  authority: string | null;
+  retraction_status: string | null;
+  found_by_node_id: string | null;
+  found_by_type: 'ScholarlyCandidateDiscoveryAgent' | 'BoundedDeepResearchAgent' | string;
+};
 export type Scorecard = {
   workflow_name: string;
   judge_model: string;
@@ -270,8 +283,8 @@ export const api = {
     anchor.click();
     URL.revokeObjectURL(url);
   },
-  runHistory: () =>
-    afetch(`${API}/runs/mine`, { headers: authHeaders() })
+  runHistory: (limit?: number) =>
+    afetch(`${API}/runs/mine${limit != null ? `?limit=${limit}` : ''}`, { headers: authHeaders() })
       .then(j<{ count: number; runs: RunSummary[] }>),
 
   runDetail: (run_id: string) =>
@@ -279,7 +292,13 @@ export const api = {
       .then(j<{ run: RunDetail; audit: AuditEvent[] }>),
   runCandidates: (run_id: string) =>
     afetch(`${API}/candidates/${run_id}`, { headers: authHeaders() })
-      .then(j<{ run_id: string; count: number; candidates: RunCandidate[] }>),
+      .then(j<{
+        run_id: string;
+        count: number;
+        candidates: RunCandidate[];
+        discovered_count: number;
+        discovered_candidates: DiscoveredCandidate[];
+      }>),
   researchSkills: () =>
     afetch(`${API}/research/skills`, { headers: authHeaders() })
       .then(j<{

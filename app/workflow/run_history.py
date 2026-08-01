@@ -248,6 +248,11 @@ async def upsert_run(
     reused_node_count: int | None = None,
     reused_nodes: list[str] | None = None,
     error: str | None = None,
+    pipeline_run_id: str | None = None,
+    pipeline_name: str | None = None,
+    stage_id: str | None = None,
+    stage_index: int | None = None,
+    total_stages: int | None = None,
 ) -> None:
     """Create or patch one run without erasing fields omitted by the caller."""
 
@@ -285,6 +290,11 @@ async def upsert_run(
         "attempt": attempt,
         "reused_node_count": reused_node_count,
         "reused_nodes": reused_nodes,
+        "pipeline_run_id": pipeline_run_id,
+        "pipeline_name": pipeline_name,
+        "stage_id": stage_id,
+        "stage_index": stage_index,
+        "total_stages": total_stages,
     }
     fields.update(
         {key: value for key, value in optional_fields.items() if value is not None}
@@ -689,6 +699,8 @@ async def record_node_failed(
     node_id: str,
     type_name: str,
     error: str,
+    error_type: str | None = None,
+    error_traceback: str | None = None,
     model_selections: list[dict[str, Any]] | None = None,
     ended_at: float,
     duration_s: float,
@@ -708,6 +720,8 @@ async def record_node_failed(
                     f"node_runs.{key}.ended_at": ended_at,
                     f"node_runs.{key}.duration_s": duration_s,
                     f"node_runs.{key}.error": error,
+                    f"node_runs.{key}.error_type": error_type,
+                    f"node_runs.{key}.error_traceback": error_traceback,
                     f"node_runs.{key}.model_selections": (
                         redact_for_history(model_selections or [])
                     ),

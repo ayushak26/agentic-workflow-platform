@@ -190,12 +190,23 @@ class ScientificResearchPlannerAgent(NodeType):
             if remaining_budget < 2:
                 break
             tool_calls = min(requested_calls, remaining_budget)
-            objective = (
-                f"{item.question}\n"
-                f"{_TRACK_GUIDANCE.get(item.track, '')}"
+            guidance = _TRACK_GUIDANCE.get(item.track, "")
+            objective = f"{item.question}\n{guidance}"
+            # The track guidance names specific skills as the intended fit
+            # for that research track. Request them explicitly rather than
+            # relying only on auto-select scoring against every allowlisted
+            # skill — a good scoring match is likely but not guaranteed, and
+            # a track that names a skill should always get it if it loaded.
+            requested_skills = tuple(
+                dict.fromkeys(
+                    token
+                    for token in guidance.split()
+                    if token in catalog.loaded_skill_names
+                )
             )
             selection = catalog.select(
                 objective=objective,
+                requested=requested_skills,
                 auto_select=True,
                 max_skills=cfg.max_skills_per_brief,
             )

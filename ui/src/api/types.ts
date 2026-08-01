@@ -174,6 +174,15 @@ export interface RunSummary {
   // decision) from a HITL gate's own pause ('hitl_gate', resumed from the
   // review screen with an approve/reject/edit decision instead).
   pause_kind?: PauseKind;
+  // Present only when this run is one stage of a pipeline (see
+  // app/runtime/pipeline_executor.py's _run_stage) — stamped at run
+  // creation so Run History can show/search/filter/sort by stage without a
+  // separate lookup into the pipeline_runs collection.
+  pipeline_run_id?: string | null;
+  pipeline_name?: string | null;
+  stage_id?: string | null;
+  stage_index?: number | null;
+  total_stages?: number | null;
 }
 
 export type NodeRunStatus =
@@ -204,6 +213,8 @@ export interface NodeRun {
   ended_at: number | null;
   duration_s: number | null;
   error: string | null;
+  error_type?: string | null;
+  error_traceback?: string | null;
   model_selections?: ModelSelection[];
 }
 

@@ -28,6 +28,23 @@ class BoundedDeepResearchConfig(BaseModel):
     max_tool_calls_per_job: int = Field(default=16, ge=2, le=40)
     max_citations_per_brief: int = Field(default=20, ge=1, le=50)
     max_candidates_per_claim: int = Field(default=12, ge=1, le=30)
+    # Hard per-brief wall-clock ceiling. A brief that hits this hands off
+    # whatever it gathered instead of running indefinitely; concurrent
+    # siblings (bounded by max_parallel_jobs) are unaffected, and the freed
+    # slot picks up the next queued brief immediately.
+    max_duration_seconds: float = Field(default=1800.0, gt=0)
+    # Hard cap on sequential gather-loop turns (web_search/analyze rounds),
+    # independent of max_duration_seconds and of the brief's own
+    # max_tool_calls budget. Either limit hitting first forces a synthesis
+    # call from whatever was gathered ("early_stopping_method=generate")
+    # rather than failing the brief.
+    max_iterations: int = Field(default=15, ge=1, le=50)
+    # Hard per-API-call dollar cap, priced via CostLedger.calculate. Checked
+    # both as a worst-case pre-call estimate (skips the call entirely) and
+    # against the actual token usage once a response comes back (stops
+    # further calls for that brief); either breach marks the dossier
+    # "incomplete" rather than silently letting spend run away.
+    max_cost_per_call_usd: float = Field(default=15.0, gt=0)
 
     @field_validator("research_briefs", mode="before")
     @classmethod
@@ -150,6 +167,9 @@ class BoundedDeepResearchAgent(NodeType):
                     dossier = await service.research(
                         brief=brief,
                         instructions=instructions,
+                        max_duration_seconds=cfg.max_duration_seconds,
+                        max_iterations=cfg.max_iterations,
+                        max_cost_per_call_usd=cfg.max_cost_per_call_usd,
                     )
                     dossier = dossier.model_copy(
                         update={

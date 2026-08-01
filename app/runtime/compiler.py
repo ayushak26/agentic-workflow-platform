@@ -22,6 +22,7 @@ on HITL interrupts, reusing the existing is_graph_interrupt() split.
 from __future__ import annotations
 from copy import deepcopy
 import time
+import traceback
 from typing import Any
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -276,6 +277,13 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         audit, run_id, session_id, node_id, NODE_ERROR,
                         payload={"error": str(e)[:200]},
                     )
+                    # Trimmed from the end, not the start — the frames nearest
+                    # the raise are the useful ones for a non-technical user's
+                    # "suggested corrective action" and for debugging, whereas
+                    # the outermost frames are just this same wrapper.
+                    formatted_traceback = "".join(
+                        traceback.format_exception(type(e), e, e.__traceback__)
+                    )[-4000:]
                     await record_node_failed(
                         audit,
                         run_id=run_id,
@@ -283,6 +291,8 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         node_id=node_id,
                         type_name=type_name,
                         error=str(e)[:500],
+                        error_type=type(e).__name__,
+                        error_traceback=formatted_traceback,
                         ended_at=time.time(),
                         duration_s=time.time() - started,
                     )

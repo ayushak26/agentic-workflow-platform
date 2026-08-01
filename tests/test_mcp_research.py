@@ -103,6 +103,39 @@ def test_openaire_query_patch_leaves_other_endpoints_untouched():
     assert seen["params"] == {"keywords": "test"}
 
 
+def test_openaire_legacy_fallback_handles_null_response():
+    """OpenAIRE's legacy `/search/publications` endpoint sometimes returns
+    `"response": null` for an empty/edge-case result set instead of omitting
+    the key. `search()`'s `data.get('response', {}).get('results', {})...`
+    chain doesn't fall back to `{}` for a present `None` value, so it raises
+    `'NoneType' object has no attribute 'get'`. Our launcher patches `_get`
+    to normalize the JSON so that chain always sees dicts."""
+    from app.mcp.paper_search_server import patch_openaire_query_param
+    from paper_search_mcp.academic_platforms.openaire import OpenAiresearcher
+
+    patch_openaire_query_param()
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"response": None}
+
+        def raise_for_status(self):
+            pass
+
+    searcher = OpenAiresearcher()
+    # search() tries the v2 XML path first and falls back to the legacy
+    # JSON path on failure; force that fallback deterministically instead
+    # of relying on the real v2 endpoint (one of its retry profiles calls
+    # `requests.get` directly, bypassing any session mock) to fail.
+    searcher._search_with_retry = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("v2 unavailable"))
+    searcher.session.get = lambda *a, **k: FakeResponse()
+
+    papers = searcher.search("a query with a null response", max_results=5)
+    assert papers == []
+
+
 def test_semantic_scholar_empty_results_do_not_raise():
     """The Semantic Scholar Graph API omits the `data` key entirely (not an
     empty list) when a query's total is 0. The vendored connector does

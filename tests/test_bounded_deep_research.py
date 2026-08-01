@@ -162,9 +162,129 @@ async def test_bounded_tool_research_service_supports_claude_fable_5():
     assert dossier.usage.tool_calls == 0
 
 
-async def test_bounded_tool_research_service_raises_when_loop_never_finalizes():
-    # Every turn keeps requesting the same search until the budget runs out
-    # and no turn is left over to produce a final answer.
+async def test_bounded_tool_research_service_hands_off_on_timeout():
+    # A negative budget means the deadline is already in the past before the
+    # first chat_with_tools call — the loop must stop immediately rather
+    # than block on gathering, and still synthesize from what it has (none).
+    llm = StubLLM(
+        tool_responses=[
+            LLMToolUseResponse(
+                text=None,
+                tool_calls=[ToolCall(id="t1", name="web_search", arguments={"query": "x"})],
+                model="gpt-5.6-sol",
+                input_tokens=5,
+                output_tokens=5,
+            ),
+        ],
+        completion=LLMResponse(
+            text="Best-effort synthesis with no gathered evidence.",
+            model="gpt-5.6-sol",
+            input_tokens=10,
+            output_tokens=10,
+        ),
+    )
+    web_search = StubWebSearch(
+        WebSearchResponse(
+            query="x", requested_provider="auto", actual_provider="tavily", results=[]
+        )
+    )
+    service = BoundedToolResearchService(llm=llm, web_search=web_search)
+    brief = ResearchBrief(
+        brief_id="RQ-4", track="state_of_art", question="q", purpose="p", max_tool_calls=5
+    )
+
+    dossier = await service.research(
+        brief=brief, instructions="Be rigorous.", max_duration_seconds=-1
+    )
+
+    assert dossier.status == "incomplete"
+    assert dossier.citations == []
+    assert llm.chat_with_tools_calls == []  # never reached: deadline was already past
+    assert len(llm.complete_calls) == 1  # synthesis still runs with whatever was gathered
+    assert web_search.calls == []
+
+
+async def test_bounded_tool_research_service_stops_on_actual_cost_cap():
+    # A single response with an implausibly huge output_tokens count breaches
+    # the $15/call cap once CostLedger prices it — the loop must stop
+    # gathering right there rather than feeding the expensive turn back in
+    # for more (possibly even more expensive) rounds.
+    llm = StubLLM(
+        tool_responses=[
+            LLMToolUseResponse(
+                text=None,
+                tool_calls=[ToolCall(id="t1", name="web_search", arguments={"query": "x"})],
+                model="gpt-5.6-sol",
+                input_tokens=100,
+                output_tokens=1_000_000,  # gpt-5.6-sol: $0.030/1K -> $30, over cap
+            ),
+        ],
+        completion=LLMResponse(
+            text="Forced summary after cost cap breach.",
+            model="gpt-5.6-sol",
+            input_tokens=10,
+            output_tokens=10,
+        ),
+    )
+    web_search = StubWebSearch(
+        WebSearchResponse(
+            query="x", requested_provider="auto", actual_provider="tavily", results=[]
+        )
+    )
+    service = BoundedToolResearchService(llm=llm, web_search=web_search)
+    brief = ResearchBrief(
+        brief_id="RQ-5", track="state_of_art", question="q", purpose="p", max_tool_calls=10
+    )
+
+    dossier = await service.research(
+        brief=brief, instructions="Be rigorous.", max_cost_per_call_usd=15.0
+    )
+
+    assert dossier.status == "incomplete"
+    assert "Forced summary" in dossier.report_markdown
+    assert len(llm.chat_with_tools_calls) == 1  # stopped right after the expensive call
+    assert web_search.calls == []  # never got to executing the requested search
+
+
+async def test_bounded_tool_research_service_skips_synthesis_when_projected_cost_too_high():
+    # A vanishingly small cap fails the pre-call projected-cost estimate
+    # immediately, before the very first chat_with_tools call — proving the
+    # guard prevents an over-cap call from ever being made, not just reacts
+    # after the fact — and the synthesis call is skipped the same way.
+    llm = StubLLM(
+        tool_responses=[
+            LLMToolUseResponse(
+                text="done", tool_calls=[], model="gpt-5.6-sol", input_tokens=5, output_tokens=5
+            ),
+        ],
+        completion=LLMResponse(
+            text="Should never be returned.", model="gpt-5.6-sol", input_tokens=1, output_tokens=1
+        ),
+    )
+    web_search = StubWebSearch(
+        WebSearchResponse(
+            query="x", requested_provider="auto", actual_provider="tavily", results=[]
+        )
+    )
+    service = BoundedToolResearchService(llm=llm, web_search=web_search)
+    brief = ResearchBrief(
+        brief_id="RQ-6", track="state_of_art", question="q", purpose="p", max_tool_calls=2
+    )
+
+    dossier = await service.research(
+        brief=brief, instructions="Be rigorous.", max_cost_per_call_usd=0.0000001
+    )
+
+    assert dossier.status == "incomplete"
+    assert "Synthesis skipped" in dossier.report_markdown
+    assert len(llm.chat_with_tools_calls) == 0  # gather call itself was never made
+    assert len(llm.complete_calls) == 0
+
+
+async def test_bounded_tool_research_service_forces_summary_when_iterations_exhausted():
+    # early_stopping_method="generate": every turn keeps requesting another
+    # search, so max_iterations runs out before a final answer — the brief
+    # must still hand back a forced-summary dossier, not raise.
     tool_responses = [
         LLMToolUseResponse(
             text=None,
@@ -175,7 +295,15 @@ async def test_bounded_tool_research_service_raises_when_loop_never_finalizes():
         )
         for i in range(3)
     ]
-    llm = StubLLM(tool_responses=tool_responses, completion=None)
+    llm = StubLLM(
+        tool_responses=tool_responses,
+        completion=LLMResponse(
+            text="Forced summary from partial results.",
+            model="gpt-5.6-sol",
+            input_tokens=10,
+            output_tokens=10,
+        ),
+    )
     web_search = StubWebSearch(
         WebSearchResponse(
             query="x", requested_provider="auto", actual_provider="tavily", results=[]
@@ -183,15 +311,17 @@ async def test_bounded_tool_research_service_raises_when_loop_never_finalizes():
     )
     service = BoundedToolResearchService(llm=llm, web_search=web_search)
     brief = ResearchBrief(
-        brief_id="RQ-3", track="state_of_art", question="q", purpose="p", max_tool_calls=2
+        brief_id="RQ-3", track="state_of_art", question="q", purpose="p", max_tool_calls=10
     )
 
-    try:
-        await service.research(brief=brief, instructions="Be rigorous.")
-        raised = False
-    except RuntimeError:
-        raised = True
-    assert raised
+    dossier = await service.research(
+        brief=brief, instructions="Be rigorous.", max_iterations=3
+    )
+
+    assert dossier.status == "incomplete"
+    assert "Forced summary" in dossier.report_markdown
+    assert len(llm.chat_with_tools_calls) == 3  # capped at max_iterations
+    assert len(llm.complete_calls) == 1
 
 
 async def test_bounded_deep_research_agent_end_to_end_with_new_service():

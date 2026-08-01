@@ -13,13 +13,22 @@ rest of the MCP implementation remains upstream-owned.
    string 400s with "Parameter query is not supported. The supported
    parameters are: ... keywords ..."). Patched here by renaming the
    parameter for that one endpoint.
-3. Its Semantic Scholar connector does ``response.json()["data"]``
+3. That same OpenAIRE legacy fallback then does
+   ``data.get('response', {}).get('results', {}).get('result', [])``. The
+   endpoint sometimes returns `"response": null` (or a null `results`) for
+   an empty/edge-case result set instead of omitting the key — and
+   `dict.get(key, default)` only falls back to `default` when the key is
+   *absent*, not when it's present with value `None`. That raises
+   `'NoneType' object has no attribute 'get'`, logged (and swallowed) as
+   "OpenAIRE API request error". Patched here by normalizing the response
+   JSON so `response`/`results` are never `None`.
+4. Its Semantic Scholar connector does ``response.json()["data"]``
    unconditionally. The Semantic Scholar Graph API omits the `data` key
    entirely (not an empty list) when a query's total is 0, which raises an
    uncaught-looking `KeyError` for what is actually a normal empty result.
    Patched here by wrapping the response so `.json()` always includes
    `data`, defaulting to `[]`.
-4. Our keyed Semantic Scholar tier is capped at 1 request/second, *cumulative
+5. Our keyed Semantic Scholar tier is capped at 1 request/second, *cumulative
    across all endpoints* (per S2's own approval email) — burst straight past
    that and every subsequent call in the burst 429s. The connector only
    reacts to 429s after the fact (a short backoff-and-retry); nothing paces
@@ -58,24 +67,60 @@ def inject_openalex_api_key(searcher: Any, api_key: str) -> bool:
     return True
 
 
+def _normalize_openaire_legacy_json(payload: Any) -> Any:
+    """Guard against `"response": null` / `"results": null` in the OpenAIRE
+    legacy search payload, which otherwise crashes the caller's
+    `data.get('response', {}).get('results', {}).get('result', [])` chain
+    (a present `None` value bypasses `dict.get`'s default)."""
+
+    if not isinstance(payload, dict):
+        return payload
+    response = payload.get("response") or {}
+    results = response.get("results") or {}
+    results.setdefault("result", [])
+    response["results"] = results
+    payload["response"] = response
+    return payload
+
+
+class _JsonNullSafeOpenAireResponse:
+    """Wraps a requests.Response so `.json()` never nests `None` under
+    `response`/`results` for the OpenAIRE legacy search endpoint."""
+
+    def __init__(self, response: Any) -> None:
+        self._response = response
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._response, name)
+
+    def json(self, *args: Any, **kwargs: Any) -> Any:
+        return _normalize_openaire_legacy_json(self._response.json(*args, **kwargs))
+
+
 def patch_openaire_query_param(module_name: str = "paper_search_mcp.academic_platforms.openaire") -> None:
-    """Rename the legacy fallback's `query` param to the supported `keywords`."""
+    """Rename the legacy fallback's `query` param to the supported `keywords`,
+    and normalize its response so a null `response`/`results` doesn't raise
+    in the caller's `.get()` chain."""
 
     openaire = importlib.import_module(module_name)
     original_get = openaire.OpenAiresearcher._get
 
     def patched_get(self, url, **kwargs):
+        is_legacy_search = url.rstrip("/").endswith("/search/publications")
         params = kwargs.get("params")
         if (
-            isinstance(params, dict)
-            and url.rstrip("/").endswith("/search/publications")
+            is_legacy_search
+            and isinstance(params, dict)
             and "query" in params
             and "keywords" not in params
         ):
             params = dict(params)
             params["keywords"] = params.pop("query")
             kwargs = {**kwargs, "params": params}
-        return original_get(self, url, **kwargs)
+        response = original_get(self, url, **kwargs)
+        if is_legacy_search:
+            return _JsonNullSafeOpenAireResponse(response)
+        return response
 
     openaire.OpenAiresearcher._get = patched_get
 

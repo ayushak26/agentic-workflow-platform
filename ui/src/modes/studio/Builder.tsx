@@ -68,7 +68,7 @@ export function Builder() {
     api.getWorkflow(name).then(({ yaml }) => {
       const wf = parseYaml(yaml);
       const { nodes: ns, edges: es } = yamlToReactFlow(wf);
-      setNodes(layoutFlow(ns, es));
+      setNodes(layoutFlow(ns, es, 'TB').nodes);
       setEdges(es);
       const { nodes: workflowNodes, edges: workflowEdges, ...rest } = wf;
       void workflowNodes;
@@ -267,7 +267,7 @@ export function Builder() {
   }, [rfInstance]);
 
   const reorganizeNodes = useCallback(() => {
-    setNodes((current) => layoutFlow(current, edges));
+    setNodes((current) => layoutFlow(current, edges, 'TB').nodes);
     requestAnimationFrame(showAllNodes);
   }, [edges, setNodes, showAllNodes]);
 

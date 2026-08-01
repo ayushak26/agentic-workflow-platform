@@ -10,6 +10,7 @@ logger = get_logger(__name__)
 MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-5":          (0.005,   0.025),
     "claude-opus-4-8":        (0.005,   0.025),
+    "claude-fable-5":         (0.005,   0.025),
     "claude-sonnet-4-5":      (0.003,   0.015),
     "claude-haiku-4-5":       (0.00025, 0.00125),
     "gpt-5.6-sol":            (0.005,   0.030),

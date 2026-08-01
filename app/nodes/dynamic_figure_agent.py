@@ -69,7 +69,7 @@ class DynamicFigureAgentConfig(BaseModel):
     size: str = "auto"
     quality: str = "auto"
     output_format: str = "png"
-    max_images: int = Field(default=12, ge=0, le=40)
+    max_images: int = Field(default=10, ge=0, le=10)
     # If generation is disabled/unavailable, fall back to captioned output for
     # the illustrated variant too, so the pipeline never hard-fails on images.
     fail_open: bool = True

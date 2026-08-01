@@ -111,6 +111,9 @@ nodes:
       max_tool_calls_per_job: 16
       max_citations_per_brief: 20
       max_candidates_per_claim: 12
+      max_duration_seconds: 1800
+      max_iterations: 15
+      max_cost_per_call_usd: 15
 
   # -- Index the acquired full text into Weaviate under this run's
   #    collection_id, stamping each chunk with its global [N]. Runs after the
@@ -1150,7 +1153,7 @@ nodes:
       size: auto
       quality: auto
       output_format: png
-      max_images: 12
+      max_images: 10
       fail_open: true
   - id: render_submission_docx_full
     type: HorizonDOCXProposalRenderer

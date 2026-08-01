@@ -18,11 +18,27 @@ running the gather loop ourselves lets any chat model — ``gpt-5.6-sol`` or
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from app.evidence.retrieval import stable_id
+from app.observability.cost_ledger import CostLedger
+from app.observability.logging import get_logger
+
+log = get_logger(__name__)
+
+# ~4 characters per token is the same rough pre-call estimate used by
+# app.llm.registry._estimate_input_tokens for deterministic model routing.
+_CHARS_PER_TOKEN_ESTIMATE = 4
+_MAX_TURN_TOKENS = 4096
+
+
+def _projected_call_cost(model: str, prompt_text: str, max_tokens: int) -> float:
+    """Worst-case pre-call cost: rough input-token estimate, full max_tokens output."""
+    estimated_input_tokens = max(0, len(prompt_text) // _CHARS_PER_TOKEN_ESTIMATE)
+    return CostLedger.calculate(model, estimated_input_tokens, max_tokens)
 
 
 ResearchTrack = Literal[
@@ -117,9 +133,9 @@ class BoundedToolResearchService:
     """Bounded, in-process replacement for the OpenAI Deep Research job API.
 
     Each brief runs two phases:
-      1. A bounded ``chat_with_tools`` gather loop (up to
-         ``brief.max_tool_calls`` ``web_search`` calls) collects candidate
-         citations.
+      1. A bounded ``chat_with_tools`` gather loop (at most ``max_iterations``
+         sequential turns, each optionally issuing ``web_search`` calls up to
+         ``brief.max_tool_calls``) collects candidate citations.
       2. One dedicated ``complete`` call, at the model's highest declared
          reasoning effort, synthesizes the dossier from what was gathered.
          Tool-calling turns intentionally run cheap (providers such as
@@ -127,6 +143,14 @@ class BoundedToolResearchService:
          see ``app.llm.openai_gw._chat_tool_reasoning_effort``); routing the
          actual synthesis through a tool-free call is what lets it run at
          full reasoning effort.
+
+    Early stopping always forces this synthesis call rather than failing the
+    brief outright — whether the gather loop is cut short by
+    ``max_duration_seconds``, by exhausting ``max_iterations``, or by a
+    single call's cost (via ``CostLedger.calculate``) breaching
+    ``max_cost_per_call_usd``, the dossier's ``status`` becomes
+    ``"incomplete"`` and the model is asked to generate its best summary
+    from whatever was gathered so far.
     """
 
     def __init__(self, *, llm: Any, web_search: Any) -> None:
@@ -141,10 +165,14 @@ class BoundedToolResearchService:
         *,
         brief: ResearchBrief,
         instructions: str,
+        max_duration_seconds: float = 1800.0,
+        max_iterations: int = 15,
+        max_cost_per_call_usd: float = 15.0,
     ) -> ResearchDossier:
         if not self.available():
             raise RuntimeError("Bounded research service is not configured")
 
+        deadline = time.monotonic() + max_duration_seconds
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": _brief_prompt(brief)}
         ]
@@ -155,8 +183,29 @@ class BoundedToolResearchService:
         input_tokens = 0
         output_tokens = 0
         final_text: str | None = None
+        # Assume an early stop unless the loop reaches a genuine final
+        # answer below — covers the time budget, the iteration cap, and the
+        # per-call cost cap.
+        stopped_early = True
 
-        for _ in range(brief.max_tool_calls + 1):
+        for _ in range(max_iterations):
+            if time.monotonic() >= deadline:
+                break
+            prompt_text = instructions + " ".join(
+                str(m.get("content") or "") for m in messages
+            )
+            projected_cost = _projected_call_cost(
+                brief.research_model, prompt_text, _MAX_TURN_TOKENS
+            )
+            if projected_cost > max_cost_per_call_usd:
+                log.warning(
+                    "deep_research.cost_cap_projected",
+                    brief_id=brief.brief_id,
+                    model=brief.research_model,
+                    projected_usd=round(projected_cost, 4),
+                    cap_usd=max_cost_per_call_usd,
+                )
+                break
             tools = (
                 [_WEB_SEARCH_TOOL] if searches_used < brief.max_tool_calls else []
             )
@@ -166,11 +215,29 @@ class BoundedToolResearchService:
                 messages=messages,
                 tools=tools,
                 temperature=0.2,
+                max_tokens=_MAX_TURN_TOKENS,
             )
             input_tokens += response.input_tokens
             output_tokens += response.output_tokens
+            actual_cost = CostLedger.calculate(
+                response.model, response.input_tokens, response.output_tokens
+            )
+            if actual_cost > max_cost_per_call_usd:
+                log.warning(
+                    "deep_research.cost_cap_actual",
+                    brief_id=brief.brief_id,
+                    model=response.model,
+                    actual_usd=round(actual_cost, 4),
+                    cap_usd=max_cost_per_call_usd,
+                )
             if not response.tool_calls:
+                # A genuine final answer is worth keeping even if this last
+                # call happened to breach the cap — the money's spent either
+                # way, and discarding a finished answer buys nothing back.
                 final_text = response.text or ""
+                stopped_early = False
+                break
+            if actual_cost > max_cost_per_call_usd:
                 break
             messages.append(
                 {
@@ -183,7 +250,11 @@ class BoundedToolResearchService:
                     ],
                 }
             )
+            deadline_hit = False
             for tc in response.tool_calls:
+                if time.monotonic() >= deadline:
+                    deadline_hit = True
+                    break
                 query = str(tc.arguments.get("query") or "").strip()
                 top_k = int(tc.arguments.get("top_k") or 8)
                 if not query or searches_used >= brief.max_tool_calls:
@@ -221,36 +292,80 @@ class BoundedToolResearchService:
                         "content": result_text,
                     }
                 )
-        else:
-            raise RuntimeError(
-                f"Deep Research brief {brief.brief_id} exhausted its gather "
-                "loop without a final answer."
-            )
+            if deadline_hit:
+                break
 
-        synthesis = await self._llm.complete(
-            model=brief.research_model,
-            system=instructions,
-            user=(
-                _brief_prompt(brief)
-                + "\n\nWEB SEARCH RESULTS GATHERED SO FAR:\n"
-                + (
-                    "\n".join(
-                        f"- {c.title} ({c.url}): {c.cited_text}"
-                        for c in citations
-                    )
-                    or "(none — no search returned usable results)"
+        # early_stopping_method="generate": whether cut short by the time
+        # budget, the iteration cap, or the per-call cost cap, force one
+        # last synthesis call from whatever was gathered rather than failing
+        # the brief or blocking the rest of the run. BoundedDeepResearchAgent
+        # runs briefs concurrently under a semaphore, so one brief stopping
+        # early here simply frees its slot for the next queued brief.
+        synthesis_user_prompt = (
+            _brief_prompt(brief)
+            + "\n\nWEB SEARCH RESULTS GATHERED SO FAR:\n"
+            + (
+                "\n".join(
+                    f"- {c.title} ({c.url}): {c.cited_text}" for c in citations
                 )
-                + "\n\nAGENT'S OWN NOTES FROM THE GATHER PHASE:\n"
-                + (final_text or "")
-                + "\n\nWrite the analytical dossier now, grounded only in the "
-                "results above."
-            ),
-            temperature=0.0,
-            max_tokens=4096,
-            reasoning_effort="xhigh",
+                or "(none — no search returned usable results)"
+            )
+            + "\n\nAGENT'S OWN NOTES FROM THE GATHER PHASE:\n"
+            + (final_text or "")
+            + (
+                "\n\nNOTE: the gather phase was stopped early (time budget, "
+                "iteration cap, or cost cap) before the model finished "
+                "searching — synthesize from whatever was gathered above "
+                "rather than waiting for more."
+                if stopped_early
+                else ""
+            )
+            + "\n\nWrite the analytical dossier now, grounded only in the "
+            "results above."
         )
-        input_tokens += synthesis.input_tokens
-        output_tokens += synthesis.output_tokens
+        projected_synthesis_cost = _projected_call_cost(
+            brief.research_model,
+            instructions + synthesis_user_prompt,
+            _MAX_TURN_TOKENS,
+        )
+        if projected_synthesis_cost > max_cost_per_call_usd:
+            log.warning(
+                "deep_research.cost_cap_projected_synthesis",
+                brief_id=brief.brief_id,
+                model=brief.research_model,
+                projected_usd=round(projected_synthesis_cost, 4),
+                cap_usd=max_cost_per_call_usd,
+            )
+            stopped_early = True
+            report_markdown = (
+                f"[Synthesis skipped: projected cost exceeded the "
+                f"${max_cost_per_call_usd:.2f} per-call cap.]\n\n"
+                + (final_text or "(no gather-phase notes available)")
+            )
+        else:
+            synthesis = await self._llm.complete(
+                model=brief.research_model,
+                system=instructions,
+                user=synthesis_user_prompt,
+                temperature=0.0,
+                max_tokens=_MAX_TURN_TOKENS,
+                reasoning_effort="xhigh",
+            )
+            input_tokens += synthesis.input_tokens
+            output_tokens += synthesis.output_tokens
+            actual_synthesis_cost = CostLedger.calculate(
+                synthesis.model, synthesis.input_tokens, synthesis.output_tokens
+            )
+            if actual_synthesis_cost > max_cost_per_call_usd:
+                log.warning(
+                    "deep_research.cost_cap_actual_synthesis",
+                    brief_id=brief.brief_id,
+                    model=synthesis.model,
+                    actual_usd=round(actual_synthesis_cost, 4),
+                    cap_usd=max_cost_per_call_usd,
+                )
+                stopped_early = True
+            report_markdown = synthesis.text
 
         return ResearchDossier(
             brief_id=brief.brief_id,
@@ -260,8 +375,8 @@ class BoundedToolResearchService:
             linked_call_requirement_ids=brief.linked_call_requirement_ids,
             model=brief.research_model,
             response_id=stable_id("RESP", brief.brief_id, str(searches_used)),
-            status="completed",
-            report_markdown=synthesis.text,
+            status="incomplete" if stopped_early else "completed",
+            report_markdown=report_markdown,
             max_tool_calls_budget=brief.max_tool_calls,
             citations=citations,
             tool_trace=tool_trace,

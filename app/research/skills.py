@@ -18,6 +18,19 @@ import yaml
 _SAFE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
 _TOKEN = re.compile(r"[a-z0-9][a-z0-9-]{2,}")
 _MAX_SKILL_FILE_BYTES = 1_000_000
+# Excluded from scoring token overlap so two unrelated texts sharing only
+# common English words (e.g. a skill description and a long research
+# question both containing "and"/"the"/"for") don't accrue a coincidental
+# match score that competes with genuine domain-term overlap.
+_STOPWORD_TOKENS = frozenset(
+    {
+        "and", "the", "for", "with", "from", "that", "this", "into",
+        "use", "used", "using", "any", "other", "such", "than", "then",
+        "when", "where", "which", "while", "each", "every", "these",
+        "those", "you", "your", "not", "but", "are", "was", "were",
+        "will", "can", "may", "its", "own", "all", "including",
+    }
+)
 _BLOCKED_SECTION_PHRASES = (
     "dependencies",
     "external resources",
@@ -245,6 +258,17 @@ class ScientificSkillCatalog:
     def load_errors(self) -> dict[str, str]:
         return dict(self._load_errors)
 
+    @property
+    def loaded_skill_names(self) -> tuple[str, ...]:
+        """Allowlisted skills whose SKILL.md actually parsed successfully.
+
+        Narrower than ``allowlist`` — a name can be allowlisted but still
+        fail to load (missing file, oversized, malformed frontmatter). Safe
+        to use for building a ``requested=`` list for select() without
+        risking a ValueError from an allowlisted-but-unloaded name.
+        """
+        return tuple(self._skills)
+
     def select(
         self,
         *,
@@ -391,16 +415,23 @@ def _sanitize_instructions(text: str) -> str:
 
 
 def _skill_score(objective: str, skill: SkillDocument) -> int:
-    objective_tokens = set(_TOKEN.findall(objective.lower()))
+    objective_tokens = (
+        set(_TOKEN.findall(objective.lower())) - _STOPWORD_TOKENS
+    )
     corpus_tokens = set(
         _TOKEN.findall(
             f"{skill.name} {skill.description}".lower()
         )
-    )
+    ) - _STOPWORD_TOKENS
     score = len(objective_tokens & corpus_tokens) * 3
     score += len(
         objective_tokens & _DOMAIN_HINTS.get(skill.name, set())
     ) * 4
-    if skill.name.replace("-", " ") in objective.lower():
+    # Skill names are always hyphenated (directory names), and every
+    # objective built from _TRACK_GUIDANCE embeds them in that exact form —
+    # check it directly rather than only a space-joined variant that never
+    # actually occurs anywhere in this codebase.
+    name_lower = skill.name.lower()
+    if name_lower in objective.lower() or name_lower.replace("-", " ") in objective.lower():
         score += 10
     return score

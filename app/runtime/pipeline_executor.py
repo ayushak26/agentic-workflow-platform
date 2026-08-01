@@ -201,6 +201,11 @@ async def _run_stage(
         workflow_yaml=stage_yaml,
         inputs=stage_inputs,
         collection_id=collection_id,
+        pipeline_run_id=pipeline_run_id,
+        pipeline_name=pipeline_spec.name,
+        stage_id=stage.id,
+        stage_index=stage_index,
+        total_stages=len(pipeline_spec.stages),
     )
     stage_result = await run_and_finalize(
         run_workflow(

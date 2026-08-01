@@ -36,11 +36,20 @@ async def start_new_run_record(
     collection_id: str,
     retry_of_run_id: str | None = None,
     attempt: int = 1,
+    pipeline_run_id: str | None = None,
+    pipeline_name: str | None = None,
+    stage_id: str | None = None,
+    stage_index: int | None = None,
+    total_stages: int | None = None,
 ) -> None:
     """Create the durable "running" record and checkpoint before execution.
 
     Mirrors what ``POST /workflows/run`` always did before this extraction —
     called once, before the first attempt to execute a workflow's graph.
+    The ``pipeline_*``/``stage_*`` params are only ever passed by a pipeline
+    stage launch (``app/runtime/pipeline_executor.py``) so this run's own
+    Run History entry can show which stage it belongs to without a
+    separate lookup into the pipeline_runs collection.
     """
     if db is None:
         return
@@ -63,6 +72,11 @@ async def start_new_run_record(
         node_types=node_types,
         retry_of_run_id=retry_of_run_id,
         attempt=attempt,
+        pipeline_run_id=pipeline_run_id,
+        pipeline_name=pipeline_name,
+        stage_id=stage_id,
+        stage_index=stage_index,
+        total_stages=total_stages,
     )
     await initialize_run_checkpoint(
         db,

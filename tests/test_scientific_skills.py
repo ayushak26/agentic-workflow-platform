@@ -91,6 +91,74 @@ def test_catalog_rejects_unapproved_explicit_skill(tmp_path):
         )
 
 
+def test_skill_score_bonus_fires_for_hyphenated_name_in_objective(tmp_path):
+    """Regression: the exact-name bonus used to only check a space-joined
+    form ("database lookup"), which never occurs anywhere in this codebase —
+    every objective embeds skill names hyphenated ("database-lookup"), since
+    that's the directory/name form. A hyphenated multi-word skill used to
+    score no better than a same-length name with zero relevance."""
+    _write_skill(tmp_path, "database-lookup", "Query public database APIs.")
+    _write_skill(tmp_path, "unrelated-skill", "Draft cover letters and memos.")
+    catalog = ScientificSkillCatalog(
+        tmp_path,
+        allowlist=("database-lookup", "unrelated-skill"),
+    )
+    catalog.refresh()
+
+    objective = (
+        "What climate and soil effects follow from biomass residue removal?\n"
+        "database-lookup"
+    )
+    selection = catalog.select(objective=objective, auto_select=True, max_skills=1)
+    assert selection.names == ["database-lookup"]
+
+
+def test_environment_track_guarantees_database_lookup_despite_noisy_competition():
+    """Regression for a real production bug: for the environment_climate_
+    biodiversity track, ScientificResearchPlannerAgent's guidance names
+    database-lookup explicitly, but a long, ecology-specific question could
+    coincidentally out-score it against an unrelated but verbose skill
+    (markitdown scored higher than database-lookup before this fix, in a
+    real AGRO-THRIVE run). requested= must now guarantee its inclusion
+    regardless of how the auto-select scoring falls."""
+    catalog = ScientificSkillCatalog(
+        _VENDORED_SKILLS_ROOT,
+        allowlist=(
+            "research-lookup",
+            "database-lookup",
+            "geomaster",
+            "geopandas",
+            "markitdown",
+        ),
+    )
+    catalog.refresh()
+    assert catalog.load_errors == {}
+
+    question = (
+        "What are the measured climate, soil, water and biodiversity effects "
+        "of removing or retaining the agricultural residues and secondary "
+        "biomass streams represented in the proposed pilot typologies, and "
+        "at what extraction or land-allocation levels do benefits reverse "
+        "or ecological thresholds become material?"
+    )
+    guidance = "research-lookup database-lookup geomaster geopandas"
+    requested = tuple(
+        token for token in guidance.split() if token in catalog.loaded_skill_names
+    )
+    selection = catalog.select(
+        objective=f"{question}\n{guidance}",
+        requested=requested,
+        auto_select=True,
+        max_skills=4,
+    )
+    assert set(selection.names) == {
+        "research-lookup",
+        "database-lookup",
+        "geomaster",
+        "geopandas",
+    }
+
+
 def test_vendored_research_and_database_lookup_skills_load_and_select():
     catalog = ScientificSkillCatalog(
         _VENDORED_SKILLS_ROOT,

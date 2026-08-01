@@ -203,21 +203,66 @@ def candidate_from_paper(
     )
 
 
+def _normalise_title_for_identity(title: str) -> str:
+    """Collapse cosmetic title differences that otherwise defeat dedup.
+
+    The same paper routinely comes back from different search backends
+    (arxiv/openalex/europepmc/core/...) with cosmetically different title
+    strings — a trailing period, curly vs straight quotes, doubled
+    whitespace, or a subtitle one source includes and another drops. A raw
+    ``.lower()`` fallback treats each of those as a distinct paper.
+    """
+
+    return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+
+
 def deduplicate_candidates(
     candidates: list[CandidateSource],
 ) -> list[CandidateSource]:
-    """Deduplicate only within one claim while preserving contradiction intent."""
+    """Deduplicate the same source across queries/backends for one claim.
 
-    seen: set[tuple[str, str, str]] = set()
-    result: list[CandidateSource] = []
+    Identity prefers, in order: DOI; paper_id (both already
+    provider-normalised); the same canonical_url returned by the same
+    source/backend label (the most common real duplicate — the same
+    query fanned out across discovery/contradiction phrasings, or two
+    near-identical query variants, hitting the same backend and getting
+    back the identical record/link); and finally a punctuation/whitespace-
+    normalised title, for the case where two different backends index the
+    same paper under neither a shared DOI nor a shared link.
+
+    purpose is deliberately NOT part of the identity key: fanning discovery
+    and contradiction queries out to the same set of backends means the
+    same paper commonly surfaces from both, and previously survived as two
+    "different" candidates. When a discovery-tagged and a contradiction-
+    tagged hit collide, the contradiction tag is kept — that signal is
+    scarce and specifically capped downstream, so it must not be silently
+    absorbed by an earlier discovery-purpose duplicate.
+    """
+
+    kept: dict[tuple[str, str], CandidateSource] = {}
+    order: list[tuple[str, str]] = []
     for candidate in candidates:
-        identity = candidate.doi or candidate.paper_id or candidate.title.lower()
-        key = (candidate.claim_id, identity, candidate.purpose)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(candidate)
-    return result
+        identity = (
+            candidate.doi
+            or candidate.paper_id
+            or (
+                f"url:{candidate.source}:{candidate.canonical_url}"
+                if candidate.canonical_url
+                else None
+            )
+            or _normalise_title_for_identity(candidate.title)
+        )
+        key = (candidate.claim_id, identity)
+        existing = kept.get(key)
+        if existing is None:
+            kept[key] = candidate
+            order.append(key)
+        elif (
+            existing.purpose != "contradiction"
+            and candidate.purpose == "contradiction"
+        ):
+            kept[key] = candidate
+    return [kept[key] for key in order]
 
 
 def formatted_citation(candidate: CandidateSource) -> str:

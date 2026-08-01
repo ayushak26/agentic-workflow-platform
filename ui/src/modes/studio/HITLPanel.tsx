@@ -79,6 +79,9 @@ export function HITLPanel({
   allowDocumentOverride,
   maxEditChars,
   onResult,
+  onSubmitting,
+  onSubmitError,
+  onClose,
 }: {
   runId: string;
   pausedNodeId: string;
@@ -89,6 +92,17 @@ export function HITLPanel({
   allowDocumentOverride: boolean;
   maxEditChars: number;
   onResult: (result: unknown) => void;
+  // Fired the moment a decision is submitted, before the (possibly slow —
+  // resume blocks until the workflow finishes or pauses again) network call
+  // resolves, so the Cockpit can close this panel immediately and show the
+  // full graph while it's in flight rather than leaving a "Working…" panel
+  // up for the whole remaining run.
+  onSubmitting?: () => void;
+  // The panel closes as soon as the decision is submitted (see
+  // onSubmitting), so a later failure has nowhere left in this component to
+  // surface — the Cockpit needs to show it instead.
+  onSubmitError?: (message: string) => void;
+  onClose: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -160,10 +174,16 @@ export function HITLPanel({
           source_document: sourceDocument,
         };
       }
-      const result = await api.resumeWorkflow(runId, payload);
+      const resumePromise = api.resumeWorkflow(runId, payload);
+      // The decision is committed — close the panel now rather than after
+      // resume resolves (which can take as long as the rest of the run).
+      onSubmitting?.();
+      const result = await resumePromise;
       onResult(result); // hand the next state up to the Cockpit
     } catch (e: unknown) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(message);
+      onSubmitError?.(message);
     } finally {
       setBusy(false);
     }
@@ -212,12 +232,22 @@ export function HITLPanel({
             {question || 'Review this content before the workflow continues.'}
           </p>
         </div>
-        <div className="shrink-0 rounded-lg bg-slate-50 px-3 py-2 text-right">
-          <div className="text-xs font-medium text-ink-700">
-            {wordCount.toLocaleString()} words
-          </div>
-          <div className={`text-[11px] ${charCount > maxEditChars ? 'text-bad' : 'text-ink-500'}`}>
-            {charCount.toLocaleString()} / {maxEditChars.toLocaleString()} chars
+        <div className="shrink-0 flex flex-col items-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            title="Close this review and see the full graph — it'll still be waiting for you"
+            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-ink-700 hover:bg-slate-50"
+          >
+            Close
+          </button>
+          <div className="rounded-lg bg-slate-50 px-3 py-2 text-right">
+            <div className="text-xs font-medium text-ink-700">
+              {wordCount.toLocaleString()} words
+            </div>
+            <div className={`text-[11px] ${charCount > maxEditChars ? 'text-bad' : 'text-ink-500'}`}>
+              {charCount.toLocaleString()} / {maxEditChars.toLocaleString()} chars
+            </div>
           </div>
         </div>
       </div>
