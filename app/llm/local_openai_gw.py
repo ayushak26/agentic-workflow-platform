@@ -134,9 +134,13 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
         on_token: object | None = None,
     ) -> LLMResponse:
         _ = on_token  # accepted for registry-streaming parity; not emitted
+        # Reasoning effort for local models is a fixed per-instance profile
+        # setting (self._generation_options()), not a per-call override.
+        _ = reasoning_effort
         create_kwargs: dict[str, Any] = {
             "model": self.profile.served_model,
             "messages": [
@@ -168,7 +172,11 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> StructuredResult:
+        # Reasoning effort for local models is a fixed per-instance profile
+        # setting (self._generation_options()), not a per-call override.
+        _ = reasoning_effort
         schema = response_model.model_json_schema()
         structured_kwargs: dict[str, Any] = {
             "model": self.profile.served_model,

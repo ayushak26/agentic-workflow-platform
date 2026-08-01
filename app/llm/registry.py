@@ -70,6 +70,7 @@ _LEGACY_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
     "claude-haiku-4-5": ("gpt-5.6-luna", "gpt-5-mini", "gpt-4o-mini"),
     "claude-opus-4-7": ("gpt-5.6-terra", "gpt-5"),
     "claude-opus-4-8": ("gpt-5.6-terra", "gpt-5"),
+    "claude-fable-5": ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5"),
     # OpenAI -> Anthropic. A same-provider fallback alone is useless during a
     # full OpenAI outage, so the same-tier Claude model leads before the
     # existing OpenAI same-family degradation chain.
@@ -114,6 +115,7 @@ _TIER_PEER: dict[str, str] = {
     "gpt-5.6-terra": "claude-sonnet-4-5",
     "claude-haiku-4-5": "gpt-5.6-luna",
     "gpt-5.6-luna": "claude-haiku-4-5",
+    "claude-fable-5": "gpt-5.6-sol",
 }
 
 

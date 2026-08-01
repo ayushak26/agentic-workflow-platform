@@ -54,7 +54,7 @@ from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
 from .templating import resolve
 from .events import RunEvent, RunEventBus
-from .node_events import sanitize_preview, is_graph_interrupt
+from .node_events import sanitize_preview, is_graph_interrupt, interrupt_payload
 
 log = get_logger(__name__)
 
@@ -263,9 +263,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                         session_id=session_id,
                         node_id=node_id,
                         pause_context={
-                            "interrupt": sanitize_preview(
-                                getattr(e, "args", None)
-                            )
+                            "interrupt": interrupt_payload(e),
                         },
                         pause_kind=pause_kind,
                     )

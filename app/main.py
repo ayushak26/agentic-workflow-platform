@@ -218,11 +218,14 @@ async def lifespan(app: FastAPI):
             errors=len(skill_catalog.load_errors),
         )
 
-    # ── Bounded OpenAI Deep Research ─────────────────────────────────────────
+    # ── Bounded Deep Research ────────────────────────────────────────────────
     if settings.deep_research_enabled:
         from app.research.deep_research import get_deep_research_service
 
-        services["deep_research"] = get_deep_research_service()
+        services["deep_research"] = get_deep_research_service(
+            llm=services["llm"],
+            web_search=services["web_search"],
+        )
         logger.info("deep_research.ready")
 
     # ── MCP client ───────────────────────────────────────────────────────────

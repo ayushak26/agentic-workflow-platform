@@ -43,3 +43,24 @@ def is_graph_interrupt(exc: BaseException) -> bool:
     return cls.__name__ in {"GraphInterrupt", "Interrupt"} or any(
         b.__name__ in {"GraphInterrupt", "Interrupt"} for b in cls.__mro__
     )
+
+
+def interrupt_payload(exc: BaseException) -> Any:
+    """Recover the actual value passed to ``langgraph.types.interrupt(...)``.
+
+    ``GraphInterrupt.__init__`` stores ``(interrupts,)`` in ``exc.args``, where
+    ``interrupts`` is a sequence of ``langgraph.types.Interrupt`` objects, each
+    carrying the real payload on ``.value``. Passing ``exc.args`` itself
+    through ``sanitize_preview`` only ever sees a bare tuple and collapses to
+    the useless string ``"<tuple>"`` — this pulls out the one thing a durable
+    checkpoint (and a later "what's this run waiting on?" read) actually
+    needs: the HITL node's real question/content/allowed_actions dict.
+    """
+    args = getattr(exc, "args", None) or ()
+    if not args:
+        return None
+    interrupts = args[0]
+    if not interrupts:
+        return None
+    first = interrupts[0]
+    return getattr(first, "value", None)

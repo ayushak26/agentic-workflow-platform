@@ -1,9 +1,12 @@
+from datetime import datetime
 import time
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
+from app.config import settings
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
@@ -75,6 +78,92 @@ async def my_run_detail(
     )
     audit = await read_audit_events(db, scope, run_id=run_id)
     return {"run": run, "audit": audit}
+
+
+@router.get("/mine/{run_id}/pending-gate")
+async def pending_gate(
+    run_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """The human-review gate a paused run is currently waiting on, if any.
+
+    Backed by the same durable ``run_checkpoints`` record
+    ``POST .../resume`` already reads, so a fresh page load (Run History
+    reopened later, a different tab) can reconstruct the same approve /
+    reject / edit review the triggering tab would have shown live, without
+    needing that original tab to still be open.
+    """
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    checkpoint = await get_resume_checkpoint(db, scope, run_id)
+    if checkpoint is None:
+        return {"run_id": run_id, "paused": False}
+
+    pause_kind = checkpoint.get("pause_kind") or "hitl_gate"
+    node_id = checkpoint.get("paused_node_id")
+    if pause_kind == "user_requested":
+        # A cooperative pause, not a HITL gate — nothing to review, just
+        # resumable. Run History's own pause/resume buttons already cover it.
+        return {
+            "run_id": run_id,
+            "paused": True,
+            "pause_kind": pause_kind,
+            "node_id": node_id,
+        }
+
+    interrupt = (checkpoint.get("pause_context") or {}).get("interrupt")
+    if not isinstance(interrupt, dict):
+        # Checkpoints paused before the interrupt-payload capture fix only
+        # hold a lossy placeholder (previously sanitize_preview(e.args), a
+        # bare tuple, always collapsed to "<tuple>"). Recover what's
+        # statically knowable from the node's own config so approve/reject/
+        # edit still work for an already-paused run — there just won't be a
+        # content preview to show alongside it.
+        interrupt = _hitl_config_fallback(checkpoint, node_id)
+
+    return {
+        "run_id": run_id,
+        "paused": True,
+        "pause_kind": pause_kind,
+        "node_id": interrupt.get("node_id", node_id),
+        "question": interrupt.get("question", ""),
+        "context": interrupt.get("context"),
+        "allowed_actions": interrupt.get("allowed_actions") or ["approve", "reject"],
+        "content": interrupt.get("content"),
+        "allow_document_override": interrupt.get("allow_document_override", True),
+        "max_edit_chars": interrupt.get("max_edit_chars", 1_000_000),
+    }
+
+
+def _hitl_config_fallback(
+    checkpoint: dict[str, Any], node_id: str | None,
+) -> dict[str, Any]:
+    """Best-effort HITL gate fields straight from the workflow's own node
+    config, for a checkpoint whose captured interrupt payload is missing or
+    unusable. question/allowed_actions/allow_document_override/
+    max_edit_chars are static per-node config, not runtime-only data, so
+    they're fully recoverable this way — only the live review `content`
+    (built from runtime state) is not."""
+    try:
+        spec = load_workflow_from_string(checkpoint.get("workflow_yaml") or "")
+    except Exception:
+        return {}
+    node = next((item for item in spec.nodes if item.id == node_id), None)
+    if node is None:
+        return {}
+    config = node.config or {}
+    return {
+        "node_id": node_id,
+        "question": config.get("question", ""),
+        "allowed_actions": config.get("allowed_actions") or ["approve", "reject", "edit"],
+        "allow_document_override": config.get("allow_document_override", True),
+        "max_edit_chars": config.get("max_edit_chars", 1_000_000),
+    }
 
 
 class RetryRunRequest(BaseModel):
@@ -591,6 +680,30 @@ async def delete_run_endpoint(
     run = await get_run(db, scope, run_id)
     if run is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+
+    if run.get("status") == "running":
+        min_age = settings.run_delete_min_running_age_seconds
+        started_at = run.get("started_at")
+        if started_at is None:
+            created_at = run.get("created_at")
+            started_at = (
+                created_at.timestamp()
+                if isinstance(created_at, datetime)
+                else None
+            )
+        # Unknown start time is treated as "too young to delete" — the safe
+        # default, since we can't rule out that it's still legitimately
+        # in-flight.
+        age_seconds = (time.time() - started_at) if started_at is not None else 0.0
+        if age_seconds < min_age:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "This run is still running and hasn't been running for at "
+                f"least {min_age // 3600} hour(s) yet. Paused, completed, "
+                "failed, and rejected runs can always be deleted — a "
+                "running one needs to either finish or run long enough "
+                "first.",
+            )
 
     active_pipeline = await find_active_pipeline_stage(
         db, run_id=run_id, session_id=scope

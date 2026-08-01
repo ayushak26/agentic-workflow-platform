@@ -73,8 +73,15 @@ class LLMGateway(ABC):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
     ) -> LLMResponse:
-        """Plain text completion."""
+        """Plain text completion.
+
+        ``reasoning_effort`` is a hint (e.g. "xhigh") consulted only by
+        providers/models that expose the concept (see each model's
+        ``reasoning_efforts`` catalog entry); implementations that don't
+        support it simply ignore the argument.
+        """
         ...
 
     @abstractmethod
@@ -87,12 +94,14 @@ class LLMGateway(ABC):
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
     ) -> T:
         """Structured completion. Returns an instance of response_model.
 
         Implementations must use the provider's native structured-output
         mechanism (tool-use for Anthropic, response_format for OpenAI,
-        etc.) — never parse free-text JSON.
+        etc.) — never parse free-text JSON. See ``complete`` for
+        ``reasoning_effort``.
         """
         ...
 

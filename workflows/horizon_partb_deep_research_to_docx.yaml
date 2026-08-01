@@ -111,8 +111,6 @@ nodes:
       max_tool_calls_per_job: 16
       max_citations_per_brief: 20
       max_candidates_per_claim: 12
-      enable_code_interpreter: false
-      background: true
 
   - id: research_documentation
     type: TransformAgent

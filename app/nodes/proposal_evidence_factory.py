@@ -72,9 +72,11 @@ class ProposalEvidenceFactoryInput(BaseModel):
 
 
 class ProposalEvidenceFactoryConfig(BaseModel):
-    candidates: str | list[CandidateSource]
+    candidates: str | list[CandidateSource] | list[str]
     documents: str | list[FullTextDocument]
-    search_audit: str | list[SearchAuditRecord] = Field(default_factory=list)
+    search_audit: str | list[SearchAuditRecord] | list[str] = Field(
+        default_factory=list
+    )
     rejected_candidates: str | list[RejectedCandidate] = Field(
         default_factory=list
     )

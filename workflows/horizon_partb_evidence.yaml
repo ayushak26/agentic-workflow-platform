@@ -120,7 +120,6 @@ nodes:
     selected_model: gpt-5.6-terra
     allowed_models:
       - gpt-5.6-terra
-      - o4-mini
       - gpt-5.6-sol
       - gpt-5
       - gpt-5-mini
@@ -157,7 +156,6 @@ nodes:
     selected_model: gpt-5.6-terra
     allowed_models:
       - gpt-5.6-terra
-      - o4-mini
       - gpt-5.6-sol
       - gpt-5
     model_routing:
@@ -200,24 +198,23 @@ nodes:
 
   - id: research_plan
     type: ScientificResearchPlannerAgent
-    selected_model: gpt-5.6-terra
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - gpt-5.6-terra
-      - o4-mini
       - gpt-5.6-sol
+      - gpt-5.6-terra
       - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: gpt-5.6-terra
+      model: gpt-5.6-sol
       call_context: "{{call_intelligence.parsed}}"
       concept_context: "{{load_concept.text}}"
       max_briefs: 8
       max_total_tool_calls: 72
       standard_tool_calls: 7
       critical_tool_calls: 11
-      standard_research_model: o4-mini-deep-research
-      critical_research_model: o3-deep-research
+      standard_research_model: gpt-5.6-sol
+      critical_research_model: gpt-5.6-sol
       max_skills_per_brief: 4
 
   - id: deep_research
@@ -230,13 +227,31 @@ nodes:
       max_tool_calls_per_job: 16
       max_citations_per_brief: 20
       max_candidates_per_claim: 12
-      enable_code_interpreter: false
-      background: true
+
+  - id: discover_candidates
+    type: ScholarlyCandidateDiscoveryAgent
+    selected_model: gpt-5.6-luna
+    allowed_models:
+      - gpt-5.6-luna
+      - gpt-5.6-terra
+      - claude-sonnet-4-5
+    model_routing:
+      accuracy_priority: balanced
+      prefer_low_latency: true
+    config:
+      model: gpt-5.6-luna
+      max_results_per_source: 3
+      max_candidates_per_claim: 10
+      max_claims: 30
+      claim_types: [state_of_art, problem, impact, method]
+      require_contradiction_search: true
 
   - id: acquire_research_sources
     type: ResearchSourceAcquirer
     config:
-      candidates: "{{deep_research.candidates}}"
+      candidates:
+        - "{{deep_research.candidates}}"
+        - "{{discover_candidates.candidates}}"
       max_concurrent_requests: 6
       max_sources_per_claim: 4
       max_total_sources: 60
@@ -257,20 +272,22 @@ nodes:
 
   - id: verify_evidence
     type: ProposalEvidenceFactoryAgent
-    selected_model: o3
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - o3
-      - o4-mini
-      - gpt-5.6-terra
       - gpt-5.6-sol
+      - gpt-5.6-terra
       - gpt-5
     model_routing:
       accuracy_priority: maximum
     config:
-      model: o3
-      candidates: "{{deep_research.candidates}}"
+      model: gpt-5.6-sol
+      candidates:
+        - "{{deep_research.candidates}}"
+        - "{{discover_candidates.candidates}}"
       documents: "{{acquire_research_sources.documents}}"
-      search_audit: "{{deep_research.search_audit}}"
+      search_audit:
+        - "{{deep_research.search_audit}}"
+        - "{{discover_candidates.search_audit}}"
       rejected_candidates: "{{acquire_research_sources.rejected_candidates}}"
       max_passages_per_document: 10
 
@@ -454,11 +471,20 @@ nodes:
         DEEP RESEARCH DOSSIERS (CANDIDATE ANALYSIS ONLY):
         {{deep_research.dossiers}}
 
-        CANDIDATE SOURCES:
+        CANDIDATE SOURCES (DEEP RESEARCH):
         {{deep_research.candidates}}
 
-        SEARCH AND CONTRADICTION AUDIT:
+        SEARCH AND CONTRADICTION AUDIT (DEEP RESEARCH):
         {{deep_research.search_audit}}
+
+        CANDIDATE SOURCES (SCHOLARLY DISCOVERY):
+        {{discover_candidates.candidates}}
+
+        SEARCH AND CONTRADICTION AUDIT (SCHOLARLY DISCOVERY):
+        {{discover_candidates.search_audit}}
+
+        SCHOLARLY DISCOVERY REPORT:
+        {{discover_candidates.report}}
 
         ACQUISITION REJECTIONS:
         {{acquire_research_sources.rejected_candidates}}
@@ -675,10 +701,14 @@ edges:
   - from: normalise_source_graph
     to: approve_call_interpretation
   - from: approve_call_interpretation
-    to: research_plan
+    to:
+      - research_plan
+      - discover_candidates
   - from: research_plan
     to: deep_research
   - from: deep_research
+    to: acquire_research_sources
+  - from: discover_candidates
     to: acquire_research_sources
   - from: acquire_research_sources
     to:
@@ -739,6 +769,8 @@ output:
     - node_id: research_plan
       flatten: false
     - node_id: deep_research
+      flatten: false
+    - node_id: discover_candidates
       flatten: false
     - node_id: acquire_research_sources
       flatten: false

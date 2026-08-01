@@ -10,6 +10,7 @@ import type {
   PipelineRunSummary,
   PipelineStageOutcome,
   PipelineSummary,
+  PendingGate,
   ProposalApproval,
   ProposalRenderRequest,
   ProposalRenderResult,
@@ -320,6 +321,9 @@ export const api = {
       state?: unknown;
       error?: string;
     }>),
+  pendingGate: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/pending-gate`, { headers: authHeaders() })
+      .then(j<PendingGate>),
   restartRun: (source_run_id: string, run_id: string) =>
     afetch(`${API}/runs/mine/${source_run_id}/restart`, {
       method: 'POST',

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,7 +11,7 @@ import app.nodes  # noqa: F401
 import pytest
 from fastapi import HTTPException
 
-from app.api.runs import RetryRunRequest, retry_failed_run
+from app.api.runs import RetryRunRequest, retry_failed_run, pending_gate, delete_run_endpoint
 from app.api.workflows import _scope
 from app.config import settings
 from app.runtime.executor import run_workflow
@@ -397,6 +398,148 @@ exit: writer
     ]
 
 
+def _pending_gate_request(db):
+    return SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(services={"audit_db": db})
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_gate_reports_not_paused_when_no_checkpoint_exists():
+    db = FakeDB()
+    db["run_checkpoints"].find_one.return_value = None
+    user = CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+    result = await pending_gate("run-1", _pending_gate_request(db), user)
+
+    assert result == {"run_id": "run-1", "paused": False}
+
+
+@pytest.mark.asyncio
+async def test_pending_gate_for_user_requested_pause_omits_review_fields():
+    db = FakeDB()
+    db["run_checkpoints"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "status": "paused",
+        "paused_node_id": "draft",
+        "pause_kind": "user_requested",
+        "pause_context": None,
+        "node_results": {},
+    }
+    user = CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+    result = await pending_gate("run-1", _pending_gate_request(db), user)
+
+    assert result == {
+        "run_id": "run-1",
+        "paused": True,
+        "pause_kind": "user_requested",
+        "node_id": "draft",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pending_gate_for_hitl_gate_returns_the_real_review_content():
+    db = FakeDB()
+    db["run_checkpoints"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "status": "paused",
+        "paused_node_id": "approval",
+        "pause_kind": "hitl_gate",
+        "pause_context": {
+            "interrupt": {
+                "node_id": "approval",
+                "question": "Approve the draft?",
+                "context": {"topic": "bioeconomy"},
+                "allowed_actions": ["approve", "reject", "edit"],
+                "content": {"text": "Draft body", "format": "text", "source": "workflow"},
+                "allow_document_override": True,
+                "max_edit_chars": 50_000,
+            }
+        },
+        "node_results": {},
+    }
+    user = CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+    result = await pending_gate("run-1", _pending_gate_request(db), user)
+
+    assert result == {
+        "run_id": "run-1",
+        "paused": True,
+        "pause_kind": "hitl_gate",
+        "node_id": "approval",
+        "question": "Approve the draft?",
+        "context": {"topic": "bioeconomy"},
+        "allowed_actions": ["approve", "reject", "edit"],
+        "content": {"text": "Draft body", "format": "text", "source": "workflow"},
+        "allow_document_override": True,
+        "max_edit_chars": 50_000,
+    }
+
+
+@pytest.mark.asyncio
+async def test_pending_gate_falls_back_to_workflow_config_for_legacy_checkpoints():
+    """Checkpoints paused before the interrupt-payload capture fix only hold
+    the lossy placeholder string "<tuple>" in pause_context.interrupt (see
+    tests/test_durable_hitl.py's payload regression test). The endpoint must
+    not crash on that shape — it should recover allowed_actions/question/etc.
+    straight from the paused node's own (static) config instead, so approve/
+    reject/edit still work for a run that's already paused."""
+    db = FakeDB()
+    workflow_yaml = """
+name: legacy_gate
+version: "1.0"
+nodes:
+  - id: seed
+    type: Literal
+    config:
+      value: seed-result
+  - id: approval
+    type: HumanInLoopAgent
+    config:
+      question: Approve the legacy draft?
+      allowed_actions: [approve, reject, edit]
+      max_edit_chars: 20000
+edges:
+  - from: seed
+    to: approval
+entry: seed
+exit: approval
+"""
+    db["run_checkpoints"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "workflow_yaml": workflow_yaml,
+        "status": "paused",
+        "paused_node_id": "approval",
+        "pause_kind": "hitl_gate",
+        "pause_context": {"interrupt": "<tuple>"},
+        "node_results": {},
+    }
+    user = CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+    result = await pending_gate("run-1", _pending_gate_request(db), user)
+
+    assert result["paused"] is True
+    assert result["node_id"] == "approval"
+    assert result["question"] == "Approve the legacy draft?"
+    assert result["allowed_actions"] == ["approve", "reject", "edit"]
+    assert result["max_edit_chars"] == 20_000
+    assert result["content"] is None
+
+
 @pytest.mark.asyncio
 async def test_retry_api_creates_a_new_attempt_from_private_checkpoint():
     db = FakeDB()
@@ -481,3 +624,78 @@ exit: first
         )
         for call in history_updates
     )
+
+
+def _delete_request(db):
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(services={"audit_db": db}))
+    )
+
+
+def _delete_user():
+    return CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_blocks_a_running_run_younger_than_the_minimum_age():
+    db = FakeDB()
+    db["run_history"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "status": "running",
+        "started_at": time.time() - 60,
+        "updated_at": datetime.now(timezone.utc),
+        "owner_pid": os.getpid(),
+        "active_nodes": [],
+    }
+    db["pipeline_runs"].find_one.return_value = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
+
+    assert exc_info.value.status_code == 409
+    assert "still running" in str(exc_info.value.detail)
+    db["run_history"].delete_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_delete_allows_a_running_run_older_than_the_minimum_age():
+    db = FakeDB()
+    old_started_at = time.time() - settings.run_delete_min_running_age_seconds - 3600
+    db["run_history"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "status": "running",
+        "started_at": old_started_at,
+        "updated_at": datetime.now(timezone.utc),
+        "owner_pid": os.getpid(),
+        "active_nodes": [],
+    }
+    db["pipeline_runs"].find_one.return_value = None
+    db["run_history"].delete_one.return_value = SimpleNamespace(deleted_count=1)
+
+    result = await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
+
+    assert result == {"run_id": "run-1", "deleted": True}
+
+
+@pytest.mark.parametrize("status", ["paused", "completed", "failed", "rejected"])
+@pytest.mark.asyncio
+async def test_delete_always_allowed_for_non_running_statuses_regardless_of_age(status):
+    db = FakeDB()
+    db["run_history"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "status": status,
+        "started_at": time.time() - 30,
+        "updated_at": datetime.now(timezone.utc),
+        "active_nodes": [],
+    }
+    db["pipeline_runs"].find_one.return_value = None
+    db["run_history"].delete_one.return_value = SimpleNamespace(deleted_count=1)
+
+    result = await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
+
+    assert result == {"run_id": "run-1", "deleted": True}

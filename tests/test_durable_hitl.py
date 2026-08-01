@@ -176,6 +176,134 @@ exit: approval
 
 
 @pytest.mark.asyncio
+async def test_paused_checkpoint_persists_the_real_interrupt_payload():
+    """Regression test: record_checkpoint_paused used to be handed
+    ``sanitize_preview(e.args)``, which collapses any non-dict/str value to a
+    useless ``"<tuple>"`` string — and GraphInterrupt.args is always a tuple.
+    A fresh page load reconstructing the HITL gate (question/content/
+    allowed_actions) from this checkpoint needs the real payload, not that
+    placeholder string.
+    """
+    workflow_yaml = """
+name: single_gate_hitl
+version: "1.0"
+nodes:
+  - id: seed
+    type: Literal
+    config:
+      value: seed-result
+  - id: approval
+    type: HumanInLoopAgent
+    config:
+      question: Approve the draft?
+      allowed_actions: [approve, reject, edit]
+edges:
+  - from: seed
+    to: approval
+entry: seed
+exit: approval
+"""
+    checkpoint = {
+        "run_id": "run-payload-check",
+        "session_id": "user@example.com",
+        "workflow_yaml": workflow_yaml,
+        "inputs": {},
+        "collection_id": "default",
+        "status": "running",
+        "paused_node_id": None,
+        "node_results": {},
+        "completed_nodes": [],
+        "approvals": [],
+    }
+    db = FakeDB(checkpoint)
+    _PAUSED_GRAPHS.pop("run-payload-check", None)
+
+    result = await run_workflow(
+        load_workflow_from_string(workflow_yaml),
+        {},
+        session_id="user@example.com",
+        services={"audit_db": db},
+        run_id="run-payload-check",
+    )
+
+    assert result["status"] == "paused"
+    assert db.checkpoint["paused_node_id"] == "approval"
+    interrupt = db.checkpoint["pause_context"]["interrupt"]
+    assert interrupt["node_id"] == "approval"
+    assert interrupt["question"] == "Approve the draft?"
+    assert interrupt["allowed_actions"] == ["approve", "reject", "edit"]
+
+
+@pytest.mark.asyncio
+async def test_pending_gate_endpoint_reads_a_run_actually_paused_by_run_workflow():
+    """End-to-end: pause a real run via run_workflow (not a hand-built
+    checkpoint fixture), then call the GET .../pending-gate handler exactly
+    as the API route does, to catch integration gaps a hand-crafted
+    checkpoint fixture could hide (e.g. field name drift between what
+    record_checkpoint_paused actually writes and what the endpoint reads)."""
+    from types import SimpleNamespace as SNS
+    from app.api.runs import pending_gate
+    from app.security.dependencies import CurrentUser
+    from app.security.rbac import Role
+
+    workflow_yaml = """
+name: single_gate_hitl_e2e
+version: "1.0"
+nodes:
+  - id: seed
+    type: Literal
+    config:
+      value: seed-result
+  - id: approval
+    type: HumanInLoopAgent
+    config:
+      question: Approve the draft?
+      allowed_actions: [approve, reject, edit]
+edges:
+  - from: seed
+    to: approval
+entry: seed
+exit: approval
+"""
+    checkpoint = {
+        "run_id": "run-e2e-gate",
+        "session_id": "user@example.com",
+        "workflow_yaml": workflow_yaml,
+        "inputs": {},
+        "collection_id": "default",
+        "status": "running",
+        "paused_node_id": None,
+        "node_results": {},
+        "completed_nodes": [],
+        "approvals": [],
+    }
+    db = FakeDB(checkpoint)
+    _PAUSED_GRAPHS.pop("run-e2e-gate", None)
+
+    result = await run_workflow(
+        load_workflow_from_string(workflow_yaml),
+        {},
+        session_id="user@example.com",
+        services={"audit_db": db},
+        run_id="run-e2e-gate",
+    )
+    assert result["status"] == "paused"
+
+    request = SNS(app=SNS(state=SNS(services={"audit_db": db})))
+    user = CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+    gate = await pending_gate("run-e2e-gate", request, user)
+
+    assert gate["paused"] is True
+    assert gate["pause_kind"] == "hitl_gate"
+    assert gate["node_id"] == "approval"
+    assert gate["question"] == "Approve the draft?"
+    assert gate["allowed_actions"] == ["approve", "reject", "edit"]
+
+
+@pytest.mark.asyncio
 async def test_persistent_checkpointer_resumes_across_two_restart_boundaries():
     workflow_yaml = TWO_GATE_WORKFLOW
     run_id = "run-two-gates"

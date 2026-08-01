@@ -32,7 +32,7 @@ class ResearchSourceAcquirerInput(BaseModel):
 
 
 class ResearchSourceAcquirerConfig(BaseModel):
-    candidates: str | list[CandidateSource]
+    candidates: str | list[CandidateSource] | list[str]
     policy: EvidencePolicy = Field(default_factory=EvidencePolicy)
     max_concurrent_requests: int = Field(default=6, ge=1, le=12)
     max_sources_per_claim: int = Field(default=4, ge=1, le=10)

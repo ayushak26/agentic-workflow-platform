@@ -305,8 +305,29 @@ def coerce_typed_list_field(
     a whole node record (a dict) instead of its list field is the most common
     mistake, so that case gets a specific, actionable message instead of
     pydantic's generic union error.
+
+    A YAML list of several whole-value templates (e.g. one entry per
+    upstream discovery node: ``["{{a.candidates}}", "{{b.candidates}}"]``)
+    resolves to a list of lists at runtime, since each template preserves
+    its own list type; that shape is flattened one level here so multiple
+    upstream sources can feed a single ``list[Model]`` field without a
+    dedicated merge node. At compile/preflight time the same YAML list is
+    still a list of raw, unresolved ``"{{...}}"`` strings (substitution
+    happens later, at node execution) — that shape is passed through
+    unchanged, same as the single-template string case below.
     """
     if isinstance(value, list):
+        if any(isinstance(item, list) for item in value):
+            value = [
+                sub_item
+                for item in value
+                for sub_item in (item if isinstance(item, list) else [item])
+            ]
+        elif any(
+            isinstance(item, str) and "{{" in item and "}}" in item
+            for item in value
+        ):
+            return value  # Unresolved template placeholders; substituted later.
         return TypeAdapter(list[model]).validate_python(value)
     if isinstance(value, str):
         text = value.strip()

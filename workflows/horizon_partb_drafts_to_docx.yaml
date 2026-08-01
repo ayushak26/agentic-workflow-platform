@@ -347,16 +347,14 @@ nodes:
 
   - id: scientific_peer_review
     type: ScientificSkillAgent
-    selected_model: o3
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - o3
-      - o4-mini
       - gpt-5.6-sol
       - gpt-5.6-terra
     model_routing:
       accuracy_priority: maximum
     config:
-      model: o3
+      model: gpt-5.6-sol
       skills:
         - peer-review
         - scientific-critical-thinking
@@ -402,23 +400,21 @@ nodes:
       proposal_text: "{{compile_v1.text}}"
       generator_model: auto
       evaluator_models:
-        - o3
+        - claude-opus-5
         - gpt-5.6-sol
       criterion_threshold: 4.0
       total_threshold: 12.0
 
   - id: red_team_v1
     type: TransformAgent
-    selected_model: o3
+    selected_model: gpt-5.6-sol
     allowed_models:
-      - o3
-      - o4-mini
       - gpt-5.6-sol
       - gpt-5.6-terra
     model_routing:
       accuracy_priority: maximum
     config:
-      model: o3
+      model: gpt-5.6-sol
       max_tokens: 12000
       output_schema:
         blocking_gaps: list
@@ -683,7 +679,7 @@ nodes:
       proposal_text: "{{final_revision.text}}"
       generator_model: auto
       evaluator_models:
-        - o3
+        - claude-opus-5
         - gpt-5.6-sol
       criterion_threshold: 4.0
       total_threshold: 12.0

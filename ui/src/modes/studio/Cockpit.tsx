@@ -25,7 +25,7 @@ import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } 
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 import { useSetRunCost } from "../../RunCostContext";
 import { layoutFlow } from './flow-layout';
-import type { HITLReviewContent, PipelineRunDetail, RunDetail } from '../../api/types';
+import type { HITLReviewContent, NodeRunStatus, PipelineRunDetail, RunDetail } from '../../api/types';
 
 type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
 const nodeTypes = { workflow: CockpitNode };
@@ -72,6 +72,26 @@ type PipelineNavState = {
   totalStages: number;
 };
 
+// Fallback node coloring for attach mode, when SSE replay has nothing (the
+// event bus is a bounded in-memory buffer and may have evicted this run's
+// history, or the backend process restarted since it paused).
+const NODE_RUN_STATUS_MAP: Record<NodeRunStatus, NodeStatus> = {
+  running: 'active',
+  paused: 'paused',
+  completed: 'done',
+  reused: 'reused',
+  failed: 'failed',
+};
+
+function liveRunNodeStatus(nodeId: string, liveRun: RunDetail | null): NodeStatus | null {
+  if (!liveRun) return null;
+  const nodeRunStatus = liveRun.node_runs?.[nodeId]?.status;
+  if (nodeRunStatus) return NODE_RUN_STATUS_MAP[nodeRunStatus];
+  if (liveRun.active_nodes?.includes(nodeId)) return 'active';
+  if (nodeId in (liveRun.outputs ?? {})) return 'done';
+  return null;
+}
+
 export function Cockpit() {
   const { runId } = useParams();
   const location = useLocation();
@@ -87,6 +107,12 @@ export function Cockpit() {
         workflowName?: string;
         retrySourceRunId?: string;
         pipeline?: PipelineNavState;
+        // Reopening an existing run (Run History's "Open in Cockpit") rather
+        // than launching a new one. Skips triggering run/resume/pipeline —
+        // this run already exists — and instead reconstructs graph + HITL
+        // gate state from durable data (SSE replay + polled run detail +
+        // the pending-gate endpoint) so it works even from a fresh page load.
+        attach?: boolean;
       }
   );
 
@@ -162,7 +188,7 @@ useEffect(() => {
 }, [finished, runId, setRunCost]);
   // Subscribe first, then trigger exactly once so no early SSE event is lost.
   useEffect(() => {
-    if (!streamOpen || runTriggered || !navState.workflowYaml || !runId) return;
+    if (navState.attach || !streamOpen || runTriggered || !navState.workflowYaml || !runId) return;
     // This state guards the one external run request owned by this effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRunTriggered(true);
@@ -197,6 +223,7 @@ useEffect(() => {
         setFinished({ status: 'failed', error: message });
       });
   }, [
+    navState.attach,
     streamOpen,
     runTriggered,
     navState.workflowYaml,
@@ -210,7 +237,8 @@ useEffect(() => {
   // history. Polling that record powers the Variables panel while the graph is
   // still executing; SSE previews remain intentionally small.
   useEffect(() => {
-    if (!runId || !runTriggered || finished) return;
+    if (!runId || finished) return;
+    if (!runTriggered && !navState.attach) return;
     let cancelled = false;
     const load = () => {
       api.runDetail(runId)
@@ -225,7 +253,71 @@ useEffect(() => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [finished, runId, runTriggered]);
+  }, [finished, runId, runTriggered, navState.attach]);
+
+  // Attach mode never gets a run/resume HTTP response of its own to read a
+  // terminal status off (see applyResumeResult) — it has to notice the run
+  // finished via the same runDetail poll that drives the Variables panel.
+  useEffect(() => {
+    if (!navState.attach || finished) return;
+    const result: Finished | null = (
+      liveRun?.status === 'completed'
+        ? {
+          status: 'completed',
+          state: {
+            node_outputs: liveRun.outputs,
+            inputs: liveRun.inputs,
+            variables: liveRun.variables,
+          },
+        }
+        : liveRun?.status === 'failed'
+        ? { status: 'failed', error: liveRun.error ?? undefined }
+        : liveRun?.status === 'rejected'
+        ? {
+          status: 'rejected',
+          node: liveRun.failed_node ?? undefined,
+          reason: liveRun.error ?? undefined,
+        }
+        : null
+    );
+    if (!result) return;
+    // Synchronizing local state from a polled external record (runDetail),
+    // not from a prop/state change this render already reflects.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setFinished(result);
+  }, [navState.attach, liveRun, finished]);
+
+  // Attach mode's HITL gate isn't known from any live HTTP response either —
+  // reconstruct it from the durable checkpoint the same way a fresh page
+  // load must (see GET .../pending-gate). A "user_requested" pause has no
+  // gate to review — Run History's own pause/resume buttons already cover
+  // that case — so this only ever populates `gate` for a real HITL node.
+  const [gateFetchError, setGateFetchError] = useState<string | null>(null);
+  const [gateRetryToken, setGateRetryToken] = useState(0);
+  useEffect(() => {
+    if (!navState.attach || !runId || finished || gate) return;
+    if (liveRun?.status !== 'paused' || liveRun.pause_kind === 'user_requested') return;
+    let cancelled = false;
+    api.pendingGate(runId)
+      .then((res) => {
+        if (cancelled) return;
+        if (!res.paused || res.pause_kind !== 'hitl_gate') return;
+        setGateFetchError(null);
+        setGate({
+          nodeId: res.node_id,
+          context: res.context,
+          question: res.question,
+          allowedActions: res.allowed_actions,
+          content: res.content,
+          allowDocumentOverride: res.allow_document_override,
+          maxEditChars: res.max_edit_chars,
+        });
+      })
+      .catch((e) => {
+        if (!cancelled) setGateFetchError(String(e.message ?? e));
+      });
+    return () => { cancelled = true; };
+  }, [navState.attach, runId, finished, gate, liveRun?.status, liveRun?.pause_kind, gateRetryToken]);
 
   // Derive node colors from SSE events (best-effort animation).
   const cockpit = useMemo(() => {
@@ -249,17 +341,20 @@ useEffect(() => {
   }, [parsedWf, setEdges, setNodes]);
 
   // SSE events change status without resetting the arranged positions.
+  // Attach mode may reopen a run whose SSE history has already been evicted
+  // from the event bus (it's a bounded in-memory replay buffer) — fall back
+  // to the polled run detail so the graph still colors correctly.
   useEffect(() => {
     setNodes((current) =>
-      current.map((node) => ({
-        ...node,
-        data: {
-          ...node.data,
-          status: cockpit.nodeStates[node.data.nodeId] ?? 'pending',
-        },
-      })),
+      current.map((node) => {
+        const ssStatus = cockpit.nodeStates[node.data.nodeId];
+        const status = ssStatus && ssStatus !== 'pending'
+          ? ssStatus
+          : liveRunNodeStatus(node.data.nodeId, liveRun) ?? ssStatus ?? 'pending';
+        return { ...node, data: { ...node.data, status } };
+      }),
     );
-  }, [cockpit.nodeStates, setNodes]);
+  }, [cockpit.nodeStates, liveRun, setNodes]);
 
   const activeNodeId = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
@@ -271,8 +366,8 @@ useEffect(() => {
         return event.node_id;
       }
     }
-    return null;
-  }, [cockpit.nodeStates, events]);
+    return liveRun?.active_nodes?.[0] ?? null;
+  }, [cockpit.nodeStates, events, liveRun]);
   const reusedNodeCount = useMemo(
     () => events.filter((event) => event.type === 'node_reused').length,
     [events],
@@ -412,6 +507,14 @@ useEffect(() => {
     ? nodes.find((n) => n.id === selectedId) ?? null
     : null;
   const showHITL = gate !== null && finished === null;
+  const showGateError = (
+    navState.attach
+    && !showHITL
+    && !finished
+    && liveRun?.status === 'paused'
+    && liveRun.pause_kind !== 'user_requested'
+    && gateFetchError !== null
+  );
   const displayStatus = finished?.status ?? (gate ? 'paused' : cockpit.runStatus);
 
   return (
@@ -524,6 +627,20 @@ useEffect(() => {
             maxEditChars={gate!.maxEditChars}
             onResult={applyResumeResult}
           />
+        ) : showGateError ? (
+          <div className="p-6">
+            <div className="text-bad font-medium">Couldn't load this run's review gate</div>
+            <div className="text-sm text-ink-500 mt-1">{gateFetchError}</div>
+            <button
+              onClick={() => {
+                setGateFetchError(null);
+                setGateRetryToken((value) => value + 1);
+              }}
+              className="mt-4 px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500"
+            >
+              Retry
+            </button>
+          </div>
         ) : finished ? (
           <div className="p-6">
             {finished.status === 'rejected' ? (

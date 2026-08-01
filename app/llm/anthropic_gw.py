@@ -156,8 +156,12 @@ class AnthropicGateway(LLMGateway):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        # Anthropic has no reasoning_effort knob wired here; accepted only
+        # for interface parity with OpenAIGateway.
+        _ = reasoning_effort
         kwargs = {
             "model": model,
             "system": _cacheable_system(system),
@@ -187,7 +191,11 @@ class AnthropicGateway(LLMGateway):
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> StructuredResult:
+        # Anthropic has no reasoning_effort knob wired here; accepted only
+        # for interface parity with OpenAIGateway.
+        _ = reasoning_effort
         # Anthropic has no .parse() shortcut. Force structured output by
         # exposing a single tool whose input_schema is the Pydantic schema,
         # and requiring the model to call it. The tool input IS our JSON.

@@ -96,11 +96,9 @@ class Settings(BaseSettings):
     )
     scientific_skills_max_prompt_chars: int = 30000
 
-    # OpenAI Deep Research (Responses API, built-in web_search_preview tool).
-    # Endpoint-specific — never selectable through the generic LLM router.
+    # Bounded Deep Research: a chat_with_tools loop over the generic LLM
+    # gateway plus the web_search service — no dedicated provider endpoint.
     deep_research_enabled: bool = False
-    deep_research_timeout_seconds: float = Field(default=3600.0, gt=0, le=7200)
-    deep_research_poll_interval_seconds: float = Field(default=2.0, gt=0, le=60)
 
     # SSE is the authenticated, one-way run-event transport.
     sse_heartbeat_seconds: float = 15.0
@@ -216,6 +214,12 @@ class Settings(BaseSettings):
     # server process restarted or crashed mid-execution) is treated as
     # orphaned and lazily flipped to "failed" the next time it is read.
     stale_run_after_seconds: int = Field(default=900, ge=60, le=86_400)
+
+    # Deleting a still-"running" run is blocked until it's been running at
+    # least this long — a run that's only been going for a minute is almost
+    # certainly still legitimately in progress, not abandoned. Paused,
+    # completed, failed, and rejected runs have no such restriction.
+    run_delete_min_running_age_seconds: int = Field(default=86_400, ge=0)
 
     dev_bypass_enabled: bool = True
     dev_bypass_username: str = "ayush"

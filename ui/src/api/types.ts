@@ -129,6 +129,26 @@ export type EventType =
 
 export type PauseKind = 'hitl_gate' | 'user_requested';
 
+// GET /api/runs/mine/{run_id}/pending-gate — reconstructs the same HITL gate
+// a live Cockpit tab would have shown, from the durable checkpoint, so it can
+// be re-displayed after a fresh page load (Run History reopened later, a
+// different tab).
+export type PendingGate =
+  | { run_id: string; paused: false }
+  | { run_id: string; paused: true; pause_kind: 'user_requested'; node_id: string | null }
+  | {
+      run_id: string;
+      paused: true;
+      pause_kind: 'hitl_gate';
+      node_id: string;
+      question: string;
+      context: Record<string, unknown> | null;
+      allowed_actions: string[];
+      content: HITLReviewContent | null;
+      allow_document_override: boolean;
+      max_edit_chars: number;
+    };
+
 export interface RunSummary {
   run_id: string;
   session_id: string;

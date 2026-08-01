@@ -12,6 +12,27 @@ import type {
   WorkflowFileReference,
 } from '../../api/types';
 
+// Keep in sync with settings.run_delete_min_running_age_seconds
+// (app/config.py) — the backend is the actual source of truth and rejects
+// the delete regardless, this only avoids offering a button that's certain
+// to 409.
+const DELETE_MIN_RUNNING_AGE_SECONDS = 24 * 60 * 60;
+
+function deleteBlockedReason(run: RunSummary): string | null {
+  if (run.status !== 'running') return null;
+  if (run.started_at == null) {
+    return "Still running — can't tell how long yet.";
+  }
+  const ageSeconds = Date.now() / 1000 - run.started_at;
+  const remaining = DELETE_MIN_RUNNING_AGE_SECONDS - ageSeconds;
+  if (remaining <= 0) return null;
+  const hoursLeft = Math.max(1, Math.ceil(remaining / 3600));
+  return (
+    `Still running — deletable once it's been running 24h `
+    + `(about ${hoursLeft}h left).`
+  );
+}
+
 const STATUS_LABEL: Record<string, string> = {
   running: 'Running',
   paused: 'Paused',
@@ -398,6 +419,7 @@ export function RunHistory() {
   const outputs = detail ? (detail.run.outputs as Record<string, unknown>) : {};
   const inputs = detail ? (detail.run.inputs as Record<string, unknown>) : {};
   const nodeTypes = detail ? (detail.run.node_types ?? {}) : {};
+  const deleteRunBlocked = detail ? deleteBlockedReason(detail.run) : null;
   const nodeRuns = detail ? (detail.run.node_runs ?? {}) : {};
   const nodeRunById = Object.fromEntries(
     Object.values(nodeRuns).map((record) => [record.node_id, record]),
@@ -440,6 +462,20 @@ export function RunHistory() {
         workflowYaml: detail.run.workflow_yaml,
         workflowName: detail.run.workflow_name,
         retrySourceRunId: detail.run.run_id,
+      },
+    });
+  }
+
+  // Reopen this exact run's graph in Cockpit — nodes/edges, live status, and
+  // (if it's paused at a human-review gate) the approve/reject/edit panel,
+  // reconstructed from durable data rather than by starting a new run.
+  function openInCockpit() {
+    if (!detail?.run.workflow_yaml) return;
+    navigate(`/cockpit/${detail.run.run_id}`, {
+      state: {
+        attach: true,
+        workflowYaml: detail.run.workflow_yaml,
+        workflowName: detail.run.workflow_name,
       },
     });
   }
@@ -572,6 +608,15 @@ export function RunHistory() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                {detail.run.workflow_yaml && (
+                  <button
+                    onClick={openInCockpit}
+                    className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
+                    title="See this run's nodes and edges, and its live status"
+                  >
+                    Open in Cockpit
+                  </button>
+                )}
                 <button
                   onClick={() => navigate(`/proposal-review/${detail.run.run_id}`)}
                   className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50"
@@ -626,7 +671,8 @@ export function RunHistory() {
                 </button>
                 <button
                   onClick={deleteRun}
-                  disabled={actionBusy !== null}
+                  disabled={actionBusy !== null || deleteRunBlocked !== null}
+                  title={deleteRunBlocked ?? undefined}
                   className="px-4 py-2 rounded-md border border-red-200 text-red-700 text-sm hover:bg-red-50 disabled:opacity-50"
                 >
                   {actionBusy === 'delete' ? 'Deleting…' : 'Delete'}
@@ -699,9 +745,19 @@ export function RunHistory() {
             )}
 
             {detail.run.status === 'paused' && detail.run.pause_kind !== 'user_requested' && (
-              <div className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                Paused at a human-review gate — resume it from the proposal
-                review screen, not from here.
+              <div className="mb-5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-center justify-between gap-3">
+                <span>
+                  Paused at a human-review gate — approve, reject, or edit it
+                  in Cockpit, where the review panel lives.
+                </span>
+                {detail.run.workflow_yaml && (
+                  <button
+                    onClick={openInCockpit}
+                    className="flex-none px-3 py-1.5 rounded-md bg-amber-600 text-white text-xs font-medium hover:bg-amber-500"
+                  >
+                    Review &amp; respond
+                  </button>
+                )}
               </div>
             )}
 

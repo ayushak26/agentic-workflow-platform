@@ -61,6 +61,11 @@ MODEL_CATALOG: tuple[ModelDefinition, ...] = (
         provider="anthropic",
     ),
     ModelDefinition(
+        name="claude-fable-5",
+        display_name="Claude Fable 5",
+        provider="anthropic",
+    ),
+    ModelDefinition(
         name="gpt-5.6-sol",
         display_name="GPT-5.6 Sol",
         provider="openai",

@@ -189,6 +189,7 @@ class OpenAIGateway(LLMGateway):
         user: str,
         temperature: float = 0.0,
         max_tokens: int = 1024,
+        reasoning_effort: str | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
         call_kwargs: dict = {
@@ -201,6 +202,8 @@ class OpenAIGateway(LLMGateway):
             "prompt_cache_key": _prompt_cache_key(model, system),
             **_prompt_cache_retention_kwargs(model),
         }
+        if reasoning_effort is not None and model.startswith(_GPT5_FAMILY_PREFIXES):
+            call_kwargs["reasoning_effort"] = reasoning_effort
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
 
@@ -258,6 +261,7 @@ class OpenAIGateway(LLMGateway):
         response_model: Type[T],
         temperature: float = 0.0,
         max_tokens: int = 4096,
+        reasoning_effort: str | None = None,
     ) -> T:
         # Non-strict JSON mode: allows free-form object fields that OpenAI's
         # strict schema mode (.parse) rejects. We validate with Pydantic
@@ -281,6 +285,8 @@ class OpenAIGateway(LLMGateway):
             "prompt_cache_key": _prompt_cache_key(model, system_with_schema),
             **_prompt_cache_retention_kwargs(model),
         }
+        if reasoning_effort is not None and model.startswith(_GPT5_FAMILY_PREFIXES):
+            call_kwargs["reasoning_effort"] = reasoning_effort
         if _supports_custom_temperature(model):
             call_kwargs["temperature"] = temperature
 
