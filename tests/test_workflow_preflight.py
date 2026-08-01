@@ -92,8 +92,8 @@ def test_proposal_evidence_and_html_renderer_nodes_are_auto_discovered():
         "ScholarlyCandidateDiscoveryAgent"
     ).__name__ == "ScholarlyCandidateDiscoveryAgent"
     assert NodeRegistry.get(
-        "FullTextEvidenceAcquirer"
-    ).__name__ == "FullTextEvidenceAcquirer"
+        "ResearchSourceAcquirer"
+    ).__name__ == "ResearchSourceAcquirer"
     assert NodeRegistry.get(
         "ProposalEvidenceFactoryAgent"
     ).__name__ == "ProposalEvidenceFactoryAgent"

@@ -354,12 +354,12 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         "RAGAgent",
         "MCPAgent",
         "GraphNormalizer",
-        "EvidenceAgent",
         "ScholarlyCandidateDiscoveryAgent",
         "ScientificSkillAgent",
         "ClaimEvidenceVerifier",
         "ProposalEvidenceFactoryAgent",
         "ConceptAlternativesAgent",
+        "MethodologyEngineeringAgent",
         "HorizonEvaluationAgent",
     }:
         required.update({"llm", "cost_ledger"})
@@ -369,9 +369,7 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         required.add("retriever")
     if node_type in {
         "MCPAgent",
-        "EvidenceAgent",
         "ScholarlyCandidateDiscoveryAgent",
-        "FullTextEvidenceAcquirer",
     }:
         required.add("mcp_client")
     if node_type in {"ScientificSkillAgent", "ScientificResearchPlannerAgent"}:
@@ -380,15 +378,14 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         required.update({"llm", "cost_ledger"})
     if node_type == "BoundedDeepResearchAgent":
         required.update({"deep_research", "scientific_skill_catalog", "cost_ledger"})
-    if node_type == "ResearchSourceAcquirer":
-        required.add("object_store")
     if node_type in {
         "PDFTextExtractor",
         "PDFProposalRenderer",
         "HorizonHTMLProposalRenderer",
         "HorizonDOCXProposalRenderer",
-        "FullTextEvidenceAcquirer",
+        "ResearchSourceAcquirer",
         "ProposalEvidenceFactoryAgent",
+        "PaperQAEvidenceSynthesizerAgent",
         "DOCXProposalRenderer",
         "ExcelTableExtractor",
         "PowerPointProposalSlides",
@@ -1254,19 +1251,12 @@ async def _probe_services(
         for node in spec.nodes:
             if node.type not in {
                 "MCPAgent",
-                "EvidenceAgent",
                 "ScholarlyCandidateDiscoveryAgent",
-                "FullTextEvidenceAcquirer",
             }:
                 continue
             server = (
                 node.effective_config().get("mcp_server")
-                if node.type
-                in {
-                    "EvidenceAgent",
-                    "ScholarlyCandidateDiscoveryAgent",
-                    "FullTextEvidenceAcquirer",
-                }
+                if node.type == "ScholarlyCandidateDiscoveryAgent"
                 else "eurskem"
             ) or "eurskem"
             if hasattr(mcp, "has_server") and not mcp.has_server(server):
@@ -1289,13 +1279,8 @@ async def _probe_services(
                 )
                 continue
             configured_tool = None
-            if node.type in {
-                "EvidenceAgent",
-                "ScholarlyCandidateDiscoveryAgent",
-            }:
+            if node.type == "ScholarlyCandidateDiscoveryAgent":
                 configured_tool = node.effective_config().get("tool")
-            elif node.type == "FullTextEvidenceAcquirer":
-                configured_tool = node.effective_config().get("download_tool")
             if configured_tool and configured_tool not in {
                 getattr(tool, "name", None) for tool in tools
             }:

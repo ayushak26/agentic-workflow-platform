@@ -169,6 +169,11 @@ inputs:
     required: false
     description: "[LIVE] drafts stage's generate_figure_workplan output - embedded in place of the 'Figure 3 - Work Package Structure' marker draft_3_1 was told to emit."
 
+  generate_figure_methodology:
+    type: json
+    required: false
+    description: "[LIVE] drafts stage's generate_figure_methodology output - embedded in place of the 'Figure 4 - Methodology Architecture' marker draft_1_2 was told to emit."
+
 nodes:
   - id: load_concept
     type: WorkflowFileLoader
@@ -716,6 +721,22 @@ nodes:
         - marker: "Figure 3 - Work Package Structure"
           image: "{{ inputs.generate_figure_workplan }}"
           alt_text: "Work package structure diagram"
+        - marker: "Figure 4 - Methodology Architecture"
+          image: "{{ inputs.generate_figure_methodology }}"
+          alt_text: "Methodology architecture diagram"
+
+  - id: generate_slide_deck
+    type: PowerPointProposalSlides
+    config:
+      proposal_title: "{{inputs.metadata.proposal_title}}"
+      client_name: "{{inputs.metadata.consortium_name}}"
+      sections:
+        "1.1 Objectives and Ambition": "{{inputs.draft_1_1}}"
+        "1.2 Methodology": "{{inputs.draft_1_2}}"
+        "2.1 Pathways towards Impact": "{{inputs.draft_2_1}}"
+        "2.2 Measures to Maximise Impact": "{{inputs.draft_2_2_2_3}}"
+        "3.1 Work Plan and Resources": "{{inputs.draft_3_1}}"
+        "3.2 Consortium Capacity": "{{inputs.draft_3_2}}"
 
   - id: render_submission_docx
     type: HorizonDOCXProposalRenderer
@@ -775,12 +796,16 @@ edges:
   - from: consistency_gate
     to: submission_gate
   - from: submission_gate
-    to: figure_embedder
+    to:
+      - figure_embedder
+      - generate_slide_deck
   - from: figure_embedder
     to: render_submission_docx
 
 entry: load_concept
-exit: render_submission_docx
+exit:
+  - render_submission_docx
+  - generate_slide_deck
 
 output:
   include_input: false
@@ -790,6 +815,8 @@ output:
     - node_id: consistency_gate
       flatten: false
     - node_id: submission_gate
+      flatten: false
+    - node_id: generate_slide_deck
       flatten: false
     - node_id: render_submission_docx
       flatten: false

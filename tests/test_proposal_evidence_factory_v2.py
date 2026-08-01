@@ -7,7 +7,7 @@ from unittest.mock import patch
 from app.evidence.models import CandidateSource, FullTextDocument
 from app.evidence.retrieval import candidate_from_paper, utc_now
 from app.nodes.evidence_agent import ScholarlyCandidateDiscoveryAgent, _sanitize_query
-from app.nodes.full_text_evidence_acquirer import FullTextEvidenceAcquirer
+from app.nodes.research_source_acquirer import ResearchSourceAcquirer
 from app.nodes.proposal_evidence_factory import (
     PairVerdict,
     ProposalEvidenceFactoryAgent,
@@ -165,36 +165,53 @@ async def test_candidate_discovery_hands_off_partial_results_past_time_budget():
     assert graph.claims["CL-2"].verification == Status.MISSING
 
 
-async def test_full_text_acquirer_stores_immutable_pdf_and_pages():
+async def test_research_source_acquirer_stores_immutable_pdf_and_pages(
+    monkeypatch,
+):
     from weasyprint import HTML
 
-    candidate = _candidate(
-        "paper-download",
-        "10.1000/download",
-        "Downloadable source",
+    candidate = candidate_from_paper(
+        {
+            "paper_id": "paper-download",
+            "title": "Downloadable source",
+            "authors": "A. Researcher; B. Researcher",
+            "published_date": "2025-01-01",
+            "doi": "10.1000/download",
+            "url": "https://example.org/paper-download",
+            "source": "openalex",
+            "is_retracted": False,
+        },
+        claim_id="CL-1",
+        query="residue mapping accuracy",
+        purpose="discovery",
     )
     pdf = HTML(
         string="<h1>Results</h1><p>Residue mapping accuracy improved.</p>"
     ).write_pdf()
 
-    class DownloadMCP:
-        async def call_tool(self, *, name, arguments, server):
-            output = Path(arguments["save_path"]) / "source.pdf"
-            output.write_bytes(pdf)
-            assert arguments["use_scihub"] is False
-            return str(output)
+    async def fake_fetch_public_source(client, url, *, max_bytes, max_redirects):
+        return url, "application/pdf", pdf
+
+    async def fake_metadata_status(candidate, *, final_url, client):
+        return True, "clear"
+
+    monkeypatch.setattr(
+        "app.nodes.research_source_acquirer._fetch_public_source",
+        fake_fetch_public_source,
+    )
+    monkeypatch.setattr(
+        "app.nodes.research_source_acquirer._metadata_status",
+        fake_metadata_status,
+    )
 
     store = StubObjectStore()
-    node = FullTextEvidenceAcquirer(
+    node = ResearchSourceAcquirer(
         "acquire",
         {
             "candidates": [candidate.model_dump(mode="json")],
             "fail_when_none_acquired": True,
         },
-        services={
-            "mcp_client": DownloadMCP(),
-            "object_store": store,
-        },
+        services={"object_store": store},
     )
     result = await node.run(
         {"inputs": {"SYSTEM.run_id": "run-acquire"}},

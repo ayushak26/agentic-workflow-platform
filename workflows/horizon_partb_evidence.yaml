@@ -178,6 +178,26 @@ nodes:
         ATOMIC CALL CHECKLIST:
         {{call_intelligence.parsed}}
 
+  - id: approve_call_interpretation
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Human Gate 1 — review the parsed call interpretation and the
+        normalised claim/requirement graph before any research budget is
+        spent. Edit call_intelligence's parsed checklist below if it
+        misreads the call; this is the highest-authority source for
+        everything that follows.
+      context_fields:
+        - call_intelligence.parsed
+        - normalise_source_graph.report
+        - normalise_source_graph.warnings
+      editable_content_field: call_intelligence.parsed
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
   - id: research_plan
     type: ScientificResearchPlannerAgent
     selected_model: gpt-5.6-terra
@@ -224,6 +244,17 @@ nodes:
       max_redirects: 4
       fail_when_none_acquired: false
 
+  - id: synthesize_literature
+    type: PaperQAEvidenceSynthesizerAgent
+    config:
+      documents: "{{acquire_research_sources.documents}}"
+      llm_model: gpt-4o-2024-11-20
+      summary_llm_model: gpt-4o-2024-11-20
+      embedding_model: text-embedding-3-small
+      evidence_k: 10
+      max_claims: 15
+      max_documents_per_claim: 12
+
   - id: verify_evidence
     type: ProposalEvidenceFactoryAgent
     selected_model: o3
@@ -255,6 +286,98 @@ nodes:
     type: CallCoverageMatrixAgent
     config: {}
 
+  - id: approve_evidence_report
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Human Gate 2 — review verified evidence, unresolved gaps, and call
+        coverage before concept development begins. Only claims verified
+        here become drafting authority; approve, reject, or request changes
+        before the concept-evolution stage spends any further budget.
+      context_fields:
+        - truth_graph.truth_graph
+        - truth_graph.human_review_queue
+        - verify_evidence.qa_report
+        - verify_evidence.evidence_gaps
+        - call_coverage
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
+  - id: concept_evolution
+    type: ConceptAlternativesAgent
+    selected_model: claude-opus-5
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - gpt-5.6-terra
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      judge_model: claude-opus-5
+      concept_note: "{{load_concept.text}}"
+
+  - id: select_concept
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Human Gate 3 — select and freeze ONE of the three independently
+        generated, scored, and adversarially-judged concepts (conservative,
+        balanced, ambitious). recommended_concept_id below defaults to the
+        highest composite_score; edit it to a different alternative's id to
+        override the recommendation. Review each alternative's critique
+        before deciding.
+      context_fields:
+        - concept_evolution.alternatives
+      editable_content_field: concept_evolution.recommended_concept_id
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
+  - id: freeze_concept
+    type: ConceptFreezeAgent
+    config:
+      alternatives: "{{concept_evolution.alternatives}}"
+      selected_concept_id: "{{select_concept.content.text}}"
+
+  - id: methodology_engineering
+    type: MethodologyEngineeringAgent
+    selected_model: claude-opus-5
+    allowed_models:
+      - claude-opus-5
+      - gpt-5.6-sol
+      - gpt-5.6-terra
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: claude-opus-5
+      research_briefs: "{{research_plan.research_briefs}}"
+      selected_concept: "{{freeze_concept.selected_concept}}"
+      max_objectives: 10
+      max_skills_per_card: 2
+
+  - id: approve_methodology
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Human Gate 4 — approve the proposed Method Cards (method, baseline
+        or comparator, validation, uncertainty handling, failure condition)
+        before proposal engineering begins. Edit any card below directly if
+        a method needs correcting.
+      context_fields:
+        - methodology_engineering.method_cards
+      editable_content_field: methodology_engineering.method_cards
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
   - id: research_documentation
     type: TransformAgent
     selected_model: gpt-5.6-terra
@@ -273,6 +396,7 @@ nodes:
         bounded_research_dossiers: list
         candidate_sources_considered: list
         citation_coverage_summary: object
+        literature_synthesis_notes: list
       prompt_template: |
         Produce a standalone, audit-ready research-documentation record for
         this proposal run. This is not proposal text — it is the evidence
@@ -310,6 +434,14 @@ nodes:
         registry, rejected, qualified, contradicted, excluded from the truth
         graph, and left for human review.
 
+        literature_synthesis_notes: one entry per claim covered by the
+        PaperQA2 literature synthesis below — claim ID, its synthesized
+        answer, how many of the acquired documents actually contributed
+        supporting context versus were acquired but unused, and any
+        synthesis error. Label every entry [UNVERIFIED SYNTHESIS] — this is
+        candidate literature analysis, not a verification result, and must
+        never be treated as equivalent to an entry in VERIFIED CLAIMS.
+
         CITATION REGISTRY:
         {{verify_evidence.citation_registry}}
 
@@ -330,6 +462,9 @@ nodes:
 
         ACQUISITION REJECTIONS:
         {{acquire_research_sources.rejected_candidates}}
+
+        PAPERQA2 LITERATURE SYNTHESIS (CANDIDATE ANALYSIS ONLY):
+        {{synthesize_literature.results}}
 
         PROPOSAL TRUTH GRAPH:
         {{truth_graph.truth_graph}}
@@ -387,11 +522,16 @@ nodes:
         impact_summary: object
         work_plan_timing: object
       prompt_template: |
-        Treat the supplied concept note as the selected project concept. Create
-        the master blueprint only for the Horizon Europe RIA/IA Part B technical
-        description. Follow the official 2026 headings exactly, down to every
-        numbered subsection below — each maps to the output field named after
-        it, and none may be silently skipped:
+        Treat FROZEN CONCEPT below as the selected project concept and scope
+        — it was chosen at Human Gate 3 from three independently generated,
+        scored, and adversarially-judged alternatives. The raw concept note
+        is supplementary source material only; where it conflicts with the
+        frozen concept's scope, scientific_advance, or assumptions, the
+        frozen concept wins. Create the master blueprint only for the
+        Horizon Europe RIA/IA Part B technical description. Follow the
+        official 2026 headings exactly, down to every numbered subsection
+        below — each maps to the output field named after it, and none may
+        be silently skipped:
         1.1 Objectives and ambition
           1.1.1 Overall project objective: one row per approved objective —
           never force the count to match a template's blank SO1-SO5
@@ -405,7 +545,12 @@ nodes:
         1.2 Methodology
           1.2.1 Concept, 1.2.2 pilot strategy -> pilot_strategy, and
           1.2.3 overall methodology and approach all belong in
-          methodology_and_validation. 1.2.4 linked research and innovation
+          methodology_and_validation. Ground 1.2.3 in the supplied METHOD
+          CARDS (approved at Human Gate 4): synthesize each into prose but
+          preserve every method_id, baseline_or_comparator, validation,
+          uncertainty_method, and failure_condition — do not restate them
+          as a bare bullet list, and do not invent a method not present in
+          the supplied cards. 1.2.4 linked research and innovation
           activities this project builds on -> linked_research_activities.
           1.2.5 interdisciplinary approach and SSH integration ->
           ssh_integration. 1.2.6 gender dimension -> gender_dimension: treat
@@ -475,7 +620,13 @@ nodes:
         Use [INPUT NEEDED: exact item] for missing facts; never invent partner,
         budget, KPI, TRL, timeline, pilot, source or evidence details.
 
-        CONCEPT NOTE:
+        FROZEN CONCEPT (approved at Human Gate 3 — authoritative scope):
+        {{freeze_concept.selected_concept}}
+
+        METHOD CARDS (approved at Human Gate 4):
+        {{methodology_engineering.method_cards}}
+
+        CONCEPT NOTE (supplementary source material only):
         {{load_concept.text}}
 
         PROPOSAL METADATA:
@@ -522,18 +673,24 @@ edges:
   - from: partb_metadata
     to: normalise_source_graph
   - from: normalise_source_graph
+    to: approve_call_interpretation
+  - from: approve_call_interpretation
     to: research_plan
   - from: research_plan
     to: deep_research
   - from: deep_research
     to: acquire_research_sources
   - from: acquire_research_sources
-    to: verify_evidence
+    to:
+      - verify_evidence
+      - synthesize_literature
   - from: verify_evidence
     to:
       - call_coverage
       - truth_graph
   - from: deep_research
+    to: research_documentation
+  - from: synthesize_literature
     to: research_documentation
   - from: understand_supporting_image
     to: research_documentation
@@ -541,7 +698,24 @@ edges:
     to:
       - research_documentation
       - proposal_blueprint
+      - approve_evidence_report
   - from: call_coverage
+    to:
+      - proposal_blueprint
+      - approve_evidence_report
+  - from: approve_evidence_report
+    to: concept_evolution
+  - from: concept_evolution
+    to: select_concept
+  - from: select_concept
+    to: freeze_concept
+  - from: freeze_concept
+    to:
+      - methodology_engineering
+      - proposal_blueprint
+  - from: methodology_engineering
+    to: approve_methodology
+  - from: approve_methodology
     to: proposal_blueprint
 
 entry: load_concept
@@ -568,6 +742,8 @@ output:
       flatten: false
     - node_id: acquire_research_sources
       flatten: false
+    - node_id: synthesize_literature
+      flatten: false
     - node_id: call_coverage
       flatten: false
     - node_id: verify_evidence
@@ -575,6 +751,20 @@ output:
     - node_id: truth_graph
       flatten: false
     - node_id: understand_supporting_image
+      flatten: false
+    - node_id: approve_call_interpretation
+      flatten: false
+    - node_id: approve_evidence_report
+      flatten: false
+    - node_id: concept_evolution
+      flatten: false
+    - node_id: select_concept
+      flatten: false
+    - node_id: freeze_concept
+      flatten: false
+    - node_id: methodology_engineering
+      flatten: false
+    - node_id: approve_methodology
       flatten: false
     - node_id: research_documentation
       flatten: false

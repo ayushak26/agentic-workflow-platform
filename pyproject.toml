@@ -44,6 +44,7 @@ dependencies = [
     "httpx>=0.27.0",
     "boto3",
     "markdown-it-py",
+    "paper-qa>=2026.3.18",
 ]
 
 [project.optional-dependencies]

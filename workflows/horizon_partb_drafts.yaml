@@ -38,6 +38,10 @@ inputs:
     type: json
     required: false
     description: "[LIVE] evidence stage's load_documents output — .text is given to draft_2_2, draft_3_1 and draft_3_2 for source fidelity."
+  methodology_engineering:
+    type: json
+    required: false
+    description: "[GATED] evidence stage's methodology_engineering output. .method_cards, approved at Human Gate 4, grounds draft_1_2's 1.2.3 narrative and the Figure 4 methodology-architecture diagram."
 
 nodes:
   - id: start
@@ -126,6 +130,24 @@ nodes:
         topic from workforce or team gender balance. Use only verified
         citations and supplied facts. Preserve missing details as
         [INPUT NEEDED: exact item].
+
+        Ground 1.2.3's overall methodology and approach in METHOD CARDS
+        below (approved at Human Gate 4): open with a narrative synthesis,
+        then include one Markdown table, one row per Method Card (columns:
+        Method ID | Objective | Method | Baseline/comparator | Validation |
+        Uncertainty handling | Failure condition), built directly from the
+        supplied cards — never invent a method not present in them. A card
+        with status "information_required" gets [INPUT NEEDED: exact item]
+        in its row, not a fabricated method.
+
+        Where a methodology-architecture diagram belongs (showing how the
+        Method Cards connect to objectives and research questions), insert
+        exactly this marker on its own line, unmodified:
+        [[IMAGE PROMPT: Figure 4 - Methodology Architecture]]
+        Do not draw or describe the diagram yourself; do not omit the marker.
+
+        METHOD CARDS:
+        {{inputs.methodology_engineering.method_cards}}
 
         BLUEPRINT:
         {{inputs.proposal_blueprint}}
@@ -385,6 +407,25 @@ nodes:
 
         {{inputs.proposal_blueprint.work_packages_tasks_deliverables}}
 
+  - id: generate_figure_methodology
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      output_format: png
+      size: auto
+      quality: auto
+      prompt: |
+        Flat vector diagram for a Horizon Europe grant proposal figure, EU
+        institutional report style, white background, no photorealism, short
+        text labels only. Show the methodology architecture: each Method
+        Card's method name as a box, connected to the objective it supports
+        and, where present, its baseline/comparator and validation step —
+        boxes and arrows only, using ONLY this grounded content, do not
+        invent additional methods, objectives or labels:
+
+        {{inputs.methodology_engineering.method_cards}}
+
 edges:
   - from: start
     to:
@@ -397,6 +438,7 @@ edges:
       - generate_figure_oro_chain
       - generate_figure_impact_pathways
       - generate_figure_workplan
+      - generate_figure_methodology
 
 entry: start
 exit:
@@ -409,6 +451,7 @@ exit:
   - generate_figure_oro_chain
   - generate_figure_impact_pathways
   - generate_figure_workplan
+  - generate_figure_methodology
 
 output:
   include_input: false
@@ -430,4 +473,6 @@ output:
     - node_id: generate_figure_impact_pathways
       flatten: false
     - node_id: generate_figure_workplan
+      flatten: false
+    - node_id: generate_figure_methodology
       flatten: false

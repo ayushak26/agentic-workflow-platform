@@ -22,7 +22,16 @@ class ConceptAlternativesInput(BaseModel):
 
 class ConceptAlternativesConfig(BaseModel):
     model: str = "claude-opus-5"
+    judge_model: str | None = None
     concept_note: str = ""
+
+
+class ConceptAlternativesOutput(ConceptAlternativeSet):
+    # Highest composite_score alternative, offered as the editable default at
+    # the "select and freeze the concept" human gate. The human can accept
+    # it or overwrite it with another alternative's id before ConceptFreezeAgent
+    # reads the gate's decision.
+    recommended_concept_id: str = ""
 
 
 @NodeRegistry.register
@@ -34,7 +43,7 @@ class ConceptAlternativesAgent(NodeType):
     )
     input_schema = ConceptAlternativesInput
     config_schema = ConceptAlternativesConfig
-    output_schema = ConceptAlternativeSet
+    output_schema = ConceptAlternativesOutput
 
     async def run(self, state: dict, resolved_config: dict) -> dict:
         cfg = ConceptAlternativesConfig(**resolved_config)
@@ -46,12 +55,20 @@ class ConceptAlternativesAgent(NodeType):
             llm,
             graph=graph,
             model=cfg.model,
+            judge_model=cfg.judge_model,
             concept_note=cfg.concept_note,
+            skill_catalog=self.services.get("scientific_skill_catalog"),
         )
         alternatives = {
             item.id: item for item in result.alternatives
         }
-        payload = result.model_dump()
+        recommended = max(
+            result.alternatives, key=lambda item: item.composite_score
+        )
+        payload = ConceptAlternativesOutput(
+            alternatives=result.alternatives,
+            recommended_concept_id=recommended.id,
+        ).model_dump()
         payload["__state__"] = proposal_graph_state_update(
             ProposalGraph(concept_alternatives=alternatives)
         )

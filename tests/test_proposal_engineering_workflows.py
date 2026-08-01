@@ -9,13 +9,12 @@ from app.runtime.loader import load_workflow
 from app.runtime.preflight import preflight_workflow_yaml
 
 
-# horizon_proposal_autonomous_docx.yaml was split/renamed to
-# horizon_partb_autonomous_docx.yaml when the Part B pipeline was staged
-# (see workflows/horizon_partb_{evidence,drafts,drafts_to_docx}.yaml and
-# workflows/pipelines/horizon_partb.pipeline.yaml for the staged version).
-AUTONOMOUS = Path(
-    "workflows/horizon_partb_autonomous_docx.yaml"
-)
+# The monolithic horizon_partb_autonomous_docx.yaml was retired in favor of
+# the staged Part B pipeline (see
+# workflows/horizon_partb_{evidence,drafts,drafts_to_docx}.yaml and
+# workflows/pipelines/horizon_partb.pipeline.yaml, its declared production
+# path). HITL remains the only proposal-drafting workflow this module tests
+# directly, since it hasn't been folded into the staged pipeline.
 HITL = Path(
     "workflows/horizon_proposal_hitl_pdf.yaml"
 )
@@ -23,33 +22,6 @@ HITL = Path(
 
 def _types(path: Path) -> list[str]:
     return [node.type for node in load_workflow(path).nodes]
-
-
-def test_autonomous_workflow_has_no_human_pause_and_only_docx_export():
-    node_types = _types(AUTONOMOUS)
-
-    # 32 original nodes + 7 added when compile/revise were split per
-    # criterion (Excellence/Impact/Implementation) to avoid a single
-    # TransformAgent call having to hold a ~40-44 page document within its
-    # max_tokens output: compile_excellence, compile_impact,
-    # compile_implementation, revise_excellence, revise_impact,
-    # revise_implementation, plus research_documentation (citation/web-search
-    # audit trail). compile_v1 and final_revision keep their ids but are now
-    # TextAssemblerAgent (deterministic, non-LLM join) nodes instead of
-    # TransformAgent. -1 for the removed scientific_synthesis node
-    # (ScientificSkillAgent); downstream drafts now source verified-evidence
-    # narrative directly from verify_evidence.proposal_ready_cited_markdown.
-    # +1 for scientific_peer_review (ScientificSkillAgent), reinstated as a
-    # dedicated node once the bounded Deep Research / truth-graph machinery
-    # (ScientificResearchPlannerAgent, BoundedDeepResearchAgent,
-    # ResearchSourceAcquirer, ProposalTruthGraphAgent) replaced
-    # scientific_synthesis's old evidence path.
-    assert len(node_types) == 39
-    assert "HumanInLoopAgent" not in node_types
-    assert node_types.count("HorizonDOCXProposalRenderer") == 1
-    assert "HorizonHTMLProposalRenderer" not in node_types
-    assert node_types.count("TextAssemblerAgent") == 2
-    assert node_types[-1] == "HorizonDOCXProposalRenderer"
 
 
 def test_human_reviewed_workflow_has_four_gates_and_only_pdf_export():
@@ -66,10 +38,8 @@ def test_human_reviewed_workflow_has_four_gates_and_only_pdf_export():
     assert node_types[-1] == "HorizonHTMLProposalRenderer"
 
 
-@pytest.mark.parametrize("path", [AUTONOMOUS, HITL])
-def test_proposal_workflows_use_auto_for_generation_and_pass_preflight(
-    path: Path,
-):
+def test_proposal_workflows_use_auto_for_generation_and_pass_preflight():
+    path = HITL
     spec = load_workflow(path)
     llm_node_types = {
         "TransformAgent",
@@ -96,20 +66,7 @@ def test_proposal_workflows_use_auto_for_generation_and_pass_preflight(
     ]
 
     assert auto_nodes
-    # horizon_partb_autonomous_docx.yaml deliberately pins the model per task
-    # to the scientific_deep_research_pipeline.md routing table (gpt-5.6-sol
-    # for final drafting/revision/blueprint, gpt-5.6-terra for planning/call
-    # synthesis/compilation, o3 for evidence verification/peer review/red
-    # team) instead of letting the generic router decide via "auto".
-    pinned_routing_table_models = {"gpt-5.6-sol", "gpt-5.6-terra", "o3"}
-    if path == AUTONOMOUS:
-        assert all(
-            node.selected_model == "auto"
-            or node.selected_model in pinned_routing_table_models
-            for node in auto_nodes
-        )
-    else:
-        assert all(node.selected_model == "auto" for node in auto_nodes)
+    assert all(node.selected_model == "auto" for node in auto_nodes)
     assert all(
         node.model_routing is not None
         for node in auto_nodes

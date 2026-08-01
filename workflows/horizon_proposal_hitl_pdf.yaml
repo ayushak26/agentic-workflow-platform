@@ -216,7 +216,7 @@ nodes:
       require_contradiction_search: true
 
   - id: acquire_full_text
-    type: FullTextEvidenceAcquirer
+    type: ResearchSourceAcquirer
     config:
       candidates: "{{discover_evidence.candidates}}"
       fail_when_none_acquired: false

@@ -86,11 +86,13 @@ class Settings(BaseSettings):
     # explicitly approved skills can be loaded into workflow prompts.
     scientific_skills_enabled: bool = False
     scientific_skills_path: str = (
-        "/opt/scientific-agent-skills/skills"
+        "scientific-agent-skills/skills"
     )
     scientific_skills_allowlist: str = (
         "literature-review,scientific-writing,research-grants,"
-        "scientific-critical-thinking"
+        "scientific-critical-thinking,research-lookup,database-lookup,"
+        "scientific-brainstorming,peer-review,geomaster,geopandas,pymoo,"
+        "networkx,hypothesis-generation,statistical-analysis"
     )
     scientific_skills_max_prompt_chars: int = 30000
 

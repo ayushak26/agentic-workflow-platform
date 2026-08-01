@@ -104,7 +104,7 @@ nodes:
   - id: deep_research
     type: BoundedDeepResearchAgent
     config:
-      research_briefs: "{{ inputs.research_briefs }}"
+      research_briefs: "{{ inputs.research_briefs.research_briefs }}"
       max_jobs: 8
       max_parallel_jobs: 2
       max_total_tool_calls: 72

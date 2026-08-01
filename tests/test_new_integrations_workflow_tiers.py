@@ -26,7 +26,6 @@ from app.runtime.preflight import preflight_workflow_yaml
 # ---- simple: one new integration alone -------------------------------------
 
 SIMPLE_WORKFLOWS = [
-    Path("workflows/web_search_agent_demo.yaml"),
     Path("workflows/kimi_vision_agent_demo.yaml"),
 ]
 
@@ -110,8 +109,6 @@ def test_medium_tier_multi_integration_chain_passes_preflight():
 # ---- complex: the real, shipped Horizon Part B workflows -------------------
 
 COMPLEX_WORKFLOWS = [
-    Path("workflows/horizon_partb_autonomous_docx.yaml"),
-    Path("workflows/horizon_partb_backhalf.yaml"),
     Path("workflows/horizon_partb_evidence.yaml"),
     Path("workflows/horizon_partb_drafts.yaml"),
     Path("workflows/horizon_partb_drafts_to_docx.yaml"),

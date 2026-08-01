@@ -254,6 +254,7 @@ async def concept_alternatives(
         graph=body.graph,
         model=body.model,
         concept_note=body.concept_note,
+        skill_catalog=services.get("scientific_skill_catalog"),
     )
     graph = body.graph.model_copy(deep=True)
     graph.concept_alternatives = {

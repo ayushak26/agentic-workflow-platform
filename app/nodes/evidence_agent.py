@@ -357,17 +357,3 @@ class ScholarlyCandidateDiscoveryAgent(_ScholarlyCandidateDiscovery):
         "Find scholarly candidate records with multi-query and contradiction "
         "searches. Candidates are never treated as verified evidence."
     )
-
-
-@NodeRegistry.register
-class EvidenceAgent(_ScholarlyCandidateDiscovery):
-    """Compatibility alias for saved workflows.
-
-    Its semantics are intentionally corrected: it now discovers candidates
-    only. New workflows should use ``ScholarlyCandidateDiscoveryAgent``.
-    """
-
-    type_name = "EvidenceAgent"
-    description = (
-        "Legacy alias for ScholarlyCandidateDiscoveryAgent; discovery only."
-    )

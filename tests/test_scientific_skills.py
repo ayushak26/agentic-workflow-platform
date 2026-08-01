@@ -5,8 +5,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.nodes.bounded_deep_research_agent import BoundedDeepResearchAgent
+from app.nodes.scientific_research_planner import ScientificResearchPlannerAgent
 from app.nodes.scientific_skill_agent import ScientificSkillAgent
+from app.research.deep_research import ResearchBrief, ResearchDossier
 from app.research.skills import ScientificSkillCatalog
+
+_VENDORED_SKILLS_ROOT = (
+    Path(__file__).resolve().parent.parent
+    / "scientific-agent-skills"
+    / "skills"
+)
 
 
 def _write_skill(root: Path, name: str, description: str) -> None:
@@ -80,6 +89,121 @@ def test_catalog_rejects_unapproved_explicit_skill(tmp_path):
             requested=("unapproved-skill",),
             auto_select=False,
         )
+
+
+def test_vendored_research_and_database_lookup_skills_load_and_select():
+    catalog = ScientificSkillCatalog(
+        _VENDORED_SKILLS_ROOT,
+        allowlist=("research-lookup", "database-lookup", "literature-review"),
+    )
+    catalog.refresh()
+
+    assert catalog.load_errors == {}
+    selection = catalog.select(
+        objective=(
+            "eu_policy_and_regulation\nresearch-lookup database-lookup"
+        ),
+        auto_select=True,
+        max_skills=3,
+    )
+    assert "research-lookup" in selection.names
+    assert "database-lookup" in selection.names
+    bundle = catalog.prompt_bundle(selection)
+    assert "research-lookup" in bundle
+    assert "database-lookup" in bundle
+
+
+@pytest.mark.asyncio
+async def test_research_lookup_skill_reaches_deep_research_instructions():
+    """Planner-selected skills must actually shape the Deep Research call.
+
+    ScientificResearchPlannerAgent only records selected skill names as
+    metadata on the ResearchBrief. BoundedDeepResearchAgent is the node that
+    turns that selection into real guidance text injected into the Deep
+    Research `instructions` argument — this proves that hand-off works with
+    the real vendored research-lookup skill, not a synthetic one.
+    """
+    catalog = ScientificSkillCatalog(
+        _VENDORED_SKILLS_ROOT,
+        allowlist=("research-lookup", "database-lookup", "literature-review"),
+    )
+    catalog.refresh()
+
+    class PlannerLLM:
+        async def complete_structured(self, **kwargs):
+            response_model = kwargs["response_model"]
+            return response_model(
+                briefs=[
+                    {
+                        "track": "eu_policy_and_regulation",
+                        "question": (
+                            "Which CAP and Bioeconomy Strategy provisions "
+                            "govern biomass residue valorisation?"
+                        ),
+                        "purpose": "policy_alignment",
+                        "linked_claim_ids": ["CL-1"],
+                        "linked_call_requirement_ids": [],
+                        "tier": "standard",
+                    }
+                ],
+                unresolved_questions=[],
+            )
+
+    planner = ScientificResearchPlannerAgent(
+        "research_plan",
+        {"call_context": "", "concept_context": ""},
+        services={"llm": PlannerLLM(), "scientific_skill_catalog": catalog},
+    )
+    graph_state = {
+        "domain_state": {
+            "eu_proposal": {
+                "claims": {
+                    "CL-1": {
+                        "id": "CL-1",
+                        "text": "Biomass residues are under-valorised.",
+                        "claim_type": "state_of_art",
+                    }
+                }
+            }
+        }
+    }
+    plan_result = await planner.run(
+        graph_state,
+        planner.config.model_dump(),
+    )
+    brief_payload = plan_result["research_briefs"][0]
+    assert "research-lookup" in brief_payload["selected_skills"]
+    assert "database-lookup" in brief_payload["selected_skills"]
+
+    captured: dict[str, str] = {}
+
+    class DeepResearchService:
+        async def research(self, *, brief, instructions, **kwargs):
+            captured["instructions"] = instructions
+            return ResearchDossier(
+                brief_id=brief.brief_id,
+                track=brief.track,
+                question=brief.question,
+                model=brief.research_model,
+                response_id="resp-1",
+                status="completed",
+                report_markdown="stub report",
+            )
+
+    runner = BoundedDeepResearchAgent(
+        "deep_research",
+        {"research_briefs": [ResearchBrief(**brief_payload)]},
+        services={
+            "deep_research": DeepResearchService(),
+            "scientific_skill_catalog": catalog,
+        },
+    )
+    result = await runner.run({}, runner.config.model_dump())
+
+    assert result["jobs_completed"] == 1
+    assert "research-lookup" in captured["instructions"]
+    assert "verified, unique references" in captured["instructions"]
+    assert "database-lookup" in captured["instructions"]
 
 
 @pytest.mark.asyncio

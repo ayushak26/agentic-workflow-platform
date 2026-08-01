@@ -264,3 +264,15 @@ class ConceptAlternative(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     key_risks: list[str] = Field(default_factory=list)
     evidence_weighted_score: float = Field(default=0.0, ge=0.0, le=100.0)
+    # Independent-judge dimensions (0-10), scored in a call separate from
+    # generation so the model isn't grading its own concept.
+    innovation_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    consortium_capability_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    methodological_validity_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    adoption_potential_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    scope_discipline_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    # Weighted combination of all 9 blueprint dimensions (call coverage,
+    # evidence strength, expected-outcome contribution, feasibility, plus the
+    # 5 judge dimensions above). See score_concept/judge_concept.
+    composite_score: float = Field(default=0.0, ge=0.0, le=100.0)
+    critique: list[str] = Field(default_factory=list)

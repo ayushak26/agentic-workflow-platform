@@ -91,11 +91,11 @@ def test_call_coverage_requires_mapping_section_and_verified_evidence():
 
 def test_reference_eu_proposal_pipeline_loads_with_all_new_nodes():
     spec = load_workflow_from_string(
-        Path("workflows/eu_proposal_evidence_pipeline.yaml").read_text()
+        Path("workflows/horizon_proposal_hitl_pdf.yaml").read_text()
     )
     assert {node.type for node in spec.nodes} >= {
         "ScholarlyCandidateDiscoveryAgent",
-        "FullTextEvidenceAcquirer",
+        "ResearchSourceAcquirer",
         "ProposalEvidenceFactoryAgent",
         "HorizonHTMLProposalRenderer",
         "CallCoverageMatrixAgent",
@@ -107,52 +107,55 @@ def test_reference_eu_proposal_pipeline_loads_with_all_new_nodes():
 
 @pytest.mark.asyncio
 async def test_concept_generator_returns_three_scored_postures(stub_llm):
+    # Each posture is drafted in its own independent call (conservative,
+    # balanced, ambitious, in ConceptPosture enum order), then each drafted
+    # concept is judged in its own independent call, same order.
     stub_llm.queue(json.dumps({
-        "alternatives": [
-            {
-                "id": "anything",
-                "posture": "conservative",
-                "title": "Focused validation",
-                "summary": "Validate the core method.",
-                "scientific_advance": "A robust validated workflow.",
-                "scope": "One technical pathway.",
-                "call_requirement_ids": ["CR-EO1"],
-                "objective_ids": ["OBJ-1"],
-                "evidence_claim_ids": ["CL-1"],
-                "required_capabilities": [],
-                "assumptions": [],
-                "key_risks": [],
-            },
-            {
-                "id": "anything",
-                "posture": "balanced",
-                "title": "Integrated validation",
-                "summary": "Validate and demonstrate uptake.",
-                "scientific_advance": "Integrated evidence and deployment.",
-                "scope": "Technical and user validation.",
-                "call_requirement_ids": ["CR-EO1"],
-                "objective_ids": ["OBJ-1"],
-                "evidence_claim_ids": ["CL-1"],
-                "required_capabilities": ["living lab"],
-                "assumptions": [],
-                "key_risks": ["adoption"],
-            },
-            {
-                "id": "anything",
-                "posture": "ambitious",
-                "title": "European-scale system",
-                "summary": "Validate a wider systemic pathway.",
-                "scientific_advance": "Cross-region optimisation.",
-                "scope": "Multiple deployment contexts.",
-                "call_requirement_ids": ["CR-EO1", "HALLUCINATED"],
-                "objective_ids": ["OBJ-1"],
-                "evidence_claim_ids": ["CL-1"],
-                "required_capabilities": ["European pilots"],
-                "assumptions": ["additional partners"],
-                "key_risks": ["scale", "data access"],
-            },
-        ]
+        "title": "Focused validation",
+        "summary": "Validate the core method.",
+        "scientific_advance": "A robust validated workflow.",
+        "scope": "One technical pathway.",
+        "call_requirement_ids": ["CR-EO1"],
+        "objective_ids": ["OBJ-1"],
+        "evidence_claim_ids": ["CL-1"],
+        "required_capabilities": [],
+        "assumptions": [],
+        "key_risks": [],
     }))
+    stub_llm.queue(json.dumps({
+        "title": "Integrated validation",
+        "summary": "Validate and demonstrate uptake.",
+        "scientific_advance": "Integrated evidence and deployment.",
+        "scope": "Technical and user validation.",
+        "call_requirement_ids": ["CR-EO1"],
+        "objective_ids": ["OBJ-1"],
+        "evidence_claim_ids": ["CL-1"],
+        "required_capabilities": ["living lab"],
+        "assumptions": [],
+        "key_risks": ["adoption"],
+    }))
+    stub_llm.queue(json.dumps({
+        "title": "European-scale system",
+        "summary": "Validate a wider systemic pathway.",
+        "scientific_advance": "Cross-region optimisation.",
+        "scope": "Multiple deployment contexts.",
+        "call_requirement_ids": ["CR-EO1", "HALLUCINATED"],
+        "objective_ids": ["OBJ-1"],
+        "evidence_claim_ids": ["CL-1"],
+        "required_capabilities": ["European pilots"],
+        "assumptions": ["additional partners"],
+        "key_risks": ["scale", "data access"],
+    }))
+    for _ in range(3):
+        stub_llm.queue(json.dumps({
+            "innovation_score": 6.0,
+            "consortium_capability_score": 7.0,
+            "methodological_validity_score": 8.0,
+            "adoption_potential_score": 5.0,
+            "scope_discipline_score": 7.0,
+            "critique": ["Needs a clearer baseline comparator."],
+        }))
+
     result = await generate_concept_alternatives(
         stub_llm,
         graph=covered_graph(),
@@ -164,6 +167,8 @@ async def test_concept_generator_returns_three_scored_postures(stub_llm):
         "ambitious",
     }
     assert all(item.evidence_weighted_score > 0 for item in result.alternatives)
+    assert all(item.composite_score > 0 for item in result.alternatives)
+    assert all(item.critique for item in result.alternatives)
     assert all(
         "HALLUCINATED" not in item.call_requirement_ids
         for item in result.alternatives
