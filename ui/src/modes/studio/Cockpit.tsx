@@ -216,17 +216,28 @@ export function Cockpit() {
     };
   }), [collapsedResult.edges, selectedId, pathHighlight, activeNodeId]);
 
+  // A HITL pause takes over the inspector by default (it needs the user's
+  // attention), but the user explicitly choosing a different node to look
+  // at should always win — otherwise every other node is uninspectable for
+  // as long as the gate is open, which defeats the point of being able to
+  // click around the graph at all. The "Review paused node" banner (shown
+  // once dismissed this way) remains the way back to the gate itself.
+  const selectNode = useCallback((nodeId: string) => {
+    setSelectedId(nodeId);
+    setGateHidden((hidden) => (gate && gate.nodeId !== nodeId ? true : hidden));
+  }, [gate, setGateHidden]);
+
   const focusNode = useCallback((nodeId: string | null) => {
     if (!nodeId || !rfInstance) return;
     const node = nodes.find((candidate) => candidate.data.nodeId === nodeId);
     if (!node) return;
-    setSelectedId(nodeId);
+    selectNode(nodeId);
     rfInstance.setCenter(
       node.position.x + (node.width ?? 260) / 2,
       node.position.y + (node.height ?? 92) / 2,
       { zoom: 1.15, duration: 450 },
     );
-  }, [nodes, rfInstance]);
+  }, [nodes, rfInstance, selectNode]);
 
   // Preselect the node the user was inspecting in Run History before
   // clicking "Open in Cockpit" — once, as soon as the graph and the
@@ -265,12 +276,12 @@ export function Cockpit() {
     const failedNode = nodes.find((n) => n.data.status === 'failed');
     if (!failedNode) return;
     const id = failedNode.data.nodeId;
-    setSelectedId(id);
+    selectNode(id);
     const highlighted = computePathHighlight(id, plainEdges);
     requestAnimationFrame(() => {
       rfInstance?.fitView({ nodes: [...highlighted].map((nid) => ({ id: nid })), padding: 0.25, duration: 400 });
     });
-  }, [nodes, plainEdges, rfInstance]);
+  }, [nodes, plainEdges, rfInstance, selectNode]);
 
   const hasFailedNode = useMemo(() => nodes.some((n) => n.data.status === 'failed'), [nodes]);
 
@@ -306,8 +317,8 @@ export function Cockpit() {
       });
       return;
     }
-    setSelectedId(node.data.nodeId);
-  }, []);
+    selectNode(node.data.nodeId);
+  }, [selectNode]);
 
   const selectedNodeInfo: SelectedNodeInfo | null = useMemo(() => {
     if (!selectedId) return null;

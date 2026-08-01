@@ -376,6 +376,16 @@ export function useCockpitRun() {
     setGateRetryToken((value) => value + 1);
   }, []);
 
+  // Memoized so it's a stable reference across renders whenever `liveRun`
+  // itself hasn't changed — Cockpit.tsx lists this in a useEffect's
+  // dependency array, and a fresh closure every render would re-run that
+  // effect every render, which calls setNodes with a new array reference
+  // each time and triggers another render: an infinite render loop.
+  const getLiveRunNodeStatus = useCallback(
+    (nodeId: string) => liveRunNodeStatus(nodeId, liveRun),
+    [liveRun],
+  );
+
   return {
     runId,
     navState,
@@ -401,6 +411,6 @@ export function useCockpitRun() {
     continueToNextStage,
     continuingStage,
     continueError,
-    liveRunNodeStatus: (nodeId: string) => liveRunNodeStatus(nodeId, liveRun),
+    liveRunNodeStatus: getLiveRunNodeStatus,
   };
 }
