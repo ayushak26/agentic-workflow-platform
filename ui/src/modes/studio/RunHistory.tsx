@@ -29,7 +29,7 @@ export function RunHistory() {
   const selectedNodeId = searchParams.get('node');
 
   const data = useRunHistoryData(runId);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth < 1150);
   const [inspectorFullscreen, setInspectorFullscreen] = useState(false);
 
   const leftPanel = useResizablePanel({

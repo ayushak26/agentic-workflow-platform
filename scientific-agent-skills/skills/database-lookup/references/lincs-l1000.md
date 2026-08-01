@@ -9,7 +9,7 @@ https://api.clue.io/api
 ```
 
 ## Authentication
-- **API key required** (free registration at clue.io)
+- **API key required** — free registration at clue.io covers **academic use only**; a commercial organization needs a subscription-based commercial licence from Clue/CMap. Confirm licence status before using L1000 output in commercial deliverables.
 - Pass via header: `user_key: YOUR_API_KEY`
 
 ## Key Endpoints

@@ -48,7 +48,7 @@ const nodeTypes = {
 
 const STATUS_BADGE: Record<string, string> = {
   connecting: 'bg-slate-200 text-ink-700',
-  running: 'bg-accent-600 text-white',
+  running: 'bg-running text-white',
   paused: 'bg-warn text-white',
   completed: 'bg-ok text-white',
   rejected: 'bg-warn text-white',
@@ -75,7 +75,8 @@ export function Cockpit() {
   const [showOnlyActive, setShowOnlyActive] = useState(false);
   const [fullscreenGraph, setFullscreenGraph] = useState(false);
   const [fullscreenOutput, setFullscreenOutput] = useState(false);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth < 1150);
+  const [graphOptionsOpen, setGraphOptionsOpen] = useState(false);
 
   const leftPanel = useResizablePanel({
     storageKey: 'cockpit.leftPanelWidth', defaultWidth: 280, minWidth: 220, maxWidth: 480, side: 'left',
@@ -209,8 +210,12 @@ export function Cockpit() {
       type: 'smoothstep',
       animated: isActiveEdge,
       style: {
-        stroke: onPath ? '#4f46e5' : '#cbd5e1',
-        strokeWidth: onPath ? 2.5 : 1.5,
+        stroke: isActiveEdge
+          ? 'var(--graph-edge-running)'
+          : onPath
+            ? 'var(--graph-edge-active)'
+            : 'var(--graph-edge)',
+        strokeWidth: isActiveEdge || onPath ? 2.5 : 1.5,
         opacity: faded ? 0.25 : 1,
       },
     };
@@ -464,12 +469,12 @@ export function Cockpit() {
             edgesUpdatable={false}
             minZoom={0.1}
           >
-            <Background gap={20} />
+            <Background color="var(--border-default)" gap={20} />
             <Controls />
-            <MiniMap pannable zoomable />
+            <MiniMap maskColor="rgba(242, 251, 250, 0.72)" nodeColor="var(--brand-teal-600)" pannable zoomable />
           </ReactFlow>
 
-          <div className="absolute top-4 left-4 bg-white/90 backdrop-blur rounded-md px-3 py-2 shadow-sm border border-slate-200 max-w-sm">
+          <div className="absolute left-3 top-3 z-10 max-w-sm rounded-md border border-ink-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur">
             <div className="text-xs text-ink-500 font-mono">run {runId.slice(0, 8)}…</div>
             {navState.retrySourceRunId && (
               <div className="text-xs text-cyan-700 mt-1">
@@ -477,7 +482,7 @@ export function Cockpit() {
               </div>
             )}
             {activeNodeId && (
-              <div className="text-xs text-accent-600 mt-1 font-medium">
+              <div className="mt-1 text-xs font-medium text-running">
                 Running: <span className="font-mono">{activeNodeId}</span>
               </div>
             )}
@@ -492,7 +497,7 @@ export function Cockpit() {
             </span>
           </div>
 
-          <div className="absolute top-4 right-4 flex flex-wrap items-center gap-1.5 justify-end max-w-[70%]">
+          <div className="canvas-toolbar absolute right-3 top-3 z-20 justify-end">
             {gateDismissed && (
               <button
                 onClick={() => setGateHidden(false)}
@@ -508,22 +513,22 @@ export function Cockpit() {
               Focus running
             </ToolbarButton>
             <ToolbarButton onClick={fitToScreen}>Fit to screen</ToolbarButton>
-            <ToolbarButton onClick={fitToScreen}>Reset view</ToolbarButton>
-            <ToolbarButton onClick={focusSelectedPath} disabled={!selectedId}>
-              Focus selected path
-            </ToolbarButton>
-            <ToolbarButton onClick={() => setShowOnlyActive((v) => !v)} active={showOnlyActive}>
-              Only active
-            </ToolbarButton>
-            <ToolbarButton onClick={showFailedPath} disabled={!hasFailedNode}>
-              Show failed path
-            </ToolbarButton>
-            <ToolbarButton onClick={() => setCollapsedStages(new Set(stages.map((s) => s.index)))}>
-              Collapse groups
-            </ToolbarButton>
-            <ToolbarButton onClick={() => setCollapsedStages(new Set())}>
-              Expand groups
-            </ToolbarButton>
+            <div className="relative">
+              <ToolbarButton onClick={() => setGraphOptionsOpen((value) => !value)} active={graphOptionsOpen}>
+                View options
+              </ToolbarButton>
+              {graphOptionsOpen && (
+                <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-52 rounded-md border border-ink-200 bg-white p-1.5 shadow-panel" role="menu">
+                  <GraphMenuButton onClick={() => { fitToScreen(); setGraphOptionsOpen(false); }}>Reset view</GraphMenuButton>
+                  <GraphMenuButton disabled={!selectedId} onClick={() => { focusSelectedPath(); setGraphOptionsOpen(false); }}>Focus selected path</GraphMenuButton>
+                  <GraphMenuButton active={showOnlyActive} onClick={() => { setShowOnlyActive((value) => !value); setGraphOptionsOpen(false); }}>Show only active</GraphMenuButton>
+                  <GraphMenuButton disabled={!hasFailedNode} onClick={() => { showFailedPath(); setGraphOptionsOpen(false); }}>Show failed path</GraphMenuButton>
+                  <div className="my-1 border-t border-ink-100" />
+                  <GraphMenuButton onClick={() => { setCollapsedStages(new Set(stages.map((stage) => stage.index))); setGraphOptionsOpen(false); }}>Collapse groups</GraphMenuButton>
+                  <GraphMenuButton onClick={() => { setCollapsedStages(new Set()); setGraphOptionsOpen(false); }}>Expand groups</GraphMenuButton>
+                </div>
+              )}
+            </div>
             <ToolbarButton onClick={() => setFullscreenGraph((v) => !v)} active={fullscreenGraph}>
               {fullscreenGraph ? 'Exit full screen' : 'Full-screen graph'}
             </ToolbarButton>
@@ -615,11 +620,35 @@ function ToolbarButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`px-2.5 py-1.5 rounded-md border text-xs whitespace-nowrap ${
+      type="button"
+      className={`ui-button min-h-8 px-2.5 text-xs ${
         active
           ? 'border-accent-600 bg-accent-50 text-accent-700'
-          : 'border-slate-300 bg-white text-ink-700 hover:bg-slate-50'
+          : 'ui-button--secondary'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function GraphMenuButton({
+  onClick, disabled, active, children,
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      className={`flex w-full items-center rounded px-2.5 py-2 text-left text-xs ${
+        active ? 'bg-accent-50 font-semibold text-accent-800' : 'text-ink-700 hover:bg-ink-50'
       } disabled:opacity-40`}
+      disabled={disabled}
+      onClick={onClick}
+      role="menuitem"
+      type="button"
     >
       {children}
     </button>

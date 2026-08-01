@@ -1,8 +1,16 @@
 # USPTO Public APIs
 
+## Auth warning (checked 2026-08-01)
+
+PatentsView's documentation says **every** call requires `X-Api-Key`, but it also states that **new API-key grants are temporarily suspended**. In parallel, USPTO has been moving services toward its **Open Data Portal**, which requires account sign-in and its own API keys for the endpoints it covers. Do not assume one stable endpoint or one stable credential:
+
+- Check for `PATENTSVIEW_API_KEY` first (legacy/current PatentsView key).
+- If that's absent or PatentsView key issuance is unavailable, check for `USPTO_API_KEY` (Open Data Portal).
+- If neither is available and key issuance is suspended, tell the user directly rather than retrying — this is a provider-side suspension, not a missing-credential problem the user can quickly fix.
+
 ## 1. PatentsView API (Primary Patent Search)
 
-The newer Elasticsearch-based API is the recommended endpoint.
+The newer Elasticsearch-based API is the recommended endpoint when key issuance is available.
 
 ### Base URL
 
@@ -10,7 +18,7 @@ The newer Elasticsearch-based API is the recommended endpoint.
 https://search.patentsview.org/api/v1/
 ```
 
-**API key required** — register at `https://patentsview.org/apis/keyrequest`
+**API key required** — register at `https://patentsview.org/apis/keyrequest`. As of 2026-08-01, PatentsView states new key grants are temporarily suspended; if registration is unavailable, fall back to the USPTO Open Data Portal path (`USPTO_API_KEY`) or tell the user no automated path is currently open.
 
 Pass as query parameter: `?api_key=YOUR_KEY`
 
@@ -83,7 +91,7 @@ GET /patent/{patent_number}/?api_key=KEY
 
 ### Important Note
 
-The user must have a PatentsView API key for this endpoint. If they don't have one, let them know they need to register at `https://patentsview.org/apis/keyrequest`. Load the key from `.env` as `PATENTSVIEW_API_KEY`.
+The user must have a PatentsView API key for this endpoint. If they don't have one, let them know they need to register at `https://patentsview.org/apis/keyrequest` — but new-key issuance is reported suspended as of 2026-08-01, so also check `USPTO_API_KEY` (Open Data Portal) as a fallback before telling the user the lookup can't proceed. Load the key from `.env` as `PATENTSVIEW_API_KEY` (or `USPTO_API_KEY`).
 
 **Note:** The legacy API at `api.patentsview.org` has been decommissioned (returns 410 Gone). Only the new API above works.
 

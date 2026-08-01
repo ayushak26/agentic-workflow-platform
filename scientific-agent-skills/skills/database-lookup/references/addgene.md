@@ -6,10 +6,12 @@ https://www.addgene.org/api/
 ```
 
 ## Auth
-API key required. Register at addgene.org and request API access.
+Uses token authentication, but access must first be **approved by Addgene** for the requested API scopes — registering and receiving a token is not the same as having working access. Register at addgene.org and request API access.
 Pass as: `Authorization: Token <your_api_key>`
 
 Load from `.env` as `ADDGENE_API_KEY`.
+
+If a request fails with an auth error even though `ADDGENE_API_KEY` is set, the likely cause is an unapproved scope rather than a bad token — tell the user to check their Addgene API access approval rather than re-registering.
 
 ## Key Endpoints
 

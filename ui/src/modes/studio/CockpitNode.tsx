@@ -21,15 +21,18 @@ export type CockpitNodeData = WorkflowNodeData & {
 };
 
 // Text glyph alongside the color — status must never be color-only.
+// 'active' uses the dedicated running/focus colour (cyan), not the brand
+// teal accent — the design system keeps "primary action" and "currently
+// running" as distinct roles even though both read as a similar hue.
 const STATUS_STYLES: Record<NodeStatus, { border: string; pill: string; glyph: string }> = {
   pending:   { border: 'border-slate-200',                 pill: 'bg-slate-100 text-ink-500',  glyph: '⋯' },
-  active:    { border: 'border-accent-600',                pill: 'bg-accent-600 text-white',   glyph: '▶' },
+  active:    { border: 'border-running',                   pill: 'bg-running text-white',       glyph: '▶' },
   done:      { border: 'border-ok',                        pill: 'bg-ok text-white',            glyph: '✓' },
   reused:    { border: 'border-cyan-500',                  pill: 'bg-cyan-500 text-white',      glyph: '↺' },
   paused:    { border: 'border-warn',                      pill: 'bg-warn text-white',          glyph: '⏸' },
   failed:    { border: 'border-bad',                       pill: 'bg-bad text-white',           glyph: '✕' },
-  skipped:   { border: 'border-slate-200 border-dashed',   pill: 'bg-slate-100 text-ink-400',   glyph: '↷' },
-  cancelled: { border: 'border-slate-200 border-dashed',   pill: 'bg-slate-100 text-ink-400',   glyph: '⊘' },
+  skipped:   { border: 'border-skipped border-dashed',     pill: 'bg-skipped/10 text-skipped',  glyph: '↷' },
+  cancelled: { border: 'border-cancelled border-dashed',   pill: 'bg-cancelled/10 text-cancelled', glyph: '⊘' },
 };
 
 function CockpitNodeImpl({ data, selected }: NodeProps<CockpitNodeData>) {
@@ -39,7 +42,7 @@ function CockpitNodeImpl({ data, selected }: NodeProps<CockpitNodeData>) {
   return (
     <div
       className={`bg-white rounded-md border-2 px-3 py-2.5 w-[240px] transition-opacity duration-200 ${s.border} ${
-        active ? 'shadow-lg ring-4 ring-accent-100' : 'shadow-sm'
+        active ? 'shadow-lg ring-4 ring-running/20' : 'shadow-sm'
       } ${selected || data.pathHighlighted ? 'ring-2 ring-accent-500' : ''} ${
         faded ? 'opacity-30' : 'opacity-100'
       }`}

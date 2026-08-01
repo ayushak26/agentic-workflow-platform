@@ -31,6 +31,7 @@ from app.runtime.events import RunEventBus
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
 from app.workflow.pipeline_history import ensure_pipeline_indexes
+from app.workflow.claim_verifications import ensure_indexes as ensure_claim_verification_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 
 from app.api import health
@@ -82,6 +83,7 @@ async def lifespan(app: FastAPI):
         try:
             await ensure_run_indexes(services["audit_db"])
             await ensure_pipeline_indexes(services["audit_db"])
+            await ensure_claim_verification_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
                 services["audit_db"],
                 None,
@@ -188,13 +190,16 @@ async def lifespan(app: FastAPI):
     # Missing credentials surface as a zero-token preflight issue instead
     # (app/runtime/preflight.py), not a startup failure.
     from app.tools.web_io import get_web_search_service
+    from app.tools.database_lookup import get_database_lookup_service
     from app.tools.image_io import get_image_generation_service
     from app.tools.vision_io import get_kimi_vision_service
 
     services["web_search"] = get_web_search_service()
+    services["database_lookup"] = get_database_lookup_service()
     services["image_generator"] = get_image_generation_service()
     services["kimi_vision"] = get_kimi_vision_service()
     logger.info("web_search.ready")
+    logger.info("database_lookup.ready")
     logger.info("image_generator.ready")
     logger.info("kimi_vision.ready")
 
@@ -285,6 +290,8 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ───────────────────────────────────────────────────────────────
     logger.info("eurskem_ai.shutdown")
+    if "database_lookup" in services:
+        await services["database_lookup"].close()
     if "mongo" in services:
         await services["mongo"].close()
     if "weaviate_client" in services:

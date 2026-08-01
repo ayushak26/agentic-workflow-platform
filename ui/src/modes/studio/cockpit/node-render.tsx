@@ -18,14 +18,14 @@ import type { NodeStatus } from '../cockpit-state';
 // outcome, which makes "failed" and "successful" equally easy to miss when
 // scanning a long list. Colour does the work uppercase alone can't.
 export const STATUS_PILL: Record<string, string> = {
-  running: 'bg-blue-50 text-blue-700',
-  paused: 'bg-amber-50 text-amber-800',
-  completed: 'bg-emerald-50 text-emerald-700',
+  running: 'bg-running/10 text-running',
+  paused: 'bg-warn/10 text-warn',
+  completed: 'bg-ok/10 text-ok',
   reused: 'bg-cyan-50 text-cyan-700',
-  rejected: 'bg-amber-50 text-amber-800',
-  failed: 'bg-red-50 text-red-700',
-  skipped: 'bg-slate-100 text-ink-500',
-  cancelled: 'bg-slate-100 text-ink-500',
+  rejected: 'bg-warn/10 text-warn',
+  failed: 'bg-bad/10 text-bad',
+  skipped: 'bg-skipped/10 text-skipped',
+  cancelled: 'bg-cancelled/10 text-cancelled',
   pending: 'bg-slate-100 text-ink-500',
 };
 

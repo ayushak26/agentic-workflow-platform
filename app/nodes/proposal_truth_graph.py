@@ -7,6 +7,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.evidence.database_models import (
+    InternalEvidenceRecord,
+    StructuredDataEvidenceRecord,
+)
 from app.evidence.models import (
     EvidenceGap,
     VerifiedClaim,
@@ -26,6 +30,13 @@ class ProposalTruthGraphConfig(BaseModel):
     evidence_gaps: str | list[EvidenceGap] = Field(default_factory=list)
     blocking_issues: Any = Field(default_factory=list)
     research_manifest: Any = Field(default_factory=dict)
+    structured_data_records: str | list[StructuredDataEvidenceRecord] = Field(
+        default_factory=list
+    )
+    internal_evidence_records: str | list[InternalEvidenceRecord] = Field(
+        default_factory=list
+    )
+    evidence_approval_decision: str = "pending"
 
     @field_validator("verified_claims", mode="before")
     @classmethod
@@ -43,6 +54,24 @@ class ProposalTruthGraphConfig(BaseModel):
             value,
             EvidenceGap,
             "evidence_gaps",
+        )
+
+    @field_validator("structured_data_records", mode="before")
+    @classmethod
+    def _coerce_structured_data_records(cls, value: Any) -> Any:
+        return coerce_typed_list_field(
+            value,
+            StructuredDataEvidenceRecord,
+            "structured_data_records",
+        )
+
+    @field_validator("internal_evidence_records", mode="before")
+    @classmethod
+    def _coerce_internal_evidence_records(cls, value: Any) -> Any:
+        return coerce_typed_list_field(
+            value,
+            InternalEvidenceRecord,
+            "internal_evidence_records",
         )
 
 
@@ -77,13 +106,18 @@ class ProposalTruthGraphAgent(NodeType):
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
         cfg = ProposalTruthGraphConfig(**resolved_config)
-        if isinstance(cfg.verified_claims, str) or isinstance(
-            cfg.evidence_gaps,
-            str,
+        if (
+            isinstance(cfg.verified_claims, str)
+            or isinstance(cfg.evidence_gaps, str)
+            or isinstance(cfg.structured_data_records, str)
+            or isinstance(cfg.internal_evidence_records, str)
         ):
             raise ValueError(
                 "truth-graph evidence templates did not resolve"
             )
+        evidence_approved = (
+            cfg.evidence_approval_decision.strip().lower() == "approve"
+        )
         graph = proposal_graph_from_state(state)
         accepted_statuses = {
             "verified",
@@ -198,13 +232,9 @@ class ProposalTruthGraphAgent(NodeType):
         )
         drafting_allowed = (
             bool(accepted)
+            and evidence_approved
             and not blockers
             and not any(gap.blocking for gap in cfg.evidence_gaps)
-            and not any(
-                item.final_status in {"mixed", "contradicted"}
-                and item.materiality == "critical"
-                for item in cfg.verified_claims
-            )
         )
         return ProposalTruthGraphOutput(
             truth_graph=snapshot,
@@ -216,7 +246,7 @@ class ProposalTruthGraphAgent(NodeType):
             evidence_gaps=cfg.evidence_gaps,
             blocking_issues=blockers,
             drafting_allowed=drafting_allowed,
-            approval_required=True,
+            approval_required=not evidence_approved,
             report=(
                 f"Truth graph {digest[:12]} contains {len(accepted)} "
                 f"drafting-eligible claim(s) and excludes "

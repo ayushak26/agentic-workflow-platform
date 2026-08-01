@@ -1,120 +1,96 @@
-import { type FC } from "react";
+import type { FC } from "react";
+import { Icon, type IconName } from "../ui/Icon";
+import { BrandMark } from "../ui/BrandMark";
 
 type Mode = "studio" | "eval" | "operator";
 
-const NAV = [
-  { id: "studio"   as Mode, label: "Workflow Studio",   icon: "ti-topology-star-3" },
-  { id: "eval"     as Mode, label: "Evaluation Lab",    icon: "ti-test-pipe"        },
-  { id: "operator" as Mode, label: "Operator Console",  icon: "ti-terminal-2"       },
+const NAV: { id: Mode; label: string; icon: IconName }[] = [
+  { id: "studio", label: "Workflow Studio", icon: "topology" },
+  { id: "eval", label: "Evaluation Lab", icon: "flask" },
+  { id: "operator", label: "Operator Console", icon: "terminal" },
 ];
 
-const SECONDARY = [
-  { label: "Cloud Map",  icon: "ti-cloud"      },
-  { label: "Audit Log",  icon: "ti-list-check" },
-  { label: "Settings",   icon: "ti-settings"   },
+const SECONDARY: { label: string; icon: IconName }[] = [
+  { label: "Cloud Map", icon: "cloud" },
+  { label: "Audit Log", icon: "checklist" },
+  { label: "Settings", icon: "settings" },
 ];
 
 interface Props {
   mode: Mode;
   onModeChange: (m: Mode) => void;
   username?: string | null;
+  collapsed: boolean;
+  mobileOpen: boolean;
+  onCloseMobile: () => void;
+  onCollapsedChange: (collapsed: boolean) => void;
 }
 
-export const Sidebar: FC<Props> = ({ mode, onModeChange, username }) => (
-  <aside style={{
-    width: "var(--sidebar-width)",
-    background: "var(--eur-navy)",
-    height: "100vh",
-    position: "fixed",
-    left: 0, top: 0,
-    display: "flex",
-    flexDirection: "column",
-    zIndex: 100,
-    borderRight: "1px solid rgba(255,255,255,0.05)",
-  }}>
-    {/* Logo */}
-    <div style={{ padding: "22px 20px 18px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{
-          width: 32, height: 32,
-          background: "var(--eur-gold)",
-          borderRadius: 8,
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <i className="ti ti-hexagon-letter-e" style={{ fontSize: 18, color: "var(--eur-navy)" }} aria-hidden />
-        </div>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: "#fff", letterSpacing: "-0.3px" }}>
-            Eurskem <span style={{ color: "var(--eur-gold)" }}>AI</span>
-          </div>
-          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", letterSpacing: "1.4px", textTransform: "uppercase" }}>
-            by Rukainnovation
+export const Sidebar: FC<Props> = ({
+  mode, onModeChange, username, collapsed, mobileOpen, onCloseMobile, onCollapsedChange,
+}) => (
+  <>
+    {mobileOpen && (
+      <button
+        type="button"
+        className="mobile-backdrop"
+        aria-label="Close navigation"
+        onClick={onCloseMobile}
+      />
+    )}
+    <aside
+      className={`app-sidebar ${collapsed ? 'app-sidebar--collapsed' : ''} ${mobileOpen ? 'app-sidebar--mobile-open' : ''}`}
+    >
+      <div className="sidebar-brand">
+        <BrandMark size="sm" />
+        <div className="sidebar-brand-copy">
+          <div className="sidebar-product-name">
+            Eurskem <span style={{ color: 'var(--brand-teal-400)' }}>AI</span>
           </div>
         </div>
-      </div>
-    </div>
-
-    {/* Primary nav */}
-    <nav style={{ padding: "12px 0", flex: 1 }}>
-      <div style={{ padding: "0 12px 6px", fontSize: 9, color: "rgba(255,255,255,0.2)", letterSpacing: "1.2px", textTransform: "uppercase" }}>
-        Workspace
-      </div>
-      {NAV.map(item => {
-        const active = mode === item.id;
-        return (
-          <button
-            key={item.id}
-            onClick={() => onModeChange(item.id)}
-            style={{
-              width: "100%", textAlign: "left",
-              padding: "9px 16px",
-              background: active ? "rgba(200,169,110,0.12)" : "transparent",
-              borderLeft: active ? "2px solid var(--eur-gold)" : "2px solid transparent",
-              border: "none",
-              color: active ? "#fff" : "rgba(255,255,255,0.45)",
-              fontSize: 12, fontWeight: active ? 500 : 400,
-              cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 10,
-              transition: "all 0.15s",
-            }}
-          >
-            <i className={`ti ${item.icon}`} style={{ fontSize: 15 }} aria-hidden />
-            {item.label}
-          </button>
-        );
-      })}
-
-      <div style={{ padding: "16px 12px 6px", marginTop: 8, fontSize: 9, color: "rgba(255,255,255,0.2)", letterSpacing: "1.2px", textTransform: "uppercase", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-        System
-      </div>
-      {SECONDARY.map(item => (
-        <button key={item.label} style={{
-          width: "100%", textAlign: "left",
-          padding: "8px 16px",
-          background: "transparent", border: "none", borderLeft: "2px solid transparent",
-          color: "rgba(255,255,255,0.35)", fontSize: 12, cursor: "pointer",
-          display: "flex", alignItems: "center", gap: 10,
-        }}>
-          <i className={`ti ${item.icon}`} style={{ fontSize: 15 }} aria-hidden />
-          {item.label}
+        <button
+          type="button"
+          className="sidebar-collapse"
+          onClick={() => onCollapsedChange(!collapsed)}
+          title={collapsed ? 'Expand navigation' : 'Collapse navigation'}
+        >
+          <Icon name={collapsed ? 'chevron-right' : 'chevron-left'} size={16} />
         </button>
-      ))}
-    </nav>
+      </div>
 
-    {/* User footer */}
-    <div style={{ padding: "14px 16px", borderTop: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{
-        width: 28, height: 28, borderRadius: "50%",
-        background: "var(--eur-gold)", color: "var(--eur-navy)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 10, fontWeight: 600,
-      }}>
-        {(username ?? "?").slice(0, 2).toUpperCase()}
+      <nav className="sidebar-nav">
+        <div className="sidebar-section-label">Workspace</div>
+        {NAV.map((item) => {
+          const active = mode === item.id;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className={`sidebar-nav-item ${active ? 'sidebar-nav-item--active' : ''}`}
+              onClick={() => onModeChange(item.id)}
+            >
+              <Icon name={item.icon} size={16} />
+              <span className="sidebar-nav-copy">{item.label}</span>
+            </button>
+          );
+        })}
+
+        <div className="sidebar-section-label">System</div>
+        {SECONDARY.map((item) => (
+          <button key={item.label} type="button" className="sidebar-nav-item" disabled>
+            <Icon name={item.icon} size={16} />
+            <span className="sidebar-nav-copy">{item.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <div className="sidebar-footer">
+        <div className="sidebar-avatar">{(username ?? "?").slice(0, 2).toUpperCase()}</div>
+        <div className="sidebar-footer-copy">
+          <div style={{ fontSize: 11, color: 'var(--text-on-dark)', fontWeight: 500 }}>{username}</div>
+          <div style={{ fontSize: 9, color: 'var(--text-on-dark-muted)' }}>Rukainnovation</div>
+        </div>
       </div>
-      <div>
-        <div style={{ fontSize: 11, color: "#fff", fontWeight: 500 }}>{username}</div>
-        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>Rukainnovation</div>
-      </div>
-    </div>
-  </aside>
+    </aside>
+  </>
 );

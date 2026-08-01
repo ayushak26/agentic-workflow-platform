@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api, type DiscoveredCandidate, type RunCandidate } from '../../api/client';
+import {
+  api,
+  type DiscoveredCandidate,
+  type InternalEvidenceRecord,
+  type RunCandidate,
+} from '../../api/client';
 
 const foundByLabel: Record<string, string> = {
   ScholarlyCandidateDiscoveryAgent: 'Scholarly discovery',
   BoundedDeepResearchAgent: 'Deep Research',
+  PriorProjectRetrieverAgent: 'Prior-project search (CORDIS/LIFE/EIP-AGRI)',
+  StructuredDatasetRetrieverAgent: 'Official database (Eurostat)',
+};
+
+const sourceTypeLabel: Record<string, string> = {
+  website: 'Website',
+  book: 'Book',
+  citation: 'Citation',
+  unknown: 'Unknown',
 };
 
 export function RunCandidates() {
@@ -12,6 +26,9 @@ export function RunCandidates() {
   const navigate = useNavigate();
   const [candidates, setCandidates] = useState<RunCandidate[] | null>(null);
   const [discovered, setDiscovered] = useState<DiscoveredCandidate[] | null>(null);
+  const [internalEvidence, setInternalEvidence] = useState<InternalEvidenceRecord[] | null>(null);
+  const [verifying, setVerifying] = useState<string | null>(null);
+  const [verifyError, setVerifyError] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('');
@@ -27,6 +44,7 @@ export function RunCandidates() {
         if (!cancelled) {
           setCandidates(res.candidates);
           setDiscovered(res.discovered_candidates);
+          setInternalEvidence(res.internal_evidence);
         }
       } catch (e) {
         if (!cancelled) setError(String(e));
@@ -39,6 +57,25 @@ export function RunCandidates() {
       cancelled = true;
     };
   }, [runId]);
+
+  async function verifyClaim(recordId: string) {
+    if (!runId) return;
+    setVerifying(recordId);
+    setVerifyError((prev) => ({ ...prev, [recordId]: '' }));
+    try {
+      const res = await api.verifyClaim(runId, recordId);
+      setInternalEvidence(
+        (prev) =>
+          prev?.map((item) =>
+            item.record_id === recordId ? { ...item, verification: res.result } : item,
+          ) ?? prev,
+      );
+    } catch (e) {
+      setVerifyError((prev) => ({ ...prev, [recordId]: String(e) }));
+    } finally {
+      setVerifying(null);
+    }
+  }
 
   const shown = (candidates ?? []).filter((c) =>
     filter.trim() === ''
@@ -181,6 +218,109 @@ export function RunCandidates() {
                       <td className="px-3 py-2">{d.authority || '—'}</td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-8">
+          <h3 className="text-sm font-semibold text-ink-900">
+            Internal evidence — needs source verification
+          </h3>
+          <p className="text-xs text-ink-500 mt-1">
+            Partner and internal-document facts have no public URL — only a
+            source name and an exact quoted passage. Use "Verify this claim"
+            to have gpt-5.6-sol run a web search and report whether it can
+            corroborate the claim and name a specific source. This is a
+            secondary check for a human reviewer; it never changes whether
+            the record is drafting-allowed.
+          </p>
+          {!error && internalEvidence && internalEvidence.length === 0 && (
+            <div className="text-sm text-ink-500 mt-3">
+              No internal-evidence records recorded for this run.
+            </div>
+          )}
+          {!error && internalEvidence && internalEvidence.length > 0 && (
+            <div className="border border-slate-200 rounded-md overflow-hidden bg-white mt-3">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-ink-600">
+                  <tr>
+                    <th className="text-left font-medium px-3 py-2">Content</th>
+                    <th className="text-left font-medium px-3 py-2">Source</th>
+                    <th className="text-left font-medium px-3 py-2">
+                      Link (verify this claim)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {internalEvidence.map((rec) => {
+                    const v = rec.verification;
+                    const isVerifying = verifying === rec.record_id;
+                    const err = verifyError[rec.record_id];
+                    return (
+                      <tr key={rec.record_id} className="border-t border-slate-100 align-top">
+                        <td className="px-3 py-2 max-w-md">
+                          <div>{rec.content}</div>
+                          {rec.fact_key && (
+                            <div className="text-xs text-ink-400 mt-0.5 font-mono">
+                              {rec.fact_key}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 max-w-xs">
+                          <div className="font-mono text-xs">{rec.source_name || '—'}</div>
+                          <div className="text-xs text-ink-400 mt-0.5">
+                            {rec.source_class || 'unclassified'}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 max-w-sm">
+                          <button
+                            onClick={() => void verifyClaim(rec.record_id)}
+                            disabled={isVerifying}
+                            className="px-2.5 py-1 rounded border border-slate-300 text-xs text-ink-700 hover:bg-slate-50 disabled:opacity-50"
+                          >
+                            {isVerifying
+                              ? 'Verifying…'
+                              : v
+                                ? 'Re-verify this claim'
+                                : 'Verify this claim'}
+                          </button>
+                          {err && <div className="text-xs text-red-700 mt-1">{err}</div>}
+                          {v && (
+                            <div className="mt-2 text-xs space-y-0.5">
+                              <div
+                                className={
+                                  v.verified ? 'text-green-700 font-medium' : 'text-ink-500 font-medium'
+                                }
+                              >
+                                {v.verified ? 'Corroborated' : 'Not corroborated'} ·{' '}
+                                {v.confidence} confidence
+                              </div>
+                              <div className="text-ink-500">
+                                Source: {sourceTypeLabel[v.source_type] ?? v.source_type}
+                                {v.source_name ? ` — ${v.source_name}` : ''}
+                              </div>
+                              {v.source_url && (
+                                <a
+                                  href={v.source_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-accent-600 hover:underline break-all block"
+                                >
+                                  {v.source_url}
+                                </a>
+                              )}
+                              {v.citation && (
+                                <div className="text-ink-500 italic">{v.citation}</div>
+                              )}
+                              {v.notes && <div className="text-ink-400">{v.notes}</div>}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

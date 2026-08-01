@@ -1,28 +1,23 @@
-name: Horizon Europe Part B - Drafts to DOCX (full checkpoint)
+name: Horizon Europe Part B - Submission Package (Stage 3 of 3)
 description: >-
-  Post-drafting "resume from drafts" checkpoint for the Horizon Europe RIA/IA
-  Part B workflow. Every artifact the upstream pipeline produces is declared as
-  an input so this file is Import-inputs-from-JSON compatible with the full and
-  acquisition variants. The six official section drafts (1.1, 1.2, 2.1,
+  Final stage of the gated Horizon Europe RIA/IA Part B pipeline. The six
+  human-approved section drafts (1.1, 1.2, 2.1,
   2.2 [+optional 2.3], 3.1, 3.2) plus the approved truth graph, locked
   blueprint, verified evidence and call context are supplied directly; this
   workflow does not re-run
   discovery, evidence verification or drafting. It compiles the drafts into one
   coherent Part B, runs a K-Dense-guided scientific peer review plus an
   independent evaluation and red-team pass, applies a single controlled
-  revision tuned to fill the page budget to a full ~44-page
-  proposal within the 45-page hard limit, runs deterministic consistency and
-  submission gates, splices any generated figures into the three
+  revision tuned to the authoritative page budget, runs an independent final
+  evaluation and deterministic submission gate, splices generated figures
+  into the four
   "[[IMAGE PROMPT: ...]]" markers the drafts stage's sections were told to
-  emit (gracefully left as a text placeholder for any figure that's missing
-  or was never generated), and renders an editable DOCX. Missing facts stay
-  visible as [INPUT NEEDED] markers and block submission-readiness; nothing
-  is fabricated to fill space.
-  INPUT USAGE: inputs marked [LIVE] are consumed by a node prompt/config below;
-  inputs marked [PASSTHROUGH] are declared for checkpoint completeness and
-  provenance but are not yet read by any node - wire them into a prompt when a
-  node needs them.
-version: 4.0-drafts2docx-truth-graph
+  emit, and renders both an editable DOCX and a submission PDF. The evidence-
+  stage graph consistency verdict is reused because proposal domain state is
+  scoped to a workflow run. A readiness router blocks rendering when evidence,
+  evaluation, headings or placeholders fail. A final human gate inspects the
+  actual DOCX/PDF page counts, warnings, figure status and hashes before release.
+version: "5.0"
 use_case: eu_proposal
 
 inputs:
@@ -80,43 +75,19 @@ inputs:
     required: true
     description: "[GATED] ProposalTruthGraphAgent output approved after evidence review. .truth_graph is the only external factual authority for compilation, peer review, red-team and revision."
 
-  normalise_report:
+  evidence_consistency:
     type: json
-    required: false
-    description: "[PASSTHROUGH] normalise_source_graph.report - typed ProposalGraph extracted from source. Declared for provenance; not yet read by a node."
-
-  normalise_warnings:
-    type: json
-    required: false
-    description: "[PASSTHROUGH] normalise_source_graph.warnings - normalisation warnings. Declared for provenance; not yet read by a node."
-
-  # ---- Discovery provenance ------------------------------------------------
-  candidates:
-    type: json
-    required: false
-    description: "[PASSTHROUGH] deep_research.candidates - candidate-only source list. Declared for provenance/audit; no drafting node re-reads it."
-
-  search_audit:
-    type: json
-    required: false
-    description: "[PASSTHROUGH] deep_research.search_audit - bounded search and contradiction provenance. Declared for audit; not read by a drafting node."
+    required: true
+    description: "[GATED] Evidence stage's ConsistencyChecker output, computed while the Proposal Graph is present in workflow domain state."
 
   # ---- Source text ---------------------------------------------------------
   concept_note:
     type: file
-    required: false
+    required: true
     multiple: true
     max_files: 5
     accept: [pdf, document, markdown, presentation]
     description: "[LIVE] The selected project concept note file(s). Loaded and given to final_revision so revisions stay faithful to the actual concept, not the drafts alone."
-
-  documents:
-    type: file
-    required: false
-    multiple: true
-    max_files: 20
-    accept: [pdf, document, markdown, presentation, spreadsheet]
-    description: "[PASSTHROUGH] Supporting documents (call text, template, consortium, budget, pilots). Declared so the checkpoint is self-contained; not re-read here because the drafts already encode them. Wire into a node if a section must be re-derived."
 
   # ---- Section drafts (the core payload) -----------------------------------
   draft_1_1:
@@ -684,24 +655,52 @@ nodes:
       criterion_threshold: 4.0
       total_threshold: 12.0
 
-  - id: consistency_gate
-    type: ConsistencyChecker
-    config:
-      block_on_warn: false
-
   - id: submission_gate
     type: ProposalSubmissionGate
     config:
       proposal_text: "{{final_revision.text}}"
       evidence_blockers: "{{ inputs.evidence_blockers }}"
-      consistency_gate: "{{consistency_gate.gate}}"
-      consistency_findings: "{{consistency_gate.findings}}"
+      consistency_gate: "{{inputs.evidence_consistency.gate}}"
+      consistency_findings: "{{inputs.evidence_consistency.findings}}"
       evaluation_threshold_passed: "{{evaluate_final.threshold_passed}}"
       evaluation_total_score: "{{evaluate_final.total_score}}"
       evaluation_blockers: "{{evaluate_final.deterministic_blockers}}"
+      required_headings:
+        - "1.1 Objectives and ambition"
+        - "1.2 Methodology"
+        - "2.1 Project's pathways towards impact"
+        - "2.2 Measures to maximise impact"
+        - "3.1 Work plan and resources"
+        - "3.2 Capacity of participants and consortium as a whole"
       minimum_proposal_characters: 20000
       require_evaluation_pass: true
       block_on_input_needed: true
+
+  - id: submission_readiness_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: READY
+          condition: "submission_gate.submission_ready == true"
+        - name: BLOCKED
+          default: true
+
+  - id: submission_blocked
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        The proposal failed the deterministic pre-render submission gate.
+        Reject this run and return to the relevant earlier stage to close the
+        listed blockers. Rendering is deliberately disabled on this branch.
+      context_fields:
+        - submission_gate.report
+        - submission_gate.blockers
+        - evaluate_final
+        - inputs.evidence_consistency
+      allow_document_override: false
+      allowed_actions:
+        - reject
 
   - id: figure_embedder
     type: FigureEmbedder
@@ -721,20 +720,27 @@ nodes:
           image: "{{ inputs.generate_figure_methodology }}"
           alt_text: "Methodology architecture diagram"
 
-  - id: generate_slide_deck
-    type: PowerPointProposalSlides
+  - id: page_limit_router
+    type: RouterAgent
     config:
-      proposal_title: "{{inputs.metadata.proposal_title}}"
-      client_name: "{{inputs.metadata.consortium_name}}"
-      sections:
-        "1.1 Objectives and Ambition": "{{inputs.draft_1_1}}"
-        "1.2 Methodology": "{{inputs.draft_1_2}}"
-        "2.1 Pathways towards Impact": "{{inputs.draft_2_1}}"
-        "2.2 Measures to Maximise Impact": "{{inputs.draft_2_2_2_3}}"
-        "3.1 Work Plan and Resources": "{{inputs.draft_3_1}}"
-        "3.2 Consortium Capacity": "{{inputs.draft_3_2}}"
+      mode: rule
+      rules:
+        - name: PAGE_45
+          condition: "inputs.proposal_blueprint.hard_page_limit == 45"
+        - name: PAGE_40
+          default: true
 
-  - id: render_submission_docx
+  - id: render_45_start
+    type: Literal
+    config:
+      value: true
+
+  - id: render_40_start
+    type: Literal
+    config:
+      value: true
+
+  - id: render_submission_docx_45
     type: HorizonDOCXProposalRenderer
     config:
       content: "{{figure_embedder.content}}"
@@ -742,12 +748,101 @@ nodes:
       metadata: "{{ inputs.metadata }}"
       citation_registry: "{{ inputs.citation_registry }}"
       evidence_qa: "{{ inputs.evidence_qa }}"
-      evidence_blockers: "{{submission_gate.blockers}}"
+      evidence_blockers: "{{inputs.evidence_blockers}}"
       include_toc: false
       include_bibliography: true
       include_evidence_annex: false
       page_limit: 45
       enforce_page_limit: true
+      enable_footnotes: true
+
+  - id: render_submission_pdf_45
+    type: HorizonHTMLProposalRenderer
+    config:
+      content: "{{figure_embedder.content}}"
+      content_format: markdown
+      metadata: "{{inputs.metadata}}"
+      citation_registry: "{{inputs.citation_registry}}"
+      evidence_qa: "{{inputs.evidence_qa}}"
+      evidence_blockers: "{{inputs.evidence_blockers}}"
+      include_toc: false
+      include_bibliography: true
+      include_evidence_annex: false
+      page_limit: 45
+      enforce_page_limit: true
+
+  - id: render_submission_docx_40
+    type: HorizonDOCXProposalRenderer
+    config:
+      content: "{{figure_embedder.content}}"
+      content_format: markdown
+      metadata: "{{inputs.metadata}}"
+      citation_registry: "{{inputs.citation_registry}}"
+      evidence_qa: "{{inputs.evidence_qa}}"
+      evidence_blockers: "{{inputs.evidence_blockers}}"
+      include_toc: false
+      include_bibliography: true
+      include_evidence_annex: false
+      page_limit: 40
+      enforce_page_limit: true
+      enable_footnotes: true
+
+  - id: render_submission_pdf_40
+    type: HorizonHTMLProposalRenderer
+    config:
+      content: "{{figure_embedder.content}}"
+      content_format: markdown
+      metadata: "{{inputs.metadata}}"
+      citation_registry: "{{inputs.citation_registry}}"
+      evidence_qa: "{{inputs.evidence_qa}}"
+      evidence_blockers: "{{inputs.evidence_blockers}}"
+      include_toc: false
+      include_bibliography: true
+      include_evidence_annex: false
+      page_limit: 40
+      enforce_page_limit: true
+
+  - id: approve_submission_package_45
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Final release gate for the 45-page profile — inspect the rendered DOCX
+        and PDF before treating this proposal as submission-ready. Approve only
+        when both renderers report submission_ready, the PDF is within 45
+        pages, no figure is missing or unmatched, no warning affects
+        submission, and the hashes and files are present. Reject to revise.
+      context_fields:
+        - submission_gate.report
+        - figure_embedder.embedded_count
+        - figure_embedder.unmatched_figures
+        - figure_embedder.missing_images
+        - render_submission_docx_45
+        - render_submission_pdf_45
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+
+  - id: approve_submission_package_40
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Final release gate for the 40-page profile — inspect the rendered DOCX
+        and PDF before treating this proposal as submission-ready. Approve only
+        when both renderers report submission_ready, the PDF is within 40
+        pages, no figure is missing or unmatched, no warning affects
+        submission, and the hashes and files are present. Reject to revise.
+      context_fields:
+        - submission_gate.report
+        - figure_embedder.embedded_count
+        - figure_embedder.unmatched_figures
+        - figure_embedder.missing_images
+        - render_submission_docx_40
+        - render_submission_pdf_40
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
 
 edges:
   - from: load_concept
@@ -784,35 +879,64 @@ edges:
   - from: revise_implementation
     to: final_revision
   - from: final_revision
-    to:
-      - evaluate_final
-      - consistency_gate
+    to: evaluate_final
   - from: evaluate_final
     to: submission_gate
-  - from: consistency_gate
-    to: submission_gate
   - from: submission_gate
-    to:
-      - figure_embedder
-      - generate_slide_deck
+    to: submission_readiness_router
+  - from: submission_readiness_router
+    condition: route
+    branches:
+      READY: figure_embedder
+      BLOCKED: submission_blocked
   - from: figure_embedder
-    to: render_submission_docx
+    to: page_limit_router
+  - from: page_limit_router
+    condition: route
+    branches:
+      PAGE_45: render_45_start
+      PAGE_40: render_40_start
+  - from: render_45_start
+    to:
+      - render_submission_docx_45
+      - render_submission_pdf_45
+  - from: render_40_start
+    to:
+      - render_submission_docx_40
+      - render_submission_pdf_40
+  - from: render_submission_docx_45
+    to: approve_submission_package_45
+  - from: render_submission_pdf_45
+    to: approve_submission_package_45
+  - from: render_submission_docx_40
+    to: approve_submission_package_40
+  - from: render_submission_pdf_40
+    to: approve_submission_package_40
 
 entry: load_concept
 exit:
-  - render_submission_docx
-  - generate_slide_deck
+  - approve_submission_package_45
+  - approve_submission_package_40
+  - submission_blocked
 
 output:
   include_input: false
   nodes:
     - node_id: evaluate_final
       flatten: false
-    - node_id: consistency_gate
-      flatten: false
     - node_id: submission_gate
       flatten: false
-    - node_id: generate_slide_deck
+    - node_id: figure_embedder
       flatten: false
-    - node_id: render_submission_docx
+    - node_id: render_submission_docx_45
+      flatten: false
+    - node_id: render_submission_pdf_45
+      flatten: false
+    - node_id: render_submission_docx_40
+      flatten: false
+    - node_id: render_submission_pdf_40
+      flatten: false
+    - node_id: approve_submission_package_45
+      flatten: false
+    - node_id: approve_submission_package_40
       flatten: false

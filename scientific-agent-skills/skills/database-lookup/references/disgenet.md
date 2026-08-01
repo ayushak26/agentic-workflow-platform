@@ -6,7 +6,7 @@ https://www.disgenet.org/api
 ```
 
 ## Auth
-**API key required.** Register at disgenet.org, then authenticate:
+**Requires account authentication and an eligible plan — not simply an unrestricted free public API.** Register at disgenet.org, then authenticate:
 ```bash
 curl -X POST https://www.disgenet.org/api/auth/ \
   -d 'email=you@example.com&password=yourpassword'
@@ -15,6 +15,8 @@ curl -X POST https://www.disgenet.org/api/auth/ \
 Pass as: `Authorization: Bearer <token>`
 
 Load token from `.env` as `DISGENET_API_KEY`.
+
+**Commercial licensing warning:** the free academic plan covers non-commercial academic work only. A commercial organization using DisGeNET in a product, service, or commercial research activity needs a commercial licence from DisGeNET. Before using DisGeNET output in a commercial deliverable, confirm the organization has the appropriate licence — do not assume a working `DISGENET_API_KEY` implies commercial-use rights.
 
 ## Key Endpoints
 

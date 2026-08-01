@@ -1,0 +1,45 @@
+name: Research Lookup Smoke Test
+description: >-
+  Standalone smoke test for PriorProjectRetrieverAgent. Confirms the
+  web_search service can actually reach the official CORDIS, LIFE and
+  EIP-AGRI project registries and that the node's official-host filter keeps
+  only real project URLs on those domains. No LLM call is made; the
+  research brief is supplied as literal test data. Inspect
+  prior_project_lookup.candidates, .search_audit, and .report in the run
+  output — projects_found should be > 0 and every candidate's canonical_url
+  should be on an official EU domain.
+version: "1.0"
+use_case: platform_validation
+
+inputs: {}
+
+nodes:
+  - id: prior_project_lookup
+    type: PriorProjectRetrieverAgent
+    config:
+      research_briefs:
+        - brief_id: RB-TEST-1
+          track: prior_projects_and_synergies
+          question: >-
+            Which EU-funded projects addressed agricultural residue
+            valorisation or circular bioeconomy pilots since 2021?
+          purpose: Smoke-test official CORDIS/LIFE/EIP-AGRI discovery.
+          linked_claim_ids: ["CL-TEST-1"]
+      sources: [cordis, life, eip_agri]
+      provider: auto
+      max_briefs: 1
+      max_results_per_source: 3
+      max_candidates_per_claim: 8
+      max_total_searches: 3
+      max_parallel_searches: 3
+      only_prior_project_track: true
+
+edges: []
+entry: prior_project_lookup
+exit: prior_project_lookup
+
+output:
+  include_input: false
+  nodes:
+    - node_id: prior_project_lookup
+      flatten: true

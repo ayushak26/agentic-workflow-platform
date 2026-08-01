@@ -4,7 +4,7 @@ description: Query documented public database APIs with explicit endpoints, filt
 allowed-tools: Read Bash
 license: MIT
 metadata:
-  version: "1.3"
+  version: "1.4"
   skill-author: "K-Dense Inc."
 ---
 
@@ -100,51 +100,84 @@ These databases require HTTP POST and **will not work with WebFetch** (GET-only)
 
 ## API Keys and Access Restrictions
 
-Some databases require API keys or have access restrictions. When an API key is needed:
+Most of the 78 databases can be queried anonymously. Do not treat "requires an API key" as a single bucket — it collapses three different situations that need different handling:
 
-1. **Probe only what the current query needs** — do not check every key in the table below. Check at most the named variable for the selected database, and only when the next request actually requires it.
-2. **Keep credential status out of normal output** — omit local key presence or absence from user-facing results unless the user asked about setup/debugging or the missing credential blocks the requested lookup.
-3. **Check only the named key in `.env` if needed** — do not read or display the whole `.env` file. Look up only the exact key required for the selected database.
-4. **If neither source has it** — proceed without the key when the API allows lower-rate anonymous access, or tell the user which credential is needed and how to obtain it.
-5. **Never include secrets in provenance** — report only whether authenticated or unauthenticated access was used. Never include token values, auth headers, signed URLs, or full environment contents.
+- **`required`** — the key is genuinely mandatory; every request fails without it.
+- **`optional`** — anonymous access works at a lower rate limit; a key only raises the ceiling.
+- **`licensed`** — access needs an account, approval, or a commercial licence, not merely a free key. A key alone does not guarantee the call will succeed.
 
-### Databases requiring API keys (free registration)
+Never require every key up front. When a query needs a database:
 
-| Database | Env Variable | Registration URL |
+1. **Probe only what the current query needs** — check at most the one named variable for the selected database, and only when the next request actually requires it.
+2. **Try anonymous access first when the mode is `optional` or `none`** — only escalate to checking for a key if the request is throttled, or the user needs a volume/feature that anonymous access doesn't support.
+3. **Keep credential status out of normal output** — omit local key presence or absence from user-facing results unless the user asked about setup/debugging or the missing credential blocks the requested lookup.
+4. **Check only the named key in `.env` if needed** — do not read or display the whole `.env` file. Look up only the exact key required for the selected database.
+5. **If neither source has it** — proceed without the key when the mode is `optional` or `none`, or tell the user which credential (or account/licence) is needed and how to obtain it when the mode is `required` or `licensed`.
+6. **Never include secrets in provenance** — report only whether authenticated or unauthenticated access was used. Never include token values, auth headers, signed URLs, or full environment contents.
+
+This classification reflects checks made on 2026-08-01; providers change auth policy without notice, so treat a 401/403 on a database marked `none`/`optional` as a signal to re-check its reference file rather than assuming the table below is stale.
+
+### 1. `required` — API key or token mandatory
+
+| Database | Env Variable | Important condition |
 |---|---|---|
-| FRED | `FRED_API_KEY` | https://fred.stlouisfed.org/docs/api/api_key.html |
-| BEA | `BEA_API_KEY` | https://apps.bea.gov/API/signup/ |
-| BLS | `BLS_API_KEY` | https://data.bls.gov/registrationEngine/ |
-| NCBI (GEO, Gene) | `NCBI_API_KEY` | https://www.ncbi.nlm.nih.gov/account/settings/ |
-| OpenFDA | `OPENFDA_API_KEY` | https://open.fda.gov/apis/authentication/ |
-| USPTO (PatentsView) | `PATENTSVIEW_API_KEY` | https://patentsview.org/apis/keyrequest |
-| Data Commons | `DATACOMMONS_API_KEY` | Google Cloud Console |
-| Materials Project | `MP_API_KEY` | https://materialsproject.org (free account) |
-| NASA | `NASA_API_KEY` | https://api.nasa.gov (free, DEMO_KEY available) |
-| NOAA (CDO) | `NOAA_API_KEY` | https://www.ncdc.noaa.gov/cdo-web/token |
-| OpenWeatherMap | `OPENWEATHERMAP_API_KEY` | https://openweathermap.org/appid |
-| OMIM | `OMIM_API_KEY` | https://omim.org/api (free academic) |
-| BioGRID | `BIOGRID_API_KEY` | https://webservice.thebiogrid.org (free) |
-| Alpha Vantage | `ALPHAVANTAGE_API_KEY` | https://www.alphavantage.co/support/#api-key |
-| US Census | `CENSUS_API_KEY` | https://api.census.gov/data/key_signup.html |
-| DisGeNET | `DISGENET_API_KEY` | https://www.disgenet.org (free academic) |
-| Addgene | `ADDGENE_API_KEY` | https://www.addgene.org (free account) |
-| LINCS L1000 (CLUE) | `CLUE_API_KEY` | https://clue.io (free academic) |
+| FRED | `FRED_API_KEY` | Every API request requires a key. |
+| BEA | `BEA_API_KEY` | Requests use the registered UserID as the key parameter. |
+| NOAA Climate Data Online | `NOAA_API_KEY` | The CDO v2 API requires a token on every request. |
+| OpenWeatherMap | `OPENWEATHERMAP_API_KEY` | `appid` is required on every request. |
+| Materials Project | `MP_API_KEY` | Required by the official API client; no anonymous path. |
+| Data Commons V2 | `DATACOMMONS_API_KEY` | Required for REST V2, Python/Pandas V2, and MCP access. |
+| OMIM | `OMIM_API_KEY` | Registration and a key are required; academic/non-commercial use only. |
+| BioGRID | `BIOGRID_API_KEY` | The REST service requires an access key on every request. |
+| Alpha Vantage | `ALPHAVANTAGE_API_KEY` | Key required; some datasets additionally need a paid plan. |
+| US Census | `CENSUS_API_KEY` | Treat as required in new code — current documentation says queries require a key, particularly microdata and newer dataset APIs, which is stricter than older Census guidance that allowed limited no-key use. |
+| PatentsView / USPTO | `PATENTSVIEW_API_KEY` and/or `USPTO_API_KEY` | See **PatentsView and USPTO** warning below — support both variables, do not assume one stable endpoint. |
+| CLUE / LINCS L1000 | `CLUE_API_KEY` | Requires a registered CLUE user and a `user_key`. Free registration is academic-use only — see **Licensing callouts** below before using it for Eurskem commercial work. |
+| Addgene | `ADDGENE_API_KEY` | Token authentication, but Addgene must first approve the requested API scopes — a newly issued token can still fail until access is granted. |
+| DisGeNET | `DISGENET_API_KEY` | Requires account authentication and an eligible plan, not just an unrestricted free API key — see **Licensing callouts** below before using it for Eurskem commercial work. |
 
-These are all free to obtain. Many APIs work without keys but have lower rate limits. Prefer a key when the user needs bulk retrieval, but never let credential lookup override the user's privacy or the principle of least privilege.
+These are free to obtain (except where a paid plan is separately noted), but "free to register" is not the same as "no further conditions" for CLUE, Addgene, or DisGeNET — read their condition above before relying on the key alone.
 
-### Databases with paid or restricted access
+#### PatentsView and USPTO
 
-| Database | Restriction | Free alternative |
+PatentsView's current documentation says all calls require `X-Api-Key`, but it also states that new API-key grants are temporarily suspended. In parallel, USPTO has moved services toward its Open Data Portal, which requires account sign-in and its own API keys for the endpoints it covers. Do not assume one stable endpoint or one stable key variable — support both the legacy `PATENTSVIEW_API_KEY` and a newer `USPTO_API_KEY`, and check `references/uspto.md` for which endpoint is live before calling.
+
+#### Licensing callouts
+
+- **DisGeNET**: the free academic plan is for non-commercial academic work only. A commercial organization (this includes Eurskem B.V.) using DisGeNET in a product, service, or commercial research activity needs a commercial licence — do not assume the free `DISGENET_API_KEY` path covers commercial use. Confirm licence status with the user before treating DisGeNET results as usable in commercial deliverables.
+- **CLUE**: distinguishes free academic availability from subscription-based commercial usage in the same way. Confirm licence status before using it for commercial work.
+
+### 2. `optional` — key improves rate limits, anonymous access works
+
+| Database | Env Variable | Anonymous access | With key |
+|---|---|---|---|
+| NCBI E-utilities (Gene, GEO, Protein, Taxonomy, dbSNP, SRA, and related) | `NCBI_API_KEY` | ~3 requests/second | 10 requests/second |
+| BLS | `BLS_API_KEY` | v1 works without registration (25 req/day, 10-year range, 25 series/query) | v2 registration key: 500 req/day, 20-year range, 50 series/query, catalog + calculations |
+| openFDA | `OPENFDA_API_KEY` | 1,000 requests/day per IP, no key needed | Substantially higher daily allowance |
+| NASA Open APIs | `NASA_API_KEY` | `DEMO_KEY` supports testing and limited use (30/hour, 50/day) | Personal key: 1,000/hour, unlimited/day — get one for production workloads |
+
+These should never block application startup. Try anonymous access first; only surface a credential error when the requested volume, API version, or endpoint genuinely needs authentication (e.g. BLS `calculations`/`catalog` fields, or NCBI bulk retrieval that would otherwise breach the 3 req/sec anonymous ceiling).
+
+### 3. `licensed` — restricted or commercially licensed access
+
+| Database | Access model | Free alternative |
 |---|---|---|
-| DrugBank | Paid API license required | Use **ChEMBL** + **PubChem** + **OpenFDA** instead |
-| COSMIC | Free academic registration required (JWT auth) | Use **Open Targets** for cancer mutation data |
-| BRENDA | Free registration required (SOAP, not REST) | Use **KEGG** for enzyme/pathway data |
+| DrugBank | Paid API licence and credentials | Use **ChEMBL** + **PubChem** + **OpenFDA** instead |
+| COSMIC | Registered access and an authenticated JWT API; licensing depends on use | Use **Open Targets** for cancer mutation data |
+| BRENDA | Registered access and credentials; its programmatic interface is SOAP, not a plain REST API | Use **KEGG** for enzyme/pathway data |
+
+DisGeNET, Addgene, and CLUE also carry account/approval/licensing conditions beyond a plain free key — see the **Licensing callouts** above; they stay in the `required` table because a key is still the primary mechanism, but do not treat "key obtained" as "access granted" for these three.
 
 When a database requires paid access or registration the user hasn't set up:
-1. **Fall back to a free alternative** that can answer the same question
-2. **Tell the user** which database you couldn't access, why, and what you used instead
-3. If the user specifically requests a restricted database, explain the access requirements so they can set it up
+1. **Fall back to a free alternative** that can answer the same question.
+2. **Tell the user** which database you couldn't access, why, and what you used instead.
+3. If the user specifically requests a restricted database, explain the access requirements so they can set it up.
+
+### 4. `none` — should not require preconfigured credentials
+
+The remaining public endpoints — including PubChem, ChEMBL, ChEBI, DailyMed, BindingDB, UniProt, Ensembl, Reactome, PDB, AlphaFold DB, InterPro, Open Targets, ClinicalTrials.gov, ClinVar, GWAS Catalog, Monarch, HPO, the NASA Exoplanet Archive, SDSS, SIMBAD, USGS, COD, World Bank, ECB, US Treasury, Eurostat, and WHO GHO — should be attempted without any credential. Still respect documented rate limits, terms of use, and dataset-level access restrictions (a public API without a key can still gate controlled, private, or individual-level data behind separate authorization).
+
+One `none`-mode database has a non-key requirement worth calling out separately: **SEC EDGAR** needs no API key for public retrieval, but every request must carry an identifying `User-Agent` header (see `references/sec-edgar.md`) — requests without one are blocked with a 403, which is a header problem, not a missing-credential problem.
 
 ### Loading API keys
 
@@ -155,7 +188,7 @@ test -n "${FRED_API_KEY:-}"
 
 **Step 2 — Check `.env` narrowly.** If the environment variable is not set, inspect only the named key. Do not copy `.env` contents into the response or into another tool.
 
-**Step 3 — Proceed without when allowed.** If neither source has the key, proceed without it when possible and mention that rate limits may be lower.
+**Step 3 — Proceed without when allowed.** If the database is `none` or `optional` mode and neither source has the key, proceed without it and mention that rate limits may be lower. If the database is `required` or `licensed` mode, tell the user which credential, account, or licence is needed instead of guessing or retrying blindly.
 
 ## Making API Calls
 

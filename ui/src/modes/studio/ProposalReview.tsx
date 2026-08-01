@@ -185,34 +185,35 @@ export function ProposalReview() {
   }
 
   return (
-    <div className="p-6 space-y-6">
-      <section className="bg-white border border-slate-200 rounded-lg p-4">
-        <h2 className="text-lg font-semibold">Proposal evidence review</h2>
+    <div className="mx-auto max-w-[1500px] space-y-5 p-4 md:p-6">
+      <section className="ui-card p-5">
+        <div className="ui-kicker">Quality assurance</div>
+        <h2 className="ui-page-title mt-1">Proposal evidence review</h2>
         <p className="text-sm text-ink-500 mt-1">
           Load a workflow run to inspect call coverage, sources, claim evidence,
           concept alternatives, approvals, and the independent evaluator.
         </p>
-        <div className="flex gap-2 mt-4">
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
           <input
             value={runId}
             onChange={event => setRunId(event.target.value)}
             placeholder="Run ID"
-            className="flex-1 border border-slate-300 rounded-md px-3 py-2 text-sm"
+            className="flex-1 rounded-md border border-ink-200 px-3 py-2 text-sm"
           />
           <button
             onClick={() => void load()}
-            className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
+            className="ui-button ui-button--primary"
           >
             {busy === 'load' ? 'Loading…' : 'Load review'}
           </button>
         </div>
-        {error && <div className="mt-3 text-sm text-bad">{error}</div>}
+        {error && <div role="alert" className="mt-3 rounded-md border border-bad/20 bg-bad/10 p-3 text-sm text-bad">{error}</div>}
       </section>
 
       {review && (
         <>
-          <section className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-            <div className="p-4 flex items-center justify-between">
+          <section className="ui-card overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
                 <h3 className="font-semibold">Call-coverage matrix</h3>
                 <div className="text-xs text-ink-500">
@@ -232,9 +233,9 @@ export function ProposalReview() {
                   : 'Ready for approval'}
               </span>
             </div>
-            <div className="overflow-x-auto">
+            <div className="ui-table-wrap rounded-none border-x-0 border-b-0">
               <table className="w-full text-xs">
-                <thead className="bg-slate-50 text-left">
+                <thead className="text-left">
                   <tr>
                     <th className="p-3">Requirement</th>
                     <th className="p-3">Status</th>
@@ -246,7 +247,7 @@ export function ProposalReview() {
                 </thead>
                 <tbody>
                   {review.coverage.rows.map(row => (
-                    <tr key={row.requirement_id} className="border-t border-slate-100 align-top">
+                    <tr key={row.requirement_id} className="border-t border-ink-100 align-top hover:bg-brand-softer">
                       <td className="p-3 max-w-md">
                         <div className="font-mono">{row.requirement_id}</div>
                         <div className="text-ink-700 mt-1">{row.requirement}</div>
@@ -273,7 +274,7 @@ export function ProposalReview() {
           </section>
 
           <section className="grid lg:grid-cols-2 gap-4">
-            <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <div className="ui-card p-4">
               <h3 className="font-semibold">Versioned sources</h3>
               <div className="text-xs text-ink-500 mt-1">
                 Same content and metadata deduplicates; every real change creates
@@ -282,27 +283,27 @@ export function ProposalReview() {
               <div className="space-y-2 mt-3">
                 <input value={sourceId} onChange={e => setSourceId(e.target.value)}
                   placeholder="Source ID, e.g. SRC-038"
-                  className="w-full border rounded px-3 py-2 text-sm" />
+                  className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm" />
                 <input value={sourceTitle} onChange={e => setSourceTitle(e.target.value)}
                   placeholder="Source title"
-                  className="w-full border rounded px-3 py-2 text-sm" />
+                  className="w-full rounded-md border border-ink-200 px-3 py-2 text-sm" />
                 <textarea value={sourceContent} onChange={e => setSourceContent(e.target.value)}
                   placeholder="Exact source text"
-                  className="w-full border rounded px-3 py-2 text-sm h-28" />
-                <div className="flex gap-2">
+                  className="h-28 w-full rounded-md border border-ink-200 px-3 py-2 text-sm" />
+                <div className="flex flex-wrap gap-2">
                   <button onClick={() => void addSource()}
-                    className="px-3 py-2 rounded bg-accent-600 text-white text-sm">
+                    className="ui-button ui-button--primary">
                     {busy === 'source' ? 'Saving…' : 'Save version'}
                   </button>
                   <button onClick={() => void verifyClaims()}
-                    className="px-3 py-2 rounded border border-slate-300 text-sm">
+                    className="ui-button ui-button--secondary">
                     {busy === 'verify' ? 'Verifying…' : 'Verify claim passages'}
                   </button>
                 </div>
               </div>
               <ul className="mt-4 space-y-2 text-xs">
                 {review.source_versions.map((source, index) => (
-                  <li key={`${source.version_id}-${index}`} className="border rounded p-2">
+                  <li key={`${source.version_id}-${index}`} className="rounded-md border border-ink-200 bg-ink-50 p-2">
                     <div className="font-medium">{source.source_id} · v{source.version}</div>
                     <div>{source.title}</div>
                     <div className="font-mono text-ink-400">{source.content_sha256}</div>
@@ -311,19 +312,19 @@ export function ProposalReview() {
               </ul>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <div className="ui-card p-4">
               <h3 className="font-semibold">Concept alternatives</h3>
               <textarea value={conceptNote} onChange={e => setConceptNote(e.target.value)}
                 placeholder="Optional concept-note emphasis"
-                className="w-full border rounded px-3 py-2 text-sm h-20 mt-3" />
+                className="mt-3 h-20 w-full rounded-md border border-ink-200 px-3 py-2 text-sm" />
               <button onClick={() => void generateConcepts()}
-                className="mt-2 px-3 py-2 rounded bg-accent-600 text-white text-sm">
+                className="ui-button ui-button--primary mt-2">
                 {busy === 'concepts' ? 'Generating…' : 'Generate three alternatives'}
               </button>
               <div className="space-y-2 mt-4">
                 {concepts.map(concept => (
                   <label key={concept.id}
-                    className="block border rounded-md p-3 cursor-pointer">
+                    className={`block cursor-pointer rounded-md border p-3 transition-colors hover:border-accent-400 hover:bg-brand-softer ${selectedConcept === concept.id ? 'border-accent-500 bg-brand-soft' : 'border-ink-200'}`}>
                     <div className="flex items-center justify-between">
                       <span className="font-medium">
                         <input type="radio" name="concept" value={concept.id}
@@ -343,8 +344,8 @@ export function ProposalReview() {
             </div>
           </section>
 
-          <section className="bg-white border border-slate-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
+          <section className="ui-card p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="font-semibold">Versioned approval workflow</h3>
                 <p className="text-xs text-ink-500">
@@ -352,13 +353,13 @@ export function ProposalReview() {
                 </p>
               </div>
               <button onClick={() => void requestApproval()}
-                className="px-3 py-2 rounded bg-accent-600 text-white text-sm">
+                className="ui-button ui-button--primary">
                 {busy === 'approval' ? 'Requesting…' : 'Request approval'}
               </button>
             </div>
             <div className="grid md:grid-cols-2 gap-3 mt-4">
               {review.approvals.map(approval => (
-                <div key={approval.approval_id} className="border rounded p-3 text-xs">
+                <div key={approval.approval_id} className="rounded-md border border-ink-200 bg-ink-50 p-3 text-xs">
                   <div className="flex justify-between">
                     <span className="font-medium">{approval.stage}</span>
                     <span>{approval.status}</span>
@@ -387,7 +388,7 @@ export function ProposalReview() {
             </div>
           </section>
 
-          <section className="bg-white border border-slate-200 rounded-lg p-4">
+          <section className="ui-card p-4">
             <h3 className="font-semibold">Independent Horizon evaluation</h3>
             <p className="text-xs text-ink-500 mt-1">
               Claude and GPT score Excellence, Impact, and Implementation
@@ -397,15 +398,15 @@ export function ProposalReview() {
             <div className="grid md:grid-cols-[220px_1fr] gap-3 mt-3">
               <input value={generatorModel}
                 onChange={e => setGeneratorModel(e.target.value)}
-                className="border rounded px-3 py-2 text-sm"
+                className="rounded-md border border-ink-200 px-3 py-2 text-sm"
                 placeholder="Generator model" />
               <textarea value={proposalText}
                 onChange={e => setProposalText(e.target.value)}
-                className="border rounded px-3 py-2 text-sm h-32"
+                className="h-32 rounded-md border border-ink-200 px-3 py-2 text-sm"
                 placeholder="Paste the proposal text to evaluate" />
             </div>
             <button onClick={() => void evaluate()}
-              className="mt-2 px-3 py-2 rounded bg-accent-600 text-white text-sm">
+              className="ui-button ui-button--primary mt-2">
               {busy === 'evaluate' ? 'Evaluating…' : 'Run independent panel'}
             </button>
             {evaluation && (
@@ -424,7 +425,7 @@ export function ProposalReview() {
                 </div>
                 <div className="grid md:grid-cols-3 gap-3 mt-3">
                   {evaluation.criteria.map(item => (
-                    <div key={item.criterion} className="border rounded p-3 text-xs">
+                    <div key={item.criterion} className="rounded-md border border-ink-200 bg-ink-50 p-3 text-xs">
                       <div className="font-medium capitalize">{item.criterion}</div>
                       <div className="text-xl mt-1">{item.mean_score}/5</div>
                       <div className="text-ink-500">

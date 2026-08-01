@@ -1,15 +1,18 @@
 name: Horizon Europe Part B - Evidence (Stage 1 of 3)
 description: >-
   First stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence ->
-  drafts -> document; see workflows/pipelines/pipeline.yaml).
+  drafts -> submission package; see
+  workflows/pipelines/horizon_partb.pipeline.yaml).
   Converts a concept note and supporting documents into: renderer metadata, an
   atomic call checklist, a normalised source graph, bounded scientific
-  research dossiers, immutable source versions, citation-grounded verified
-  claims, an integrity-stamped proposal truth graph, an audit record, a
-  call-coverage matrix, and the locked master blueprint every later section
-  is drafted against. Raw research is never drafting authority. Produces no
+  research dossiers, immutable source versions, PaperQA2 candidate synthesis,
+  citation-grounded verified claims, an integrity-stamped proposal truth
+  graph, an audit record, a call-coverage matrix, Method Cards, and the locked
+  master blueprint every later section is drafted against. PaperQA2 and raw
+  research are never drafting authority. A deterministic readiness router
+  stops the stage when evidence or graph consistency is not ready. Produces no
   proposal prose itself.
-version: "4.0"
+version: "5.0"
 use_case: eu_proposal
 
 inputs:
@@ -68,6 +71,52 @@ nodes:
         from any inference. If the image carries no proposal-relevant
         information, say so plainly.
       vision_model: kimi-k3
+
+  - id: source_authority_curator
+    type: TransformAgent
+    selected_model: gpt-5.6-terra
+    allowed_models:
+      - gpt-5.6-terra
+      - gpt-5.6-sol
+      - gpt-5
+      - gpt-5-mini
+    model_routing:
+      accuracy_priority: maximum
+    config:
+      model: gpt-5.6-terra
+      max_tokens: 10000
+      output_schema:
+        source_registry: list
+        authority_order: list
+        conflicts_and_duplicates: list
+        unreadable_or_truncated_files: list
+        missing_authoritative_inputs: list
+      prompt_template: |
+        Classify every uploaded supporting file before any call interpretation
+        or research planning. Return one source_registry entry per file with:
+        file name, proposed source class, authority scope, facts it may support,
+        facts it may not support, and any conflict or limitation.
+
+        Allowed source classes:
+        - official_call_or_template
+        - human_approved_project_or_concept_fact
+        - consortium_or_partner_supplied_fact
+        - external_scientific_or_policy_evidence
+        - structured_dataset_or_database_export
+        - contextual_unverified_material
+
+        Authority order must put the official call/template first for call
+        requirements, human-approved project commitments first for project
+        design, and exact-passage-verified external evidence first for factual
+        claims. A partner document, concept note, research paper, web page or
+        dataset must never be promoted to official-call authority. This node
+        classifies provenance only; it does not verify external claims.
+
+        FILE MANIFEST:
+        {{load_documents.files}}
+
+        EXTRACTED CONTENT:
+        {{load_documents.text}}
 
   - id: partb_metadata
     type: TransformAgent
@@ -148,8 +197,29 @@ nodes:
         unresolved_call_questions. For a lump-sum RIA/IA, apply 45 pages only
         when the supplied official template or topic conditions support it.
 
+        SOURCE AUTHORITY REGISTRY:
+        {{source_authority_curator.parsed}}
+
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
+
+  - id: approve_call_interpretation
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Human Gate 1 — review the parsed call interpretation before it enters
+        the Proposal Graph and before any research budget is spent. Edit the
+        checklist if it misreads the official call or template; the approved
+        version is the highest-authority source for everything that follows.
+      context_fields:
+        - source_authority_curator.parsed
+        - call_intelligence.parsed
+      editable_content_field: call_intelligence.parsed
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+        - edit
 
   - id: normalise_source_graph
     type: GraphNormalizer
@@ -167,34 +237,17 @@ nodes:
         CONCEPT NOTE:
         {{load_concept.text}}
 
-        SUPPORTING DOCUMENTS:
+        SUPPORTING PROJECT DOCUMENTS:
         {{load_documents.text}}
       call_facts: |
-        SUPPORTING DOCUMENTS:
-        {{load_documents.text}}
-
-        ATOMIC CALL CHECKLIST:
+        HUMAN-APPROVED ATOMIC CALL CHECKLIST:
         {{call_intelligence.parsed}}
 
-  - id: approve_call_interpretation
-    type: HumanInLoopAgent
-    config:
-      question: >-
-        Human Gate 1 — review the parsed call interpretation and the
-        normalised claim/requirement graph before any research budget is
-        spent. Edit call_intelligence's parsed checklist below if it
-        misreads the call; this is the highest-authority source for
-        everything that follows.
-      context_fields:
-        - call_intelligence.parsed
-        - normalise_source_graph.report
-        - normalise_source_graph.warnings
-      editable_content_field: call_intelligence.parsed
-      allow_document_override: false
-      allowed_actions:
-        - approve
-        - reject
-        - edit
+        SOURCE AUTHORITY REGISTRY:
+        {{source_authority_curator.parsed}}
+
+        OFFICIAL CALL AND TEMPLATE SOURCE TEXT:
+        {{load_documents.text}}
 
   - id: research_plan
     type: ScientificResearchPlannerAgent
@@ -249,12 +302,59 @@ nodes:
       claim_types: [state_of_art, problem, impact, method]
       require_contradiction_search: true
 
+  - id: prior_project_research
+    type: PriorProjectRetrieverAgent
+    config:
+      research_briefs: "{{research_plan.research_briefs}}"
+      sources: [cordis, life, eip_agri]
+      provider: auto
+      max_briefs: 5
+      max_results_per_source: 5
+      max_candidates_per_claim: 8
+      max_total_searches: 15
+      max_parallel_searches: 3
+      only_prior_project_track: true
+
+  - id: structured_dataset_research
+    type: StructuredDatasetRetrieverAgent
+    selected_model: gpt-5.6-terra
+    config:
+      queries: []
+      research_briefs: "{{research_plan.research_briefs}}"
+      candidate_context: "{{deep_research.dossiers}}"
+      auto_plan_queries: true
+      model: gpt-5.6-terra
+      max_queries: 8
+      max_api_calls: 20
+      max_records: 5000
+      max_response_bytes: 20971520
+      request_timeout_seconds: 45
+      fail_when_no_records: false
+
+  - id: internal_project_evidence
+    type: InternalProjectEvidenceRetrieverAgent
+    selected_model: gpt-5.6-terra
+    config:
+      source_registry: "{{source_authority_curator.parsed}}"
+      source_text: "{{load_documents.text}}"
+      research_briefs: "{{research_plan.research_briefs}}"
+      model: gpt-5.6-terra
+      max_queries: 12
+      max_records: 80
+      max_source_chars: 300000
+      query_internal_index: true
+      require_internal_index: false
+      internal_index_filters: {}
+      top_k_candidates: 15
+      top_n_final: 6
+
   - id: acquire_research_sources
     type: ResearchSourceAcquirer
     config:
       candidates:
         - "{{deep_research.candidates}}"
         - "{{discover_candidates.candidates}}"
+        - "{{prior_project_research.candidates}}"
       max_concurrent_requests: 6
       max_sources_per_claim: 4
       max_total_sources: 60
@@ -287,10 +387,12 @@ nodes:
       candidates:
         - "{{deep_research.candidates}}"
         - "{{discover_candidates.candidates}}"
+        - "{{prior_project_research.candidates}}"
       documents: "{{acquire_research_sources.documents}}"
       search_audit:
         - "{{deep_research.search_audit}}"
         - "{{discover_candidates.search_audit}}"
+        - "{{prior_project_research.search_audit}}"
       rejected_candidates: "{{acquire_research_sources.rejected_candidates}}"
       max_passages_per_document: 10
 
@@ -300,7 +402,45 @@ nodes:
       verified_claims: "{{verify_evidence.verified_claims}}"
       evidence_gaps: "{{verify_evidence.evidence_gaps}}"
       blocking_issues: "{{verify_evidence.blocking_issues}}"
-      research_manifest: "{{deep_research.research_manifest}}"
+
+      research_manifest:
+        deep_research: "{{deep_research.research_manifest}}"
+        structured_dataset_audit: "{{structured_dataset_research.audit}}"
+        prior_project_search_audit: "{{prior_project_research.search_audit}}"
+        internal_evidence_report: "{{internal_project_evidence.report}}"
+
+      structured_data_records: "{{structured_dataset_research.records}}"
+      internal_evidence_records: "{{internal_project_evidence.records}}"
+      evidence_approval_decision: "{{approve_evidence_report.decision}}"
+
+  - id: evidence_readiness_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: READY
+          condition: "truth_graph.drafting_allowed == true"
+        - name: BLOCKED
+          default: true
+
+  - id: evidence_blocked
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Evidence is not ready for drafting. Review the blocking issues,
+        evidence gaps, contradictions and human-review queue below. Reject
+        this run, correct the sources or research plan, and rerun Stage 1;
+        this branch cannot advance to concept or drafting work.
+      context_fields:
+        - truth_graph.report
+        - truth_graph.blocking_issues
+        - truth_graph.evidence_gaps
+        - truth_graph.human_review_queue
+        - verify_evidence.qa_report
+        - synthesize_literature.results
+      allow_document_override: false
+      allowed_actions:
+        - reject
 
   - id: call_coverage
     type: CallCoverageMatrixAgent
@@ -311,20 +451,26 @@ nodes:
     config:
       question: >-
         Human Gate 2 — review verified evidence, unresolved gaps, and call
-        coverage before concept development begins. Only claims verified
-        here become drafting authority; approve, reject, or request changes
-        before the concept-evolution stage spends any further budget.
+        coverage before concept development begins. PaperQA2 is shown only as
+        candidate literature understanding; only ProposalEvidenceFactory's
+        exact-passage-verified claims become drafting authority. Approve or
+        reject before the concept-evolution stage spends further budget.
       context_fields:
-        - truth_graph.truth_graph
-        - truth_graph.human_review_queue
+        - verify_evidence.verified_claims
+        - verify_evidence.citation_registry
         - verify_evidence.qa_report
         - verify_evidence.evidence_gaps
-        - call_coverage
+        - structured_dataset_research.records
+        - structured_dataset_research.audit
+        - structured_dataset_research.unresolved_questions
+        - internal_project_evidence.records
+        - internal_project_evidence.pending_human_approval
+        - internal_project_evidence.rejected_facts
+        - prior_project_research.candidates
       allow_document_override: false
       allowed_actions:
         - approve
         - reject
-        - edit
 
   - id: concept_evolution
     type: ConceptAlternativesAgent
@@ -648,6 +794,11 @@ nodes:
         grounded. Build an explicit objective -> result -> outcome -> impact chain.
         Use [INPUT NEEDED: exact item] for missing facts; never invent partner,
         budget, KPI, TRL, timeline, pilot, source or evidence details.
+        Every item in unresolved_inputs must be written exactly as
+        "[INPUT NEEDED: exact item]" so the deterministic completeness gate
+        can detect it. Return an empty unresolved_inputs list only when no
+        consortium, work-plan, budget, pilot, metadata, evidence or
+        methodological commitment remains unresolved.
 
         FROZEN CONCEPT (approved at Human Gate 3 — authoritative scope):
         {{freeze_concept.selected_concept}}
@@ -674,6 +825,9 @@ nodes:
         SUPPORTING DOCUMENTS:
         {{load_documents.text}}
 
+        SOURCE AUTHORITY REGISTRY:
+        {{source_authority_curator.parsed}}
+
         VERIFIED EVIDENCE (citation-annotated narrative markdown of verified
         claims):
         {{verify_evidence.proposal_ready_cited_markdown}}
@@ -689,38 +843,121 @@ nodes:
         project/call facts. Preserve every qualification and
         [INPUT NEEDED] item.
 
+  - id: evidence_consistency
+    type: ConsistencyChecker
+    config:
+      block_on_warn: true
+
+  - id: blueprint_completeness_gate
+    type: ProposalSubmissionGate
+    config:
+      proposal_text: "{{proposal_blueprint.raw}}"
+      evidence_blockers: "{{truth_graph.blocking_issues}}"
+      consistency_gate: "{{evidence_consistency.gate}}"
+      consistency_findings: "{{evidence_consistency.findings}}"
+      evaluation_threshold_passed: true
+      evaluation_total_score: 0
+      evaluation_blockers: []
+      required_headings: []
+      minimum_proposal_characters: 1000
+      require_evaluation_pass: false
+      block_on_input_needed: true
+
+  - id: blueprint_readiness_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: READY
+          condition: "blueprint_completeness_gate.submission_ready == true"
+        - name: BLOCKED
+          default: true
+
+  - id: blueprint_blocked
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        The locked blueprint cannot be released to section drafting because
+        the Proposal Graph still has blocking or advisory consistency issues.
+        Reject this run, close the listed project inputs in the concept and
+        supporting documents, and rerun Stage 1.
+      context_fields:
+        - blueprint_completeness_gate.report
+        - evidence_consistency.report
+        - evidence_consistency.findings
+        - proposal_blueprint.parsed.unresolved_inputs
+      allow_document_override: false
+      allowed_actions:
+        - reject
+
+  - id: approve_locked_blueprint
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Human Gate 5 — approve the locked proposal blueprint for section
+        drafting. Confirm that unresolved_inputs is empty and that the
+        objectives, KPIs, partners, work packages, resources, Method Cards,
+        impact logic and page budget reflect the consortium's approved
+        commitments. Reject and rerun Stage 1 if anything remains unresolved.
+      context_fields:
+        - proposal_blueprint.parsed
+        - proposal_blueprint.parsed.unresolved_inputs
+        - methodology_engineering.method_cards
+        - evidence_consistency.report
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+
 edges:
   - from: load_concept
     to: load_documents
   - from: load_documents
     to:
       - partb_metadata
-      - call_intelligence
       - understand_supporting_image
+      - source_authority_curator
+  - from: source_authority_curator
+    to: call_intelligence
   - from: call_intelligence
+    to: approve_call_interpretation
+  - from: approve_call_interpretation
     to: normalise_source_graph
   - from: partb_metadata
     to: normalise_source_graph
   - from: normalise_source_graph
-    to: approve_call_interpretation
-  - from: approve_call_interpretation
     to:
       - research_plan
       - discover_candidates
   - from: research_plan
-    to: deep_research
+    to:
+      - deep_research
+      - prior_project_research
+      - internal_project_evidence
   - from: deep_research
-    to: acquire_research_sources
+    to:
+      - acquire_research_sources
+      - structured_dataset_research
   - from: discover_candidates
     to: acquire_research_sources
+  - from: prior_project_research
+    to: acquire_research_sources
   - from: acquire_research_sources
-    to:
-      - verify_evidence
-      - synthesize_literature
+    to: synthesize_literature
+  - from: synthesize_literature
+    to: verify_evidence
   - from: verify_evidence
     to:
       - call_coverage
-      - truth_graph
+      - approve_evidence_report
+  - from: structured_dataset_research
+    to: approve_evidence_report
+  - from: internal_project_evidence
+    to: approve_evidence_report
+  - from: call_coverage
+    to: truth_graph
+  - from: approve_evidence_report
+    to: truth_graph
   - from: deep_research
     to: research_documentation
   - from: synthesize_literature
@@ -731,13 +968,12 @@ edges:
     to:
       - research_documentation
       - proposal_blueprint
-      - approve_evidence_report
-  - from: call_coverage
-    to:
-      - proposal_blueprint
-      - approve_evidence_report
-  - from: approve_evidence_report
-    to: concept_evolution
+      - evidence_readiness_router
+  - from: evidence_readiness_router
+    condition: route
+    branches:
+      READY: concept_evolution
+      BLOCKED: evidence_blocked
   - from: concept_evolution
     to: select_concept
   - from: select_concept
@@ -750,10 +986,23 @@ edges:
     to: approve_methodology
   - from: approve_methodology
     to: proposal_blueprint
+  - from: proposal_blueprint
+    to: evidence_consistency
+  - from: evidence_consistency
+    to: blueprint_completeness_gate
+  - from: blueprint_completeness_gate
+    to: blueprint_readiness_router
+  - from: blueprint_readiness_router
+    condition: route
+    branches:
+      READY: approve_locked_blueprint
+      BLOCKED: blueprint_blocked
 
 entry: load_concept
 exit:
-  - proposal_blueprint
+  - approve_locked_blueprint
+  - evidence_blocked
+  - blueprint_blocked
   - research_documentation
 
 output:
@@ -767,6 +1016,8 @@ output:
       flatten: false
     - node_id: call_intelligence
       flatten: false
+    - node_id: source_authority_curator
+      flatten: false
     - node_id: normalise_source_graph
       flatten: false
     - node_id: research_plan
@@ -774,6 +1025,12 @@ output:
     - node_id: deep_research
       flatten: false
     - node_id: discover_candidates
+      flatten: false
+    - node_id: prior_project_research
+      flatten: false
+    - node_id: structured_dataset_research
+      flatten: false
+    - node_id: internal_project_evidence
       flatten: false
     - node_id: acquire_research_sources
       flatten: false
@@ -804,4 +1061,10 @@ output:
     - node_id: research_documentation
       flatten: false
     - node_id: proposal_blueprint
+      flatten: false
+    - node_id: evidence_consistency
+      flatten: false
+    - node_id: blueprint_completeness_gate
+      flatten: false
+    - node_id: approve_locked_blueprint
       flatten: false

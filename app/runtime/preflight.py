@@ -398,8 +398,25 @@ def _required_services_for_node(node: NodeSpec) -> set[str]:
         and config.get("allow_document_override", True)
     ):
         required.add("object_store")
-    if node_type == "WebSearchAgent":
+    if node_type in {
+        "WebSearchAgent",
+        "PriorProjectRetrieverAgent",
+    }:
         required.add("web_search")
+    if node_type == "StructuredDatasetRetrieverAgent":
+        required.update({"database_lookup", "object_store"})
+    if (
+        node_type == "StructuredDatasetRetrieverAgent"
+        and config.get("auto_plan_queries", False)
+    ):
+        required.update({"llm", "cost_ledger"})
+    if node_type == "InternalProjectEvidenceRetrieverAgent":
+        required.update({"llm", "cost_ledger"})
+    if (
+        node_type == "InternalProjectEvidenceRetrieverAgent"
+        and config.get("require_internal_index", False)
+    ):
+        required.add("retriever")
     if node_type == "OpenAIImageGenerationAgent" and config.get(
         "backend", "openai"
     ) != "disabled":

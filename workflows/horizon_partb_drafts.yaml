@@ -2,19 +2,20 @@ name: Horizon Europe Part B - Drafts (Stage 2 of 3)
 description: >-
   Second stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence
   -> drafts -> document; see workflows/pipelines/pipeline.yaml).
-  Every artifact the evidence stage produces is declared as an input, so this
-  file is Import-inputs-from-JSON compatible with "Copy run as workflow
-  inputs" from Run History, or auto-matched by name from the pipeline. Drafts
-  the six official Part B subsections in parallel from the human-approved,
-  integrity-stamped truth graph and locked blueprint,
+  Receives only the approved drafting package from Stage 1. A deterministic
+  router checks truth_graph.drafting_allowed before any drafting or image
+  generation begins. It drafts the six official Part B subsections in
+  parallel from the human-approved, integrity-stamped truth graph, verified
+  evidence, Method Cards and locked blueprint,
   and generates three grounded figures (objective-result-outcome-impact
   chain, impact pathways, work-plan structure) in parallel alongside them.
   Each figure-eligible draft is instructed to emit a stable
   "[[IMAGE PROMPT: marker]]" placeholder at the point the figure belongs;
   the document stage's FigureEmbedder later splices the real image in. This
-  workflow does not compile, evaluate or render — see
-  horizon_partb_drafts_to_docx.yaml.
-version: "4.0"
+  workflow does not compile, evaluate or render. A final human gate presents
+  the complete draft packet and figure outputs for approval before the
+  pipeline can advance to horizon_partb_drafts_to_docx.yaml.
+version: "5.0"
 use_case: eu_proposal
 
 inputs:
@@ -34,10 +35,6 @@ inputs:
     type: json
     required: false
     description: "[LIVE] evidence stage's call_intelligence output — .expected_outcomes is given to draft_2_1; the whole object to draft_2_2."
-  load_documents:
-    type: json
-    required: false
-    description: "[LIVE] evidence stage's load_documents output — .text is given to draft_2_2, draft_3_1 and draft_3_2 for source fidelity."
   methodology_engineering:
     type: json
     required: false
@@ -45,6 +42,36 @@ inputs:
 
 nodes:
   - id: start
+    type: Literal
+    config:
+      value: true
+
+  - id: drafting_readiness_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: READY
+          condition: "inputs.truth_graph.drafting_allowed == true"
+        - name: BLOCKED
+          default: true
+
+  - id: drafting_blocked
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Stage 2 cannot start because the approved truth graph does not permit
+        drafting. Reject this run and return to Stage 1 to close the evidence
+        blockers and re-approve the blueprint.
+      context_fields:
+        - inputs.truth_graph.report
+        - inputs.truth_graph.blocking_issues
+        - inputs.truth_graph.evidence_gaps
+      allow_document_override: false
+      allowed_actions:
+        - reject
+
+  - id: drafting_start
     type: Literal
     config:
       value: true
@@ -263,8 +290,11 @@ nodes:
         graph. Preserve qualifications. Raw research dossiers are not
         drafting inputs.
 
-        SUPPORTING DOCUMENTS:
-        {{inputs.load_documents.text}}
+        APPROVED PROJECT FACTS:
+        Use only the blueprint and approved truth graph above. Stage 1 should
+        already have closed partner, work-plan and exploitation inputs; if an
+        essential fact is unexpectedly absent, retain one precise
+        [INPUT NEEDED] marker rather than reading raw source files or guessing.
 
   - id: draft_3_1_workplan_resources
     type: TransformAgent
@@ -314,8 +344,11 @@ nodes:
         graph. Preserve qualifications. Raw research dossiers are not
         drafting inputs.
 
-        SUPPORTING DOCUMENTS:
-        {{inputs.load_documents.text}}
+        APPROVED PROJECT FACTS:
+        Use only the blueprint and approved truth graph above. Stage 1 should
+        already have closed work-plan, budget and resource inputs; if an
+        essential fact is unexpectedly absent, retain one precise
+        [INPUT NEEDED] marker rather than reading raw source files or guessing.
 
   - id: draft_3_2_consortium
     type: TransformAgent
@@ -352,8 +385,11 @@ nodes:
         graph. Preserve qualifications. Raw research dossiers are not
         drafting inputs.
 
-        SUPPORTING DOCUMENTS:
-        {{inputs.load_documents.text}}
+        APPROVED PROJECT FACTS:
+        Use only the blueprint and approved truth graph above. Stage 1 should
+        already have closed partner and capability inputs; if an essential
+        fact is unexpectedly absent, retain one precise [INPUT NEEDED] marker
+        rather than reading raw source files or guessing.
 
   - id: generate_figure_oro_chain
     type: OpenAIImageGenerationAgent
@@ -426,8 +462,47 @@ nodes:
 
         {{inputs.methodology_engineering.method_cards}}
 
+  - id: draft_review_packet
+    type: TextAssemblerAgent
+    config:
+      separator: "\n\n---\n\n"
+      parts:
+        - "{{draft_1_1_objectives_ambition.raw}}"
+        - "{{draft_1_2_methodology.raw}}"
+        - "{{draft_2_1_pathways.raw}}"
+        - "{{draft_2_2_measures_and_2_3_summary.raw}}"
+        - "{{draft_3_1_workplan_resources.raw}}"
+        - "{{draft_3_2_consortium.raw}}"
+
+  - id: approve_drafts
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Stage 2 review gate — inspect the complete six-section Part B draft
+        packet and the four grounded figure outputs. Approve only when every
+        section follows the locked blueprint and official headings, citations
+        use verified IDs, figures match approved content, and no unexpected
+        [INPUT NEEDED] marker remains. Reject to revise or rerun Stage 2.
+      context_fields:
+        - draft_review_packet.text
+        - generate_figure_oro_chain
+        - generate_figure_impact_pathways
+        - generate_figure_workplan
+        - generate_figure_methodology
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+
 edges:
   - from: start
+    to: drafting_readiness_router
+  - from: drafting_readiness_router
+    condition: route
+    branches:
+      READY: drafting_start
+      BLOCKED: drafting_blocked
+  - from: drafting_start
     to:
       - draft_1_1_objectives_ambition
       - draft_1_2_methodology
@@ -439,19 +514,33 @@ edges:
       - generate_figure_impact_pathways
       - generate_figure_workplan
       - generate_figure_methodology
+  - from: draft_1_1_objectives_ambition
+    to: draft_review_packet
+  - from: draft_1_2_methodology
+    to: draft_review_packet
+  - from: draft_2_1_pathways
+    to: draft_review_packet
+  - from: draft_2_2_measures_and_2_3_summary
+    to: draft_review_packet
+  - from: draft_3_1_workplan_resources
+    to: draft_review_packet
+  - from: draft_3_2_consortium
+    to: draft_review_packet
+  - from: draft_review_packet
+    to: approve_drafts
+  - from: generate_figure_oro_chain
+    to: approve_drafts
+  - from: generate_figure_impact_pathways
+    to: approve_drafts
+  - from: generate_figure_workplan
+    to: approve_drafts
+  - from: generate_figure_methodology
+    to: approve_drafts
 
 entry: start
 exit:
-  - draft_1_1_objectives_ambition
-  - draft_1_2_methodology
-  - draft_2_1_pathways
-  - draft_2_2_measures_and_2_3_summary
-  - draft_3_1_workplan_resources
-  - draft_3_2_consortium
-  - generate_figure_oro_chain
-  - generate_figure_impact_pathways
-  - generate_figure_workplan
-  - generate_figure_methodology
+  - approve_drafts
+  - drafting_blocked
 
 output:
   include_input: false
@@ -475,4 +564,8 @@ output:
     - node_id: generate_figure_workplan
       flatten: false
     - node_id: generate_figure_methodology
+      flatten: false
+    - node_id: draft_review_packet
+      flatten: false
+    - node_id: approve_drafts
       flatten: false

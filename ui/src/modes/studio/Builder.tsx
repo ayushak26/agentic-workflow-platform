@@ -36,6 +36,7 @@ import {
 import { generateDefaults, newNodeId, findManifest } from './builder-helpers';
 import { layoutFlow } from './flow-layout';
 import { WorkflowInputsPanel } from './WorkflowInputsPanel';
+import { Icon } from '../../components/ui/Icon';
 
 const nodeTypes = { workflow: WorkflowNode };
 
@@ -53,6 +54,8 @@ export function Builder() {
   const [showInputs, setShowInputs] = useState(false);
   const [validating, setValidating] = useState(false);
   const [preflight, setPreflight] = useState<WorkflowPreflightReport | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(() => window.innerWidth > 900);
+  const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth > 900);
 
   // Load node-type manifests once (used by palette + config form).
   useEffect(() => {
@@ -279,12 +282,12 @@ export function Builder() {
   }
 
   return (
-    <div className="h-full flex">
-      <aside className="w-56 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+    <div className="builder-shell flex h-full">
+      {paletteOpen && <aside className="builder-palette">
         <NodePalette />
-      </aside>
+      </aside>}
 
-      <div className="flex-1 relative" onDrop={onDrop} onDragOver={onDragOver}>
+      <div className="builder-canvas relative flex-1" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -296,24 +299,26 @@ export function Builder() {
           onNodeClick={(_, n) => {
             setSelectedId(n.id);
             setShowInputs(false);
+            setInspectorOpen(true);
+            if (window.innerWidth <= 900) setPaletteOpen(false);
           }}
           onPaneClick={() => setSelectedId(null)}
           fitView
           deleteKeyCode={['Backspace', 'Delete']}
         >
-          <Background gap={20} />
+          <Background color="var(--border-default)" gap={20} />
           <Controls />
-          <MiniMap pannable zoomable />
+          <MiniMap maskColor="rgba(242, 251, 250, 0.72)" nodeColor="var(--brand-teal-600)" pannable zoomable />
         </ReactFlow>
 
         {/* Top-left badge */}
-        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur rounded-md px-3 py-2 shadow-sm border border-slate-200">
-          <div className="text-sm font-medium">{meta.name}</div>
+        <div className="absolute left-3 top-3 z-10 max-w-[240px] rounded-md border border-ink-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur">
+          <div className="truncate text-sm font-semibold text-ink-950" title={meta.name}>{meta.name}</div>
           <div className="text-xs text-ink-500">{nodes.length} nodes</div>
         </div>
 
         {/* Top-right canvas actions + save */}
-        <div className="absolute top-4 right-4 flex items-center gap-3">
+        <div className="canvas-toolbar absolute right-3 top-3 z-20">
           {saveState === 'saved' && <span className="text-xs text-ok">Saved</span>}
           {saveState === 'error' && (
             <span className="text-xs text-bad max-w-xs truncate" title={saveError ?? ''}>
@@ -321,42 +326,66 @@ export function Builder() {
             </span>
           )}
           <button
+            aria-pressed={paletteOpen}
+            className={`ui-button min-h-8 px-2.5 ${paletteOpen ? 'border-accent-500 bg-accent-50 text-accent-700' : 'ui-button--secondary'}`}
+            onClick={() => setPaletteOpen(value => !value)}
+            title={paletteOpen ? 'Hide node library' : 'Show node library'}
+            type="button"
+          >
+            <Icon name="layout" size={15} />
+            Nodes
+          </button>
+          <button
             onClick={() => {
               setSelectedId(null);
               setShowInputs(true);
+              setInspectorOpen(true);
+              if (window.innerWidth <= 900) setPaletteOpen(false);
             }}
-            className={`px-3 py-2 rounded-md border text-sm ${
+            className={`ui-button min-h-8 px-2.5 ${
               showInputs
                 ? 'border-accent-600 bg-accent-50 text-accent-600'
-                : 'border-slate-300 bg-white hover:bg-slate-50'
+                : 'ui-button--secondary'
             }`}
           >
             Inputs ({Object.keys(meta.inputs ?? {}).length})
           </button>
           <button
             onClick={reorganizeNodes}
-            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50"
+            className="ui-button ui-button--secondary min-h-8 px-2.5"
+            title="Arrange nodes into stages"
           >
             Reorganize
           </button>
           <button
             onClick={showAllNodes}
-            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50"
+            className="ui-button ui-button--secondary min-h-8 px-2.5"
+            title="Fit all nodes on screen"
           >
             Show all nodes
           </button>
           <button
+            aria-pressed={inspectorOpen}
+            className={`ui-button min-h-8 px-2.5 ${inspectorOpen ? 'border-accent-500 bg-accent-50 text-accent-700' : 'ui-button--secondary'}`}
+            onClick={() => setInspectorOpen(value => !value)}
+            title={inspectorOpen ? 'Hide configuration panel' : 'Show configuration panel'}
+            type="button"
+          >
+            Inspector
+          </button>
+          <button
             onClick={onValidate}
             disabled={validating}
-            className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm hover:bg-slate-50 disabled:opacity-50"
+            className="ui-button ui-button--secondary min-h-8 px-2.5"
           >
             {validating ? 'Checking…' : 'Preflight'}
           </button>
           <button
             onClick={onSave}
             disabled={saveState === 'saving'}
-            className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
+            className="ui-button ui-button--primary min-h-8 px-3"
           >
+            <Icon name="save" size={15} />
             {saveState === 'saving' ? 'Saving…' : 'Save'}
           </button>
         </div>
@@ -417,7 +446,7 @@ export function Builder() {
         )}
       </div>
 
-      <aside className="w-96 border-l border-slate-200 bg-white">
+      {inspectorOpen && <aside className="builder-inspector">
         {showInputs ? (
           <WorkflowInputsPanel
             inputs={meta.inputs ?? {}}
@@ -441,7 +470,7 @@ export function Builder() {
             onModelRoutingChange={onModelRoutingChange}
           />
         )}
-      </aside>
+      </aside>}
     </div>
   );
 }

@@ -1,0 +1,54 @@
+name: Internal Evidence Lookup Smoke Test
+description: >-
+  Standalone smoke test for InternalProjectEvidenceRetrieverAgent. Confirms
+  exact-passage extraction, source-class gating (only approved source
+  classes may be used), and the human-approval flag all work against a
+  literal fixture partner document. The internal retrieval index is
+  disabled, so only the llm service is required. Inspect
+  internal_evidence_lookup.records and .pending_human_approval — every
+  returned record's exact_passage must appear verbatim in source_text, with
+  drafting_allowed=false and verification_status
+  exact_passage_matched_pending_human_approval until a human approves it.
+  If the model ever proposes a fact whose quote isn't a literal substring of
+  the source, it lands in rejected_facts with reason "exact passage was not
+  present in source" instead of being silently accepted.
+version: "1.0"
+use_case: platform_validation
+
+inputs: {}
+
+nodes:
+  - id: internal_evidence_lookup
+    type: InternalProjectEvidenceRetrieverAgent
+    config:
+      source_registry:
+        source_registry:
+          - source_id: ISRC-TEST-1
+            file_name: partner_alpha.md
+            source_class: consortium_or_partner_supplied_fact
+            approval_status: pending
+      source_text: |
+        --- partner_alpha.md ---
+        Partner Alpha operates a pilot fermentation facility with a
+        500-litre bioreactor.
+        No staffing commitment is stated in this document.
+      research_briefs: []
+      model: gpt-5-mini
+      max_queries: 4
+      max_records: 20
+      max_source_chars: 20000
+      query_internal_index: false
+      require_internal_index: false
+      internal_index_filters: {}
+      top_k_candidates: 15
+      top_n_final: 6
+
+edges: []
+entry: internal_evidence_lookup
+exit: internal_evidence_lookup
+
+output:
+  include_input: false
+  nodes:
+    - node_id: internal_evidence_lookup
+      flatten: true

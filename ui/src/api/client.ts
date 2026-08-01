@@ -62,7 +62,33 @@ export type DiscoveredCandidate = {
   authority: string | null;
   retraction_status: string | null;
   found_by_node_id: string | null;
-  found_by_type: 'ScholarlyCandidateDiscoveryAgent' | 'BoundedDeepResearchAgent' | string;
+  found_by_type:
+    | 'ScholarlyCandidateDiscoveryAgent'
+    | 'BoundedDeepResearchAgent'
+    | 'PriorProjectRetrieverAgent'
+    | 'StructuredDatasetRetrieverAgent'
+    | string;
+};
+export type ClaimVerificationResult = {
+  verified: boolean;
+  confidence: 'low' | 'medium' | 'high';
+  source_type: 'website' | 'book' | 'citation' | 'unknown';
+  source_name: string;
+  source_url: string | null;
+  citation: string;
+  notes: string;
+};
+export type InternalEvidenceRecord = {
+  record_id: string;
+  claim_id: string | null;
+  fact_key: string | null;
+  content: string;
+  source_name: string | null;
+  source_class: string | null;
+  verification_status: string | null;
+  drafting_allowed: boolean | null;
+  found_by_node_id: string | null;
+  verification: ClaimVerificationResult | null;
 };
 export type Scorecard = {
   workflow_name: string;
@@ -298,7 +324,15 @@ export const api = {
         candidates: RunCandidate[];
         discovered_count: number;
         discovered_candidates: DiscoveredCandidate[];
+        internal_evidence_count: number;
+        internal_evidence: InternalEvidenceRecord[];
       }>),
+  verifyClaim: (run_id: string, record_id: string) =>
+    afetch(`${API}/candidates/${run_id}/verify-claim`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ record_id }),
+    }).then(j<{ record_id: string; result: ClaimVerificationResult }>),
   researchSkills: () =>
     afetch(`${API}/research/skills`, { headers: authHeaders() })
       .then(j<{
