@@ -360,17 +360,18 @@ export const api = {
     inputs: Record<string, unknown>,
     session_id?: string,
     pipeline_run_id?: string,
+    stage_run_id?: string,
   ) =>
     afetch(`${API}/pipelines/run`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ pipeline_yaml, inputs, session_id, pipeline_run_id }),
+      body: JSON.stringify({ pipeline_yaml, inputs, session_id, pipeline_run_id, stage_run_id }),
     }).then(j<PipelineStageOutcome>),
-  advancePipeline: (pipeline_run_id: string, session_id?: string) =>
+  advancePipeline: (pipeline_run_id: string, session_id?: string, stage_run_id?: string) =>
     afetch(`${API}/pipelines/${pipeline_run_id}/advance`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ session_id }),
+      body: JSON.stringify({ session_id, stage_run_id }),
     }).then(j<PipelineStageOutcome>),
   pipelineRuns: () =>
     afetch(`${API}/pipelines/mine`, { headers: authHeaders() })

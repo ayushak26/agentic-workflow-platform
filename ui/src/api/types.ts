@@ -266,6 +266,9 @@ export interface PipelineStageOutcome {
     run_id: string;
     error?: string;
     state?: unknown;
+    output?: Record<string, unknown>;
+    node_id?: string;
+    reason?: string;
   };
   pipeline: PipelineRunDetail;
 }

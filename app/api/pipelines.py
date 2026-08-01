@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 import yaml
 
-from app.api.workflows import _scope
+from app.api.workflows import _reserve_run_id, _scope
 from app.runtime.pipeline_executor import (
     PipelineExecutionError,
     advance_pipeline,
@@ -44,6 +44,11 @@ class RunPipelineRequest(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = None
     pipeline_run_id: str | None = None
+    # Client-supplied id for stage 0's underlying workflow run. Lets the UI
+    # open a live Cockpit (SSE) view before triggering the run, exactly like
+    # POST /workflows/run's run_id — see _reserve_run_id for the reservation
+    # semantics that make this safe.
+    stage_run_id: str | None = None
 
 
 def _preflight_http_detail(report) -> dict[str, Any]:
@@ -96,6 +101,12 @@ async def run(
                 detail=f"pipeline_run_id already exists: {pipeline_run_id}",
             )
 
+    stage_run_id = None
+    if req.stage_run_id:
+        stage_run_id = await _reserve_run_id(
+            services, run_id=req.stage_run_id, session_id=session,
+        )
+
     try:
         return await run_pipeline(
             pipeline_spec=spec,
@@ -104,6 +115,7 @@ async def run(
             pipeline_inputs=validated_inputs,
             session=session,
             services=services,
+            stage_run_id=stage_run_id,
         )
     except PipelineExecutionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -111,6 +123,10 @@ async def run(
 
 class AdvancePipelineRequest(BaseModel):
     session_id: str | None = None
+    # Client-supplied id for the next stage's underlying workflow run — same
+    # purpose as RunPipelineRequest.stage_run_id, for the "Continue to next
+    # stage" action.
+    stage_run_id: str | None = None
 
 
 @router.post("/{pipeline_run_id}/advance")
@@ -122,11 +138,17 @@ async def advance(
 ):
     services = getattr(request.app.state, "services", {})
     session = _scope(user, req.session_id)
+    stage_run_id = None
+    if req.stage_run_id:
+        stage_run_id = await _reserve_run_id(
+            services, run_id=req.stage_run_id, session_id=session,
+        )
     try:
         return await advance_pipeline(
             pipeline_run_id=pipeline_run_id,
             session=session,
             services=services,
+            stage_run_id=stage_run_id,
         )
     except PipelineExecutionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

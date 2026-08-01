@@ -197,9 +197,40 @@ function PipelineLaunchDialog({
         setLaunchStage(null);
         return;
       }
+
+      const parsedPipeline = parsePipelineYaml(pipelineYaml);
+      const firstStage = parsedPipeline.stages[0];
+      if (!firstStage) {
+        setLaunchError('This pipeline has no stages.');
+        setLaunching(false);
+        setLaunchStage(null);
+        return;
+      }
+      setLaunchStage('Opening stage 1…');
+      const { yaml: stageYaml } = await api.getWorkflow(firstStage.workflow);
+
       const pipelineRunId = crypto.randomUUID();
-      const result = await api.runPipeline(pipelineYaml, runInputs, undefined, pipelineRunId);
-      navigate(`/pipelines/runs/${result.pipeline_run_id}`);
+      const stageRunId = crypto.randomUUID();
+      // Navigate straight into the Cockpit's live graph — it triggers the
+      // actual run itself (opens the SSE stream first, same as a plain
+      // workflow run), rather than us awaiting the whole stage here and
+      // landing on a static status page after the fact.
+      navigate(`/cockpit/${stageRunId}`, {
+        state: {
+          workflowYaml: stageYaml,
+          workflowName: firstStage.id,
+          inputs: runInputs,
+          pipeline: {
+            mode: 'start',
+            pipelineYaml,
+            pipelineRunId,
+            pipelineName,
+            stageId: firstStage.id,
+            stageIndex: 0,
+            totalStages: parsedPipeline.stages.length,
+          },
+        },
+      });
     } catch (e: unknown) {
       setLaunchError(e instanceof Error ? e.message : String(e));
       setLaunching(false);
@@ -213,9 +244,9 @@ function PipelineLaunchDialog({
         <div className="px-6 py-4 border-b border-slate-200">
           <h2 className="text-lg font-semibold">Run {pipelineName}</h2>
           <p className="text-xs text-ink-500 mt-0.5">
-            This starts stage 1 only. Each later stage waits for you to
-            review its output and explicitly continue — see the pipeline run
-            page after launch.
+            This opens the live Cockpit view for stage 1. Each later stage
+            waits for you to review its output and explicitly continue to
+            the next stage's Cockpit view.
           </p>
         </div>
         <div className="px-6 py-4 space-y-4">
@@ -332,7 +363,7 @@ function PipelineLaunchDialog({
             disabled={launching}
             className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
           >
-            {launching ? (launchStage ?? 'Running stage 1…') : 'Run pipeline'}
+            {launching ? (launchStage ?? 'Starting…') : 'Run pipeline'}
           </button>
         </div>
       </div>
@@ -514,15 +545,30 @@ export function PipelineRunView() {
   }, [pipelineRunId]);
 
   async function advance() {
-    if (!pipelineRunId) return;
+    if (!pipelineRunId || !detail || !nextStage) return;
     setAdvancing(true);
     setAdvanceError(null);
     try {
-      const result = await api.advancePipeline(pipelineRunId);
-      setDetail(result.pipeline);
+      // Same pattern as launching a pipeline: open the next stage's live
+      // Cockpit view first, and let Cockpit itself trigger the advance call.
+      const { yaml: stageYaml } = await api.getWorkflow(nextStage.workflow);
+      const stageRunId = crypto.randomUUID();
+      navigate(`/cockpit/${stageRunId}`, {
+        state: {
+          workflowYaml: stageYaml,
+          workflowName: nextStage.id,
+          pipeline: {
+            mode: 'advance',
+            pipelineRunId,
+            pipelineName: detail.pipeline_name,
+            stageId: nextStage.id,
+            stageIndex: detail.current_stage_index + 1,
+            totalStages: detail.stages.length,
+          },
+        },
+      });
     } catch (e: unknown) {
       setAdvanceError(e instanceof Error ? e.message : String(e));
-    } finally {
       setAdvancing(false);
     }
   }
@@ -560,7 +606,7 @@ export function PipelineRunView() {
             disabled={advancing}
             className="mt-2 px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
           >
-            {advancing ? `Running ${nextStage.id}… this can take a while` : `Continue to ${nextStage.id}`}
+            {advancing ? `Opening ${nextStage.id}…` : `Continue to ${nextStage.id}`}
           </button>
           {advanceError && <p className="mt-2 text-xs text-red-700">{advanceError}</p>}
         </div>

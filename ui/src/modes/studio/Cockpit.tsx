@@ -25,7 +25,7 @@ import { parseYaml, yamlToReactFlow, type WorkflowNodeData, type YamlWorkflow } 
 import { deriveCockpitState, type NodeStatus } from './cockpit-state';
 import { useSetRunCost } from "../../RunCostContext";
 import { layoutFlow } from './flow-layout';
-import type { HITLReviewContent, RunDetail } from '../../api/types';
+import type { HITLReviewContent, PipelineRunDetail, RunDetail } from '../../api/types';
 
 type CockpitNodeData = WorkflowNodeData & { status: NodeStatus };
 const nodeTypes = { workflow: CockpitNode };
@@ -58,6 +58,20 @@ type Finished = {
   reason?: string;
 };
 
+// Present when this Cockpit is running one stage of a pipeline rather than a
+// standalone workflow. 'start' triggers POST /pipelines/run (stage 0 of a
+// fresh pipeline run); 'advance' triggers POST /pipelines/{id}/advance (any
+// later stage, reached via the "Continue to next stage" action).
+type PipelineNavState = {
+  mode: 'start' | 'advance';
+  pipelineYaml?: string;
+  pipelineRunId: string;
+  pipelineName?: string;
+  stageId: string;
+  stageIndex: number;
+  totalStages: number;
+};
+
 export function Cockpit() {
   const { runId } = useParams();
   const location = useLocation();
@@ -72,6 +86,7 @@ export function Cockpit() {
         inputs?: Record<string, unknown>;
         workflowName?: string;
         retrySourceRunId?: string;
+        pipeline?: PipelineNavState;
       }
   );
 
@@ -151,7 +166,18 @@ useEffect(() => {
     // This state guards the one external run request owned by this effect.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setRunTriggered(true);
-    const request = navState.retrySourceRunId
+    const pipeline = navState.pipeline;
+    const request = pipeline
+      ? pipeline.mode === 'advance'
+        ? api.advancePipeline(pipeline.pipelineRunId, undefined, runId)
+        : api.runPipeline(
+            pipeline.pipelineYaml!,
+            navState.inputs ?? {},
+            undefined,
+            pipeline.pipelineRunId,
+            runId,
+          )
+      : navState.retrySourceRunId
       ? api.retryFailedRun(navState.retrySourceRunId, runId)
       // Do not send a made-up "default" session. The API derives the durable
       // history/retrieval scope from the authenticated user.
@@ -162,7 +188,9 @@ useEffect(() => {
           runId,
         );
     request
-      .then((res) => applyResumeResult(res))
+      // A pipeline call's result is nested under stage_result — the same
+      // {status, run_id, state, ...} shape run_workflow returns directly.
+      .then((res) => applyResumeResult(pipeline ? (res as any).stage_result : res))
       .catch((e) => {
         const message = String(e.message ?? e);
         setTriggerError(message);
@@ -174,6 +202,7 @@ useEffect(() => {
     navState.workflowYaml,
     navState.inputs,
     navState.retrySourceRunId,
+    navState.pipeline,
     runId,
   ]);
 
@@ -275,15 +304,79 @@ useEffect(() => {
     requestAnimationFrame(showAllNodes);
   }, [edges, setNodes, showAllNodes]);
 
+  // Pipeline mode: keep the pipeline's own gate/advance state alongside this
+  // stage's run so the banner can offer "Continue to next stage" as soon as
+  // this stage finishes. Re-fetched (not read off the trigger response) so it
+  // stays correct even when this stage finished via a mid-run HITL resume,
+  // which doesn't return the pipeline doc itself.
+  const [pipelineDoc, setPipelineDoc] = useState<PipelineRunDetail | null>(null);
+  const [continuingStage, setContinuingStage] = useState(false);
+  const [continueError, setContinueError] = useState<string | null>(null);
+  const pipelineRunId = navState.pipeline?.pipelineRunId;
+  useEffect(() => {
+    if (!pipelineRunId) return;
+    let cancelled = false;
+    api.pipelineRunDetail(pipelineRunId)
+      .then((doc) => { if (!cancelled) setPipelineDoc(doc); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [pipelineRunId, finished]);
+
+  const continueToNextStage = useCallback(async () => {
+    if (!pipelineDoc) return;
+    const nextIndex = pipelineDoc.current_stage_index + 1;
+    const nextStage = pipelineDoc.stages[nextIndex];
+    if (!nextStage) return;
+    setContinuingStage(true);
+    setContinueError(null);
+    try {
+      const { yaml: stageYaml } = await api.getWorkflow(nextStage.workflow);
+      const stageRunId = crypto.randomUUID();
+      navigate(`/cockpit/${stageRunId}`, {
+        state: {
+          workflowYaml: stageYaml,
+          workflowName: nextStage.id,
+          pipeline: {
+            mode: 'advance',
+            pipelineRunId: pipelineDoc.pipeline_run_id,
+            pipelineName: pipelineDoc.pipeline_name,
+            stageId: nextStage.id,
+            stageIndex: nextIndex,
+            totalStages: pipelineDoc.stages.length,
+          },
+        },
+      });
+    } catch (e: unknown) {
+      setContinueError(e instanceof Error ? e.message : String(e));
+      setContinuingStage(false);
+    }
+  }, [pipelineDoc, navigate]);
+
+  const pipelineBanner = navState.pipeline && (
+    <PipelineStageBanner
+      pipeline={navState.pipeline}
+      pipelineDoc={pipelineDoc}
+      onContinue={continueToNextStage}
+      continuing={continuingStage}
+      continueError={continueError}
+      onViewOverview={() => navigate(`/pipelines/runs/${navState.pipeline!.pipelineRunId}`)}
+    />
+  );
+
   // ✅ early returns go AFTER all hooks
   if (finished?.status === 'completed') {
     return (
-      <OutputViewer
-        runId={runId}
-        state={finished.state}
-        projectedOutput={finished.output}
-        workflowName={navState.workflowName ?? parsedWf?.name}
-      />
+      <div className="h-full flex flex-col">
+        {pipelineBanner}
+        <div className="flex-1 min-h-0">
+          <OutputViewer
+            runId={runId}
+            state={finished.state}
+            projectedOutput={finished.output}
+            workflowName={navState.workflowName ?? parsedWf?.name}
+          />
+        </div>
+      </div>
     );
   }
 
@@ -322,7 +415,9 @@ useEffect(() => {
   const displayStatus = finished?.status ?? (gate ? 'paused' : cockpit.runStatus);
 
   return (
-    <div className="h-full flex">
+    <div className="h-full flex flex-col">
+      {pipelineBanner}
+      <div className="flex-1 flex min-h-0">
       <div className="flex-1 relative">
         <ReactFlow
           nodes={nodes}
@@ -550,6 +645,60 @@ useEffect(() => {
           </div>
         )}
       </aside>
+      </div>
+    </div>
+  );
+}
+
+function PipelineStageBanner({
+  pipeline,
+  pipelineDoc,
+  onContinue,
+  continuing,
+  continueError,
+  onViewOverview,
+}: {
+  pipeline: PipelineNavState;
+  pipelineDoc: PipelineRunDetail | null;
+  onContinue: () => void;
+  continuing: boolean;
+  continueError: string | null;
+  onViewOverview: () => void;
+}) {
+  const nextStage = pipelineDoc?.status === 'gated'
+    ? pipelineDoc.stages[pipelineDoc.current_stage_index + 1]
+    : null;
+
+  return (
+    <div className="flex-none px-4 py-2.5 bg-cyan-50 border-b border-cyan-200 flex items-center justify-between gap-3">
+      <div className="text-xs text-cyan-900 min-w-0">
+        <span className="font-semibold">{pipeline.pipelineName ?? pipelineDoc?.pipeline_name ?? 'Pipeline'}</span>
+        {' '}— stage {pipeline.stageIndex + 1}/{pipeline.totalStages} · <span className="font-mono">{pipeline.stageId}</span>
+        {!pipelineDoc && ' · loading status…'}
+        {pipelineDoc?.status === 'gated' && !nextStage && ' · complete'}
+        {pipelineDoc?.status === 'completed' && ' · all stages complete'}
+        {pipelineDoc?.status === 'failed' && ' · pipeline stopped'}
+        {continueError && <span className="text-red-700 ml-2">{continueError}</span>}
+      </div>
+      <div className="flex-none flex items-center gap-2">
+        {nextStage && (
+          <button
+            type="button"
+            onClick={onContinue}
+            disabled={continuing}
+            className="px-3 py-1.5 rounded-md bg-accent-600 text-white text-xs font-medium hover:bg-accent-500 disabled:opacity-50"
+          >
+            {continuing ? `Opening ${nextStage.id}…` : `Continue to ${nextStage.id}`}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onViewOverview}
+          className="px-3 py-1.5 rounded-md border border-cyan-300 bg-white text-cyan-800 text-xs hover:bg-cyan-50"
+        >
+          Pipeline overview
+        </button>
+      </div>
     </div>
   );
 }

@@ -176,6 +176,7 @@ async def _run_stage(
     pipeline_inputs: dict[str, Any],
     stage_outputs_by_id: dict[str, dict[str, Any]],
     collection_id: str,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     db = services.get("audit_db")
     stage = pipeline_spec.stages[stage_index]
@@ -184,7 +185,7 @@ async def _run_stage(
         stage, stage_spec, pipeline_inputs, stage_outputs_by_id,
     )
 
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     await record_stage_launch(
         db,
         pipeline_run_id=pipeline_run_id,
@@ -236,6 +237,7 @@ async def run_pipeline(
     session: str,
     services: dict[str, Any],
     collection_id: str = "default",
+    stage_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Start a new pipeline run: create its record and run stage 0."""
 
@@ -259,6 +261,7 @@ async def run_pipeline(
         pipeline_inputs=pipeline_inputs,
         stage_outputs_by_id={},
         collection_id=collection_id,
+        run_id=stage_run_id,
     )
 
 
@@ -268,6 +271,7 @@ async def advance_pipeline(
     session: str,
     services: dict[str, Any],
     collection_id: str = "default",
+    stage_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run the next stage of a pipeline that is gated awaiting approval."""
 
@@ -300,4 +304,5 @@ async def advance_pipeline(
         pipeline_inputs=pipeline_doc.get("pipeline_inputs") or {},
         stage_outputs_by_id=stage_outputs_by_id,
         collection_id=collection_id,
+        run_id=stage_run_id,
     )
