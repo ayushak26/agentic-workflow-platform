@@ -1,5 +1,6 @@
 import type {
   AuditEvent,
+  AutofixWorkflowResult,
   ConceptAlternative,
   ExtractedWorkflowFile,
   GenerateWorkflowResult,
@@ -276,6 +277,16 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ workflow_yaml, inputs, check_services }),
     }).then(j<WorkflowPreflightReport>),
+  autofixWorkflow: (
+    workflow_yaml: string,
+    inputs?: Record<string, unknown>,
+    check_services = false,
+  ) =>
+    afetch(`${API}/workflows/autofix`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ workflow_yaml, inputs, check_services }),
+    }).then(j<AutofixWorkflowResult>),
   generateWorkflow: (prompt: string, sample_inputs?: Record<string, unknown>) =>
     afetch(`${API}/workflows/generate`, {
       method: 'POST',

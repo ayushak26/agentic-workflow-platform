@@ -53,6 +53,7 @@ export function RunWorkspace({
   actionBusy,
   actionErr,
   retryErr,
+  autofixErr,
   blockingPipelineId,
   onPause,
   onResume,
@@ -62,6 +63,8 @@ export function RunWorkspace({
   onRetry,
   onOpenInCockpit,
   onOpenInGuided,
+  onAutofix,
+  autofixBusy,
   onOpenProposalReview,
   onOpenEvidence,
   activeTab,
@@ -72,6 +75,7 @@ export function RunWorkspace({
   actionBusy: 'pause' | 'resume' | 'restart' | 'delete' | null;
   actionErr: string | null;
   retryErr: string | null;
+  autofixErr?: string | null;
   blockingPipelineId?: string | null;
   onPause: () => void;
   onResume: () => void;
@@ -81,6 +85,8 @@ export function RunWorkspace({
   onRetry: () => void;
   onOpenInCockpit: () => void;
   onOpenInGuided: () => void;
+  onAutofix: () => void;
+  autofixBusy: boolean;
   onOpenProposalReview: () => void;
   onOpenEvidence: () => void;
   activeTab: WorkspaceTab;
@@ -193,6 +199,13 @@ export function RunWorkspace({
                 >
                   Open in Cockpit
                 </button>
+                <button
+                  onClick={onAutofix}
+                  disabled={autofixBusy}
+                  className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {autofixBusy ? 'Fixing…' : 'Auto-fix'}
+                </button>
               </>
             )}
             <button
@@ -287,9 +300,9 @@ export function RunWorkspace({
           </div>
         </div>
 
-        {(actionErr || retryErr) && (
+        {(actionErr || retryErr || autofixErr) && (
           <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
-            <div>{actionErr ?? retryErr}</div>
+            <div>{actionErr ?? retryErr ?? autofixErr}</div>
             {actionErr && blockingPipelineId && onAbandonAndDelete && (
               <button
                 onClick={onAbandonAndDelete}

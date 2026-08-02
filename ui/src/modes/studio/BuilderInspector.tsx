@@ -36,12 +36,16 @@ export function BuilderInspector({
   onExperienceChange,
   onIdChange,
   onInputsChange,
+  onAutofix,
   onLaunchTest,
   onModelRoutingChange,
   onModelSelectionChange,
+  onRunWorkflow,
   onSelectNode,
   onTabChange,
+  onTestWorkflow,
   onValidate,
+  autofixing,
   preflight,
   selected,
   showInputs,
@@ -53,6 +57,7 @@ export function BuilderInspector({
   llmModels: LLMModelInfo[];
   manifests: NodeTypeManifest[];
   nodes: Node<WorkflowNodeData>[];
+  onAutofix?: () => void;
   onClose: () => void;
   onCloseInputs: () => void;
   onConfigChange: (next: Record<string, unknown>) => void;
@@ -62,9 +67,12 @@ export function BuilderInspector({
   onLaunchTest: (workflow: YamlWorkflow, title: string) => void;
   onModelRoutingChange: (next: ModelRoutingPolicy | undefined) => void;
   onModelSelectionChange: (next: string | null) => void;
+  onRunWorkflow: () => void;
   onSelectNode: (nodeId: string) => void;
   onTabChange: (tab: BuilderInspectorTab) => void;
+  onTestWorkflow: () => void;
   onValidate: () => void;
+  autofixing?: boolean;
   preflight: WorkflowPreflightReport | null;
   selected: Node<WorkflowNodeData> | null;
   showInputs: boolean;
@@ -94,6 +102,10 @@ export function BuilderInspector({
             inputs={workflow.inputs ?? {}}
             onChange={onInputsChange}
             onClose={onCloseInputs}
+            onRunWorkflow={onRunWorkflow}
+            onTestWorkflow={onTestWorkflow}
+            runDisabled={nodes.length === 0}
+            testing={validating}
           />
         </div>
       ) : (
@@ -161,6 +173,8 @@ export function BuilderInspector({
                 validating={validating}
                 onValidate={onValidate}
                 onSelectNode={onSelectNode}
+                onAutofix={onAutofix}
+                autofixing={autofixing}
               />
             )}
           </div>

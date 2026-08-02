@@ -67,10 +67,18 @@ export function WorkflowInputsPanel({
   inputs,
   onChange,
   onClose,
+  onRunWorkflow,
+  onTestWorkflow,
+  runDisabled,
+  testing,
 }: {
   inputs: Record<string, WorkflowInputSpec>;
   onChange: (inputs: Record<string, WorkflowInputSpec>) => void;
   onClose: () => void;
+  onRunWorkflow: () => void;
+  onTestWorkflow: () => void;
+  runDisabled: boolean;
+  testing: boolean;
 }) {
   function update(name: string, patch: Partial<WorkflowInputSpec>) {
     onChange({
@@ -124,6 +132,25 @@ export function WorkflowInputsPanel({
           className="text-lg leading-none text-ink-500 hover:text-ink-900"
         >
           ×
+        </button>
+      </div>
+
+      <div className="flex gap-2 border-b border-slate-200 px-4 py-3">
+        <button
+          type="button"
+          onClick={onTestWorkflow}
+          disabled={testing}
+          className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-ink-700 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {testing ? 'Testing…' : 'Test Workflow'}
+        </button>
+        <button
+          type="button"
+          onClick={onRunWorkflow}
+          disabled={runDisabled}
+          className="flex-1 rounded-md bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-500 disabled:opacity-50"
+        >
+          Run Workflow
         </button>
       </div>
 

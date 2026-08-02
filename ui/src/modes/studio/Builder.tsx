@@ -155,6 +155,7 @@ export function Builder() {
   const [error, setError] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [preflight, setPreflight] = useState<WorkflowPreflightReport | null>(null);
+  const [autofixing, setAutofixing] = useState(false);
   const [recovery, setRecovery] = useState<WorkflowDraft | null>(null);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [runDraft, setRunDraft] = useState<RunDraft | null>(null);
@@ -545,6 +546,25 @@ export function Builder() {
     }
   }, [currentWorkflow]);
 
+  const autofix = useCallback(async () => {
+    if (!currentWorkflow) return;
+    setAutofixing(true);
+    setError(null);
+    try {
+      const result = await api.autofixWorkflow(dumpYaml(currentWorkflow));
+      const fixedWorkflow = parseYaml(result.yaml);
+      hydrateWorkflow(fixedWorkflow, workflowName, undefined, { dirty: true });
+      setInspectorOpen(true);
+      setShowInputs(false);
+      setInspectorTab('checks');
+      await validate(fixedWorkflow);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAutofixing(false);
+    }
+  }, [currentWorkflow, hydrateWorkflow, validate, workflowName]);
+
   const onSave = useCallback(async () => {
     if (!currentWorkflow) return;
     // A brand-new, generated-and-not-yet-named workflow has no file slug
@@ -792,6 +812,11 @@ export function Builder() {
           <button className="ui-button ui-button--secondary" disabled={validating} onClick={() => { setShowInputs(false); setInspectorOpen(true); setInspectorTab('checks'); void validate(); }} type="button">
             <Icon name="check" size={14} /> {validating ? 'Checking…' : 'Preflight'}
           </button>
+          {preflight && !preflight.valid && (
+            <button className="ui-button ui-button--secondary" disabled={autofixing} onClick={() => void autofix()} type="button">
+              <Icon name="check" size={14} /> {autofixing ? 'Fixing…' : 'Auto-fix'}
+            </button>
+          )}
           <button className="ui-button ui-button--secondary" disabled={nodes.length === 0} onClick={() => void prepareRun(currentWorkflow, 'Full workflow')} type="button"><Icon name="play" size={14} /> Run in Cockpit</button>
           <button className="ui-button ui-button--primary" disabled={saveState === 'saving'} onClick={() => void onSave()} type="button"><Icon name="save" size={14} /> {saveState === 'saving' ? 'Saving…' : 'Save'}</button>
           <button
@@ -894,6 +919,8 @@ export function Builder() {
               llmModels={llmModels}
               manifests={manifests}
               nodes={nodes}
+              onAutofix={() => void autofix()}
+              autofixing={autofixing}
               onClose={() => setInspectorOpen(false)}
               onCloseInputs={() => setShowInputs(false)}
               onConfigChange={onConfigChange}
@@ -903,12 +930,18 @@ export function Builder() {
               onLaunchTest={(workflow, title) => void prepareRun(workflow, title)}
               onModelRoutingChange={onModelRoutingChange}
               onModelSelectionChange={onModelSelectionChange}
+              onRunWorkflow={() => void prepareRun(currentWorkflow, 'Full workflow')}
               onSelectNode={nodeId => {
                 setSelectedId(nodeId);
                 setShowInputs(false);
                 setInspectorTab('configure');
               }}
               onTabChange={tab => { setShowInputs(false); setInspectorTab(tab); }}
+              onTestWorkflow={() => {
+                setShowInputs(false);
+                setInspectorTab('checks');
+                void validate();
+              }}
               onValidate={() => void validate()}
               preflight={preflight}
               selected={selected}

@@ -134,6 +134,7 @@ export function RunHistory() {
             actionBusy={data.actionBusy}
             actionErr={data.actionErr}
             retryErr={data.retryErr}
+            autofixErr={data.autofixErr}
             blockingPipelineId={data.blockingPipelineId}
             onPause={data.pauseRun}
             onResume={data.resumeRun}
@@ -143,6 +144,8 @@ export function RunHistory() {
             onRetry={data.retryFailedRun}
             onOpenInCockpit={() => data.openInCockpit(selectedNodeId)}
             onOpenInGuided={data.openInGuided}
+            onAutofix={() => void data.autofixAndOpenInBuilder()}
+            autofixBusy={data.autofixBusy}
             onOpenProposalReview={() => navigate(`/proposal-review/${data.detail!.run.run_id}`)}
             onOpenEvidence={() => navigate(`/candidates/${data.detail!.run.run_id}`)}
             activeTab={activeTab}

@@ -140,6 +140,14 @@ export type WorkflowPreflightReport = {
   tokens_spent: number;
 };
 
+export type AutofixWorkflowResult = {
+  yaml: string;
+  fixed: boolean;
+  deterministic_fixes_applied: string[];
+  llm_attempts: { success: boolean; detail: string }[];
+  preflight_report: WorkflowPreflightReport;
+};
+
 // Mirrors app/workflow/builder_store.py's save_draft/read_draft document.
 export type WorkflowDraft = {
   name: string;

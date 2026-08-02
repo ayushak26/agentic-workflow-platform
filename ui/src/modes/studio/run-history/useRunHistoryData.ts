@@ -47,6 +47,8 @@ export function useRunHistoryData(runId: string | undefined) {
   const [actionErr, setActionErr] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<'pause' | 'resume' | 'restart' | 'delete' | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [autofixBusy, setAutofixBusy] = useState(false);
+  const [autofixErr, setAutofixErr] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,6 +161,20 @@ export function useRunHistoryData(runId: string | undefined) {
     });
   }
 
+  async function autofixAndOpenInBuilder() {
+    if (!detail?.run.workflow_yaml) return;
+    setAutofixBusy(true);
+    setAutofixErr(null);
+    try {
+      const result = await api.autofixWorkflow(detail.run.workflow_yaml);
+      navigate('/builder', { state: { generatedYaml: result.yaml } });
+    } catch (error) {
+      setAutofixErr(String(error));
+    } finally {
+      setAutofixBusy(false);
+    }
+  }
+
   async function pauseRun() {
     if (!detail || detail.run.status !== 'running') return;
     setActionErr(null);
@@ -248,6 +264,9 @@ export function useRunHistoryData(runId: string | undefined) {
     retryFailedRun,
     openInCockpit,
     openInGuided,
+    autofixBusy,
+    autofixErr,
+    autofixAndOpenInBuilder,
     pauseRun,
     resumeRun,
     restartRun,

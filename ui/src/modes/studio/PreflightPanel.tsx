@@ -5,11 +5,15 @@ export function PreflightPanel({
   validating,
   onValidate,
   onSelectNode,
+  onAutofix,
+  autofixing,
 }: {
   report: WorkflowPreflightReport | null;
   validating: boolean;
   onValidate: () => void;
   onSelectNode: (nodeId: string) => void;
+  onAutofix?: () => void;
+  autofixing?: boolean;
 }) {
   const errors = report?.issues.filter(issue => issue.severity === 'error') ?? [];
   const warnings = report?.issues.filter(issue => issue.severity === 'warning') ?? [];
@@ -18,14 +22,26 @@ export function PreflightPanel({
     <div className="builder-inspector-scroll p-4">
       <div className="flex items-center justify-between gap-2">
         <div className="builder-panel-heading">Preflight</div>
-        <button
-          className="ui-button ui-button--secondary"
-          disabled={validating}
-          onClick={onValidate}
-          type="button"
-        >
-          {validating ? 'Checking…' : 'Run preflight'}
-        </button>
+        <div className="flex gap-2">
+          {onAutofix && report && !report.valid && (
+            <button
+              className="ui-button ui-button--secondary"
+              disabled={Boolean(autofixing)}
+              onClick={onAutofix}
+              type="button"
+            >
+              {autofixing ? 'Fixing…' : 'Auto-fix'}
+            </button>
+          )}
+          <button
+            className="ui-button ui-button--secondary"
+            disabled={validating}
+            onClick={onValidate}
+            type="button"
+          >
+            {validating ? 'Checking…' : 'Run preflight'}
+          </button>
+        </div>
       </div>
       <p className="mt-1 text-xs leading-5 text-ink-500">
         Structural validation only — zero model tokens are spent. Errors
