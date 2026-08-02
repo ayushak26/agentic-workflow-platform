@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import type { WorkflowSummary } from '../../../api/types';
 import { Icon } from '../../../components/ui/Icon';
 import { humanizeIdentifier } from '../guided/runtime-model';
@@ -29,6 +30,7 @@ export function WorkflowCard({
   onToggleFavorite,
   onOpenBuilder,
   onPrepareRun,
+  onDelete,
 }: {
   workflow: WorkflowSummary;
   favorite: boolean;
@@ -37,27 +39,65 @@ export function WorkflowCard({
   onToggleFavorite: () => void;
   onOpenBuilder: () => void;
   onPrepareRun: () => void;
+  onDelete: () => void;
 }) {
   const title = workflow.library?.title || humanizeIdentifier(workflow.name);
   const summary = workflow.library?.summary || workflow.description || 'Description not yet provided.';
   const status = workflow.library?.visibility_status ?? 'draft';
   const reviewCount = workflow.library?.human_reviews.count ?? 0;
   const outputs = workflow.library?.outputs ?? [];
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [menuOpen]);
 
   return (
     <article
       className={`library-card ${selected ? 'is-selected' : ''}`}
       aria-current={selected ? 'true' : undefined}
     >
-      <button
-        type="button"
-        className="library-card-favorite"
-        aria-pressed={favorite}
-        aria-label={favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`}
-        onClick={event => { event.stopPropagation(); onToggleFavorite(); }}
-      >
-        <Icon name={favorite ? 'star-filled' : 'star'} size={16} />
-      </button>
+      <div className="library-card-corner-actions">
+        <button
+          type="button"
+          className="library-card-favorite"
+          aria-pressed={favorite}
+          aria-label={favorite ? `Remove ${title} from favorites` : `Add ${title} to favorites`}
+          onClick={event => { event.stopPropagation(); onToggleFavorite(); }}
+        >
+          <Icon name={favorite ? 'star-filled' : 'star'} size={16} />
+        </button>
+        <div className="library-card-menu" ref={menuRef}>
+          <button
+            type="button"
+            className="library-card-favorite"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label={`More actions for ${title}`}
+            onClick={event => { event.stopPropagation(); setMenuOpen(value => !value); }}
+          >
+            <Icon name="more-vertical" size={16} />
+          </button>
+          {menuOpen && (
+            <div className="library-card-menu-popover" role="menu">
+              <button
+                type="button"
+                role="menuitem"
+                className="library-card-menu-item is-destructive"
+                onClick={event => { event.stopPropagation(); setMenuOpen(false); onDelete(); }}
+              >
+                <Icon name="trash" size={14} /> Delete workflow
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       <button type="button" className="library-card-main" onClick={onSelect}>
         <h3 className="library-card-title" title={title}>{title}</h3>

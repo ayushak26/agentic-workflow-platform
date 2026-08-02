@@ -109,3 +109,34 @@ def test_restore_version_writes_back_and_preserves_history(store):
     current = [v for v in versions if v["current"]]
     assert len(current) == 1
     assert current[0]["version_id"] == v1
+
+
+def test_delete_workflow_removes_yaml_draft_and_versions(store):
+    store.save_workflow("wf", SAMPLE_YAML_V1)
+    store.save_workflow("wf", SAMPLE_YAML_V2)
+    store.save_draft("wf", SAMPLE_YAML_V2, canvas={"viewport": {"x": 0}})
+    assert store.workflow_path("wf").exists()
+    assert store.versions_dir("wf").exists()
+    assert store.read_draft("wf") is not None
+
+    deleted = store.delete_workflow("wf")
+
+    assert deleted is True
+    assert not store.workflow_path("wf").exists()
+    assert not store.versions_dir("wf").exists()
+    assert store.read_draft("wf") is None
+
+
+def test_delete_workflow_returns_false_when_nothing_to_delete(store):
+    assert store.delete_workflow("never_existed") is False
+
+
+def test_delete_workflow_is_scoped_to_the_named_workflow_only(store):
+    store.save_workflow("wf_a", SAMPLE_YAML_V1)
+    store.save_workflow("wf_b", SAMPLE_YAML_V1)
+
+    store.delete_workflow("wf_a")
+
+    assert not store.workflow_path("wf_a").exists()
+    assert store.workflow_path("wf_b").exists()
+    assert store.versions_dir("wf_b").exists()

@@ -230,6 +230,11 @@ export const api = {
   getWorkflowStats: (name: string) =>
     afetch(`${API}/workflows/${name}/stats`, { headers: authHeaders() })
       .then(j<WorkflowStats>),
+  deleteWorkflow: (name: string) =>
+    afetch(`${API}/workflows/${name}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then(j<{ name: string; deleted: boolean }>),
   saveWorkflow: (name: string, yaml: string) =>
     afetch(`${API}/workflows/save`, {
       method: 'POST',

@@ -7,6 +7,7 @@ import { Spinner } from '../../components/Spinner';
 import { GenerateWorkflowDialog } from './GenerateWorkflowDialog';
 import { CategoryNav, type LibraryNavSelection } from './library/CategoryNav';
 import { categoriesForWorkflow, type LibraryCategoryId } from './library/categories';
+import { ConfirmDeleteDialog } from './library/ConfirmDeleteDialog';
 import {
   emptyFilterState,
   matchesFilters,
@@ -16,7 +17,7 @@ import {
   type LibrarySortKey,
 } from './library/filters';
 import { ImportWorkflowDialog } from './library/ImportWorkflowDialog';
-import { getFavorites, getRecentlyOpened, recordOpened, toggleFavorite } from './library/localState';
+import { forgetWorkflow, getFavorites, getRecentlyOpened, recordOpened, toggleFavorite } from './library/localState';
 import { PrepareAndRunPanel } from './library/PrepareAndRunPanel';
 import { WorkflowCard } from './library/WorkflowCard';
 import { LibraryToolbar, type LibraryViewMode } from './library/LibraryToolbar';
@@ -39,6 +40,7 @@ export function Library() {
 
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [prepareRunTarget, setPrepareRunTarget] = useState<WorkflowSummary | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<WorkflowSummary | null>(null);
   const [favorites, setFavorites] = useState<Set<string>>(() => getFavorites());
   const [recentlyOpened, setRecentlyOpened] = useState<string[]>(() => getRecentlyOpened());
 
@@ -107,6 +109,19 @@ export function Library() {
 
   function toggleFavoriteFor(name: string) {
     setFavorites(toggleFavorite(name));
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const { name } = deleteTarget;
+    await api.deleteWorkflow(name);
+    forgetWorkflow(name);
+    setWorkflows(current => (current ?? []).filter(workflow => workflow.name !== name));
+    setFavorites(getFavorites());
+    setRecentlyOpened(getRecentlyOpened());
+    if (selectedName === name) setSelectedName(null);
+    if (prepareRunTarget?.name === name) setPrepareRunTarget(null);
+    setDeleteTarget(null);
   }
 
   const selectedWorkflow = selectedName
@@ -191,6 +206,7 @@ export function Library() {
                     onToggleFavorite={() => toggleFavoriteFor(lastOpened.name)}
                     onOpenBuilder={() => navigate(`/builder/${lastOpened.name}`)}
                     onPrepareRun={() => setPrepareRunTarget(lastOpened)}
+                    onDelete={() => setDeleteTarget(lastOpened)}
                   />
                 </div>
               )}
@@ -208,6 +224,7 @@ export function Library() {
                         onToggleFavorite={() => toggleFavoriteFor(workflow.name)}
                         onOpenBuilder={() => navigate(`/builder/${workflow.name}`)}
                         onPrepareRun={() => setPrepareRunTarget(workflow)}
+                        onDelete={() => setDeleteTarget(workflow)}
                       />
                     ))}
                   </div>
@@ -227,6 +244,7 @@ export function Library() {
                         onToggleFavorite={() => toggleFavoriteFor(workflow.name)}
                         onOpenBuilder={() => navigate(`/builder/${workflow.name}`)}
                         onPrepareRun={() => setPrepareRunTarget(workflow)}
+                        onDelete={() => setDeleteTarget(workflow)}
                       />
                     ))}
                   </div>
@@ -267,6 +285,7 @@ export function Library() {
                     onToggleFavorite={() => toggleFavoriteFor(workflow.name)}
                     onOpenBuilder={() => navigate(`/builder/${workflow.name}`)}
                     onPrepareRun={() => setPrepareRunTarget(workflow)}
+                    onDelete={() => setDeleteTarget(workflow)}
                   />
                 ))}
               </div>
@@ -280,6 +299,7 @@ export function Library() {
             onClose={() => setSelectedName(null)}
             onOpenBuilder={() => navigate(`/builder/${selectedWorkflow.name}`)}
             onPrepareRun={() => setPrepareRunTarget(selectedWorkflow)}
+            onDelete={() => setDeleteTarget(selectedWorkflow)}
           />
         )}
       </div>
@@ -288,6 +308,14 @@ export function Library() {
         <PrepareAndRunPanel
           workflow={prepareRunTarget}
           onClose={() => setPrepareRunTarget(null)}
+        />
+      )}
+
+      {deleteTarget && (
+        <ConfirmDeleteDialog
+          workflow={deleteTarget}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={confirmDelete}
         />
       )}
 

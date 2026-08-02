@@ -19,6 +19,7 @@ from app.runtime.autofix import (
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
+from app.runtime.pipeline_loader import PIPELINES_DIR, load_pipeline_from_string
 from app.runtime.preflight import (
     DuplicateYamlKeyError,
     PreflightCheck,
@@ -675,6 +676,55 @@ def save_workflow(req: SaveWorkflowRequest):
     # autosave draft for this workflow.
     version_id = BUILDER_STORE.save_workflow(req.name, req.yaml)
     return {"ok": True, "name": req.name, "version_id": version_id}
+
+
+def _pipelines_referencing_workflow(name: str) -> list[str]:
+    """Names of every pipeline whose stages reference this workflow. Deleting
+    a workflow out from under a pipeline would silently break that pipeline
+    the next time it's launched or advanced, so the delete route blocks on
+    this rather than leaving a dangling reference."""
+    referencing: list[str] = []
+    if not PIPELINES_DIR.exists():
+        return referencing
+    for path in sorted(PIPELINES_DIR.glob("*.yaml")):
+        try:
+            pipeline = load_pipeline_from_string(path.read_text())
+        except Exception:
+            # An unrelated broken pipeline file must not block deleting a
+            # perfectly good workflow — surfacing that belongs to whatever
+            # would actually try to load/run the broken pipeline.
+            continue
+        if any(stage.workflow == name for stage in pipeline.stages):
+            referencing.append(pipeline.name)
+    return referencing
+
+
+@router.delete("/workflows/{name}")
+def delete_workflow(
+    name: str,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Permanently removes a workflow's YAML together with its autosave
+    draft and full version history — there is no undo. Blocked (409) while
+    any pipeline still references this workflow by name."""
+    safe_name = _builder_name(name)
+    if not BUILDER_STORE.workflow_path(safe_name).exists():
+        raise HTTPException(status_code=404, detail=f"workflow '{name}' not found")
+
+    referencing = _pipelines_referencing_workflow(safe_name)
+    if referencing:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{name}' is used by pipeline(s): {', '.join(referencing)}. "
+                "Remove it from those pipelines before deleting it."
+            ),
+        )
+
+    deleted = BUILDER_STORE.delete_workflow(safe_name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"workflow '{name}' not found")
+    return {"name": safe_name, "deleted": True}
 
 
 class SaveDraftRequest(BaseModel):

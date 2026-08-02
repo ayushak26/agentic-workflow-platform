@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import shutil
 from typing import Any
 import uuid
 
@@ -194,3 +195,19 @@ class WorkflowBuilderStore:
         yaml_text = self.get_version(name, version_id)
         restored_version_id = self.save_workflow(name, yaml_text)
         return yaml_text, restored_version_id
+
+    def delete_workflow(self, name: str) -> bool:
+        """Remove the executable YAML together with every Builder-owned
+        trace of it — an autosave draft and the whole immutable version
+        history — so nothing orphaned lingers under ``.builder`` once the
+        workflow itself is gone. Returns False if there was nothing to
+        delete (the workflow didn't exist)."""
+        path = self.workflow_path(name)
+        existed = path.exists()
+        if existed:
+            path.unlink()
+        self.delete_draft(name)
+        versions_dir = self.versions_dir(name)
+        if versions_dir.exists():
+            shutil.rmtree(versions_dir)
+        return existed

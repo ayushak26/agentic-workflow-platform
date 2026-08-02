@@ -40,11 +40,13 @@ export function WorkflowDetailsPanel({
   onClose,
   onOpenBuilder,
   onPrepareRun,
+  onDelete,
 }: {
   workflow: WorkflowSummary;
   onClose: () => void;
   onOpenBuilder: () => void;
   onPrepareRun: () => void;
+  onDelete: () => void;
 }) {
   const [tab, setTab] = useState<DetailsTab>('overview');
   const [parsed, setParsed] = useState<YamlWorkflow | null>(null);
@@ -172,6 +174,9 @@ export function WorkflowDetailsPanel({
       </div>
 
       <div className="library-details-footer">
+        <button type="button" className="ui-button ui-button--danger" onClick={onDelete}>
+          <Icon name="trash" size={14} /> Delete
+        </button>
         <button type="button" className="ui-button ui-button--secondary" onClick={onOpenBuilder}>
           <Icon name="layout" size={14} /> Open in Builder
         </button>

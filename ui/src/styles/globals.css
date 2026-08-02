@@ -2210,11 +2210,17 @@ a {
   box-shadow: 0 0 0 1px var(--brand-teal-500);
 }
 
-.library-card-favorite {
+.library-card-corner-actions {
   position: absolute;
-  top: 10px;
-  right: 10px;
+  top: 8px;
+  right: 8px;
   z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.library-card-favorite {
   color: var(--text-muted);
   padding: 4px;
   border-radius: 999px;
@@ -2222,6 +2228,43 @@ a {
 
 .library-card-favorite[aria-pressed="true"] {
   color: var(--brand-teal-500);
+}
+
+.library-card-menu {
+  position: relative;
+}
+
+.library-card-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  min-width: 170px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-primary);
+  box-shadow: var(--shadow-panel);
+}
+
+.library-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+  color: var(--text-primary);
+  text-align: left;
+}
+
+.library-card-menu-item:hover {
+  background: var(--surface-secondary);
+}
+
+.library-card-menu-item.is-destructive {
+  color: var(--status-error);
 }
 
 .library-card-main {
@@ -2235,7 +2278,7 @@ a {
 
 .library-card-title {
   margin: 0;
-  padding-right: 24px;
+  padding-right: 48px;
   font-size: 14px;
   font-weight: 700;
   color: var(--brand-navy-950);
@@ -2791,10 +2834,11 @@ a {
   white-space: pre-wrap;
 }
 
-/* Prepare-and-run + Import dialogs */
+/* Prepare-and-run + Import + Delete-confirm dialogs */
 
 .prepare-run-panel,
-.import-workflow-dialog {
+.import-workflow-dialog,
+.confirm-delete-dialog {
   width: min(560px, 92vw);
   max-height: 90vh;
   overflow-y: auto;

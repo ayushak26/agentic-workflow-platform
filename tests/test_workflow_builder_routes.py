@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.api.workflows as workflows_module
+from app.security.dependencies import CurrentUser, require_consultant
+from app.security.rbac import Role
 from app.workflow.builder_store import WorkflowBuilderStore
 
 VALID_YAML = """
@@ -31,8 +33,14 @@ def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setattr(
         workflows_module, "BUILDER_STORE", WorkflowBuilderStore(tmp_path),
     )
+    # Same isolation for the pipeline-reference scan the delete route runs —
+    # point it at an empty scratch dir instead of the repo's real pipelines.
+    monkeypatch.setattr(workflows_module, "PIPELINES_DIR", tmp_path / "pipelines")
     scratch_app = FastAPI()
     scratch_app.include_router(workflows_module.router)
+    scratch_app.dependency_overrides[require_consultant] = lambda: CurrentUser(
+        "alice", Role.CONSULTANT, session_id="tenant-a",
+    )
     return TestClient(scratch_app)
 
 
@@ -125,3 +133,49 @@ def test_restore_unknown_version_is_404(client):
     client.post("/api/workflows/save", json={"name": "routetest", "yaml": VALID_YAML})
     res = client.post("/api/workflows/routetest/versions/does-not-exist/restore")
     assert res.status_code == 404
+
+
+def test_delete_workflow_removes_file_and_versions(client):
+    client.post("/api/workflows/save", json={"name": "routetest", "yaml": VALID_YAML})
+
+    res = client.delete("/api/workflows/routetest")
+    assert res.status_code == 200
+    assert res.json() == {"name": "routetest", "deleted": True}
+
+    assert not workflows_module.BUILDER_STORE.workflow_path("routetest").exists()
+    assert client.get("/api/workflows/routetest/versions").json() == []
+
+
+def test_delete_unknown_workflow_is_404(client):
+    res = client.delete("/api/workflows/does-not-exist")
+    assert res.status_code == 404
+
+
+def test_delete_workflow_requires_auth(client):
+    client.post("/api/workflows/save", json={"name": "routetest", "yaml": VALID_YAML})
+    client.app.dependency_overrides.pop(require_consultant, None)
+
+    res = client.delete("/api/workflows/routetest")
+    assert res.status_code in {401, 403}
+
+
+def test_delete_workflow_blocked_when_referenced_by_a_pipeline(client, monkeypatch):
+    client.post("/api/workflows/save", json={"name": "routetest", "yaml": VALID_YAML})
+    pipelines_dir = workflows_module.PIPELINES_DIR
+    pipelines_dir.mkdir(parents=True, exist_ok=True)
+    (pipelines_dir / "demo.pipeline.yaml").write_text(
+        """
+name: Demo Pipeline
+version: '1.0'
+stages:
+  - id: stage_1
+    workflow: routetest
+"""
+    )
+
+    res = client.delete("/api/workflows/routetest")
+    assert res.status_code == 409
+    assert "Demo Pipeline" in res.json()["detail"]
+
+    # The workflow must still be intact — a blocked delete is not partial.
+    assert workflows_module.BUILDER_STORE.workflow_path("routetest").exists()

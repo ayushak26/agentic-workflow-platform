@@ -64,3 +64,12 @@ export function recordOpened(name: string): string[] {
 export function getLastOpened(): string | null {
   return getRecentlyOpened()[0] ?? null;
 }
+
+/** Strips a deleted workflow's name out of both favorites and recently-
+ * opened — otherwise it lingers as a dead entry (a favorite star with
+ * nothing to unstar, a "recently used" card pointing at nothing) until it
+ * ages out of the 10-slot recent list on its own. */
+export function forgetWorkflow(name: string): void {
+  writeJsonArray(FAVORITES_KEY, readJsonArray(FAVORITES_KEY).filter(item => item !== name));
+  writeJsonArray(RECENT_KEY, readJsonArray(RECENT_KEY).filter(item => item !== name));
+}

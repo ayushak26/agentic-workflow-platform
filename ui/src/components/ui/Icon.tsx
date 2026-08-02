@@ -27,7 +27,9 @@ export type IconName =
   | 'grid'
   | 'rows'
   | 'refresh'
-  | 'upload';
+  | 'upload'
+  | 'trash'
+  | 'more-vertical';
 
 function IconPath({ name }: { name: IconName }) {
   switch (name) {
@@ -191,6 +193,24 @@ function IconPath({ name }: { name: IconName }) {
           <path d="M12 16V5" />
           <polyline points="7.5,9.5 12,5 16.5,9.5" />
           <path d="M4.5 16v3a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-3" />
+        </>
+      );
+    case 'trash':
+      return (
+        <>
+          <path d="M4.5 7h15" />
+          <path d="M9.5 7V4.5h5V7" />
+          <path d="M6.5 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5L17.5 7" />
+          <path d="M10.2 11v6" />
+          <path d="M13.8 11v6" />
+        </>
+      );
+    case 'more-vertical':
+      return (
+        <>
+          <circle cx="12" cy="5.5" r="1.3" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="18.5" r="1.3" fill="currentColor" stroke="none" />
         </>
       );
     default:

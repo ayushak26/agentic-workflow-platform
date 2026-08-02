@@ -60,6 +60,20 @@ describe('library/localState', () => {
     expect(getLastOpened()).toBe('only-one');
   });
 
+  it('forgetWorkflow removes a name from both favorites and recently opened', async () => {
+    const { toggleFavorite, recordOpened, forgetWorkflow, isFavorite, getRecentlyOpened } = await import('./localState');
+    toggleFavorite('a');
+    toggleFavorite('b');
+    recordOpened('a');
+    recordOpened('b');
+
+    forgetWorkflow('a');
+
+    expect(isFavorite('a')).toBe(false);
+    expect(isFavorite('b')).toBe(true);
+    expect(getRecentlyOpened()).toEqual(['b']);
+  });
+
   it('degrades to a no-op instead of throwing when localStorage is unavailable', async () => {
     vi.unstubAllGlobals();
     vi.stubGlobal('window', {
