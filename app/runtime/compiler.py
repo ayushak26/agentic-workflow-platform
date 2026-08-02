@@ -166,6 +166,9 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     node_type=type_name,
                     allowed_models=getattr(instance, "_allowed_models", None),
                     routing_policy=getattr(instance, "_model_routing", None),
+                    entity_tokenizer=services.get("entity_tokenizer"),
+                    collection_id=state.get("collection_id", "default"),
+                    processing_mode=services.get("entity_protection_mode"),
                 ),
             }
         else:

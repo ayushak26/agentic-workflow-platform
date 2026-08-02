@@ -245,11 +245,18 @@ export function useCockpitRun() {
     };
   }, [finished, runId, runTriggered, navState.attach]);
 
-  // Attach mode never gets a run/resume HTTP response of its own to read a
-  // terminal status off (see applyResumeResult) — it has to notice the run
-  // finished via the same runDetail poll that drives the Variables panel.
+  // A fresh POST /workflows/run now returns {status: 'running'} almost
+  // immediately — execution happens in a detached background task so a
+  // dropped/slow HTTP connection can't cancel a multi-minute run mid-call
+  // (see launch_background_run on the backend). So neither a fresh launch
+  // nor attach mode (reopening an existing run) gets a terminal status off
+  // the trigger response anymore (see applyResumeResult) — both notice the
+  // run finished via the same runDetail poll that drives the Variables
+  // panel. Resume/pipeline endpoints still resolve synchronously with a
+  // terminal result via applyResumeResult, which sets `finished` first and
+  // short-circuits this effect.
   useEffect(() => {
-    if (!navState.attach || finished) return;
+    if ((!runTriggered && !navState.attach) || finished) return;
     const result: Finished | null = (
       liveRun?.status === 'completed'
         ? {
@@ -275,17 +282,18 @@ export function useCockpitRun() {
     // not from a prop/state change this render already reflects.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setFinished(result);
-  }, [navState.attach, liveRun, finished]);
+  }, [runTriggered, navState.attach, liveRun, finished]);
 
-  // Attach mode's HITL gate isn't known from any live HTTP response either —
-  // reconstruct it from the durable checkpoint the same way a fresh page
-  // load must (see GET .../pending-gate). A "user_requested" pause has no
-  // gate to review — Run History's own pause/resume buttons already cover
-  // that case — so this only ever populates `gate` for a real HITL node.
+  // Neither a fresh launch nor attach mode gets a HITL gate off a live HTTP
+  // response anymore (see the effect above) — reconstruct it from the
+  // durable checkpoint the same way a fresh page load must (see GET
+  // .../pending-gate). A "user_requested" pause has no gate to review — Run
+  // History's own pause/resume buttons already cover that case — so this
+  // only ever populates `gate` for a real HITL node.
   const [gateFetchError, setGateFetchError] = useState<string | null>(null);
   const [gateRetryToken, setGateRetryToken] = useState(0);
   useEffect(() => {
-    if (!navState.attach || !runId || finished || gate) return;
+    if ((!runTriggered && !navState.attach) || !runId || finished || gate) return;
     if (liveRun?.status !== 'paused' || liveRun.pause_kind === 'user_requested') return;
     let cancelled = false;
     api.pendingGate(runId)
@@ -307,7 +315,7 @@ export function useCockpitRun() {
         if (!cancelled) setGateFetchError(String(e.message ?? e));
       });
     return () => { cancelled = true; };
-  }, [navState.attach, runId, finished, gate, liveRun?.status, liveRun?.pause_kind, gateRetryToken]);
+  }, [runTriggered, navState.attach, runId, finished, gate, liveRun?.status, liveRun?.pause_kind, gateRetryToken]);
 
   // Derive node colors from SSE events (best-effort animation).
   const cockpit = useMemo(() => {

@@ -274,9 +274,24 @@ class WorkflowSpec(BaseModel):
     entry: str | None = None
     exit: str | list[str] | None = None
     output: WorkflowOutputSpec | None = None
+    # Confidential entity protection (Phase 1) — None means "use the
+    # platform default" (settings.entity_protection_default_mode, resolved
+    # in app/runtime/executor.py's run_workflow). An explicit value here
+    # overrides that default for this workflow only.
+    data_protection_mode: str | None = None
 
     @model_validator(mode="after")
     def validate_graph_references(self) -> "WorkflowSpec":
+        if self.data_protection_mode is not None:
+            from app.security.entity_tokenizer import ProcessingMode
+
+            valid_modes = {mode.value for mode in ProcessingMode}
+            if self.data_protection_mode not in valid_modes:
+                raise ValueError(
+                    f"data_protection_mode must be one of {sorted(valid_modes)}, "
+                    f"got {self.data_protection_mode!r}"
+                )
+
         node_ids = [node.id for node in self.nodes]
         if not node_ids:
             raise ValueError("workflow must contain at least one node")

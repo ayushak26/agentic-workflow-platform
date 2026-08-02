@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings>=2.3.0",
     "structlog>=24.2.0",
     "python-jose[cryptography]>=3.3.0",
+    "cryptography>=42.0.0",
     "passlib[bcrypt]>=1.7.4",
     "python-multipart>=0.0.9",
     "motor>=3.4.0",
@@ -45,6 +46,8 @@ dependencies = [
     "boto3",
     "markdown-it-py",
     "paper-qa>=2026.3.18",
+    "spacy>=3.8,<3.9",
+    "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
 ]
 
 [project.optional-dependencies]

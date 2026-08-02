@@ -11,6 +11,7 @@ reconciliation exactly one place to hook in rather than three.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Awaitable
 
@@ -94,7 +95,7 @@ async def record_run_failure(
     *,
     run_id: str,
     session: str,
-    error: Exception | str,
+    error: BaseException | str,
 ) -> dict[str, Any]:
     """Persist an exception raised while executing/resuming a run.
 
@@ -186,6 +187,14 @@ async def run_and_finalize(
     """
     try:
         result = await coro
+    except asyncio.CancelledError as e:
+        # Only reaches here when something cancels the task actually running
+        # the workflow (e.g. process shutdown) — a dropped HTTP request no
+        # longer does this, since launch_background_run() detaches execution
+        # from the request task. Still record it rather than leaving the run
+        # stuck "running" forever, then let the cancellation keep propagating.
+        await record_run_failure(db, run_id=run_id, session=session, error=e)
+        raise
     except Exception as e:
         return await record_run_failure(db, run_id=run_id, session=session, error=e)
     return await finalize_run_result(
@@ -195,6 +204,50 @@ async def run_and_finalize(
         session=session,
         record_rejection_reason=record_rejection_reason,
     )
+
+
+_BACKGROUND_RUN_TASKS: set[asyncio.Task] = set()
+
+
+def launch_background_run(
+    coro: Awaitable[dict[str, Any]],
+    *,
+    db: Any,
+    run_id: str,
+    session: str,
+    record_rejection_reason: bool = False,
+) -> None:
+    """Run ``coro`` to completion detached from the request that triggered it.
+
+    A workflow run can take minutes; holding the HTTP request open for that
+    long means any idle-connection timeout upstream (reverse proxy, browser,
+    NAT) cancels the request task and, with it, whatever call the workflow
+    was in the middle of — this is what produced a recurring
+    ``asyncio.CancelledError`` inside the OpenAI client mid-run. Detaching
+    execution into its own task means a dropped request no longer touches
+    it; Run History (``start_new_run_record``) and the SSE event bus are how
+    callers observe progress and the terminal result instead.
+    """
+    task = asyncio.create_task(
+        run_and_finalize(
+            coro,
+            db=db,
+            run_id=run_id,
+            session=session,
+            record_rejection_reason=record_rejection_reason,
+        )
+    )
+    _BACKGROUND_RUN_TASKS.add(task)
+
+    def _on_done(t: asyncio.Task) -> None:
+        _BACKGROUND_RUN_TASKS.discard(t)
+        if t.cancelled():
+            return
+        exc = t.exception()
+        if exc is not None:
+            log.error("background_run.task_failed", run_id=run_id, error=str(exc))
+
+    task.add_done_callback(_on_done)
 
 
 async def _reconcile_pipeline_stage(db: Any, run_id: str, session: str) -> None:

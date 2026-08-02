@@ -1,4 +1,14 @@
-"""Tenant-scoped Redis semantic cache for deterministic text completions."""
+"""Tenant-scoped Redis semantic cache for deterministic text completions.
+
+Invariant: this module must only ever be reached with already-tokenized
+`system`/`user` text (confidential entities already replaced with
+placeholders). Enforcement lives in RegistryLLMGateway's public complete()
+wrapper (app/llm/registry.py), which brackets the ENTIRE method body of the
+renamed _complete_impl — including this cache's get()/put() calls and the
+embedder call inside get() — not just the underlying provider call. A future
+refactor that lets raw text reach get()/put() directly (e.g. calling this
+cache from a new code path) would reopen the leak this design closes.
+"""
 from __future__ import annotations
 
 import hashlib

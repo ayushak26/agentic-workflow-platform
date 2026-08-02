@@ -14,6 +14,7 @@ import time as _time
 import uuid
 from typing import Any
 
+from app.config import settings
 from app.observability import metrics
 
 from . import sleep_guard
@@ -89,6 +90,13 @@ async def run_workflow(
     run_services["retry_source_run_id"] = retry_source_run_id
     run_services["hitl_resume_decisions"] = hitl_resume_decisions or {}
     run_services["resume_replay"] = resume_replay
+    # Confidential entity protection (Phase 1) — resolved once per run so
+    # every node's llm.with_context() clone (app/runtime/compiler.py) sees
+    # the same mode. An explicit per-workflow override wins over the
+    # platform-wide default.
+    run_services["entity_protection_mode"] = (
+        spec.data_protection_mode or settings.entity_protection_default_mode
+    )
     graph = compile_workflow(
         spec,
         checkpointer=run_services.get("langgraph_checkpointer"),

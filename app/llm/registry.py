@@ -47,6 +47,7 @@ from app.llm.openai_registry import (
 from app.llm.errors import LLMProviderUnavailableError, StructuredOutputError
 from app.observability import metrics
 from app.runtime.events import RunEvent
+from app.security.entity_tokenizer import ProcessingMode
 
 log = structlog.get_logger(__name__)
 
@@ -549,6 +550,13 @@ class RegistryLLMGateway(LLMGateway):
         self._routing_policy: dict[str, Any] | None = None
         self._semantic_cache = None
         self._use_cache: bool = False
+        # Confidential entity protection (Phase 1) — bound per node by the
+        # compiler, same as event_bus/node_type above. None = no tokenizer
+        # bound (e.g. a raw RegistryLLMGateway() built by a script/test) ->
+        # tokenization is skipped entirely, preserving prior behavior.
+        self._entity_tokenizer = None
+        self._collection_id: str = "default"
+        self._processing_mode: str | None = None
         # Shared by context-bound clones. Strict preflight populates this only
         # through provider model-metadata endpoints, never generation calls.
         self._model_access_cache: dict[
@@ -581,6 +589,9 @@ class RegistryLLMGateway(LLMGateway):
         routing_policy: dict[str, Any] | None = None,
         semantic_cache=None,
         use_cache: bool = False,
+        entity_tokenizer=None,
+        collection_id: str = "default",
+        processing_mode: str | None = None,
     ) -> "RegistryLLMGateway":
         """Return a context-bound copy for per-node cost tracking and routing.
 
@@ -603,10 +614,75 @@ class RegistryLLMGateway(LLMGateway):
         clone._routing_policy  = routing_policy
         clone._semantic_cache  = semantic_cache
         clone._use_cache       = use_cache
+        clone._entity_tokenizer = entity_tokenizer
+        clone._collection_id    = collection_id
+        clone._processing_mode  = processing_mode
         # Each bound clone accumulates its own selections independently.
         clone._selection_history = []
         clone._call_seq = 0
         return clone
+
+    # ---- Confidential entity protection (Phase 1) --------------------------
+    # Tokenization runs OUTSIDE _complete_impl/_complete_structured_impl/
+    # _chat_with_tools_impl — i.e. before the semantic cache is ever touched
+    # (SemanticLLMCache.get() calls an embedder on the raw `user` text before
+    # the provider call), and before any provider/network call. See the
+    # public complete()/complete_structured()/chat_with_tools() wrappers
+    # below the renamed *_impl methods.
+
+    async def _tokenize_text(self, text: str | None) -> str | None:
+        if text is None or self._entity_tokenizer is None or self._session_id is None:
+            return text
+        result = await self._entity_tokenizer.tokenize(
+            text,
+            session_id=self._session_id,
+            collection_id=self._collection_id,
+            mode=ProcessingMode(self._processing_mode or ProcessingMode.PSEUDONYMISED.value),
+        )
+        return result.text
+
+    async def _tokenize_value(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return await self._tokenize_text(value)
+        if isinstance(value, dict):
+            result: dict[str, Any] = {}
+            for key, item in value.items():
+                result[key] = await self._tokenize_value(item)
+            return result
+        if isinstance(value, list):
+            return [await self._tokenize_value(item) for item in value]
+        return value
+
+    async def _tokenize_messages(self, messages: list[dict]) -> list[dict]:
+        tokenized: list[dict] = []
+        for msg in messages:
+            new_msg = dict(msg)
+            content = new_msg.get("content")
+            if isinstance(content, str):
+                new_msg["content"] = await self._tokenize_text(content)
+            tool_calls = new_msg.get("tool_calls")
+            if isinstance(tool_calls, list):
+                new_tool_calls = []
+                for tc in tool_calls:
+                    new_tc = dict(tc)
+                    if isinstance(new_tc.get("arguments"), dict):
+                        new_tc["arguments"] = await self._tokenize_value(
+                            new_tc["arguments"]
+                        )
+                    new_tool_calls.append(new_tc)
+                new_msg["tool_calls"] = new_tool_calls
+            tokenized.append(new_msg)
+        return tokenized
+
+    async def _detokenize_value(self, value: Any) -> Any:
+        if self._entity_tokenizer is None or self._session_id is None:
+            return value
+        result = await self._entity_tokenizer.detokenize(
+            value,
+            session_id=self._session_id,
+            collection_id=self._collection_id,
+        )
+        return result.value
 
     def _cached_model_access(self, model: str) -> ModelAccessResult | None:
         cached = self._model_access_cache.get(model)
@@ -1006,6 +1082,20 @@ class RegistryLLMGateway(LLMGateway):
         raise last_error
 
     async def complete(self, *, model: str, **kwargs):
+        """Public entry point — tokenizes system/user, delegates to the
+        unchanged implementation, then detokenizes the response. Skipped
+        entirely (zero behavior change) when no entity_tokenizer/session_id
+        is bound — see with_context()."""
+        if self._entity_tokenizer is None or self._session_id is None:
+            return await self._complete_impl(model=model, **kwargs)
+        tokenized = dict(kwargs)
+        tokenized["system"] = await self._tokenize_text(kwargs.get("system", ""))
+        tokenized["user"] = await self._tokenize_text(kwargs.get("user", ""))
+        resp = await self._complete_impl(model=model, **tokenized)
+        detokenized_text = await self._detokenize_value(resp.text)
+        return resp.model_copy(update={"text": detokenized_text})
+
+    async def _complete_impl(self, *, model: str, **kwargs):
         # Fast path: no routing context bound (executor's plain calls, scripts,
         # and the existing test suite). Behaviour is exactly as before —
         # no selection, no events, no on_token injection.
@@ -1115,6 +1205,21 @@ class RegistryLLMGateway(LLMGateway):
         return resp
 
     async def complete_structured(self, *, model: str, **kwargs):
+        """Public entry point — tokenizes system/user, delegates, then
+        detokenizes every string field of the parsed structured result by
+        walking its model_dump() and re-validating. Skipped entirely when no
+        entity_tokenizer/session_id is bound."""
+        if self._entity_tokenizer is None or self._session_id is None:
+            return await self._complete_structured_impl(model=model, **kwargs)
+        tokenized = dict(kwargs)
+        tokenized["system"] = await self._tokenize_text(kwargs.get("system", ""))
+        tokenized["user"] = await self._tokenize_text(kwargs.get("user", ""))
+        parsed = await self._complete_structured_impl(model=model, **tokenized)
+        response_model = type(parsed)
+        walked = await self._detokenize_value(parsed.model_dump())
+        return response_model.model_validate(walked)
+
+    async def _complete_structured_impl(self, *, model: str, **kwargs):
         if self._event_bus is None and self._allowed_models is None:
             resp, resolved = await self._call_resilient(
                 "complete_structured",
@@ -1166,6 +1271,35 @@ class RegistryLLMGateway(LLMGateway):
         return resp.parsed
 
     async def chat_with_tools(self, *, model: str, **kwargs):
+        """Public entry point — tokenizes system + every message's content/
+        tool_calls[].arguments, delegates, then detokenizes text/
+        reasoning_content/tool_calls[].arguments on the response. Skipped
+        entirely when no entity_tokenizer/session_id is bound."""
+        if self._entity_tokenizer is None or self._session_id is None:
+            return await self._chat_with_tools_impl(model=model, **kwargs)
+        tokenized = dict(kwargs)
+        tokenized["system"] = await self._tokenize_text(kwargs.get("system", ""))
+        tokenized["messages"] = await self._tokenize_messages(
+            kwargs.get("messages", [])
+        )
+        resp = await self._chat_with_tools_impl(model=model, **tokenized)
+        detokenized_text = await self._detokenize_value(resp.text)
+        detokenized_reasoning = await self._detokenize_value(resp.reasoning_content)
+        detokenized_tool_calls = []
+        for tool_call in resp.tool_calls:
+            detokenized_args = await self._detokenize_value(tool_call.arguments)
+            detokenized_tool_calls.append(
+                tool_call.model_copy(update={"arguments": detokenized_args})
+            )
+        return resp.model_copy(
+            update={
+                "text": detokenized_text,
+                "reasoning_content": detokenized_reasoning,
+                "tool_calls": detokenized_tool_calls,
+            }
+        )
+
+    async def _chat_with_tools_impl(self, *, model: str, **kwargs):
         if self._event_bus is None and self._allowed_models is None:
             resp, resolved = await self._call_resilient(
                 "chat_with_tools",

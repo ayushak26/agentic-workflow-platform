@@ -36,6 +36,8 @@ from app.workflow.pipeline_history import ensure_pipeline_indexes
 from app.workflow.claim_verifications import ensure_indexes as ensure_claim_verification_indexes
 from app.workflow.run_chat_store import ensure_run_chat_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
+from app.security.entity_tokenizer import EntityTokenizerService
+from app.security.entity_protection_errors import VaultKeyMisconfiguredError
 
 from app.api import health
 from app.api.auth import router as auth_router
@@ -54,6 +56,7 @@ from app.api import candidates as candidates_api
 from app.api import run_chat as run_chat_api
 from app.api import node_types_chat as node_types_chat_api
 from app.api import workflow_generation as workflow_generation_api
+from app.api import entity_registry as entity_registry_api
 
 from app.db.mongo import DB_NAME
 
@@ -98,6 +101,36 @@ async def lifespan(app: FastAPI):
             logger.info("run_history.indexes_ensured")
         except Exception as exc:
             logger.warning("run_history.indexes_failed", error=str(exc))
+
+        # Confidential entity protection (Phase 1) — always constructed when
+        # Mongo is up, since pseudonymised mode is the default for every run.
+        # Not a hard boot-time crash on a missing/placeholder vault key (that
+        # would break pytest/dev environments that never configure it) — the
+        # key is validated lazily the moment a real workflow actually
+        # tokenizes something (see app/security/entity_vault.py). This is
+        # only an eager, loud warning so a real deployment notices before
+        # its first run fails.
+        services["entity_tokenizer"] = EntityTokenizerService(services["audit_db"])
+        try:
+            await services["entity_tokenizer"].ensure_indexes()
+            logger.info("entity_tokenizer.ready")
+        except Exception as exc:
+            logger.warning("entity_tokenizer.indexes_failed", error=str(exc))
+        try:
+            if settings.entity_protection_default_mode != "public":
+                from app.security.entity_vault import _load_kek
+
+                _load_kek()
+        except VaultKeyMisconfiguredError as exc:
+            logger.error(
+                "entity_tokenizer.vault_key_misconfigured",
+                error=str(exc),
+                hint=(
+                    "every workflow run will fail closed until "
+                    "ENTITY_VAULT_MASTER_KEY is set to a unique 32+ byte "
+                    "secret distinct from SECRET_KEY"
+                ),
+            )
 
         services["db"] = db                 # raw pymongo Database for CostLedger
         services["cost_ledger"] = CostLedger(db)
@@ -393,3 +426,4 @@ app.include_router(candidates_api.router)
 app.include_router(run_chat_api.router)
 app.include_router(node_types_chat_api.router)
 app.include_router(workflow_generation_api.router)
+app.include_router(entity_registry_api.router)

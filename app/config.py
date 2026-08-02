@@ -166,6 +166,22 @@ class Settings(BaseSettings):
     guardrail_pii_mode: Literal["audit", "redact", "block"] = "audit"
     guardrail_max_text_chars: int = Field(default=2_000_000, ge=1_000, le=10_000_000)
 
+    # Confidential Entity Protection / pre-LLM pseudonymisation (Phase 1).
+    # "pseudonymised" (the default) replaces registered/detected entities with
+    # stable placeholders before any external LLM call; "public" is a no-op
+    # passthrough; "restricted_local" is not implemented yet (falls back to
+    # pseudonymised — see app/security/entity_tokenizer.py).
+    entity_protection_default_mode: Literal[
+        "public", "pseudonymised", "restricted_local"
+    ] = "pseudonymised"
+    entity_mapping_ttl_seconds: int = Field(default=30 * 86_400, ge=3_600)
+    # Root key (envelope-encryption KEK) for the entity mapping vault.
+    # Deliberately separate from secret_key (JWT signing) — a leaked JWT
+    # secret must not also decrypt every protected entity ever tokenized.
+    # Required (checked lazily on first real use, see entity_vault.py) once
+    # entity_protection_default_mode != "public".
+    entity_vault_master_key: str = ""
+
     # Redis-backed fixed-window rate limits across Uvicorn workers.
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = Field(default=60, ge=1, le=10_000)

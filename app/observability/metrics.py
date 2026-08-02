@@ -126,6 +126,15 @@ GUARDRAIL_EVENTS = Counter(
     labelnames=("direction", "outcome"),
 )
 
+# ── Confidential entity protection (Phase 1) ────────────────────────────────
+
+ENTITY_TOKENIZER_EVENTS = Counter(
+    "awp_entity_tokenizer_events_total",
+    "Entity-tokenization response validation events, by outcome.",
+    # outcome: unresolved_placeholder | response_leak_detected  (bounded set)
+    labelnames=("outcome",),
+)
+
 # ── LLM semantic cache ───────────────────────────────────────────────────────
 
 LLM_CACHE = Counter(
