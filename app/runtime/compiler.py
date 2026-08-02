@@ -388,6 +388,30 @@ def _wire_edges(
     all of them on 'approve'/'edit' and END on 'reject'. Registering per-edge
     would call add_conditional_edges twice for the same node -> LangGraph raises
     "Branch with name '_hitl_router' already exists".
+
+    Mixed fan-in (a target reached by more than one "arrival group" — a
+    HITL router's dispatch, a plain-edge router's (condition+branches)
+    branch, or the combined plain-edge group) needs special handling — see
+    the join-gate logic below. Verified empirically (not just read from
+    docs) against langgraph 1.2.9: a target with two SEPARATE incoming
+    registrations races (fires as soon as ANY one of them arrives), not an
+    AND-join, EXCEPT when the predecessors are true siblings scheduled in
+    the same tick. The moment ANY branch feeding a shared target passes
+    through a genuine interrupt() (a HumanInLoopAgent pause + later
+    out-of-band resume) — even indirectly, through an ordinary router node
+    downstream of the paused branch — a faster sibling branch reaches the
+    shared target and fires it BEFORE the paused branch ever resumes; its
+    template references to the not-yet-run branch's node then fail
+    (KeyError: Template path not resolvable / a Pydantic error on whatever
+    got substituted). Confirmed for both the direct HITL case and the
+    HITL-behind-a-router case with a minimal raw-LangGraph reproduction
+    before writing this fix. LangGraph only genuinely waits for every
+    predecessor when they're passed together as a list in ONE
+    add_edge([...], target) call — true for plain-only fan-in already (see
+    step 6), and now made true for HITL- and router-involving fan-in too,
+    via a synthetic pass-through "join gate" node that a conditional
+    dispatch (HITL or router) targets instead of the shared node directly,
+    combined into that one list.
     """
     sources: set[str] = set()
 
@@ -398,11 +422,66 @@ def _wire_edges(
             tgts = edge.to if isinstance(edge.to, list) else [edge.to]
             hitl_targets.setdefault(edge.from_, []).extend(tgts)
 
-    # 2. Register exactly one conditional router per HITL node.
+    # 2. Collect router (condition+branches) edges separately — each one is
+    # its own conditional-dispatch arrival group, distinct per source node.
+    router_edges = [e for e in edges if e.condition and e.branches]
+
+    # 3. Collect plain edges. Must happen before step 4, which needs to know
+    # which conditional targets also have other (non-conditional)
+    # predecessors before deciding whether they need a join gate.
+    plain_targets: dict[str, list[str]] = {}
+    for edge in edges:
+        sources.add(edge.from_)
+        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
+            continue  # HITL nodes wired separately (step 5)
+        if edge.condition and edge.branches:
+            continue  # routers wired separately (step 6)
+        targets = edge.to if isinstance(edge.to, list) else ([edge.to] if edge.to else [])
+        for target in targets:
+            plain_targets.setdefault(target, []).append(edge.from_)
+
+    # A target reached by exactly one "arrival group" (one HITL router's
+    # dispatch, XOR one router branch, XOR the one combined plain-edge
+    # group) is unaffected by the race above and is wired directly, exactly
+    # as before. A target reached by MORE than one group is where the race
+    # lives — every conditional group feeding it gets redirected through a
+    # join gate (steps 5-6) so all groups can be combined into one
+    # add_edge([...], target) call (step 7).
+    target_group_counts: dict[str, int] = {}
+    for hitl_id, targets in hitl_targets.items():
+        for target in dict.fromkeys(targets):
+            target_group_counts[target] = target_group_counts.get(target, 0) + 1
+    for edge in router_edges:
+        for target in dict.fromkeys(edge.branches.values()):
+            target_group_counts[target] = target_group_counts.get(target, 0) + 1
+    for target in plain_targets:
+        target_group_counts[target] = target_group_counts.get(target, 0) + 1
+
+    join_gates_by_target: dict[str, list[str]] = {}
+
+    def _register_join_gate(gate_id: str, target: str) -> None:
+        if gate_id in join_gates_by_target.get(target, []):
+            return  # already registered (e.g. two branches of one router share a target)
+
+        async def _join_gate(state: dict) -> dict:
+            return {}
+
+        graph.add_node(gate_id, _join_gate)
+        join_gates_by_target.setdefault(target, []).append(gate_id)
+
+    # 4. Register exactly one conditional router per HITL node.
     for hitl_id, targets in hitl_targets.items():
         uniq = list(dict.fromkeys(targets))  # dedup, preserve order
+        dispatch_targets: list[str] = []
+        for target in uniq:
+            if target_group_counts.get(target, 1) > 1:
+                gate_id = f"__hitl_join__{hitl_id}__{target}"
+                _register_join_gate(gate_id, target)
+                dispatch_targets.append(gate_id)
+            else:
+                dispatch_targets.append(target)
 
-        def _hitl_router(state: dict, _targets=uniq, _hid=hitl_id):
+        def _hitl_router(state: dict, _targets=dispatch_targets, _hid=hitl_id):
             decision = (
                 state.get("node_outputs", {})
                 .get(_hid, {})
@@ -413,46 +492,45 @@ def _wire_edges(
             # approve / edit -> proceed to ALL fan-out targets in parallel
             return _targets
 
-        graph.add_conditional_edges(hitl_id, _hitl_router, [*uniq, END])
+        graph.add_conditional_edges(hitl_id, _hitl_router, [*dispatch_targets, END])
 
-    # 3. Wire everything else (routers, plain edges, fan-outs).
-    #
-    # Plain edges into the SAME target are collected and wired with one
-    # add_edge(sources, target) call instead of one add_edge() per source.
-    # LangGraph only treats multiple predecessors as an AND-join (wait for
-    # ALL of them) when they're passed together as a list in a single call.
-    # N separate add_edge(source_i, target) calls instead each act as an
-    # independent OR-trigger, so a fan-in node with predecessors at unequal
-    # distances (e.g. one 1-hop upstream, another 4 hops upstream) fires as
-    # soon as the FIRST of them completes — with the rest of its inputs
-    # still missing — instead of waiting for the last one.
-    plain_targets: dict[str, list[str]] = {}
-    for edge in edges:
-        sources.add(edge.from_)
+    # 5. Wire routers (condition+branches), redirecting any branch whose
+    # target has other arrival groups through a join gate the same way.
+    for edge in router_edges:
+        branch_map: dict[str, str] = {}
+        for decision, target in edge.branches.items():
+            if target_group_counts.get(target, 1) > 1:
+                gate_id = f"__router_join__{edge.from_}__{target}"
+                _register_join_gate(gate_id, target)
+                branch_map[decision] = gate_id
+            else:
+                branch_map[decision] = target
 
-        # HITL nodes already fully wired above — skip their plain edges.
-        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
-            continue
+        def _router(state: dict, _edge=edge, _branch_map=branch_map) -> str:
+            decision = state["node_outputs"][_edge.from_].get("route")
+            if decision not in _edge.branches:
+                raise ValueError(
+                    f"Router {_edge.from_} returned unknown route {decision!r}; "
+                    f"expected one of {list(_edge.branches)}"
+                )
+            return _branch_map[decision]
 
-        if edge.condition and edge.branches:
-            def _router(state: dict, _edge=edge) -> str:
-                decision = state["node_outputs"][_edge.from_].get("route")
-                if decision not in _edge.branches:
-                    raise ValueError(
-                        f"Router {_edge.from_} returned unknown route {decision!r}; "
-                        f"expected one of {list(_edge.branches)}"
-                    )
-                return decision
-            graph.add_conditional_edges(edge.from_, _router, edge.branches)
-            continue
+        graph.add_conditional_edges(
+            edge.from_, _router, list(dict.fromkeys(branch_map.values()))
+        )
 
-        targets = edge.to if isinstance(edge.to, list) else ([edge.to] if edge.to else [])
-        for target in targets:
-            plain_targets.setdefault(target, []).append(edge.from_)
-
-    for target, srcs in plain_targets.items():
-        uniq_srcs = list(dict.fromkeys(srcs))  # dedup, preserve order
-        graph.add_edge(uniq_srcs if len(uniq_srcs) > 1 else uniq_srcs[0], target)
+    # 6. Plain edges (and any join gates from steps 4-5) into the SAME
+    # target are collected and wired with one add_edge(sources, target)
+    # call instead of one add_edge() per source — this is what makes
+    # LangGraph treat multiple predecessors as an AND-join (wait for ALL of
+    # them).
+    all_fan_in_targets = set(plain_targets) | set(join_gates_by_target)
+    for target in all_fan_in_targets:
+        combined = list(dict.fromkeys(plain_targets.get(target, [])))
+        for gate_id in join_gates_by_target.get(target, []):
+            if gate_id not in combined:
+                combined.append(gate_id)
+        graph.add_edge(combined if len(combined) > 1 else combined[0], target)
 
     return sources
 

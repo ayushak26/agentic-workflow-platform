@@ -63,7 +63,7 @@ nodes:
   - id: render_call_pdf
     type: HorizonHTMLProposalRenderer
     config:
-      content: '{{structure_call_text.parsed}}'
+      content: '{{structure_call_text.raw}}'
       content_format: markdown
       metadata:
         title: '{{inputs.document_title}}'

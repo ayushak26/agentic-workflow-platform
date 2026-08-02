@@ -61,3 +61,15 @@ class NodeType(ABC):
         be exact field names or dotted prefixes (e.g. "parsed.summary").
         Default: exactly the output_schema's declared field names."""
         return set(cls.output_schema.model_fields)
+
+    @classmethod
+    def preflight_static_output_values(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Output fields whose value preflight can already prove, without
+        running the node — e.g. TransformAgent's "parsed" is always {} when
+        its own config sets no output_schema. A bare template reference to
+        such a field can only ever substitute that one fixed value, never
+        real content, so preflight treats it as an authoring error rather
+        than a warning (see TEMPLATE_STATICALLY_EMPTY_FIELD in
+        app/runtime/preflight.py). Default: none — most node types have no
+        statically-known-empty fields."""
+        return {}

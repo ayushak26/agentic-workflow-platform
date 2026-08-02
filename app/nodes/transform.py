@@ -114,6 +114,16 @@ class TransformAgent(NodeType):
         declared = config.get("output_schema") or {}
         return {"raw", "parsed"} | {f"parsed.{key}" for key in declared}
 
+    @classmethod
+    def preflight_static_output_values(cls, config: dict[str, Any]) -> dict[str, Any]:
+        # run() (above) hardcodes "parsed": {} whenever output_schema is
+        # empty — see the `if not cfg.output_schema:` branch. A bare
+        # {{this_node.parsed}} reference is then guaranteed to substitute an
+        # empty object forever, regardless of what the LLM actually returns.
+        if not (config.get("output_schema") or {}):
+            return {"parsed": {}}
+        return {}
+
     async def run(
         self,
         state,

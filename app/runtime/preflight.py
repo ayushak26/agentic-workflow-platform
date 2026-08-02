@@ -533,6 +533,73 @@ def _reachable(start: str, graph: dict[str, set[str]]) -> set[str]:
     return seen
 
 
+def _topological_order(
+    reachable: set[str],
+    forward: dict[str, set[str]],
+    reverse: dict[str, set[str]],
+) -> list[str]:
+    """Kahn's-algorithm topological sort restricted to `reachable`. Nodes
+    that are part of a cycle are simply never enqueued (their in-degree
+    never reaches 0) and are omitted from the result — GRAPH_CYCLE already
+    flags cycles separately; _guaranteed_before below treats any node
+    missing from this order as "unknown, skip the check" rather than
+    guessing about execution order inside a cycle.
+    """
+    in_degree = {n: len(reverse.get(n, set()) & reachable) for n in reachable}
+    queue: deque[str] = deque(n for n in reachable if in_degree[n] == 0)
+    order: list[str] = []
+    seen: set[str] = set()
+    while queue:
+        node_id = queue.popleft()
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        order.append(node_id)
+        for succ in forward.get(node_id, set()) & reachable:
+            in_degree[succ] -= 1
+            if in_degree[succ] == 0:
+                queue.append(succ)
+    return order
+
+
+def _guaranteed_before(
+    entry: str,
+    forward: dict[str, set[str]],
+    reverse: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    """For each node reachable from entry, the set of nodes GUARANTEED to
+    have already run by the time it fires.
+
+    This is NOT classical CFG dominance (which takes the INTERSECTION of
+    predecessors' dominator sets at a merge point, assuming any one
+    alternative predecessor is enough to reach the merge point). This
+    engine's actual join semantics are the opposite: a node with multiple
+    declared predecessors is an AND-join — see app/runtime/compiler.py's
+    _wire_edges, which now (as of the mixed-fan-in HITL/router race fix)
+    guarantees ALL of a node's declared predecessors have completed before
+    it fires, regardless of whether they arrived via a plain edge, a HITL
+    dispatch, or a router branch. So the correct computation is the UNION
+    of every declared direct predecessor's own guaranteed-set, not an
+    intersection — a node reachable via exactly one router branch still has
+    that branch's source guaranteed (only one decision fires it, and that
+    decision requires the router to have run), while a node reachable via
+    TWO alternative router branches of the SAME router (an actual either/or)
+    only has the router itself guaranteed, not either branch-specific
+    ancestor -- which the union-of-direct-predecessors computation reflects
+    correctly on its own, since the router node itself is what's common to
+    every one of the (at most one, in practice) matching direct edges.
+    """
+    reachable = _reachable(entry, forward)
+    order = _topological_order(reachable, forward, reverse)
+    guaranteed: dict[str, set[str]] = {}
+    for node_id in order:
+        acc: set[str] = {node_id}
+        for pred in reverse.get(node_id, set()) & reachable:
+            acc |= guaranteed.get(pred, {pred})
+        guaranteed[node_id] = acc
+    return guaranteed
+
+
 def _has_cycle(graph: dict[str, set[str]]) -> bool:
     colors = {node_id: 0 for node_id in graph}
 
@@ -677,6 +744,115 @@ def _validate_router_edges(
                 )
 
 
+def _exclusive_branch_groups(
+    spec: WorkflowSpec, forward: dict[str, set[str]]
+) -> list[list[set[str]]]:
+    """For each router (condition+branches) edge with 2+ distinct targets,
+    the node sets exclusively reachable via each individual branch target
+    (i.e. reachable via THAT target but not via any OTHER target of the
+    SAME router). One entry per router edge; each entry is the list of that
+    router's per-branch exclusive sets. Used by _mutually_exclusive below
+    to detect a fan-in target whose declared predecessors can never all
+    fire together — see FANIN_UNREACHABLE_ANDJOIN.
+    """
+    per_router: list[list[set[str]]] = []
+    for edge in spec.edges:
+        if not (edge.condition and edge.branches):
+            continue
+        targets = list(dict.fromkeys(edge.branches.values()))
+        if len(targets) < 2:
+            continue
+        reach_by_target = {t: _reachable(t, forward) for t in targets}
+        exclusive_sets = []
+        for t in targets:
+            others: set[str] = set()
+            for t2 in targets:
+                if t2 != t:
+                    others |= reach_by_target[t2]
+            exclusive_sets.append(reach_by_target[t] - others)
+        per_router.append(exclusive_sets)
+    return per_router
+
+
+def _mutually_exclusive(
+    a: str, b: str, exclusive_groups: list[list[set[str]]]
+) -> bool:
+    """True if `a` and `b` are exclusively reachable via two DIFFERENT
+    branches of the SAME router — i.e. provably can never both execute in
+    the same run. Being merely "incomparable" (neither reaches the other)
+    is NOT sufficient on its own: two parallel branches of an ordinary
+    unconditional fan-out (`to: [a, b]`) are also incomparable but DO both
+    always run together — confirmed this is the common case in this
+    codebase's own shipped workflows (dozens of legitimate hits), so this
+    function deliberately requires tracing back to a shared conditional
+    (router) ancestor with differing branch membership, not just
+    reachability incomparability.
+    """
+    for exclusive_sets in exclusive_groups:
+        group_a = next((s for s in exclusive_sets if a in s), None)
+        group_b = next((s for s in exclusive_sets if b in s), None)
+        if group_a is not None and group_b is not None and group_a is not group_b:
+            return True
+    return False
+
+
+def _validate_fanin_reachability(
+    spec: WorkflowSpec,
+    report: WorkflowPreflightReport,
+    forward: dict[str, set[str]],
+) -> None:
+    """A plain-edge fan-in target (2+ declared predecessors combined into
+    one add_edge([...], target) AND-join — see app/runtime/compiler.py's
+    _wire_edges) can only ever fire if ALL of its predecessors actually run
+    in the same invocation. If two of them are provably mutually exclusive
+    branches of the same upstream router, that can never happen — the
+    target silently never fires (LangGraph doesn't error or hang; the
+    invocation just completes without ever running it or anything
+    downstream of it). Confirmed empirically against real langgraph 1.2.9
+    execution before writing this check, precisely because it doesn't
+    manifest as a "Template path not resolvable" KeyError at all -- the
+    referencing node just never gets a chance to run its template.
+    """
+    hitl_ids = {n.id for n in spec.nodes if n.type == "HumanInLoopAgent"}
+    plain_targets: dict[str, list[str]] = {}
+    for edge in spec.edges:
+        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
+            continue
+        if edge.condition and edge.branches:
+            continue
+        targets = edge.to if isinstance(edge.to, list) else ([edge.to] if edge.to else [])
+        for target in targets:
+            plain_targets.setdefault(target, []).append(edge.from_)
+
+    exclusive_groups = _exclusive_branch_groups(spec, forward)
+    if not exclusive_groups:
+        return  # no routers at all -> nothing can be mutually exclusive
+
+    for target, preds in plain_targets.items():
+        uniq = list(dict.fromkeys(preds))
+        if len(uniq) < 2:
+            continue
+        for i in range(len(uniq)):
+            for j in range(i + 1, len(uniq)):
+                a, b = uniq[i], uniq[j]
+                if _mutually_exclusive(a, b, exclusive_groups):
+                    _issue(
+                        report,
+                        "FANIN_UNREACHABLE_ANDJOIN",
+                        f"Node {target!r} requires BOTH {a!r} and {b!r} to "
+                        "complete (a plain-edge fan-in is an AND-join), but "
+                        "they are mutually exclusive branches of an "
+                        f"upstream router — {target!r} can never fire.",
+                        node_id=target,
+                        suggestion=(
+                            "Route both branches to the same node instead of "
+                            "separate ones that later reconverge via plain "
+                            "edges, or restructure so the router's own "
+                            "branches map directly to the shared target."
+                        ),
+                    )
+
+
 def _validate_graph(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
@@ -686,6 +862,7 @@ def _validate_graph(
     forward, reverse = _adjacency(spec)
     entry = spec.entry or spec.nodes[0].id
     reachable = _reachable(entry, forward)
+    _validate_fanin_reachability(spec, report, forward)
 
     for node_id in sorted(set(forward) - reachable):
         _issue(
@@ -781,6 +958,7 @@ def _validate_template_output_path(
     report: WorkflowPreflightReport,
     path: str,
     forward: dict[str, set[str]],
+    guaranteed: dict[str, set[str]],
 ) -> None:
     parts = reference.split(".")
     first = parts[0]
@@ -852,7 +1030,8 @@ def _validate_template_output_path(
         )
         return
 
-    if current_node.id not in _reachable(first, forward):
+    not_upstream = current_node.id not in _reachable(first, forward)
+    if not_upstream:
         _issue(
             report,
             "TEMPLATE_NOT_UPSTREAM",
@@ -862,6 +1041,34 @@ def _validate_template_output_path(
             node_id=current_node.id,
             suggestion="Add the required upstream edge or fix the template.",
         )
+    elif first not in guaranteed.get(current_node.id, set()):
+        # Reachable via SOME path, but not every path -- e.g. current_node is
+        # a merge point reachable both from this router branch and from a
+        # sibling branch that never runs `first` at all. If the OTHER branch
+        # is taken at runtime, `first` never executes and this reference
+        # fails with "Template path not resolvable" -- the exact error class
+        # this whole check exists to catch before any node runs. Silent if
+        # current_node isn't in `guaranteed` at all (inside a graph cycle;
+        # GRAPH_CYCLE already flags that separately and this check doesn't
+        # attempt to reason about execution order inside one).
+        if current_node.id in guaranteed:
+            _issue(
+                report,
+                "TEMPLATE_CONDITIONAL_UPSTREAM",
+                f"Template reads {first!r}, but {first!r} only executes on "
+                f"SOME paths that reach {current_node.id!r} (e.g. one branch "
+                "of a router), not every path. If a different branch is "
+                f"taken at runtime, {first!r} never runs and this reference "
+                "fails.",
+                path=path,
+                node_id=current_node.id,
+                suggestion=(
+                    "Reference a node common to every path instead (e.g. a "
+                    "shared ancestor before the branch point), or move this "
+                    "reference to a node only reachable via the same branch "
+                    f"as {first!r}."
+                ),
+            )
 
     if len(parts) < 2:
         return
@@ -884,6 +1091,34 @@ def _validate_template_output_path(
             path=path,
             node_id=current_node.id,
             suggestion=f"Available fields: {', '.join(sorted(top_level))}.",
+        )
+        return
+
+    # A bare reference to a field whose value preflight can already prove
+    # (e.g. TransformAgent's "parsed" is always {} when its config sets no
+    # output_schema) can only ever substitute that one fixed value — never
+    # real content — regardless of what the upstream node actually produces
+    # at runtime. This is virtually always an authoring mistake, so it's an
+    # error here rather than left to fail deep inside a downstream node's
+    # Pydantic validation after the (possibly costly) upstream call already ran.
+    static_values = source_class.preflight_static_output_values(
+        node_map[first].effective_config()
+    )
+    if parts[1] in static_values:
+        _issue(
+            report,
+            "TEMPLATE_STATICALLY_EMPTY_FIELD",
+            f"{node_map[first].type} {first!r}'s {parts[1]!r} output is "
+            f"always {static_values[parts[1]]!r} given its current "
+            "config — substituting it here can only ever produce that "
+            "fixed value, never real content.",
+            path=path,
+            node_id=current_node.id,
+            suggestion=(
+                "Use a different output field (e.g. '.raw' for a "
+                "TransformAgent with no output_schema), or add the "
+                "config that would actually populate this field."
+            ),
         )
         return
 
@@ -922,8 +1157,11 @@ def _validate_templates(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
     forward: dict[str, set[str]],
+    reverse: dict[str, set[str]],
 ) -> None:
     before = len(report.issues)
+    entry = spec.entry or spec.nodes[0].id
+    guaranteed = _guaranteed_before(entry, forward, reverse)
     for index, node in enumerate(spec.nodes):
         config = node.effective_config()
         for path, text in _iter_strings(config, f"nodes.{index}.config"):
@@ -944,6 +1182,7 @@ def _validate_templates(
                     report,
                     path,
                     forward,
+                    guaranteed,
                 )
 
     _add_check(
@@ -1150,8 +1389,8 @@ def preflight_workflow_yaml(
 
     _validate_registry(report)
     _validate_nodes(spec, report)
-    forward, _ = _validate_graph(spec, report)
-    _validate_templates(spec, report, forward)
+    forward, reverse = _validate_graph(spec, report)
+    _validate_templates(spec, report, forward, reverse)
     _validate_inputs(spec, provided_inputs, report)
     _validate_guided_experience(spec, report)
     if compile_graph:
