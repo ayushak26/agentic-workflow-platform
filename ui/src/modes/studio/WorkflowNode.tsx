@@ -1,21 +1,41 @@
+import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
 import type { WorkflowNodeData } from './yaml-bridge';
 
-export function WorkflowNode({ data, selected }: NodeProps<WorkflowNodeData>) {
+export const WorkflowNode = memo(function WorkflowNode({
+  data,
+  selected,
+}: NodeProps<WorkflowNodeData>) {
   const requestedModel = data.selectedModel ?? data.config.model;
   return (
     <div
-      className={`bg-white rounded-md border-2 shadow-sm px-4 py-3 min-w-[220px] ${
-        selected ? 'border-accent-600' : 'border-slate-200'
-      }`}
+      className={`min-w-[220px] rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${
+        data.hasIssue
+          ? 'border-red-400'
+          : selected
+            ? 'border-accent-600'
+            : 'border-slate-200'
+      } ${data.faded ? 'opacity-40' : 'opacity-100'}`}
     >
-      {/* Top handle: incoming edges */}
-      <Handle type="target" position={Position.Top} className="!bg-slate-400" />
+      {/* Left handle: incoming edges (canvas flows left to right) */}
+      <Handle type="target" position={Position.Left} className="!bg-slate-400" />
 
-      <div className="text-xs uppercase tracking-wide text-ink-500">
-        {data.typeName}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-xs uppercase tracking-wide text-ink-500">
+            {data.typeName}
+          </div>
+          <div className="mt-1 truncate font-medium text-ink-900">{data.nodeId}</div>
+        </div>
+        {data.hasIssue && (
+          <span
+            className="mt-0.5 inline-flex h-4 w-4 flex-none items-center justify-center rounded-full bg-red-100 text-[10px] font-bold text-red-700"
+            title="This node has a preflight issue"
+          >
+            !
+          </span>
+        )}
       </div>
-      <div className="font-medium text-ink-900 mt-1">{data.nodeId}</div>
       {typeof requestedModel === 'string' && requestedModel && (
         <div
           className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] ${
@@ -29,9 +49,14 @@ export function WorkflowNode({ data, selected }: NodeProps<WorkflowNodeData>) {
             : requestedModel}
         </div>
       )}
+      {typeof data.downstreamCount === 'number' && data.downstreamCount > 1 && (
+        <div className="mt-1 text-[10px] text-ink-400">
+          Fans out to {data.downstreamCount} nodes
+        </div>
+      )}
 
-      {/* Bottom handle: outgoing edges */}
-      <Handle type="source" position={Position.Bottom} className="!bg-slate-400" />
+      {/* Right handle: outgoing edges */}
+      <Handle type="source" position={Position.Right} className="!bg-slate-400" />
     </div>
   );
-}
+});

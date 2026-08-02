@@ -38,7 +38,8 @@ import {
 } from './cockpit/graph-collapse';
 import { STAGE_BAND_TYPE, StageBandNode } from './cockpit/StageBandNode';
 import { StagePlaceholderNode } from './cockpit/StagePlaceholderNode';
-import type { PipelineRunDetail } from '../../api/types';
+import { api } from '../../api/client';
+import type { NodeTypeManifest, PipelineRunDetail } from '../../api/types';
 
 const nodeTypes = {
   workflow: CockpitNode,
@@ -77,6 +78,15 @@ export function Cockpit() {
   const [fullscreenOutput, setFullscreenOutput] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth < 1150);
   const [graphOptionsOpen, setGraphOptionsOpen] = useState(false);
+  const [nodeTypesByName, setNodeTypesByName] = useState<Record<string, NodeTypeManifest>>({});
+
+  // Same manifest NodePalette fetches — cached here so the inspector can
+  // show each node's category + description without a per-node request.
+  useEffect(() => {
+    api.nodeTypes()
+      .then(types => setNodeTypesByName(Object.fromEntries(types.map(t => [t.type_name, t]))))
+      .catch(() => undefined);
+  }, []);
 
   const leftPanel = useResizablePanel({
     storageKey: 'cockpit.leftPanelWidth', defaultWidth: 280, minWidth: 220, maxWidth: 480, side: 'left',
@@ -361,6 +371,22 @@ export function Cockpit() {
     return (
       <div className="h-full flex flex-col">
         {pipelineBanner}
+        {!navState.testLabel && (
+          <div className="flex-none flex justify-end border-b border-slate-200 bg-white px-4 py-2">
+            <button
+              onClick={() => navigate(`/guided/${runId}`, {
+                state: {
+                  attach: true,
+                  workflowYaml: navState.workflowYaml ?? liveRun?.workflow_yaml,
+                  workflowName: navState.workflowName ?? liveRun?.workflow_name ?? parsedWf?.name,
+                },
+              })}
+              className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
+            >
+              View guided run
+            </button>
+          </div>
+        )}
         <div className="flex-1 min-h-0">
           <OutputViewer
             runId={runId}
@@ -423,6 +449,7 @@ export function Cockpit() {
       workflowVariables={workflowVariables}
       fullscreen={fullscreenOutput}
       onToggleFullscreen={() => setFullscreenOutput((v) => !v)}
+      nodeTypesByName={nodeTypesByName}
     />
   );
 
@@ -476,6 +503,9 @@ export function Cockpit() {
 
           <div className="absolute left-3 top-3 z-10 max-w-sm rounded-md border border-ink-200 bg-white/95 px-3 py-2 shadow-sm backdrop-blur">
             <div className="text-xs text-ink-500 font-mono">run {runId.slice(0, 8)}…</div>
+            {navState.testLabel && (
+              <div className="mt-1 text-xs font-semibold text-accent-700">{navState.testLabel}</div>
+            )}
             {navState.retrySourceRunId && (
               <div className="text-xs text-cyan-700 mt-1">
                 Retry: {reusedNodeCount} completed node{reusedNodeCount === 1 ? '' : 's'} reused
@@ -532,6 +562,35 @@ export function Cockpit() {
             <ToolbarButton onClick={() => setFullscreenGraph((v) => !v)} active={fullscreenGraph}>
               {fullscreenGraph ? 'Exit full screen' : 'Full-screen graph'}
             </ToolbarButton>
+            {/* A node/branch test's YAML is a synthetic slice with no
+                business meaning of its own — Guided Run isn't offered for it. */}
+            {!navState.testLabel && (
+              <ToolbarButton
+                onClick={() => navigate(`/guided/${runId}`, {
+                  state: {
+                    attach: true,
+                    workflowYaml: navState.workflowYaml ?? liveRun?.workflow_yaml,
+                    workflowName: navState.workflowName ?? liveRun?.workflow_name,
+                  },
+                })}
+              >
+                View guided run
+              </ToolbarButton>
+            )}
+            {navState.builderReturnPath && (
+              <ToolbarButton
+                onClick={() => navigate(navState.builderReturnPath!, {
+                  state: {
+                    builderResume: {
+                      selectedNodeId: navState.selectedNodeId ?? null,
+                      viewport: navState.viewport,
+                    },
+                  },
+                })}
+              >
+                Back to Builder
+              </ToolbarButton>
+            )}
           </div>
         </div>
 

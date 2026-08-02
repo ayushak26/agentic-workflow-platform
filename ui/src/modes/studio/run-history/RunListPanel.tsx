@@ -215,16 +215,20 @@ export function RunListPanel({
           <select
             value={sortKey}
             onChange={(e) => setSortKey(e.target.value as SortKey)}
-            className="flex-1 min-w-0 rounded-md border border-slate-300 px-1.5 py-1 text-[11px]"
+            aria-label="Sort by"
+            title="Sort by"
+            className="flex-1 min-w-0 max-w-[50%] truncate rounded-md border border-slate-300 px-1.5 py-1 text-[11px]"
           >
             {SORT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
           <select
             value={groupBy}
             onChange={(e) => setGroupBy(e.target.value as GroupBy)}
-            className="flex-1 min-w-0 rounded-md border border-slate-300 px-1.5 py-1 text-[11px]"
+            aria-label="Group by"
+            title="Group by"
+            className="flex-1 min-w-0 max-w-[50%] truncate rounded-md border border-slate-300 px-1.5 py-1 text-[11px]"
           >
-            {GROUP_OPTIONS.map((o) => <option key={o.key} value={o.key}>Group: {o.label}</option>)}
+            {GROUP_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
         </div>
         {filtersOpen && (

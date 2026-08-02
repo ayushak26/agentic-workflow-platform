@@ -1,12 +1,20 @@
 /* JSON Schema is recursive and permits arbitrary extension keywords. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import type { ChangeEvent } from 'react';
+import { useState, type ChangeEvent } from 'react';
+import { PromptDraftAssistant } from './PromptDraftAssistant';
 
 // Treat these field names as multiline regardless of schema (the schema
 // doesn't carry "format: textarea" by default from Pydantic).
 const MULTILINE_NAMES = new Set([
   'prompt_template', 'system_prompt', 'prompt', 'generation_prompt',
   'objective', 'description', 'instructions', 'context',
+]);
+
+// Subset of MULTILINE_NAMES that's actually LLM prompt text (as opposed to
+// a plain description/context string) — these get the "Draft with AI"
+// affordance since PromptDraftAssistant is specifically for prompt authoring.
+const PROMPT_FIELD_NAMES = new Set([
+  'prompt_template', 'system_prompt', 'prompt', 'generation_prompt', 'instructions',
 ]);
 
 type Schema = any;
@@ -16,11 +24,15 @@ export function SchemaForm({
   value,
   onChange,
   hiddenFields = [],
+  typeName,
 }: {
   schema: Schema;
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
   hiddenFields?: string[];
+  // Which node type this config belongs to — only needed to scope the
+  // "Draft with AI" assistant; omit it and that affordance just won't show.
+  typeName?: string;
 }) {
   if (!schema || schema.type !== 'object' || !schema.properties) {
     return <div className="text-sm text-ink-500">No editable fields.</div>;
@@ -39,6 +51,7 @@ export function SchemaForm({
           schema={propSchema}
           required={required.includes(name)}
           value={value[name]}
+          typeName={typeName}
           onChange={v => {
             if (v === undefined) {
               const next = { ...value };
@@ -60,13 +73,16 @@ function FieldRenderer({
   required,
   value,
   onChange,
+  typeName,
 }: {
   name: string;
   schema: Schema;
   required: boolean;
   value: unknown;
   onChange: (v: unknown) => void;
+  typeName?: string;
 }) {
+  const [drafting, setDrafting] = useState(false);
   const label = (
     <label className="block text-xs font-medium text-ink-700">
       {name}
@@ -135,6 +151,7 @@ function FieldRenderer({
   // String → text input or textarea
   if (effective.type === 'string') {
     const multiline = MULTILINE_NAMES.has(name);
+    const isPromptField = typeName && PROMPT_FIELD_NAMES.has(name);
     const common = {
       value: typeof value === 'string' ? value : '',
       onChange: (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => onChange(e.target.value),
@@ -142,13 +159,32 @@ function FieldRenderer({
     };
     return (
       <div>
-        {label}
+        <div className="flex items-center justify-between">
+          {label}
+          {isPromptField && (
+            <button
+              type="button"
+              onClick={() => setDrafting(true)}
+              className="text-xs text-accent-700 hover:underline"
+            >
+              ✨ Draft with AI
+            </button>
+          )}
+        </div>
         {multiline ? (
           <textarea {...common} rows={6} />
         ) : (
           <input type="text" {...common} />
         )}
         {effective.description && <Hint text={effective.description} />}
+        {isPromptField && drafting && typeName && (
+          <PromptDraftAssistant
+            typeName={typeName}
+            fieldName={name}
+            onInsert={onChange}
+            onClose={() => setDrafting(false)}
+          />
+        )}
       </div>
     );
   }

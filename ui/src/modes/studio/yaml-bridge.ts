@@ -40,6 +40,47 @@ export type ModelRoutingPolicy = {
   quality_scores?: Record<string, number>;
 };
 
+// Optional, presentation-only metadata for Guided Run. Mirrors
+// app/runtime/schema.py's GuidedStageSpec/WorkflowExperienceSpec/
+// NodeExperienceSpec field-for-field — never changes routing or execution.
+export type GuidedVisibility = 'standard' | 'summary' | 'advanced';
+
+export type GuidedStageSpec = {
+  id: string;
+  display_name: string;
+  purpose?: string;
+  node_ids?: string[];
+  success_criteria?: string[];
+  expected_output?: string;
+  visibility?: GuidedVisibility;
+  weight?: number;
+  may_ask_questions?: boolean;
+  may_require_approval?: boolean;
+};
+
+export type WorkflowExperienceSpec = {
+  schema_version?: string;
+  goal?: string;
+  stages?: GuidedStageSpec[];
+};
+
+export type NodeExperienceSpec = {
+  stage_id?: string;
+  display_name?: string;
+  purpose?: string;
+  contribution?: string;
+  expected_output?: string;
+  success_condition?: string;
+  quality_checks?: string[];
+  failure_message?: string;
+  recovery_actions?: string[];
+  visibility?: GuidedVisibility;
+  receiving_steps?: string[];
+  handoff_fields?: string[];
+  agent_role?: string;
+  show_agent_role?: boolean;
+};
+
 export type YamlWorkflowNode = {
   id: string;
   type: string;
@@ -47,6 +88,7 @@ export type YamlWorkflowNode = {
   allowed_models?: string[];
   selected_model?: string | null;
   model_routing?: ModelRoutingPolicy;
+  experience?: NodeExperienceSpec;
 };
 
 export type YamlWorkflow = {
@@ -54,6 +96,7 @@ export type YamlWorkflow = {
   description?: string;
   version?: string;
   use_case?: string;
+  experience?: WorkflowExperienceSpec;
   inputs?: Record<string, WorkflowInputSpec>;   // was Record<string, unknown>
   static_variables?: Array<{ name: string; type: string; value: unknown }>;
   nodes: YamlWorkflowNode[];
@@ -76,6 +119,17 @@ export type WorkflowNodeData = {
   allowedModels?: string[];
   selectedModel?: string | null;
   modelRouting?: ModelRoutingPolicy;
+  experience?: NodeExperienceSpec;
+  downstreamCount?: number;
+  hasIssue?: boolean;
+  faded?: boolean;
+};
+
+export type WorkflowEdgeData = {
+  edgeKind: 'simple' | 'branch';
+  groupId: string;
+  condition?: string;
+  branchLabel?: string;
 };
 
 const NODE_X = 320;
@@ -92,7 +146,7 @@ export function dumpYaml(wf: YamlWorkflow): string {
 /** YAML → React Flow nodes + edges. Auto-positions vertically by declaration order. */
 export function yamlToReactFlow(
   wf: YamlWorkflow
-): { nodes: RFNode<WorkflowNodeData>[]; edges: RFEdge[] } {
+): { nodes: RFNode<WorkflowNodeData>[]; edges: RFEdge<WorkflowEdgeData>[] } {
   const nodes: RFNode<WorkflowNodeData>[] = wf.nodes.map((n, i) => ({
     id: n.id,
     type: 'workflow',                       // matches the key in `nodeTypes` prop
@@ -104,34 +158,59 @@ export function yamlToReactFlow(
       allowedModels: n.allowed_models,
       selectedModel: n.selected_model,
       modelRouting: n.model_routing,
+      experience: n.experience,
     },
   }));
 
-  const edges: RFEdge[] = [];
-  let edgeId = 0;
-  for (const e of wf.edges ?? []) {
+  const edges: RFEdge<WorkflowEdgeData>[] = [];
+  for (const [edgeIndex, e] of (wf.edges ?? []).entries()) {
+    const groupId = `yaml-edge-${edgeIndex}`;
     // Conditional router edges: one source, multiple labeled branches.
     if (e.branches) {
       for (const [label, target] of Object.entries(e.branches)) {
         edges.push({
-          id: `e${edgeId++}`,
+          id: `${groupId}-${label}`,
           source: e.from,
           target,
           label,
+          data: {
+            edgeKind: 'branch',
+            groupId,
+            condition: e.condition,
+            branchLabel: label,
+          },
         });
       }
       continue;
     }
     // Fan-out: one source, multiple targets via list.
     if (Array.isArray(e.to)) {
-      for (const target of e.to) {
-        edges.push({ id: `e${edgeId++}`, source: e.from, target });
+      for (const [targetIndex, target] of e.to.entries()) {
+        edges.push({
+          id: `${groupId}-${targetIndex}`,
+          source: e.from,
+          target,
+          data: {
+            edgeKind: 'simple',
+            groupId,
+            condition: e.condition,
+          },
+        });
       }
       continue;
     }
     // Simple edge.
     if (e.to) {
-      edges.push({ id: `e${edgeId++}`, source: e.from, target: e.to });
+      edges.push({
+        id: `${groupId}-0`,
+        source: e.from,
+        target: e.to,
+        data: {
+          edgeKind: 'simple',
+          groupId,
+          condition: e.condition,
+        },
+      });
     }
   }
   return { nodes, edges };
@@ -141,7 +220,7 @@ export function yamlToReactFlow(
 export function reactFlowToYaml(
   meta: Omit<YamlWorkflow, 'nodes' | 'edges'>,
   rfNodes: RFNode<WorkflowNodeData>[],
-  rfEdges: RFEdge[]
+  rfEdges: RFEdge<WorkflowEdgeData>[]
 ): YamlWorkflow {
   const nodes: YamlWorkflowNode[] = rfNodes.map(n => ({
     id: n.data.nodeId,
@@ -156,19 +235,44 @@ export function reactFlowToYaml(
     ...(n.data.modelRouting
       ? { model_routing: n.data.modelRouting }
       : {}),
+    ...(n.data.experience
+      ? { experience: n.data.experience }
+      : {}),
   }));
 
-  // Group edges by source. Multiple targets become a list.
-  const bySource = new Map<string, string[]>();
-  for (const e of rfEdges) {
-    const arr = bySource.get(e.source) ?? [];
-    arr.push(e.target);
-    bySource.set(e.source, arr);
+  // Preserve each original YAML edge group, including router branch labels
+  // and condition fields. Newly drawn simple edges group by source.
+  const groups = new Map<string, RFEdge<WorkflowEdgeData>[]>();
+  for (const edge of rfEdges) {
+    const key = edge.data?.groupId ?? `new-edge-${edge.source}`;
+    const group = groups.get(key) ?? [];
+    group.push(edge);
+    groups.set(key, group);
   }
-  const edges = Array.from(bySource.entries()).map(([from, targets]) => ({
-    from,
-    to: targets.length === 1 ? targets[0] : targets,
-  }));
+  const edges: YamlWorkflow['edges'] = [];
+  for (const group of groups.values()) {
+    const first = group[0];
+    const branchEdges = group.filter(edge => edge.data?.edgeKind === 'branch');
+    if (branchEdges.length > 0) {
+      edges.push({
+        from: first.source,
+        condition: first.data?.condition,
+        branches: Object.fromEntries(
+          branchEdges.map(edge => [
+            edge.data?.branchLabel ?? String(edge.label ?? edge.target),
+            edge.target,
+          ]),
+        ),
+      });
+      continue;
+    }
+    const targets = group.map(edge => edge.target);
+    edges.push({
+      from: first.source,
+      to: targets.length === 1 ? targets[0] : targets,
+      ...(first.data?.condition ? { condition: first.data.condition } : {}),
+    });
+  }
 
   return {
     ...meta,

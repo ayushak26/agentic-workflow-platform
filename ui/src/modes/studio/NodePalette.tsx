@@ -1,40 +1,171 @@
-import { useEffect, useState } from 'react';
-import { api } from '../../api/client';
+import { useMemo, useState } from 'react';
 import type { NodeTypeManifest } from '../../api/types';
-import { Spinner } from '../../components/Spinner';
+import { Icon, type IconName } from '../../components/ui/Icon';
+import { NodeTypeAskAi } from './NodeTypeAskAi';
 
-export function NodePalette() {
-  const [types, setTypes] = useState<NodeTypeManifest[] | null>(null);
+// Fixed display order — otherwise groups would shuffle on every reload
+// based on whatever order the registry happens to iterate in.
+const CATEGORY_ORDER = [
+  'Control & Flow',
+  'Research & Discovery',
+  'Evidence & Retrieval',
+  'Proposal Engineering',
+  'Multimodal',
+  'Document Rendering & Export',
+  'Integrations',
+  'Other',
+];
 
-  useEffect(() => {
-    api.nodeTypes().then(setTypes).catch(console.error);
-  }, []);
+function groupByCategory(types: NodeTypeManifest[]): [string, NodeTypeManifest[]][] {
+  const groups = new Map<string, NodeTypeManifest[]>();
+  for (const t of types) {
+    const list = groups.get(t.category) ?? [];
+    list.push(t);
+    groups.set(t.category, list);
+  }
+  const known = CATEGORY_ORDER.filter(c => groups.has(c));
+  const unknown = [...groups.keys()].filter(c => !CATEGORY_ORDER.includes(c)).sort();
+  return [...known, ...unknown].map(c => [c, groups.get(c)!]);
+}
 
-  if (!types) return <div className="p-4"><Spinner /></div>;
+function matchesQuery(t: NodeTypeManifest, query: string): boolean {
+  if (!query) return true;
+  const haystack = `${t.type_name} ${t.description} ${t.category}`.toLowerCase();
+  return haystack.includes(query);
+}
+
+function NodeTypeCard({
+  t,
+  onAdd,
+}: {
+  t: NodeTypeManifest;
+  onAdd: (typeName: string) => void;
+}) {
+  const [askingAi, setAskingAi] = useState(false);
+  return (
+    <div
+      draggable
+      onDragStart={e => {
+        // React Flow checks this exact MIME type on drop.
+        e.dataTransfer.setData('application/reactflow', t.type_name);
+        e.dataTransfer.effectAllowed = 'move';
+      }}
+      className="group relative rounded-md border border-slate-200 bg-white px-3 py-2 cursor-grab transition hover:border-accent-600 hover:shadow-sm"
+      title={t.description}
+    >
+      <button
+        type="button"
+        onClick={e => { e.stopPropagation(); setAskingAi(true); }}
+        title={`Ask AI about ${t.type_name}`}
+        className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-slate-300 bg-white text-[11px] text-ink-500 opacity-0 hover:border-accent-600 hover:text-accent-700 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        ?
+      </button>
+      <div className="flex items-start gap-2 pr-5">
+        <span className="mt-0.5 flex-none text-ink-400">
+          <Icon name={(t.icon as IconName) ?? 'topology'} size={14} />
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-ink-900">{t.type_name}</div>
+          <div className="mt-0.5 line-clamp-2 text-xs text-ink-500">{t.description}</div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={e => { e.stopPropagation(); onAdd(t.type_name); }}
+        aria-label={`Add ${t.type_name} to the canvas`}
+        className="mt-2 w-full rounded border border-slate-200 py-1 text-[11px] font-medium text-accent-700 opacity-0 transition hover:bg-accent-50 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        + Add
+      </button>
+      {askingAi && <NodeTypeAskAi typeName={t.type_name} onClose={() => setAskingAi(false)} />}
+    </div>
+  );
+}
+
+export function NodePalette({
+  types,
+  onAdd,
+  onClose,
+}: {
+  types: NodeTypeManifest[];
+  onAdd: (typeName: string) => void;
+  onClose?: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState('');
+
+  const filtered = useMemo(
+    () => types.filter(t => matchesQuery(t, query.trim().toLowerCase())),
+    [types, query],
+  );
+  const groups = useMemo(() => groupByCategory(filtered), [filtered]);
+
+  function toggle(category: string) {
+    setCollapsed(current => {
+      const next = new Set(current);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }
 
   return (
-    <div className="p-3 space-y-1">
-      <div className="text-xs uppercase tracking-wide text-ink-500 px-2 pb-2">
-        Node types
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
+        <div className="text-xs uppercase tracking-wide text-ink-500">Node types</div>
+        {onClose && (
+          <button
+            aria-label="Close node library"
+            className="text-ink-500 hover:text-ink-900"
+            onClick={onClose}
+            type="button"
+          >
+            ×
+          </button>
+        )}
       </div>
-      {types.map(t => (
-        <div
-          key={t.type_name}
-          draggable
-          onDragStart={e => {
-            // React Flow checks this exact MIME type on drop.
-            e.dataTransfer.setData('application/reactflow', t.type_name);
-            e.dataTransfer.effectAllowed = 'move';
-          }}
-          className="rounded-md border border-slate-200 bg-white px-3 py-2 cursor-grab hover:border-accent-600 hover:shadow-sm transition"
-          title={t.description}
-        >
-          <div className="text-sm font-medium text-ink-900">{t.type_name}</div>
-          <div className="text-xs text-ink-500 line-clamp-2 mt-0.5">
-            {t.description}
+      <div className="px-3 pt-3">
+        <input
+          aria-label="Search node types"
+          className="builder-field"
+          onChange={event => setQuery(event.target.value)}
+          placeholder="Search by name, description, category"
+          type="search"
+          value={query}
+        />
+      </div>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        {groups.length === 0 && (
+          <div className="rounded-md border border-dashed border-slate-300 p-4 text-center text-xs text-ink-500">
+            No node types match &ldquo;{query}&rdquo;.
           </div>
-        </div>
-      ))}
+        )}
+        {groups.map(([category, items]) => {
+          const isCollapsed = collapsed.has(category);
+          return (
+            <div key={category}>
+              <button
+                type="button"
+                onClick={() => toggle(category)}
+                className="flex w-full items-center justify-between px-2 py-1 text-xs font-semibold text-ink-700 hover:text-ink-900"
+              >
+                <span>{category}</span>
+                <span className="text-ink-400">
+                  {items.length} {isCollapsed ? '▸' : '▾'}
+                </span>
+              </button>
+              {!isCollapsed && (
+                <div className="mt-1 space-y-1">
+                  {items.map(t => (
+                    <NodeTypeCard key={t.type_name} t={t} onAdd={onAdd} />
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -211,11 +211,13 @@ function PipelineLaunchDialog({
 
       const pipelineRunId = crypto.randomUUID();
       const stageRunId = crypto.randomUUID();
-      // Navigate straight into the Cockpit's live graph — it triggers the
-      // actual run itself (opens the SSE stream first, same as a plain
-      // workflow run), rather than us awaiting the whole stage here and
-      // landing on a static status page after the fact.
-      navigate(`/cockpit/${stageRunId}`, {
+      // Navigate straight into the live graph — it triggers the actual run
+      // itself (opens the SSE stream first, same as a plain workflow run),
+      // rather than us awaiting the whole stage here and landing on a
+      // static status page after the fact. Pipelines are a business-user
+      // flow, so this defaults to the Guided Run surface (Cockpit stays
+      // reachable from there via "View process map").
+      navigate(`/guided/${stageRunId}`, {
         state: {
           workflowYaml: stageYaml,
           workflowName: firstStage.id,
@@ -530,6 +532,8 @@ export function PipelineRunView() {
   const [error, setError] = useState<string | null>(null);
   const [advancing, setAdvancing] = useState(false);
   const [advanceError, setAdvanceError] = useState<string | null>(null);
+  const [abandoning, setAbandoning] = useState(false);
+  const [abandonError, setAbandonError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!pipelineRunId) return;
@@ -550,10 +554,11 @@ export function PipelineRunView() {
     setAdvanceError(null);
     try {
       // Same pattern as launching a pipeline: open the next stage's live
-      // Cockpit view first, and let Cockpit itself trigger the advance call.
+      // run view first (defaults to Guided Run, same as launch), and let it
+      // trigger the advance call itself.
       const { yaml: stageYaml } = await api.getWorkflow(nextStage.workflow);
       const stageRunId = crypto.randomUUID();
-      navigate(`/cockpit/${stageRunId}`, {
+      navigate(`/guided/${stageRunId}`, {
         state: {
           workflowYaml: stageYaml,
           workflowName: nextStage.id,
@@ -573,10 +578,25 @@ export function PipelineRunView() {
     }
   }
 
+  async function abandon() {
+    if (!pipelineRunId) return;
+    setAbandoning(true);
+    setAbandonError(null);
+    try {
+      await api.abandonPipeline(pipelineRunId);
+      setDetail(current => (current ? { ...current, status: 'abandoned' } : current));
+    } catch (e: unknown) {
+      setAbandonError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAbandoning(false);
+    }
+  }
+
   if (error) return <div className="p-8 text-bad">Couldn't load this pipeline run: {error}</div>;
   if (detail === null) return <div className="p-8"><Spinner label="Loading pipeline run…" /></div>;
 
   const nextStage = detail.status === 'gated' ? detail.stages[detail.current_stage_index + 1] : null;
+  const canAbandon = detail.status === 'running' || detail.status === 'gated';
 
   return (
     <div className="p-8 max-w-3xl">
@@ -591,9 +611,24 @@ export function PipelineRunView() {
         />
       </div>
 
-      <div className="mt-2 text-sm uppercase tracking-wide text-ink-500">
-        Status: {detail.status}
+      <div className="mt-2 flex items-center justify-between">
+        <div className="text-sm uppercase tracking-wide text-ink-500">
+          Status: {detail.status}
+        </div>
+        {canAbandon && (
+          <button
+            onClick={abandon}
+            disabled={abandoning}
+            title="Manually mark this pipeline as abandoned so its stage run can be deleted."
+            className="px-3 py-1.5 rounded-md border border-red-300 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+          >
+            {abandoning ? 'Abandoning…' : 'Abandon pipeline'}
+          </button>
+        )}
       </div>
+      {abandonError && (
+        <div className="mt-2 text-xs text-red-700">{abandonError}</div>
+      )}
 
       {detail.status === 'gated' && nextStage && (
         <div className="mt-5 rounded-md border border-cyan-200 bg-cyan-50 px-4 py-3">
@@ -625,6 +660,13 @@ export function PipelineRunView() {
       {detail.status === 'completed' && (
         <div className="mt-5 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
           All stages completed.
+        </div>
+      )}
+
+      {detail.status === 'abandoned' && (
+        <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-ink-700">
+          This pipeline was manually abandoned. Its stage runs can now be
+          deleted from Run History.
         </div>
       )}
 

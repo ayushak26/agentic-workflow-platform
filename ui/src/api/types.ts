@@ -2,6 +2,8 @@
 export type NodeTypeManifest = {
   type_name: string;
   description: string;
+  category: string;
+  icon: string;
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   config_schema: Record<string, unknown>;
@@ -23,10 +25,91 @@ export type LLMModelInfo = {
   description?: string | null;
 };
 
+// Mirrors app/runtime/schema.py's LibraryMetadataSpec + friends, as returned
+// (declared or honestly-derived) by app.workflow.library_metadata.
+export type LibraryVisibilityStatus = 'approved' | 'draft' | 'in_review' | 'deprecated' | 'archived';
+
+export type LibraryDurationRange = {
+  minimum_minutes: number | null;
+  maximum_minutes: number | null;
+};
+
+export type LibraryHumanReviews = {
+  count: number;
+  labels: string[];
+};
+
+export type LibraryEvidencePolicy = {
+  drafting_requires_verified_evidence: boolean | null;
+  deep_research_is_context_only: boolean | null;
+};
+
+export type LibraryMetadata = {
+  title: string;
+  summary: string;
+  purpose: string[];
+  suitable_for: string[];
+  not_suitable_for: string[];
+  outputs: string[];
+  input_types: string[];
+  typical_duration: LibraryDurationRange | null;
+  human_reviews: LibraryHumanReviews;
+  evidence_policy: LibraryEvidencePolicy | null;
+  visibility_status: LibraryVisibilityStatus;
+  owner_team: string | null;
+  // False for every pre-existing workflow: everything above except
+  // `human_reviews.count` (derived from the graph) and `outputs` (a naming
+  // heuristic) is an honest fallback, not authored fact.
+  declared: boolean;
+};
+
+export type ReadinessLevel = 'ready' | 'ready_with_warnings' | 'blocked';
+
+export type ReadinessItem = {
+  severity: 'error' | 'warning';
+  code: string;
+  message: string;
+  suggestion: string | null;
+};
+
+export type ReadinessSummary = {
+  level: ReadinessLevel;
+  items: ReadinessItem[];
+};
+
+export type WorkflowStats = {
+  sample_size: number;
+  completed_runs: number;
+  failed_runs: number;
+  enough_data_for_estimates: boolean;
+  success_rate: number | null;
+  median_duration_s: number | null;
+  most_common_failure: string | null;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_successful_run_at: string | null;
+};
+
 export type WorkflowSummary = {
   name: string;
   description: string;
+  use_case: string;
+  version: string;
   node_count: number;
+  updated_at: string;
+  library: LibraryMetadata | null;
+  readiness: ReadinessSummary;
+};
+
+export type WorkflowDetail = {
+  name: string;
+  description: string;
+  use_case: string;
+  version: string;
+  node_count: number;
+  updated_at: string;
+  library: LibraryMetadata;
+  readiness: ReadinessSummary;
 };
 
 export type PreflightSeverity = 'error' | 'warning';
@@ -55,6 +138,33 @@ export type WorkflowPreflightReport = {
   checks: PreflightCheck[];
   issues: PreflightIssue[];
   tokens_spent: number;
+};
+
+// Mirrors app/workflow/builder_store.py's save_draft/read_draft document.
+export type WorkflowDraft = {
+  name: string;
+  updated_at: string;
+  sha256: string;
+  base_sha256: string | null;
+  yaml: string;
+  canvas: {
+    nodes?: Array<{ id: string; position: { x: number; y: number } }>;
+    viewport?: { x: number; y: number; zoom: number };
+    selected_node_id?: string | null;
+  };
+  current_sha256: string | null;
+  differs_from_current: boolean;
+};
+
+// Mirrors app/workflow/builder_store.py's list_versions entries.
+export type WorkflowVersionSummary = {
+  version_id: string;
+  created_at: string;
+  sha256: string;
+  current: boolean;
+  workflow_version: string;
+  node_count: number;
+  description: string;
 };
 
 export type WorkflowFileReference = {
@@ -218,6 +328,28 @@ export interface NodeRun {
   model_selections?: ModelSelection[];
 }
 
+export interface GenerateWorkflowAttempt {
+  stage: 'static' | 'real_execution';
+  success: boolean;
+  detail: string;
+}
+
+export interface GenerateWorkflowResult {
+  yaml: string;
+  success: boolean;
+  preflight_report: WorkflowPreflightReport | null;
+  execution_result: { status: string; error: string | null } | null;
+  execution_skipped_reason: string | null;
+  attempts: GenerateWorkflowAttempt[];
+}
+
+export interface RunChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  model?: string;
+  ts: number;
+}
+
 export interface AuditEvent {
   run_id: string;
   session_id: string;
@@ -269,7 +401,7 @@ export interface PipelineStageResult {
   error?: string | null;
 }
 
-export type PipelineRunStatus = 'running' | 'gated' | 'completed' | 'failed';
+export type PipelineRunStatus = 'running' | 'gated' | 'completed' | 'failed' | 'abandoned';
 
 export interface PipelineRunSummary {
   pipeline_run_id: string;

@@ -14,7 +14,20 @@ export type IconName =
   | 'coin'
   | 'menu'
   | 'chevron-left'
-  | 'chevron-right';
+  | 'chevron-right'
+  | 'history'
+  | 'check'
+  | 'play'
+  | 'undo'
+  | 'redo'
+  | 'star'
+  | 'star-filled'
+  | 'search'
+  | 'filter'
+  | 'grid'
+  | 'rows'
+  | 'refresh'
+  | 'upload';
 
 function IconPath({ name }: { name: IconName }) {
   switch (name) {
@@ -107,6 +120,79 @@ function IconPath({ name }: { name: IconName }) {
       return <polyline points="14.5,5 8,12 14.5,19" />;
     case 'chevron-right':
       return <polyline points="9.5,5 16,12 9.5,19" />;
+    case 'history':
+      return (
+        <>
+          <circle cx="12" cy="13" r="8" />
+          <polyline points="12,9 12,13 15,15" />
+          <path d="M4.5 6.5 3 4v3.4h3.4" />
+        </>
+      );
+    case 'check':
+      return <polyline points="4.5,12.5 9.5,17.5 19.5,6.5" />;
+    case 'play':
+      return <path d="M6.5 4.5v15l13-7.5z" />;
+    case 'undo':
+      return (
+        <>
+          <path d="M6 8H15a5.5 5.5 0 0 1 0 11h-3" />
+          <polyline points="9.5,4 6,8 9.5,12" />
+        </>
+      );
+    case 'redo':
+      return (
+        <>
+          <path d="M18 8H9a5.5 5.5 0 0 0 0 11h3" />
+          <polyline points="14.5,4 18,8 14.5,12" />
+        </>
+      );
+    case 'star':
+      return <path d="M12 4 14.4 9.6 20.5 10.2 15.9 14.1 17.3 20 12 16.7 6.7 20 8.1 14.1 3.5 10.2 9.6 9.6Z" />;
+    case 'star-filled':
+      return <path d="M12 4 14.4 9.6 20.5 10.2 15.9 14.1 17.3 20 12 16.7 6.7 20 8.1 14.1 3.5 10.2 9.6 9.6Z" fill="currentColor" />;
+    case 'search':
+      return (
+        <>
+          <circle cx="10.5" cy="10.5" r="6.5" />
+          <line x1="15.3" y1="15.3" x2="20.5" y2="20.5" />
+        </>
+      );
+    case 'filter':
+      return <path d="M4 5h16l-6 7v6l-4 2v-8z" />;
+    case 'grid':
+      return (
+        <>
+          <rect x="3.5" y="3.5" width="7" height="7" rx="1" />
+          <rect x="13.5" y="3.5" width="7" height="7" rx="1" />
+          <rect x="3.5" y="13.5" width="7" height="7" rx="1" />
+          <rect x="13.5" y="13.5" width="7" height="7" rx="1" />
+        </>
+      );
+    case 'rows':
+      return (
+        <>
+          <rect x="3.5" y="4.5" width="17" height="4.5" rx="1" />
+          <rect x="3.5" y="10.75" width="17" height="4.5" rx="1" />
+          <rect x="3.5" y="17" width="17" height="4.5" rx="1" />
+        </>
+      );
+    case 'refresh':
+      return (
+        <>
+          <path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5L19.5 8" />
+          <polyline points="19.5,4 19.5,8 15.5,8" />
+          <path d="M19.5 12a7.5 7.5 0 0 1-12.6 5.5L4.5 16" />
+          <polyline points="4.5,20 4.5,16 8.5,16" />
+        </>
+      );
+    case 'upload':
+      return (
+        <>
+          <path d="M12 16V5" />
+          <polyline points="7.5,9.5 12,5 16.5,9.5" />
+          <path d="M4.5 16v3a1.5 1.5 0 0 0 1.5 1.5h12a1.5 1.5 0 0 0 1.5-1.5v-3" />
+        </>
+      );
     default:
       return null;
   }

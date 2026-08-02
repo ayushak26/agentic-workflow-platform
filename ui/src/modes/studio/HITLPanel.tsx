@@ -72,6 +72,9 @@ function errorMessage(error: unknown): string {
 export function HITLPanel({
   runId,
   pausedNodeId,
+  pausedStepName,
+  reviewPurpose,
+  downstreamSummary,
   question,
   context,
   allowedActions,
@@ -85,6 +88,11 @@ export function HITLPanel({
 }: {
   runId: string;
   pausedNodeId: string;
+  // Guided Run's business-language framing for the same paused node — all
+  // three optional so Cockpit's existing technical call site is unaffected.
+  pausedStepName?: string;
+  reviewPurpose?: string;
+  downstreamSummary?: string;
   question: string;
   context: unknown;
   allowedActions: string[];
@@ -227,10 +235,16 @@ export function HITLPanel({
           <div className="inline-block text-[10px] uppercase tracking-wide rounded-full px-2 py-0.5 bg-warn text-white">
             Action required
           </div>
-          <h3 className="text-lg font-semibold mt-3">{pausedNodeId} is paused</h3>
+          <h3 className="text-lg font-semibold mt-3">{pausedStepName ?? pausedNodeId} is paused</h3>
           <p className="text-sm text-ink-700 mt-2">
             {question || 'Review this content before the workflow continues.'}
           </p>
+          {reviewPurpose && (
+            <p className="text-xs text-ink-500 mt-2">Why this matters: {reviewPurpose}</p>
+          )}
+          {downstreamSummary && (
+            <p className="text-xs text-ink-500 mt-1">Your decision affects: {downstreamSummary}</p>
+          )}
         </div>
         <div className="shrink-0 flex flex-col items-end gap-2">
           <button

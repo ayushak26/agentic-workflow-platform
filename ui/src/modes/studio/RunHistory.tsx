@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { api } from '../../api/client';
+import type { NodeTypeManifest } from '../../api/types';
 import { historicalNodeStatus } from './cockpit/node-render';
 import { NodeInspector, type SelectedNodeInfo } from './cockpit/NodeInspector';
 import { ResizeHandle } from './cockpit/ResizeHandle';
@@ -13,9 +15,10 @@ import { OutputsTab } from './run-history/tabs/OutputsTab';
 import { InputsTab } from './run-history/tabs/InputsTab';
 import { TimelineTab } from './run-history/tabs/TimelineTab';
 import { ErrorsTab } from './run-history/tabs/ErrorsTab';
+import { AskAiPanel } from './run-history/AskAiPanel';
 
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'failed']);
-const VALID_TABS: WorkspaceTab[] = ['overview', 'nodes', 'outputs', 'inputs', 'timeline', 'errors'];
+const VALID_TABS: WorkspaceTab[] = ['overview', 'nodes', 'outputs', 'inputs', 'timeline', 'errors', 'ask-ai'];
 
 export function RunHistory() {
   const { runId } = useParams<{ runId?: string }>();
@@ -31,6 +34,13 @@ export function RunHistory() {
   const data = useRunHistoryData(runId);
   const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth < 1150);
   const [inspectorFullscreen, setInspectorFullscreen] = useState(false);
+  const [nodeTypesByName, setNodeTypesByName] = useState<Record<string, NodeTypeManifest>>({});
+
+  useEffect(() => {
+    api.nodeTypes()
+      .then(types => setNodeTypesByName(Object.fromEntries(types.map(t => [t.type_name, t]))))
+      .catch(() => undefined);
+  }, []);
 
   const leftPanel = useResizablePanel({
     storageKey: 'runHistory.leftPanelWidth', defaultWidth: 320, minWidth: 240, maxWidth: 520, side: 'left',
@@ -124,12 +134,15 @@ export function RunHistory() {
             actionBusy={data.actionBusy}
             actionErr={data.actionErr}
             retryErr={data.retryErr}
+            blockingPipelineId={data.blockingPipelineId}
             onPause={data.pauseRun}
             onResume={data.resumeRun}
             onRestart={data.restartRun}
             onDelete={data.deleteRun}
+            onAbandonAndDelete={data.abandonBlockingPipelineAndDelete}
             onRetry={data.retryFailedRun}
             onOpenInCockpit={() => data.openInCockpit(selectedNodeId)}
+            onOpenInGuided={data.openInGuided}
             onOpenProposalReview={() => navigate(`/proposal-review/${data.detail!.run.run_id}`)}
             onOpenEvidence={() => navigate(`/candidates/${data.detail!.run.run_id}`)}
             activeTab={activeTab}
@@ -156,6 +169,7 @@ export function RunHistory() {
             {activeTab === 'errors' && (
               <ErrorsTab run={data.detail.run} onInspectNode={(nodeId) => selectNode(nodeId, 'nodes')} />
             )}
+            {activeTab === 'ask-ai' && <AskAiPanel runId={data.detail.run.run_id} />}
           </RunWorkspace>
         )}
       </div>
@@ -175,6 +189,7 @@ export function RunHistory() {
             fullscreen
             onToggleFullscreen={() => setInspectorFullscreen(false)}
             live={false}
+            nodeTypesByName={nodeTypesByName}
           />
         </div>
       ) : (
@@ -194,6 +209,7 @@ export function RunHistory() {
               fullscreen={false}
               onToggleFullscreen={() => setInspectorFullscreen(true)}
               live={false}
+              nodeTypesByName={nodeTypesByName}
             />
           </aside>
         </>

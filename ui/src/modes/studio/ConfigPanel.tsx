@@ -194,6 +194,7 @@ export function ConfigPanel({
           value={selected.data.config}
           onChange={onConfigChange}
           hiddenFields={supportsModelSelection ? ['model'] : []}
+          typeName={selected.data.typeName}
         />
       ) : (
         <div className="text-sm text-bad">

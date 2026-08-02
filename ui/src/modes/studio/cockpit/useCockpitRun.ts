@@ -67,6 +67,15 @@ export type CockpitNavState = {
   // switching between the two screens doesn't lose the node you were
   // looking at.
   selectedNodeId?: string;
+  // Present only when this run was launched from the Workflow Builder
+  // ("Run in Cockpit" / a node or branch test). Lets Cockpit show a "Back
+  // to Builder" action that restores the same workflow, selection, and
+  // viewport instead of just navigating to the Library.
+  builderReturnPath?: string;
+  viewport?: { x: number; y: number; zoom: number };
+  // e.g. "Node test: reviewer" / "Branch test: approve" — shown instead of
+  // the plain workflow name so a test run is never mistaken for a full run.
+  testLabel?: string;
 };
 
 // Fallback node coloring for attach mode, when SSE replay has nothing (the
@@ -341,6 +350,11 @@ export function useCockpitRun() {
     return () => { cancelled = true; };
   }, [pipelineRunId, finished]);
 
+  // Guided Run and Cockpit share this one hook mount, so "Continue to next
+  // stage" must land back on whichever surface the user is currently on
+  // rather than hardcoding one — detected from the route, not passed in.
+  const surface = location.pathname.startsWith('/guided') ? 'guided' : 'cockpit';
+
   const continueToNextStage = useCallback(async () => {
     if (!pipelineDoc) return;
     const nextIndex = pipelineDoc.current_stage_index + 1;
@@ -351,7 +365,7 @@ export function useCockpitRun() {
     try {
       const { yaml: stageYaml } = await api.getWorkflow(nextStage.workflow);
       const stageRunId = crypto.randomUUID();
-      navigate(`/cockpit/${stageRunId}`, {
+      navigate(`/${surface}/${stageRunId}`, {
         state: {
           workflowYaml: stageYaml,
           workflowName: nextStage.id,
@@ -369,7 +383,7 @@ export function useCockpitRun() {
       setContinueError(e instanceof Error ? e.message : String(e));
       setContinuingStage(false);
     }
-  }, [pipelineDoc, navigate]);
+  }, [pipelineDoc, navigate, surface]);
 
   const retryGateFetch = useCallback(() => {
     setGateFetchError(null);

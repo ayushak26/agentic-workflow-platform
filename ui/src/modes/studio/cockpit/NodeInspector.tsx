@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
-import type { NodeRun, RunDetail } from '../../../api/types';
+import type { NodeRun, NodeTypeManifest, RunDetail } from '../../../api/types';
 import { STATUS_LABEL, type NodeStatus } from '../cockpit-state';
 import { WorkflowVariablesPanel } from '../WorkflowVariablesPanel';
 import { clock, outputSummary, typeStyle } from './node-render';
@@ -8,6 +8,7 @@ import { JsonTree } from './JsonTree';
 import { OutputTab } from './tabs/OutputTab';
 import { ErrorsTab } from './tabs/ErrorsTab';
 import { LogsTab } from './tabs/LogsTab';
+import { NodeTypeAskAi } from '../NodeTypeAskAi';
 
 export type SelectedNodeInfo = {
   id: string;
@@ -32,8 +33,23 @@ function durationLabel(seconds: number | null | undefined): string {
   return seconds < 1 ? `${Math.round(seconds * 1000)}ms` : `${seconds.toFixed(2)}s`;
 }
 
-function OverviewTabContent({ node, nodeRun }: { node: SelectedNodeInfo; nodeRun: NodeRun | undefined }) {
+function OverviewTabContent({
+  node,
+  nodeRun,
+  typeInfo,
+  runStatus,
+}: {
+  node: SelectedNodeInfo;
+  nodeRun: NodeRun | undefined;
+  typeInfo: NodeTypeManifest | undefined;
+  runStatus: string | undefined;
+}) {
   const ts = typeStyle(node.typeName);
+  const [askingAi, setAskingAi] = useState(false);
+  // Only meaningful once the run has stopped changing under it — while a
+  // run is still "running", asking about a node type mid-execution isn't
+  // useful and adds load during the part of the lifecycle that matters most.
+  const askAiAvailable = runStatus !== 'running';
   return (
     <div className="p-3 space-y-3 text-xs">
       <div className="flex items-center gap-2">
@@ -44,6 +60,10 @@ function OverviewTabContent({ node, nodeRun }: { node: SelectedNodeInfo; nodeRun
         <div>
           <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">Type</div>
           <div className="text-ink-900">{ts.label}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">Category</div>
+          <div className="text-ink-900">{typeInfo?.category ?? '—'}</div>
         </div>
         <div>
           <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">Status</div>
@@ -68,6 +88,22 @@ function OverviewTabContent({ node, nodeRun }: { node: SelectedNodeInfo; nodeRun
           </div>
         )}
       </div>
+      {typeInfo?.description && (
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">What this node does</div>
+          <div className="text-ink-700">{typeInfo.description}</div>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => setAskingAi(true)}
+        disabled={!askAiAvailable}
+        title={askAiAvailable ? undefined : 'Available once the run finishes, fails, or pauses'}
+        className="text-accent-700 hover:underline disabled:text-ink-400 disabled:no-underline disabled:cursor-not-allowed"
+      >
+        Ask AI about this node type →
+      </button>
+      {askingAi && <NodeTypeAskAi typeName={node.typeName} onClose={() => setAskingAi(false)} />}
     </div>
   );
 }
@@ -142,6 +178,7 @@ export function NodeInspector({
   fullscreen,
   onToggleFullscreen,
   live = true,
+  nodeTypesByName = {},
 }: {
   selectedNode: SelectedNodeInfo | null;
   nodeRun: NodeRun | undefined;
@@ -155,6 +192,10 @@ export function NodeInspector({
   // historical one — WorkflowVariablesPanel's copy differs accordingly
   // ("Live workflow variables" vs. a plain review of what this run used).
   live?: boolean;
+  // Node-type manifest keyed by type_name — supplies the category +
+  // description shown on the Overview tab. Optional so callers that haven't
+  // fetched it yet just render without that section.
+  nodeTypesByName?: Record<string, NodeTypeManifest>;
 }) {
   const [tab, setTab] = useState<TabKey>('overview');
   const hasError = Boolean(nodeRun?.error);
@@ -216,7 +257,14 @@ export function NodeInspector({
         ))}
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {tab === 'overview' && <OverviewTabContent node={selectedNode} nodeRun={nodeRun} />}
+        {tab === 'overview' && (
+          <OverviewTabContent
+            node={selectedNode}
+            nodeRun={nodeRun}
+            typeInfo={nodeTypesByName[selectedNode.typeName]}
+            runStatus={run?.status}
+          />
+        )}
         {tab === 'input' && <InputTabContent nodeRun={nodeRun} />}
         {tab === 'output' && (
           <OutputTab

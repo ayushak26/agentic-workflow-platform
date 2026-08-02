@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AuditEvent, RunDetail } from '../../../api/types';
 import { CopyButton } from '../../../components/CopyButton';
 import { clock, StatusPill } from '../cockpit/node-render';
 import { RUN_STATUS_LABEL } from './run-list-utils';
 import { deleteBlockedReason } from './useRunHistoryData';
 
-export type WorkspaceTab = 'overview' | 'nodes' | 'outputs' | 'inputs' | 'timeline' | 'errors';
+export type WorkspaceTab = 'overview' | 'nodes' | 'outputs' | 'inputs' | 'timeline' | 'errors' | 'ask-ai';
 
 const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
@@ -14,6 +14,7 @@ const TABS: { key: WorkspaceTab; label: string }[] = [
   { key: 'inputs', label: 'Inputs' },
   { key: 'timeline', label: 'Timeline' },
   { key: 'errors', label: 'Errors' },
+  { key: 'ask-ai', label: 'Ask AI' },
 ];
 
 function durationLabel(run: RunDetail): string {
@@ -52,12 +53,15 @@ export function RunWorkspace({
   actionBusy,
   actionErr,
   retryErr,
+  blockingPipelineId,
   onPause,
   onResume,
   onRestart,
   onDelete,
+  onAbandonAndDelete,
   onRetry,
   onOpenInCockpit,
+  onOpenInGuided,
   onOpenProposalReview,
   onOpenEvidence,
   activeTab,
@@ -68,12 +72,15 @@ export function RunWorkspace({
   actionBusy: 'pause' | 'resume' | 'restart' | 'delete' | null;
   actionErr: string | null;
   retryErr: string | null;
+  blockingPipelineId?: string | null;
   onPause: () => void;
   onResume: () => void;
   onRestart: () => void;
   onDelete: () => void;
+  onAbandonAndDelete?: () => void;
   onRetry: () => void;
   onOpenInCockpit: () => void;
+  onOpenInGuided: () => void;
   onOpenProposalReview: () => void;
   onOpenEvidence: () => void;
   activeTab: WorkspaceTab;
@@ -82,15 +89,27 @@ export function RunWorkspace({
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
   const run = detail.run;
   const deleteBlocked = deleteBlockedReason(run);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    function onPointerDown(e: MouseEvent) {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setMoreOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, [moreOpen]);
 
   const isHitlGatePause = run.status === 'paused' && run.pause_kind !== 'user_requested';
 
   return (
     <div className="flex flex-col h-full min-h-0 min-w-0">
       <div className="flex-none border-b border-slate-200 bg-white px-4 py-3 sticky top-0 z-10">
-        <div className="flex items-start justify-between gap-3 min-w-0">
+        <div className="flex flex-wrap items-start justify-between gap-3 min-w-0">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2 min-w-0">
               <span className="text-base font-semibold text-ink-900 truncate" title={run.workflow_name}>
@@ -118,7 +137,7 @@ export function RunWorkspace({
             </div>
           </div>
 
-          <div className="flex-none flex items-start gap-2">
+          <div className="flex-none flex flex-wrap items-start gap-2">
             {/* Primary action — exactly one, status-dependent. */}
             {isHitlGatePause ? (
               <button
@@ -161,12 +180,20 @@ export function RunWorkspace({
 
             {/* Secondary actions. */}
             {run.workflow_yaml && (
-              <button
-                onClick={onOpenInCockpit}
-                className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
-              >
-                Open in Cockpit
-              </button>
+              <>
+                <button
+                  onClick={onOpenInGuided}
+                  className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
+                >
+                  Open in Guided
+                </button>
+                <button
+                  onClick={onOpenInCockpit}
+                  className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
+                >
+                  Open in Cockpit
+                </button>
+              </>
             )}
             <button
               onClick={onOpenProposalReview}
@@ -182,7 +209,7 @@ export function RunWorkspace({
             </button>
 
             {/* Overflow menu. */}
-            <div className="relative">
+            <div className="relative" ref={moreMenuRef}>
               <button
                 onClick={() => setMoreOpen((v) => !v)}
                 className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
@@ -262,7 +289,16 @@ export function RunWorkspace({
 
         {(actionErr || retryErr) && (
           <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
-            {actionErr ?? retryErr}
+            <div>{actionErr ?? retryErr}</div>
+            {actionErr && blockingPipelineId && onAbandonAndDelete && (
+              <button
+                onClick={onAbandonAndDelete}
+                disabled={actionBusy !== null}
+                className="mt-1.5 px-2 py-1 rounded bg-red-600 text-white text-[11px] font-medium hover:bg-red-500 disabled:opacity-50"
+              >
+                {actionBusy === 'delete' ? 'Abandoning & deleting…' : 'Abandon pipeline & delete this run'}
+              </button>
+            )}
           </div>
         )}
 

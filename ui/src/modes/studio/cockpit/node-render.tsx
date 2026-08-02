@@ -263,6 +263,10 @@ export function suggestedCorrectiveAction(error: string | null | undefined): str
 export function startRetryRun(
   run: Pick<RunDetail, 'run_id' | 'status' | 'retry_available' | 'workflow_yaml' | 'workflow_name'>,
   navigate: NavigateFunction,
+  // Which run surface to relaunch into. Defaults to 'cockpit' so every
+  // pre-existing caller (Cockpit's own retry button, Run History's "Retry
+  // from failure") keeps its current behavior unchanged.
+  surface: 'guided' | 'cockpit' = 'cockpit',
 ): string | null {
   if (run.status !== 'failed') {
     return 'This run has not failed — there is nothing to retry.';
@@ -274,7 +278,7 @@ export function startRetryRun(
     );
   }
   const retryRunId = crypto.randomUUID();
-  navigate(`/cockpit/${retryRunId}`, {
+  navigate(`/${surface}/${retryRunId}`, {
     state: {
       workflowYaml: run.workflow_yaml,
       workflowName: run.workflow_name,

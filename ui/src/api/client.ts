@@ -2,6 +2,7 @@ import type {
   AuditEvent,
   ConceptAlternative,
   ExtractedWorkflowFile,
+  GenerateWorkflowResult,
   HorizonEvaluation,
   LLMModelInfo,
   NodeTypeManifest,
@@ -15,13 +16,18 @@ import type {
   ProposalRenderRequest,
   ProposalRenderResult,
   ProposalReview,
+  RunChatTurn,
   RunDetail,
   RunEvent,
   RunSummary,
+  WorkflowDetail,
+  WorkflowDraft,
   WorkflowFileCapabilities,
   WorkflowFileReference,
   WorkflowPreflightReport,
+  WorkflowStats,
   WorkflowSummary,
+  WorkflowVersionSummary,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
@@ -217,12 +223,49 @@ export const api = {
   getWorkflow: (name: string) =>
     afetch(`${API}/workflows/by-name/${name}`, { headers: authHeaders() })
       .then(j<{ name: string; yaml: string }>),
+  getWorkflowDetail: (name: string) =>
+    afetch(`${API}/workflows/${name}/detail`, { headers: authHeaders() })
+      .then(j<WorkflowDetail>),
+  getWorkflowStats: (name: string) =>
+    afetch(`${API}/workflows/${name}/stats`, { headers: authHeaders() })
+      .then(j<WorkflowStats>),
   saveWorkflow: (name: string, yaml: string) =>
     afetch(`${API}/workflows/save`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ name, yaml }),
-    }).then(j<{ ok: true; name: string }>),
+    }).then(j<{ ok: true; name: string; version_id: string }>),
+
+  // ---- Builder autosave drafts + immutable versions
+  getWorkflowDraft: (name: string) =>
+    afetch(`${API}/workflows/${name}/draft`, { headers: authHeaders() })
+      .then(j<WorkflowDraft>),
+  saveWorkflowDraft: (
+    name: string,
+    yaml: string,
+    canvas?: WorkflowDraft['canvas'],
+  ) =>
+    afetch(`${API}/workflows/${name}/draft`, {
+      method: 'PUT',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ yaml, canvas }),
+    }).then(j<WorkflowDraft>),
+  deleteWorkflowDraft: (name: string) =>
+    afetch(`${API}/workflows/${name}/draft`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then(j<{ ok: boolean }>),
+  listWorkflowVersions: (name: string) =>
+    afetch(`${API}/workflows/${name}/versions`, { headers: authHeaders() })
+      .then(j<WorkflowVersionSummary[]>),
+  getWorkflowVersion: (name: string, versionId: string) =>
+    afetch(`${API}/workflows/${name}/versions/${versionId}`, { headers: authHeaders() })
+      .then(j<{ yaml: string }>),
+  restoreWorkflowVersion: (name: string, versionId: string) =>
+    afetch(`${API}/workflows/${name}/versions/${versionId}/restore`, {
+      method: 'POST',
+      headers: authHeaders(),
+    }).then(j<{ yaml: string; version_id: string }>),
   validateWorkflow: (
     workflow_yaml: string,
     inputs?: Record<string, unknown>,
@@ -233,6 +276,12 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ workflow_yaml, inputs, check_services }),
     }).then(j<WorkflowPreflightReport>),
+  generateWorkflow: (prompt: string, sample_inputs?: Record<string, unknown>) =>
+    afetch(`${API}/workflows/generate`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ prompt, sample_inputs }),
+    }).then(j<GenerateWorkflowResult>),
 
   workflowFileCapabilities: () =>
     afetch(`${API}/workflow-input-files/capabilities`, {
@@ -393,6 +442,48 @@ export const api = {
       method: 'DELETE',
       headers: authHeaders(),
     }).then(j<{ run_id: string; deleted: boolean }>),
+  runChatHistory: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/chat`, { headers: authHeaders() })
+      .then(j<{ turns: RunChatTurn[]; starter_questions: string[] }>),
+  askAboutRun: (run_id: string, question: string, history: RunChatTurn[] = []) =>
+    afetch(`${API}/runs/mine/${run_id}/chat`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        question,
+        history: history.map(({ role, content }) => ({ role, content })),
+      }),
+    }).then(j<{ turns: RunChatTurn[]; answer: string }>),
+  askAboutNodeTypes: (
+    question: string,
+    focus_type_name?: string,
+    history: RunChatTurn[] = [],
+  ) =>
+    afetch(`${API}/node-types/ask`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        question,
+        focus_type_name,
+        history: history.map(({ role, content }) => ({ role, content })),
+      }),
+    }).then(j<{ answer: string }>),
+  draftPrompt: (
+    type_name: string,
+    field_name: string,
+    instruction: string,
+    history: RunChatTurn[] = [],
+  ) =>
+    afetch(`${API}/node-types/draft-prompt`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type_name,
+        field_name,
+        instruction,
+        history: history.map(({ role, content }) => ({ role, content })),
+      }),
+    }).then(j<{ answer: string }>),
 
   // ---- pipelines (chain saved workflows: one's outputs become the next's inputs)
   listPipelines: () =>
@@ -436,6 +527,12 @@ export const api = {
   pipelineRunDetail: (pipeline_run_id: string) =>
     afetch(`${API}/pipelines/mine/${pipeline_run_id}`, { headers: authHeaders() })
       .then(j<PipelineRunDetail>),
+  abandonPipeline: (pipeline_run_id: string, session_id?: string) =>
+    afetch(`${API}/pipelines/${pipeline_run_id}/abandon`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ session_id }),
+    }).then(j<{ pipeline_run_id: string; status: string }>),
 
   proposalReview: (run_id: string) =>
     afetch(`${API}/proposals/runs/${run_id}/review`, {

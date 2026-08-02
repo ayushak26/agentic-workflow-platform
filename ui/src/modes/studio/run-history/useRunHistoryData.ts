@@ -148,6 +148,17 @@ export function useRunHistoryData(runId: string | undefined) {
     });
   }
 
+  function openInGuided() {
+    if (!detail?.run.workflow_yaml) return;
+    navigate(`/guided/${detail.run.run_id}`, {
+      state: {
+        attach: true,
+        workflowYaml: detail.run.workflow_yaml,
+        workflowName: detail.run.workflow_name,
+      },
+    });
+  }
+
   async function pauseRun() {
     if (!detail || detail.run.status !== 'running') return;
     setActionErr(null);
@@ -206,6 +217,24 @@ export function useRunHistoryData(runId: string | undefined) {
     }
   }
 
+  // The backend 409s a blocked delete with this exact wording (see
+  // app/api/runs.py delete_run_endpoint) — matched here only to offer a
+  // one-click way to unstick it, not as a structured error contract.
+  const blockingPipelineId = actionErr?.match(/active stage of pipeline '([^']+)'/)?.[1] ?? null;
+
+  async function abandonBlockingPipelineAndDelete() {
+    if (!blockingPipelineId) return;
+    setActionErr(null);
+    setActionBusy('delete');
+    try {
+      await api.abandonPipeline(blockingPipelineId);
+      await deleteRun();
+    } catch (error) {
+      setActionErr(String(error));
+      setActionBusy(null);
+    }
+  }
+
   return {
     runs,
     listErr,
@@ -215,12 +244,15 @@ export function useRunHistoryData(runId: string | undefined) {
     retryErr,
     actionErr,
     actionBusy,
+    blockingPipelineId,
     retryFailedRun,
     openInCockpit,
+    openInGuided,
     pauseRun,
     resumeRun,
     restartRun,
     deleteRun,
+    abandonBlockingPipelineAndDelete,
     navigate,
   };
 }

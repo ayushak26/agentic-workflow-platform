@@ -3,20 +3,31 @@ import { useNavigate } from 'react-router-dom';
 
 import { api } from '../../api/client';
 import type { WorkflowFileReference } from '../../api/types';
+import type { CockpitNavState } from './cockpit/useCockpitRun';
 import { FileInputField } from './FileInputField';
 import { FALLBACK_FILE_CAPABILITIES, fileReferencesFrom } from './fileInputUtils';
 import { valueForJsonInput, type WorkflowInputSpec } from './yaml-bridge';
+
+// Only set when this Run is launched from the Builder — carries the
+// context Cockpit needs to offer "Back to Builder" and to label a node/
+// branch test run distinctly from a full run.
+export type RunLaunchContext = Omit<
+  Pick<CockpitNavState, 'builderReturnPath' | 'selectedNodeId' | 'viewport' | 'testLabel'>,
+  'selectedNodeId'
+> & { selectedNodeId?: string | null };
 
 export function RunDialog({
   workflowName,
   workflowYaml,
   inputs,
   onClose,
+  launchContext,
 }: {
   workflowName: string;
   workflowYaml: string;
   inputs: Record<string, WorkflowInputSpec>;
   onClose: () => void;
+  launchContext?: RunLaunchContext;
 }) {
   const navigate = useNavigate();
   const [values, setValues] = useState<Record<string, string>>({});
@@ -222,8 +233,13 @@ export function RunDialog({
       }
 
       const runId = crypto.randomUUID();
-      navigate(`/cockpit/${runId}`, {
-        state: { workflowYaml, workflowName, inputs: runInputs },
+      // A Builder-originated launch (a "Run in Cockpit" or a node/branch
+      // test) always carries launchContext and stays on the technical
+      // Cockpit surface. A normal Library launch has none and defaults to
+      // the business-language Guided Run surface instead.
+      const surface = launchContext ? 'cockpit' : 'guided';
+      navigate(`/${surface}/${runId}`, {
+        state: { workflowYaml, workflowName, inputs: runInputs, ...launchContext },
       });
     } catch (error: unknown) {
       setLaunchError(error instanceof Error ? error.message : String(error));
