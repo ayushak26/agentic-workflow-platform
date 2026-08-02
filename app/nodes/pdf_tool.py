@@ -42,6 +42,10 @@ class PDFTextExtractor(NodeType):
     output_schema = PDFExtractOutput
     config_schema = PDFExtractConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         store = self.services["object_store"]
         cfg = PDFExtractConfig(**resolved_config)
@@ -85,6 +89,10 @@ class PDFProposalRenderer(NodeType):
     input_schema = PDFRenderInput
     output_schema = PDFRenderOutput
     config_schema = PDFRenderConfig
+
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         store = self.services["object_store"]

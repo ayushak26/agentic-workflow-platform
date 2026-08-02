@@ -1,16 +1,21 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, Depends, Header
+from fastapi import APIRouter, HTTPException, Request, Depends, Header, status
 from pydantic import BaseModel, Field, ValidationError
 import yaml
 from pathlib import Path
 from fastapi.responses import Response, StreamingResponse
 
 from app.nodes.registry import NodeRegistry
+from app.runtime.autofix import (
+    NOT_AUTOFIXABLE_CODES,
+    apply_deterministic_fixes,
+    repair_with_llm,
+)
 from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
@@ -23,6 +28,7 @@ from app.runtime.preflight import (
     preflight_workflow_for_run,
     preflight_workflow_yaml,
 )
+from app.workflow.preflight_stats import preflight_stats, record_attempt
 from app.security.dependencies import (
     require_permission, require_consultant, require_admin, CurrentUser,
 )
@@ -234,7 +240,142 @@ async def validate_workflow(
             services=services,
             compile_graph=True,
         )
+    await record_attempt(
+        services.get("audit_db"),
+        source="validate",
+        workflow_name=report.workflow_name,
+        success=report.valid,
+        error_codes=[issue.code for issue in report.errors],
+    )
     return report.model_dump(mode="json")
+
+
+class AutofixWorkflowRequest(BaseModel):
+    workflow_yaml: str
+    inputs: dict[str, Any] | None = None
+    check_services: bool = False
+
+
+class AutofixWorkflowResponse(BaseModel):
+    yaml: str
+    fixed: bool
+    deterministic_fixes_applied: list[str]
+    llm_attempts: list[dict[str, Any]]
+    preflight_report: dict[str, Any]
+
+
+async def _run_preflight(
+    yaml_text: str, req: AutofixWorkflowRequest, services: dict[str, Any],
+) -> WorkflowPreflightReport:
+    """Same branching `validate_workflow` uses, so Auto-fix and Preflight
+    agree on what "valid" means for identical input."""
+    if req.check_services:
+        return await preflight_workflow_for_run(
+            yaml_text,
+            provided_inputs=req.inputs or {},
+            services=services,
+            probe_services=True,
+            require_run_history=False,
+        )
+    return preflight_workflow_yaml(
+        yaml_text,
+        provided_inputs=req.inputs,
+        services=services,
+        compile_graph=True,
+    )
+
+
+@router.post("/workflows/autofix")
+async def autofix_workflow(
+    req: AutofixWorkflowRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Best-effort repair of a workflow's preflight errors: deterministic
+    patches first (free, predictable), then an LLM repair loop for whatever
+    remains. Never runs a node or executes the workflow."""
+    services = getattr(request.app.state, "services", {})
+
+    current_yaml = req.workflow_yaml
+    report = await _run_preflight(current_yaml, req, services)
+    initial_codes = [issue.code for issue in report.errors]
+    deterministic_fixes: list[str] = []
+    llm_attempts: list[dict[str, Any]] = []
+
+    if not report.valid:
+        remaining_codes = {issue.code for issue in report.errors}
+        if remaining_codes <= NOT_AUTOFIXABLE_CODES:
+            pass  # nothing here is fixable by editing YAML — skip straight to recording+returning
+        else:
+            fix_result = apply_deterministic_fixes(current_yaml, report)
+            if fix_result.changed:
+                current_yaml = fix_result.yaml_text
+                deterministic_fixes = fix_result.fixes_applied
+                report = await _run_preflight(current_yaml, req, services)
+
+            if not report.valid:
+                remaining_codes = {issue.code for issue in report.errors}
+                if remaining_codes - NOT_AUTOFIXABLE_CODES:
+                    llm = services.get("llm")
+                    if llm is None:
+                        raise HTTPException(
+                            status.HTTP_503_SERVICE_UNAVAILABLE, "LLM gateway unavailable",
+                        )
+                    from app.api.workflow_generation import build_llm_yaml_generator
+
+                    scope = getattr(user, "session_id", None) or user.username
+                    generate_yaml = build_llm_yaml_generator(llm, services, scope)
+
+                    async def static_check(yaml_text: str) -> WorkflowPreflightReport:
+                        return await _run_preflight(yaml_text, req, services)
+
+                    current_yaml, report, attempts = await repair_with_llm(
+                        current_yaml, report,
+                        static_check=static_check,
+                        generate_yaml=generate_yaml,
+                    )
+                    llm_attempts = [
+                        {"success": attempt.success, "detail": attempt.detail}
+                        for attempt in attempts
+                    ]
+
+    await record_attempt(
+        services.get("audit_db"),
+        source="autofix",
+        workflow_name=report.workflow_name,
+        success=report.valid,
+        error_codes=[issue.code for issue in report.errors],
+        initial_error_codes=initial_codes,
+        deterministic_fixes_applied=len(deterministic_fixes),
+        llm_attempts=len(llm_attempts),
+    )
+    return AutofixWorkflowResponse(
+        yaml=current_yaml,
+        fixed=report.valid,
+        deterministic_fixes_applied=deterministic_fixes,
+        llm_attempts=llm_attempts,
+        preflight_report=report.model_dump(mode="json"),
+    )
+
+
+@router.get("/workflows/preflight-stats")
+async def get_preflight_stats(
+    request: Request,
+    since_hours: int | None = None,
+    user: CurrentUser = Depends(require_admin),
+):
+    """Platform-wide preflight reliability rollup across every /validate,
+    /generate, and /autofix call — success rate, and which error codes
+    recur most before any fix is attempted. Deliberately global (not
+    session-scoped like run_history): error codes carry no run content, and
+    the question this answers is a platform reliability question, not a
+    per-user one."""
+    services = getattr(request.app.state, "services", {})
+    since = (
+        datetime.now(timezone.utc) - timedelta(hours=since_hours)
+        if since_hours is not None else None
+    )
+    return await preflight_stats(services.get("audit_db"), since=since)
 
 
 @router.post("/workflows/run")

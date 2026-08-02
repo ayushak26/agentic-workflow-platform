@@ -1,7 +1,6 @@
 import pytest
 
 from app.config import settings
-from app.security.entity_protection_errors import ResponseLeakDetectedError
 from app.security.entity_tokenizer import EntityTokenizerService, ProcessingMode
 from tests.security._fake_mongo import FakeAsyncDatabase
 
@@ -214,18 +213,23 @@ async def test_unresolved_placeholder_is_flagged_not_guessed(
     assert "[[ENTITY_ORGANISATION_999]]" in detok.value
 
 
-async def test_response_leak_of_registered_value_is_blocked(
+async def test_response_leak_of_registered_value_is_audited_not_blocked(
     service: EntityTokenizerService,
 ):
+    """The core guarantee is on the INPUT side (proven at the gateway
+    boundary in tests/llm/). A verbatim match in the OUTPUT can't be told
+    apart from the model correctly guessing/inferring a name, or a noisy
+    auto-detected entity reappearing -- both far more common in practice
+    than a real leak -- so this is audit-only and must never raise."""
     await service.registry.register(
         session_id="s1", collection_id="c1", entity_type="organisation",
         value="Acme Robotics GmbH",
     )
-    with pytest.raises(ResponseLeakDetectedError):
-        await service.detokenize(
-            "The coordinator is Acme Robotics GmbH.",
-            session_id="s1", collection_id="c1",
-        )
+    detok = await service.detokenize(
+        "The coordinator is Acme Robotics GmbH.",
+        session_id="s1", collection_id="c1",
+    )
+    assert detok.value == "The coordinator is Acme Robotics GmbH."
 
 
 async def test_restricted_local_mode_falls_back_to_pseudonymised(

@@ -345,84 +345,16 @@ def _iter_model_values(config: Any, path: str = "config") -> Iterable[tuple[str,
 
 
 def _required_services_for_node(node: NodeSpec) -> set[str]:
-    node_type = node.type
+    """Delegates to the node type's own `required_services()` override (see
+    app/nodes/base.py) — every node-type-specific service dependency lives
+    beside the node that declares it, not in a central if/elif chain here."""
     config = node.effective_config()
-    required: set[str] = set()
+    try:
+        node_class = NodeRegistry.get(node.type)
+    except KeyError:
+        return set()
 
-    if node_type in {
-        "TransformAgent",
-        "RAGAgent",
-        "MCPAgent",
-        "GraphNormalizer",
-        "ScholarlyCandidateDiscoveryAgent",
-        "ScientificSkillAgent",
-        "ClaimEvidenceVerifier",
-        "ProposalEvidenceFactoryAgent",
-        "ConceptAlternativesAgent",
-        "MethodologyEngineeringAgent",
-        "HorizonEvaluationAgent",
-    }:
-        required.update({"llm", "cost_ledger"})
-    if node_type == "RouterAgent" and config.get("mode", "rule") == "llm":
-        required.update({"llm", "cost_ledger"})
-    if node_type == "RAGAgent":
-        required.add("retriever")
-    if node_type in {
-        "MCPAgent",
-        "ScholarlyCandidateDiscoveryAgent",
-    }:
-        required.add("mcp_client")
-    if node_type in {"ScientificSkillAgent", "ScientificResearchPlannerAgent"}:
-        required.add("scientific_skill_catalog")
-    if node_type == "ScientificResearchPlannerAgent":
-        required.update({"llm", "cost_ledger"})
-    if node_type == "BoundedDeepResearchAgent":
-        required.update({"deep_research", "scientific_skill_catalog", "cost_ledger"})
-    if node_type in {
-        "PDFTextExtractor",
-        "PDFProposalRenderer",
-        "HorizonHTMLProposalRenderer",
-        "HorizonDOCXProposalRenderer",
-        "ResearchSourceAcquirer",
-        "ProposalEvidenceFactoryAgent",
-        "PaperQAEvidenceSynthesizerAgent",
-        "DOCXProposalRenderer",
-        "ExcelTableExtractor",
-        "PowerPointProposalSlides",
-        "WorkflowFileLoader",
-        "KimiVisionAgent",
-    }:
-        required.add("object_store")
-    if (
-        node_type == "HumanInLoopAgent"
-        and config.get("allow_document_override", True)
-    ):
-        required.add("object_store")
-    if node_type in {
-        "WebSearchAgent",
-        "PriorProjectRetrieverAgent",
-    }:
-        required.add("web_search")
-    if node_type == "StructuredDatasetRetrieverAgent":
-        required.update({"database_lookup", "object_store"})
-    if (
-        node_type == "StructuredDatasetRetrieverAgent"
-        and config.get("auto_plan_queries", False)
-    ):
-        required.update({"llm", "cost_ledger"})
-    if node_type == "InternalProjectEvidenceRetrieverAgent":
-        required.update({"llm", "cost_ledger"})
-    if (
-        node_type == "InternalProjectEvidenceRetrieverAgent"
-        and config.get("require_internal_index", False)
-    ):
-        required.add("retriever")
-    if node_type == "OpenAIImageGenerationAgent" and config.get(
-        "backend", "openai"
-    ) != "disabled":
-        required.update({"image_generator", "object_store"})
-    if node_type == "KimiVisionAgent":
-        required.add("kimi_vision")
+    required = set(node_class.required_services(config))
     for _, model in _iter_model_values(config):
         service_name = local_service_name(model)
         if service_name:
@@ -937,8 +869,13 @@ def _validate_template_output_path(
         source_class = NodeRegistry.get(node_map[first].type)
     except KeyError:
         return
-    fields = set(source_class.output_schema.model_fields)
-    if parts[1] not in fields:
+    # `preflight_output_fields` is the generic extension point (app/nodes/base.py):
+    # most node types just return their static output_schema field names, but a
+    # node type can override it to allow nested dotted references (e.g. a
+    # declared structured sub-schema) — no per-node-type dispatch lives here.
+    fields = source_class.preflight_output_fields(node_map[first].effective_config())
+    top_level = {field.split(".", 1)[0] for field in fields}
+    if parts[1] not in top_level:
         _issue(
             report,
             "TEMPLATE_UNKNOWN_OUTPUT_FIELD",
@@ -946,28 +883,39 @@ def _validate_template_output_path(
             f"{parts[1]!r}.",
             path=path,
             node_id=current_node.id,
-            suggestion=f"Available fields: {', '.join(sorted(fields))}.",
+            suggestion=f"Available fields: {', '.join(sorted(top_level))}.",
         )
         return
 
-    if (
-        node_map[first].type == "TransformAgent"
-        and parts[1] == "parsed"
-        and len(parts) >= 3
-    ):
-        declared = node_map[first].effective_config().get("output_schema") or {}
-        if parts[2] not in declared:
-            _issue(
-                report,
-                "TEMPLATE_UNKNOWN_STRUCTURED_FIELD",
-                f"TransformAgent {first!r} does not declare parsed field "
-                f"{parts[2]!r}.",
-                path=path,
-                node_id=current_node.id,
-                suggestion=(
-                    "Add it to output_schema or correct the template path."
-                ),
-            )
+    # Nested dotted access (node.field.subfield) is only checked for node
+    # types that explicitly opt in by overriding preflight_output_fields
+    # (e.g. TransformAgent, whose "parsed" field is a free-form dict shaped
+    # by the node's own YAML config). Everything else keeps its statically
+    # typed nested fields (e.g. a Pydantic sub-model) unchecked here, exactly
+    # like the top-level output_schema check already trusts Pydantic's shape
+    # — there is no way to know a type-annotated nested field is wrong
+    # without re-deriving its whole schema, so we don't guess.
+    overrides_structure_check = (
+        source_class.preflight_output_fields.__func__
+        is not NodeType.preflight_output_fields.__func__
+    )
+    if not overrides_structure_check:
+        return
+
+    remainder = ".".join(parts[1:])
+    if len(parts) >= 3 and remainder not in fields:
+        _issue(
+            report,
+            "TEMPLATE_UNKNOWN_STRUCTURED_FIELD",
+            f"{node_map[first].type} {first!r} does not declare structured "
+            f"field {remainder!r}.",
+            path=path,
+            node_id=current_node.id,
+            suggestion=(
+                "Add it to the node's declared output schema or correct "
+                "the template path."
+            ),
+        )
 
 
 def _validate_templates(

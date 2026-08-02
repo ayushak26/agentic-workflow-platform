@@ -66,6 +66,10 @@ class ResearchSourceAcquirer(NodeType):
     config_schema = ResearchSourceAcquirerConfig
     output_schema = ResearchSourceAcquirerOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(
         self,
         state: dict[str, Any],

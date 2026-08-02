@@ -38,3 +38,26 @@ class NodeType(ABC):
         self.output_schema; the compiler will validate it before merging.
         """
         ...
+
+    # ----- optional preflight extension points -----
+    # Overriding these is how a new node type gets preflight coverage for
+    # anything beyond the generic schema checks — no edits to
+    # app/runtime/preflight.py required. See tests/test_node_preflight_coverage.py,
+    # which forces every new registered node type to be reviewed against them.
+
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Service names this node needs at runtime, given its resolved
+        config. Preflight aggregates these across all nodes to compute the
+        workflow's `required_services`. Default: none."""
+        return set()
+
+    @classmethod
+    def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        """Valid dotted template-reference suffixes for this node's output,
+        beyond the static output_schema field names — e.g. a node whose
+        output_schema declares a free-form dict but whose own YAML config
+        further constrains which sub-keys are actually populated. Entries may
+        be exact field names or dotted prefixes (e.g. "parsed.summary").
+        Default: exactly the output_schema's declared field names."""
+        return set(cls.output_schema.model_fields)

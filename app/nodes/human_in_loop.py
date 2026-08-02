@@ -96,6 +96,12 @@ class HumanInLoopAgent(NodeType):
     output_schema = HITLOutput
     config_schema = HITLConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        if config.get("allow_document_override", True):
+            return {"object_store"}
+        return set()
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = HITLConfig(**resolved_config)
 

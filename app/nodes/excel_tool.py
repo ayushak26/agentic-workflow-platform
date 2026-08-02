@@ -35,6 +35,10 @@ class ExcelTableExtractor(NodeType):
     output_schema = ExcelOutput
     config_schema = ExcelConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         store = self.services["object_store"]
         cfg = ExcelConfig(**resolved_config)

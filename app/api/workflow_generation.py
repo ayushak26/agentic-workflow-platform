@@ -22,11 +22,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from app.nodes.registry import NodeRegistry
+from app.runtime.autofix import apply_deterministic_fixes, format_preflight_feedback
 from app.runtime.executor import run_workflow
 from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import WorkflowPreflightReport, preflight_workflow_for_run
 from app.runtime.schema import WorkflowInputSpec
 from app.security.dependencies import CurrentUser, require_consultant
+from app.workflow.preflight_stats import record_attempt
 
 router = APIRouter(prefix="/api/workflows", tags=["workflow-generation"])
 
@@ -36,7 +38,9 @@ MAX_REAL_EXECUTION_ATTEMPTS = 1 + 2  # one real run, then up to 2 repair-and-ret
 
 _EXAMPLE_WORKFLOW_YAML = """
 name: Hello Workflow
-description: Minimal example: one Literal node feeding an Echo template.
+description: >-
+  Literal feeds a template, an LLM summarizes it into a declared structured
+  field, and a final node reads both the structured field and the raw text.
 version: "1.0"
 use_case: generic
 inputs:
@@ -51,11 +55,26 @@ nodes:
     type: Echo
     config:
       template: "Hello, {{first.value}}!"
+  - id: extract
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: "Summarize this greeting in one word: {{second.text}}"
+      output_schema:
+        summary: str
+  - id: render
+    type: Echo
+    config:
+      template: "Summary: {{extract.parsed.summary}} (raw model text: {{extract.raw}})"
 edges:
   - from: first
     to: second
+  - from: second
+    to: extract
+  - from: extract
+    to: render
 entry: first
-exit: second
+exit: render
 """
 
 _SYSTEM_PROMPT_TEMPLATE = """You generate workflow YAML files for an agentic workflow builder.
@@ -63,6 +82,15 @@ _SYSTEM_PROMPT_TEMPLATE = """You generate workflow YAML files for an agentic wor
 Every node's "type" MUST be one of the node types in this NODE TYPE CATALOG \
 — it is generated live from the platform's current registry, so it is \
 always complete and current. Never invent a node type that isn't listed.
+
+A template like {{{{node_id.field}}}} may ONLY reference a field name that is \
+listed under that node's "Output fields" below — never guess or invent one. \
+Some node types (marked "declares structured output") have an output field \
+that is a free-form dict shaped by that SAME node's own config.output_schema \
+mapping: the dict is empty unless you declare output_schema on that node, and \
+its only valid keys are exactly the ones you declared there (e.g. declaring \
+`output_schema: {{summary: str}}` on a node makes `{{{{that_node.parsed.summary}}}}` \
+valid, and nothing else under `.parsed` is). See the worked example below.
 
 NODE TYPE CATALOG:
 {catalog}
@@ -82,11 +110,16 @@ def _node_type_catalog() -> str:
     lines = []
     for entry in NodeRegistry.manifest():
         config_fields = list((entry.get("config_schema") or {}).get("properties", {}).keys())
-        lines.append(
+        output_fields = list((entry.get("output_schema") or {}).get("properties", {}).keys())
+        structured = "output_schema" in config_fields
+        line = (
             f"- {entry['type_name']} (category: {entry.get('category', 'Other')}): "
             f"{entry.get('description') or 'no description'}. "
-            f"Config fields: {', '.join(config_fields) or 'none'}."
+            f"Config fields: {', '.join(config_fields) or 'none'}. "
+            f"Output fields: {', '.join(output_fields) or 'none'}"
+            f"{' (declares structured output — see note above)' if structured else ''}."
         )
+        lines.append(line)
     return "\n".join(lines)
 
 
@@ -169,15 +202,36 @@ async def run_generation_pipeline(
     declared_inputs: dict[str, WorkflowInputSpec] = {}
 
     for _ in range(MAX_STATIC_ATTEMPTS):
+        # Before burning an LLM attempt on a retry, try the free,
+        # deterministic fixer on the previous attempt's report — it resolves
+        # the mechanical cases (typo'd template field, unknown node type
+        # with an obvious fuzzy match, etc.) without a model call. Only
+        # applies from the second iteration on: the first attempt has no
+        # prior yaml/report to fix yet.
+        if current_yaml is not None and report is not None and not report.valid:
+            fix_result = apply_deterministic_fixes(current_yaml, report)
+            if fix_result.changed:
+                current_yaml = fix_result.yaml_text
+                report, declared_inputs = await static_check(current_yaml)
+                if report.valid:
+                    attempts.append(GenerationAttempt(
+                        "static", current_yaml, True,
+                        "Deterministic fix resolved remaining issues.",
+                    ))
+                    break
+                issue_text = format_preflight_feedback(report)
+                attempts.append(GenerationAttempt("static", current_yaml, False, issue_text))
+                feedback = (
+                    "Your previous YAML failed static validation with these "
+                    f"issues: {issue_text}. Return a corrected, complete YAML."
+                )
+
         current_yaml = await generate_yaml(prompt, current_yaml, feedback)
         report, declared_inputs = await static_check(current_yaml)
         if report.valid:
             attempts.append(GenerationAttempt("static", current_yaml, True, "Preflight passed."))
             break
-        issue_text = "; ".join(
-            f"{issue.code} ({issue.node_id or issue.path or 'workflow'}): {issue.message}"
-            for issue in report.errors
-        )
+        issue_text = format_preflight_feedback(report)
         attempts.append(GenerationAttempt("static", current_yaml, False, issue_text))
         feedback = (
             "Your previous YAML failed static validation with these "
@@ -225,10 +279,7 @@ async def run_generation_pipeline(
             if new_inputs is not None:
                 inputs = new_inputs
         if not report.valid:
-            issue_text = "; ".join(
-                f"{issue.code} ({issue.node_id or issue.path or 'workflow'}): {issue.message}"
-                for issue in report.errors
-            )
+            issue_text = format_preflight_feedback(report)
             attempts.append(GenerationAttempt("static", current_yaml, False, issue_text))
             return GenerationResult(
                 yaml=current_yaml, success=False, preflight_report=report,
@@ -246,18 +297,14 @@ class GenerateWorkflowRequest(BaseModel):
     sample_inputs: dict[str, Any] | None = None
 
 
-@router.post("/generate")
-async def generate_workflow_endpoint(
-    req: GenerateWorkflowRequest,
-    request: Request,
-    user: CurrentUser = Depends(require_consultant),
-):
-    services = getattr(request.app.state, "services", {})
-    llm = services.get("llm")
-    if llm is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM gateway unavailable")
-
-    scope = getattr(user, "session_id", None) or user.username
+def build_llm_yaml_generator(
+    llm: Any, services: dict[str, Any], scope: str,
+) -> Callable[[str, str | None, str | None], Awaitable[str]]:
+    """Build a `generate_yaml(base_prompt, prior_yaml, feedback) -> yaml text`
+    closure over a live LLM client. Shared by /generate (a fresh workflow
+    from a prompt) and /workflows/autofix (repairing an existing one) — both
+    need the same node-type-catalog system prompt and prior-attempt/feedback
+    convention, just with a different `base_prompt`."""
     catalog = _node_type_catalog()
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(catalog=catalog, example=_EXAMPLE_WORKFLOW_YAML)
 
@@ -274,6 +321,23 @@ async def generate_workflow_endpoint(
             max_tokens=4096,
         )
         return _strip_code_fence(response.text)
+
+    return generate_yaml
+
+
+@router.post("/generate")
+async def generate_workflow_endpoint(
+    req: GenerateWorkflowRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    services = getattr(request.app.state, "services", {})
+    llm = services.get("llm")
+    if llm is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM gateway unavailable")
+
+    scope = getattr(user, "session_id", None) or user.username
+    generate_yaml = build_llm_yaml_generator(llm, services, scope)
 
     async def static_check(yaml_text: str) -> tuple[WorkflowPreflightReport, dict[str, WorkflowInputSpec]]:
         report = await preflight_workflow_for_run(
@@ -301,6 +365,18 @@ async def generate_workflow_endpoint(
         generate_yaml=generate_yaml,
         static_check=static_check,
         execute=execute,
+    )
+
+    await record_attempt(
+        services.get("audit_db"),
+        source="generate",
+        workflow_name=result.preflight_report.workflow_name if result.preflight_report else None,
+        success=result.success,
+        error_codes=(
+            [issue.code for issue in result.preflight_report.errors]
+            if result.preflight_report else []
+        ),
+        total_attempts=len(result.attempts),
     )
 
     return {

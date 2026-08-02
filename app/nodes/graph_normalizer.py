@@ -220,6 +220,10 @@ class GraphNormalizer(NodeType):
     config_schema = GraphNormalizerConfig
     output_schema = GraphNormalizerOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger"}
+
     async def run(self, state: dict, config: dict) -> dict:
         inputs = state.get("inputs", {})
         # Accept either the proposal-style inputs (concept_note + call_facts) or

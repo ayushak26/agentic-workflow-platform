@@ -108,6 +108,10 @@ class DOCXProposalRenderer(NodeType):
     output_schema = DOCXRenderOutput
     config_schema = DOCXRenderConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         store = self.services["object_store"]
         cfg = DOCXRenderConfig(**resolved_config)

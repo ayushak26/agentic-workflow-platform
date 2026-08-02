@@ -84,6 +84,10 @@ class BoundedDeepResearchAgent(NodeType):
     config_schema = BoundedDeepResearchConfig
     output_schema = BoundedDeepResearchOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"deep_research", "scientific_skill_catalog", "cost_ledger"}
+
     async def run(
         self,
         state: dict[str, Any],

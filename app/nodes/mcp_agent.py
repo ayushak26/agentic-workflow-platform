@@ -58,6 +58,10 @@ class MCPAgent(NodeType):
     output_schema = MCPAgentOutput
     config_schema = MCPAgentConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger", "mcp_client"}
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = MCPAgentConfig(**resolved_config)
         llm = self.services["llm"]

@@ -53,6 +53,12 @@ class RouterAgent(NodeType):
     output_schema = RouterOutput
     config_schema = RouterConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        if config.get("mode", "rule") == "llm":
+            return {"llm", "cost_ledger"}
+        return set()
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = RouterConfig(**resolved_config)
         if cfg.mode == "rule":

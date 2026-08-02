@@ -108,6 +108,13 @@ class StructuredDatasetRetrieverAgent(NodeType):
     config_schema = StructuredDatasetRetrieverConfig
     output_schema = StructuredDatasetRetrieverOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        required = {"database_lookup", "object_store"}
+        if config.get("auto_plan_queries", False):
+            required.update({"llm", "cost_ledger"})
+        return required
+
     async def run(
         self,
         state: dict[str, Any],

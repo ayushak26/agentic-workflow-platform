@@ -1,6 +1,8 @@
 """Workflow node for independent two-provider Horizon evaluation."""
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from app.nodes.base import NodeType
@@ -36,6 +38,10 @@ class HorizonEvaluationAgent(NodeType):
     input_schema = HorizonEvaluationInput
     config_schema = HorizonEvaluationConfig
     output_schema = HorizonEvaluationReport
+
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger"}
 
     async def run(self, state: dict, resolved_config: dict) -> dict:
         cfg = HorizonEvaluationConfig(**resolved_config)

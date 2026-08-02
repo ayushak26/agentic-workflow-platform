@@ -53,6 +53,10 @@ class ScientificSkillAgent(NodeType):
     output_schema = ScientificSkillOutput
     config_schema = ScientificSkillConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger", "scientific_skill_catalog"}
+
     async def run(
         self,
         state,

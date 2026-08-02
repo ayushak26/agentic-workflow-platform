@@ -62,6 +62,10 @@ class WorkflowFileLoader(NodeType):
     output_schema = WorkflowFileLoaderOutput
     config_schema = WorkflowFileLoaderConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(
         self,
         state: dict[str, Any],

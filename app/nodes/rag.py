@@ -62,6 +62,10 @@ class RAGAgent(NodeType):
     output_schema = RAGOutput
     config_schema = RAGConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger", "retriever"}
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = RAGConfig(**resolved_config)
         llm = self.services["llm"]

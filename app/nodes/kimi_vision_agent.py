@@ -56,6 +56,10 @@ class KimiVisionAgent(NodeType):
     config_schema = KimiVisionConfig
     output_schema = KimiVisionOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store", "kimi_vision"}
+
     async def run(
         self,
         state: dict[str, Any],

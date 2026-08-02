@@ -38,6 +38,10 @@ class PowerPointProposalSlides(NodeType):
     output_schema = PPTOutput
     config_schema = PPTConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         store = self.services["object_store"]
         cfg = PPTConfig(**resolved_config)

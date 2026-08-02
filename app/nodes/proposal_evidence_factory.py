@@ -207,6 +207,10 @@ class ProposalEvidenceFactoryAgent(NodeType):
     config_schema = ProposalEvidenceFactoryConfig
     output_schema = ProposalEvidenceFactoryOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger", "object_store"}
+
     async def run(
         self,
         state: dict[str, Any],

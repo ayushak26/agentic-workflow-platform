@@ -51,6 +51,10 @@ class ClaimEvidenceVerifier(NodeType):
     config_schema = ClaimEvidenceVerifierConfig
     output_schema = ClaimEvidenceVerifierOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger"}
+
     async def _source_text(self, source, cap: int) -> tuple[str, str]:
         if source.object_key and self.services.get("object_store") is not None:
             raw = await asyncio.to_thread(

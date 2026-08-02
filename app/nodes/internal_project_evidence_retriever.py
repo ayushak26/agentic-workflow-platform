@@ -91,6 +91,13 @@ class InternalProjectEvidenceRetrieverAgent(NodeType):
     config_schema = InternalProjectEvidenceRetrieverConfig
     output_schema = InternalProjectEvidenceRetrieverOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        required = {"llm", "cost_ledger"}
+        if config.get("require_internal_index", False):
+            required.add("retriever")
+        return required
+
     async def run(
         self,
         state: dict[str, Any],

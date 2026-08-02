@@ -105,6 +105,15 @@ class TransformAgent(NodeType):
     output_schema = TransformOutput
     config_schema = TransformConfig
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger"}
+
+    @classmethod
+    def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        declared = config.get("output_schema") or {}
+        return {"raw", "parsed"} | {f"parsed.{key}" for key in declared}
+
     async def run(
         self,
         state,

@@ -113,6 +113,10 @@ class PriorProjectRetrieverAgent(NodeType):
     config_schema = PriorProjectRetrieverConfig
     output_schema = PriorProjectRetrieverOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"web_search"}
+
     async def run(
         self,
         state: dict[str, Any],

@@ -96,6 +96,10 @@ class MethodologyEngineeringAgent(NodeType):
     config_schema = MethodologyEngineeringConfig
     output_schema = MethodologyEngineeringOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger"}
+
     async def run(
         self,
         state: dict[str, Any],

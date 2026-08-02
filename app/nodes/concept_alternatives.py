@@ -1,6 +1,8 @@
 """Workflow node for three grounded Horizon concept alternatives."""
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 from app.nodes.base import NodeType
@@ -44,6 +46,10 @@ class ConceptAlternativesAgent(NodeType):
     input_schema = ConceptAlternativesInput
     config_schema = ConceptAlternativesConfig
     output_schema = ConceptAlternativesOutput
+
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger"}
 
     async def run(self, state: dict, resolved_config: dict) -> dict:
         cfg = ConceptAlternativesConfig(**resolved_config)

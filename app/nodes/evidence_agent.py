@@ -117,6 +117,10 @@ class _ScholarlyCandidateDiscovery(NodeType):
     config_schema = ScholarlyCandidateDiscoveryConfig
     output_schema = ScholarlyCandidateDiscoveryOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"llm", "cost_ledger", "mcp_client"}
+
     async def run(
         self,
         state: dict[str, Any],

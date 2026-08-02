@@ -86,6 +86,10 @@ class HorizonDOCXProposalRenderer(NodeType):
     config_schema = HorizonDOCXProposalRendererConfig
     output_schema = HorizonDOCXProposalRendererOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        return {"object_store"}
+
     async def run(
         self,
         state: dict[str, Any],

@@ -68,6 +68,12 @@ class OpenAIImageGenerationAgent(NodeType):
     config_schema = ImageGenerationConfig
     output_schema = ImageGenerationOutput
 
+    @classmethod
+    def required_services(cls, config: dict[str, Any]) -> set[str]:
+        if config.get("backend", "openai") != "disabled":
+            return {"image_generator", "object_store"}
+        return set()
+
     async def run(
         self,
         state: dict[str, Any],

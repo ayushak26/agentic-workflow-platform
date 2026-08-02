@@ -35,6 +35,7 @@ from app.workflow.run_history import ensure_indexes as ensure_run_indexes
 from app.workflow.pipeline_history import ensure_pipeline_indexes
 from app.workflow.claim_verifications import ensure_indexes as ensure_claim_verification_indexes
 from app.workflow.run_chat_store import ensure_run_chat_indexes
+from app.workflow.preflight_stats import ensure_indexes as ensure_preflight_stats_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 from app.security.entity_tokenizer import EntityTokenizerService
 from app.security.entity_protection_errors import VaultKeyMisconfiguredError
@@ -94,6 +95,7 @@ async def lifespan(app: FastAPI):
             await ensure_pipeline_indexes(services["audit_db"])
             await ensure_claim_verification_indexes(services["audit_db"])
             await ensure_run_chat_indexes(services["audit_db"])
+            await ensure_preflight_stats_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
                 services["audit_db"],
                 None,

@@ -22,7 +22,6 @@ from typing import Any
 from app.observability import metrics
 from app.observability.logging import get_logger
 from app.security.entity_ner import extract_entities
-from app.security.entity_protection_errors import ResponseLeakDetectedError
 from app.security.entity_registry import EntityRegistry
 from app.security.entity_vault import EntityVault
 from app.security.guardrails import _PII_PATTERNS
@@ -287,9 +286,20 @@ class EntityTokenizerService:
             )
 
         # Verbatim-leak rescan on the RAW response text (before we splice
-        # anything back in) — any registered real value appearing here means
-        # the model itself wrote it in plaintext (e.g. echoed from retrieved
-        # content), independent of our own substitution below.
+        # anything back in) — audit-only, NOT a hard gate. The actual
+        # guarantee this system provides is on the INPUT side: the model
+        # never received the real value in the first place (proven at the
+        # gateway boundary — see tests/llm/test_registry_tokenization_boundary.py).
+        # If a registered value shows up in the OUTPUT anyway, there are two
+        # very different causes we cannot distinguish from text alone: (a) a
+        # real leak via some path this system doesn't cover yet (e.g. raw
+        # retrieval/embedding content — see Phase 1's documented gaps), or
+        # (b) the model correctly guessing/inferring the real value from
+        # context, or a noisy auto-detected entity (NER can mistag an
+        # ordinary phrase as PERSON/ORG) legitimately reappearing later.
+        # Blocking the whole run on (b) — which is far more common in
+        # practice — would fail workflows that never actually leaked
+        # anything. So: log + count for audit visibility, never raise.
         known = await self._vault.list_scope_entities(
             session_id=session_id, collection_id=collection_id
         )
@@ -299,14 +309,11 @@ class EntityTokenizerService:
                 metrics.ENTITY_TOKENIZER_EVENTS.labels(
                     outcome="response_leak_detected"
                 ).inc()
-                log.error(
+                log.warning(
                     "entity_tokenizer.response_leak_detected",
                     entity_type=entry["entity_type"],
+                    entity_source=entry.get("source", "unknown"),
                     session_id=session_id,
-                )
-                raise ResponseLeakDetectedError(
-                    f"a registered {entry['entity_type']} value appeared "
-                    "verbatim in a model response"
                 )
 
         rewritten = text

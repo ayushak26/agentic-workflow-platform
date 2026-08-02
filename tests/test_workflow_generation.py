@@ -3,11 +3,18 @@ from __future__ import annotations
 import pytest
 
 from app.api.workflow_generation import (
+    _EXAMPLE_WORKFLOW_YAML,
+    _node_type_catalog,
     MAX_REAL_EXECUTION_ATTEMPTS,
     MAX_STATIC_ATTEMPTS,
     run_generation_pipeline,
 )
-from app.runtime.preflight import PreflightIssue, PreflightSeverity, WorkflowPreflightReport
+from app.runtime.preflight import (
+    PreflightIssue,
+    PreflightSeverity,
+    WorkflowPreflightReport,
+    preflight_workflow_yaml,
+)
 
 VALID_REPORT = WorkflowPreflightReport(valid=True)
 
@@ -17,6 +24,27 @@ def _invalid_report(message: str) -> WorkflowPreflightReport:
         valid=False,
         issues=[PreflightIssue(code="bad_node", severity=PreflightSeverity.ERROR, message=message)],
     )
+
+
+def test_node_catalog_lists_output_fields_and_flags_structured_output():
+    catalog = _node_type_catalog()
+
+    transform_line = next(line for line in catalog.splitlines() if line.startswith("- TransformAgent "))
+    assert "Output fields: raw, parsed" in transform_line
+    assert "declares structured output" in transform_line
+
+    echo_line = next(line for line in catalog.splitlines() if line.startswith("- Echo "))
+    assert "Output fields: text" in echo_line
+    assert "declares structured output" not in echo_line
+
+
+def test_example_workflow_yaml_passes_structural_preflight():
+    """The worked example in the generation system prompt is the model's
+    only concrete template of a multi-node reference chain — if it doesn't
+    pass preflight itself, it's actively teaching the bug it's meant to
+    prevent."""
+    report = preflight_workflow_yaml(_EXAMPLE_WORKFLOW_YAML)
+    assert report.valid, [issue.message for issue in report.errors]
 
 
 @pytest.mark.asyncio
@@ -95,6 +123,65 @@ async def test_exhausts_static_attempts_and_returns_failure_without_ever_executi
     assert executed == []
     assert len(result.attempts) == MAX_STATIC_ATTEMPTS
     assert all(a.stage == "static" and not a.success for a in result.attempts)
+
+
+BROKEN_TEMPLATE_YAML = """
+name: t
+nodes:
+  - id: first
+    type: Literal
+    config:
+      value: hello
+  - id: second
+    type: Echo
+    config:
+      template: "{{first.val}}"
+edges:
+  - from: first
+    to: second
+entry: first
+exit: second
+"""
+
+
+@pytest.mark.asyncio
+async def test_deterministic_fix_resolves_a_retry_without_a_second_llm_call():
+    """The static loop tries the free, deterministic fixer on a failed
+    attempt's report before spending another LLM call — a single typo'd
+    template field (an obviously fixable case) should never need a second
+    generate_yaml call."""
+    generate_calls = 0
+
+    async def generate_yaml(prompt, prior_yaml, feedback):
+        nonlocal generate_calls
+        generate_calls += 1
+        return BROKEN_TEMPLATE_YAML
+
+    async def static_check(yaml_text):
+        if "{{first.val}}" in yaml_text:
+            issue = PreflightIssue(
+                code="TEMPLATE_UNKNOWN_OUTPUT_FIELD",
+                severity=PreflightSeverity.ERROR,
+                message="Literal 'first' has no output field 'val'.",
+                path="nodes.1.config.template",
+                node_id="second",
+                suggestion="Available fields: value.",
+            )
+            return WorkflowPreflightReport(valid=False, issues=[issue]), {}
+        return WorkflowPreflightReport(valid=True), {}
+
+    async def execute(yaml_text, inputs):
+        return {"status": "completed"}
+
+    result = await run_generation_pipeline(
+        prompt="p", sample_inputs=None,
+        generate_yaml=generate_yaml, static_check=static_check, execute=execute,
+    )
+
+    assert result.success is True
+    assert generate_calls == 1
+    static_attempts = [a for a in result.attempts if a.stage == "static"]
+    assert any("Deterministic fix" in a.detail for a in static_attempts)
 
 
 @pytest.mark.asyncio
