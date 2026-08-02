@@ -4,8 +4,22 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.observability.logging import get_logger
+from app.llm.openai_registry import OPENAI_MODEL_REGISTRY
 
 logger = get_logger(__name__)
+
+# Sourced live from OPENAI_MODEL_REGISTRY (app/llm/openai_registry.py) — the
+# same catalog the LLM router uses — rather than a hand-copied duplicate.
+# A second, separately maintained table is exactly what let this drift
+# in the first place: it was missing gpt-5.6-terra/gpt-5.6-luna/gpt-4o-mini/
+# o3/o4-mini entirely (silently falling back to the generic default below)
+# and had stale numbers for gpt-5/gpt-5-mini. Covers every OpenAI model,
+# including embeddings (e.g. text-embedding-3-small), since
+# OPENAI_MODEL_REGISTRY prices every kind, not just "llm".
+_OPENAI_PRICING: dict[str, tuple[float, float]] = {
+    model.name: (model.input_usd_per_1k, model.output_usd_per_1k)
+    for model in OPENAI_MODEL_REGISTRY
+}
 
 MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-5":          (0.005,   0.025),
@@ -13,14 +27,11 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-fable-5":         (0.005,   0.025),
     "claude-sonnet-4-5":      (0.003,   0.015),
     "claude-haiku-4-5":       (0.00025, 0.00125),
-    "gpt-5.6-sol":            (0.005,   0.030),
-    "gpt-5":                  (0.005,   0.020),
-    "gpt-5-mini":             (0.0005,  0.0015),
     # API-metered cost is zero for private endpoints. GPU/infrastructure cost
     # remains an operator metric and must not be presented as free compute.
     "local-kimi-k3":          (0.0,     0.0),
     "local-glm-5":            (0.0,     0.0),
-    "text-embedding-3-small": (0.00002, 0.0),
+    **_OPENAI_PRICING,
 }
 
 # Cache-token price multipliers, applied to a model's input price.

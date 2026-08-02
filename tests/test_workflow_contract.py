@@ -7,7 +7,7 @@ import app.nodes  # noqa: F401
 from app.runtime.domain_state import DomainStateRegistry, merge_domain_state
 from app.runtime.executor import run_workflow
 from app.runtime.loader import load_workflow_from_string
-from app.runtime.schema import NodeSpec
+from app.runtime.schema import NodeSpec, WorkflowSpec
 
 
 def test_complete_workflow_contract_survives_validation():
@@ -183,3 +183,183 @@ edges:
     to: missing
 """
         )
+
+
+def _guided_experience_yaml() -> str:
+    return """
+name: Guided Experience Test
+experience:
+  goal: Produce a checked requirement matrix.
+  stages:
+    - id: understand
+      display_name: Understand the request
+      purpose: Confirm requirements and success criteria.
+      node_ids: [map_requirements]
+      visibility: standard
+
+nodes:
+  - id: map_requirements
+    type: Literal
+    config:
+      value: ok
+    experience:
+      stage_id: understand
+      display_name: Map the call requirements
+      purpose: Identify what the final result must address.
+      contribution: Guides evidence collection and compliance review.
+      expected_output: A checked requirement matrix
+      failure_message: This step could not finish; completed work remains safe.
+      visibility: standard
+      show_agent_role: false
+edges: []
+"""
+
+
+def test_guided_experience_round_trips_through_workflow_spec():
+    spec = load_workflow_from_string(_guided_experience_yaml())
+
+    assert spec.experience is not None
+    assert spec.experience.goal == "Produce a checked requirement matrix."
+    assert spec.experience.stages[0].id == "understand"
+    assert spec.experience.stages[0].node_ids == ["map_requirements"]
+
+    node = spec.nodes[0]
+    assert node.experience is not None
+    assert node.experience.display_name == "Map the call requirements"
+    assert node.experience.contribution == (
+        "Guides evidence collection and compliance review."
+    )
+
+
+def test_legacy_workflow_without_experience_remains_valid():
+    spec = load_workflow_from_string(
+        """
+name: Legacy Workflow
+nodes:
+  - id: only
+    type: Literal
+    config:
+      value: ok
+edges: []
+"""
+    )
+
+    assert spec.experience is None
+    assert spec.nodes[0].experience is None
+
+
+def test_duplicate_guided_stage_ids_rejected():
+    with pytest.raises(ValidationError):
+        WorkflowSpec.model_validate({
+            "name": "Bad Stages",
+            "experience": {
+                "stages": [
+                    {"id": "understand", "display_name": "Understand"},
+                    {"id": "understand", "display_name": "Understand again"},
+                ],
+            },
+            "nodes": [{"id": "only", "type": "Literal", "config": {"value": "ok"}}],
+        })
+
+
+def test_guided_stage_referencing_unknown_node_is_rejected():
+    with pytest.raises(ValidationError):
+        WorkflowSpec.model_validate({
+            "name": "Bad Stage Nodes",
+            "experience": {
+                "stages": [
+                    {
+                        "id": "understand",
+                        "display_name": "Understand",
+                        "node_ids": ["missing"],
+                    },
+                ],
+            },
+            "nodes": [{"id": "only", "type": "Literal", "config": {"value": "ok"}}],
+        })
+
+
+def test_node_referencing_unknown_guided_stage_is_rejected():
+    with pytest.raises(ValidationError):
+        WorkflowSpec.model_validate({
+            "name": "Bad Node Stage",
+            "experience": {
+                "stages": [
+                    {"id": "understand", "display_name": "Understand"},
+                ],
+            },
+            "nodes": [{
+                "id": "only",
+                "type": "Literal",
+                "config": {"value": "ok"},
+                "experience": {"stage_id": "does_not_exist"},
+            }],
+        })
+
+
+def test_library_metadata_round_trips_through_workflow_spec():
+    spec = load_workflow_from_string(
+        """
+name: Library Metadata Test
+library:
+  title: Horizon Europe Part B Proposal
+  summary: Create a researched, reviewed and cited Part B proposal.
+  purpose: [evidence, research, drafting]
+  suitable_for: [project-administrator, domain-expert]
+  not_suitable_for: [financial-submission-forms]
+  outputs: [proposal-drafts, docx, pdf]
+  input_types: [documents, urls]
+  typical_duration:
+    minimum_minutes: 45
+    maximum_minutes: 60
+  human_reviews:
+    count: 2
+    labels: ["Approve draft package", "Approve final documents"]
+  evidence_policy:
+    drafting_requires_verified_evidence: true
+    deep_research_is_context_only: true
+  visibility_status: approved
+  owner_team: Eurskem Research
+nodes:
+  - id: only
+    type: Literal
+    config:
+      value: ok
+edges: []
+"""
+    )
+
+    assert spec.library is not None
+    assert spec.library.title == "Horizon Europe Part B Proposal"
+    assert spec.library.purpose == ["evidence", "research", "drafting"]
+    assert spec.library.typical_duration.minimum_minutes == 45
+    assert spec.library.human_reviews.count == 2
+    assert spec.library.evidence_policy.drafting_requires_verified_evidence is True
+    assert spec.library.visibility_status == "approved"
+
+
+def test_legacy_workflow_without_library_metadata_remains_valid():
+    spec = load_workflow_from_string(
+        """
+name: Legacy Workflow
+nodes:
+  - id: only
+    type: Literal
+    config:
+      value: ok
+edges: []
+"""
+    )
+
+    assert spec.library is None
+
+
+def test_library_metadata_defaults_visibility_status_to_draft():
+    spec = WorkflowSpec.model_validate({
+        "name": "Defaults Test",
+        "library": {"title": "Untitled"},
+        "nodes": [{"id": "only", "type": "Literal", "config": {"value": "ok"}}],
+    })
+
+    assert spec.library.visibility_status == "draft"
+    assert spec.library.purpose == []

@@ -49,3 +49,6 @@ ui/.vite/
 data/
 *.log
 samples/
+
+# Workflow Builder autosave drafts + immutable manual-save versions
+workflows/.builder/

@@ -22,7 +22,11 @@ from app.runtime.pipeline_loader import PIPELINES_DIR, load_pipeline_from_string
 from app.runtime.pipeline_preflight import preflight_pipeline_yaml
 from app.security.dependencies import CurrentUser, require_consultant
 from app.workflow.file_inputs import WorkflowFileInputError, validate_workflow_inputs
-from app.workflow.pipeline_history import get_pipeline_run, list_pipeline_runs
+from app.workflow.pipeline_history import (
+    abandon_pipeline,
+    get_pipeline_run,
+    list_pipeline_runs,
+)
 
 router = APIRouter(prefix="/api/pipelines", tags=["pipelines"])
 
@@ -182,6 +186,41 @@ async def my_pipeline_run_detail(
     if run is None:
         raise HTTPException(status_code=404, detail="Pipeline run not found")
     return run
+
+
+class AbandonPipelineRequest(BaseModel):
+    session_id: str | None = None
+
+
+@router.post("/{pipeline_run_id}/abandon")
+async def abandon(
+    pipeline_run_id: str,
+    req: AbandonPipelineRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Manually move a stuck pipeline out of running/gated so any run that is
+    one of its stages stops being permanently delete-blocked. Intended for a
+    pipeline whose stage run never reached a terminal status through the
+    normal completion path (e.g. it was deleted, or its process died before
+    ever finalizing) — see find_active_pipeline_stage."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status_code=503, detail="run store unavailable")
+    session = _scope(user, req.session_id)
+    abandoned = await abandon_pipeline(
+        db, pipeline_run_id=pipeline_run_id, session_id=session,
+    )
+    if not abandoned:
+        existing = await get_pipeline_run(db, session, pipeline_run_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Pipeline run not found")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pipeline is already {existing.get('status')!r} — nothing to abandon.",
+        )
+    return {"pipeline_run_id": pipeline_run_id, "status": "abandoned"}
 
 
 @router.get("")

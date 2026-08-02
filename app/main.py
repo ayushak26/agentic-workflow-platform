@@ -15,6 +15,8 @@ Services dict keys (consumed by routes and the runtime executor):
   llm            — RegistryLLMGateway singleton
   event_bus      — RunEventBus for authenticated SSE live streaming
 """
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
@@ -32,6 +34,7 @@ from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
 from app.workflow.pipeline_history import ensure_pipeline_indexes
 from app.workflow.claim_verifications import ensure_indexes as ensure_claim_verification_indexes
+from app.workflow.run_chat_store import ensure_run_chat_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 
 from app.api import health
@@ -48,6 +51,9 @@ from app.api import workflow_files as workflow_files_api
 from app.api import llm_providers as llm_providers_api
 from app.api import pipelines as pipelines_api
 from app.api import candidates as candidates_api
+from app.api import run_chat as run_chat_api
+from app.api import node_types_chat as node_types_chat_api
+from app.api import workflow_generation as workflow_generation_api
 
 from app.db.mongo import DB_NAME
 
@@ -84,6 +90,7 @@ async def lifespan(app: FastAPI):
             await ensure_run_indexes(services["audit_db"])
             await ensure_pipeline_indexes(services["audit_db"])
             await ensure_claim_verification_indexes(services["audit_db"])
+            await ensure_run_chat_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
                 services["audit_db"],
                 None,
@@ -285,11 +292,39 @@ async def lifespan(app: FastAPI):
     services["sse_heartbeat_seconds"] = settings.sse_heartbeat_seconds
     logger.info("event_bus.ready")
 
+    # ── Stale-run auto-cleanup ──────────────────────────────────────────────────
+    # No external scheduler in this deployment (no APScheduler/celery/cron) —
+    # an in-process periodic task matches how everything else in this
+    # lifespan is already wired. See cleanup_stale_runs in
+    # app/workflow/run_history.py for the actual deletion rules.
+    cleanup_task: asyncio.Task | None = None
+    if services.get("audit_db") is not None:
+        async def _run_cleanup_loop() -> None:
+            from app.workflow.run_history import cleanup_stale_runs
+            while True:
+                await asyncio.sleep(settings.run_auto_cleanup_interval_seconds)
+                try:
+                    deleted = await cleanup_stale_runs(services["audit_db"])
+                    if deleted:
+                        logger.warning(
+                            "run_history.auto_cleanup_swept", count=len(deleted)
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "run_history.auto_cleanup_loop_failed", error=str(exc)
+                    )
+
+        cleanup_task = asyncio.create_task(_run_cleanup_loop())
+
     app.state.services = services
     yield
 
     # ── Shutdown ───────────────────────────────────────────────────────────────
     logger.info("eurskem_ai.shutdown")
+    if cleanup_task is not None:
+        cleanup_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await cleanup_task
     if "database_lookup" in services:
         await services["database_lookup"].close()
     if "mongo" in services:
@@ -355,3 +390,6 @@ app.include_router(workflow_files_api.router)
 app.include_router(llm_providers_api.router)
 app.include_router(pipelines_api.router)
 app.include_router(candidates_api.router)
+app.include_router(run_chat_api.router)
+app.include_router(node_types_chat_api.router)
+app.include_router(workflow_generation_api.router)

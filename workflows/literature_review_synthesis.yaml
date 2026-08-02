@@ -1,0 +1,161 @@
+name: Literature Review & Synthesis
+description: >-
+  Gathers academic papers or market reports on a new technical topic,
+  extracts key methodologies and findings from the acquired full text, then
+  cross-references those findings and flags contradictory data points.
+  GraphNormalizer first turns the free-text topic into the claim records
+  ScholarlyCandidateDiscoveryAgent searches against (that agent only searches
+  claims already present in the run's domain state — without this step it
+  would compile and pass static validation but find zero claims at actual
+  runtime). ScholarlyCandidateDiscoveryAgent is the platform's closest
+  equivalent to an arXiv/Google Scholar search: it discovers candidate
+  records only, never verified evidence. ResearchSourceAcquirer fetches and
+  immutably stores the full text for each candidate, PaperQAEvidenceSynthesizerAgent
+  runs PaperQA2 over that stored text to extract per-source methodologies and
+  findings, and a final TransformAgent cross-references those findings across
+  sources and flags contradictions.
+version: "1.0"
+use_case: generic
+
+inputs:
+  topic:
+    type: text
+    description: >-
+      The technical topic or market area to research (e.g. "solid-state
+      battery electrolytes" or "on-device LLM inference accelerators").
+    required: true
+
+nodes:
+  - id: normalize_topic
+    type: GraphNormalizer
+    config:
+      model: gpt-5.6-terra
+      max_tokens: 16384
+      concept_note: |
+        TOPIC UNDER REVIEW (extract every distinct assertion about it as a
+        claim — state_of_art, problem, or method — so it can be researched):
+        {{inputs.topic}}
+
+  - id: discover_candidates
+    type: ScholarlyCandidateDiscoveryAgent
+    config:
+      model: claude-sonnet-4-5
+      sources:
+        - arxiv
+        - openalex
+        - semantic
+        - core
+        - doaj
+      max_results_per_source: 3
+      max_candidates_per_claim: 10
+      max_claims: 10
+      claim_types:
+        - state_of_art
+        - method
+      require_contradiction_search: true
+      max_duration_seconds: 900
+
+  - id: acquire_sources
+    type: ResearchSourceAcquirer
+    config:
+      candidates: "{{discover_candidates.candidates}}"
+      max_concurrent_requests: 6
+      max_sources_per_claim: 4
+      max_total_sources: 40
+      request_timeout_seconds: 45
+      max_redirects: 4
+      fail_when_none_acquired: false
+
+  - id: synthesize_methodologies
+    type: PaperQAEvidenceSynthesizerAgent
+    config:
+      documents: "{{acquire_sources.documents}}"
+      llm_model: gpt-4o-mini
+      summary_llm_model: gpt-4o-mini
+      embedding_model: text-embedding-3-small
+      evidence_k: 10
+      max_claims: 10
+      max_documents_per_claim: 8
+
+  - id: cross_reference_findings
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      max_tokens: 8000
+      temperature: 0.2
+      output_schema:
+        methodology_overview: str
+        cross_referenced_findings: list
+        contradictions: list
+        evidence_gaps: list
+        synthesis_report: str
+      system_prompt: >-
+        You are a rigorous literature-review analyst. You only summarize and
+        compare what is present in the supplied per-source synthesis
+        results; you never invent a paper, methodology, or finding that is
+        not present in the input. Every synthesis result below is a
+        candidate literature synthesis, not independently verified evidence
+        — reflect that uncertainty in your output rather than overstating
+        confidence.
+      prompt_template: |
+        TOPIC UNDER REVIEW:
+        {{inputs.topic}}
+
+        Produce a literature-review synthesis for this topic from the
+        material below.
+
+        methodology_overview: a prose summary of the distinct methodologies
+        used across the acquired sources to study or address this topic.
+
+        cross_referenced_findings: one entry per finding or claim that
+        multiple sources address, noting which sources agree and what they
+        found in common.
+
+        contradictions: one entry per case where two or more sources
+        disagree on a methodology, result, or conclusion for the same
+        question — name the sources and describe the disagreement
+        specifically, do not generalize.
+
+        evidence_gaps: aspects of the topic that the acquired sources do not
+        cover, or claims that could not be synthesized because no full text
+        was acquired.
+
+        synthesis_report: a short narrative report tying the above together
+        for a reader who has not seen the raw data.
+
+        PER-CLAIM LITERATURE SYNTHESIS (PaperQA2 over acquired full text):
+        {{synthesize_methodologies.results}}
+
+        CANDIDATE DISCOVERY REPORT (search coverage, not verified evidence):
+        {{discover_candidates.report}}
+
+        SOURCE ACQUISITION REPORT:
+        {{acquire_sources.report}}
+
+        CANDIDATES REJECTED OR UNAVAILABLE DURING ACQUISITION:
+        {{acquire_sources.rejected_candidates}}
+
+edges:
+  - from: normalize_topic
+    to: discover_candidates
+  - from: discover_candidates
+    to: acquire_sources
+  - from: acquire_sources
+    to: synthesize_methodologies
+  - from: synthesize_methodologies
+    to: cross_reference_findings
+
+entry: normalize_topic
+exit: cross_reference_findings
+
+output:
+  include_input: false
+  nodes:
+    - node_id: discover_candidates
+      flatten: false
+    - node_id: acquire_sources
+      flatten: false
+    - node_id: synthesize_methodologies
+      flatten: false
+    - node_id: cross_reference_findings
+      flatten: false

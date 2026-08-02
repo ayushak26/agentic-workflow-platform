@@ -12,12 +12,26 @@ Mongo array-element-match "stages.run_id").
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass
+class _DeleteResult:
+    deleted_count: int
+
+
+def _matches_leaf(value: Any, expected: Any) -> bool:
+    if isinstance(expected, dict) and ("$in" in expected or "$nin" in expected):
+        if "$in" in expected:
+            return value in expected["$in"]
+        return value not in expected["$nin"]
+    return value == expected
 
 
 def _match_path(value: Any, parts: list[str], expected: Any) -> bool:
     if not parts:
-        return value == expected
+        return _matches_leaf(value, expected)
     head, rest = parts[0], parts[1:]
     if isinstance(value, dict):
         return head in value and _match_path(value[head], rest, expected)
@@ -95,6 +109,12 @@ class InMemoryCollection:
             lst = doc.setdefault(key, [])
             if value not in lst:
                 lst.append(value)
+        for key, value in (update.get("$push") or {}).items():
+            lst = doc.setdefault(key, [])
+            if isinstance(value, dict) and "$each" in value:
+                lst.extend(value["$each"])
+            else:
+                lst.append(value)
         for key, value in (update.get("$pull") or {}).items():
             doc[key] = [item for item in doc.get(key, []) if item != value]
         for key, value in (update.get("$inc") or {}).items():
@@ -116,6 +136,13 @@ class InMemoryCollection:
                 if "." not in key and key not in new_doc:
                     new_doc[key] = value
             self.docs.append(new_doc)
+
+    async def delete_one(self, filter_: dict[str, Any]) -> _DeleteResult:
+        for i, doc in enumerate(self.docs):
+            if self._matches(doc, filter_):
+                del self.docs[i]
+                return _DeleteResult(deleted_count=1)
+        return _DeleteResult(deleted_count=0)
 
 
 class _Cursor:

@@ -1,0 +1,162 @@
+name: Account-Based Marketing (ABM) Playbook
+description: >-
+  Maps a named target enterprise account to find key decision-makers and
+  pain points: searches the company's public technology-stack footprint and
+  open job postings, acquires a single explicitly-identified quarterly
+  earnings report/press-release page as a verified source, then builds a
+  per-executive dossier of custom value propositions. Design note on
+  ResearchSourceAcquirer: unlike raw multi-hit web-search results (which
+  don't carry the claim_id/independence_group/query/retrieved_at identity
+  ResearchSourceAcquirer's Deep Research contract requires per item — see
+  competitive_intelligence_tracking.yaml for why that shortcut is avoided
+  elsewhere in this platform), this workflow points it at exactly one
+  explicitly-supplied earnings document URL, so the acquired-source identity
+  is genuine rather than fabricated from ambiguous search snippets. Treat the
+  tech-stack and open-roles findings as directional web-search signals a
+  rep should verify, and the earnings acquisition as the one verified,
+  citable source in the dossier.
+version: "1.0"
+use_case: account_based_marketing
+
+inputs:
+  target_company:
+    type: text
+    description: >-
+      Name of the target enterprise account (e.g. "Acme Corp"). Seeds the
+      live web search for its technology stack and open job postings.
+    required: true
+  decision_maker_titles:
+    type: text
+    description: >-
+      Comma-separated list of decision-maker titles to build the dossier
+      for (e.g. "CTO, VP Engineering, CFO, Head of Talent Acquisition").
+    required: true
+  earnings_report_url:
+    type: text
+    description: >-
+      Canonical URL of the target account's most recent quarterly earnings
+      report, investor-relations press release, or 10-Q/10-K filing page to
+      acquire and store as a verified source for the dossier.
+    required: true
+
+nodes:
+  - id: search_tech_stack
+    type: WebSearchAgent
+    config:
+      query: >-
+        {{inputs.target_company}} technology stack engineering blog case
+        studies cloud infrastructure vendors integrations built with
+      provider: auto
+      top_k: 8
+      fallback_to_openai: true
+
+  - id: search_open_roles
+    type: WebSearchAgent
+    config:
+      query: >-
+        {{inputs.target_company}} open job postings careers hiring
+        engineering product sales leadership 2026
+      provider: auto
+      top_k: 8
+      fallback_to_openai: true
+
+  - id: acquire_earnings_report
+    type: ResearchSourceAcquirer
+    config:
+      candidates:
+        - candidate_id: abm-earnings-report
+          claim_id: quarterly-earnings
+          query: "{{inputs.target_company}} quarterly earnings report"
+          purpose: discovery
+          source: investor_relations
+          title: "{{inputs.target_company}} quarterly earnings report"
+          canonical_url: "{{inputs.earnings_report_url}}"
+          authority: unverified
+          independence_group: company_disclosed
+          retraction_status: unchecked
+          evidence_access: full_text
+          retrieved_at: "2026-08-02T00:00:00Z"
+      fail_when_none_acquired: false
+
+  - id: build_dossier
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      system_prompt: >-
+        You are an account-based marketing strategist preparing an internal
+        pre-outreach dossier for a sales team. You work from live
+        web-search titles/snippets (directional signals, not verified page
+        fetches) for technology stack and open roles, and from one
+        verified acquired-source record for the quarterly earnings
+        material. Never state a web-search-derived fact as certain; never
+        invent figures that are not present in the provided inputs — mark
+        anything you cannot ground as [INPUT NEEDED: ...].
+      prompt_template: >-
+        Target account: {{inputs.target_company}}
+
+        Decision-maker titles to profile (comma-separated):
+        {{inputs.decision_maker_titles}}
+
+
+        TECHNOLOGY STACK — live web-search hits (title, url, snippet,
+        score per hit; unverified signals):
+        {{search_tech_stack.results}}
+
+
+        OPEN JOB ROLES — live web-search hits (title, url, snippet, score
+        per hit; unverified signals, useful for inferring hiring priorities
+        and team growth areas):
+        {{search_open_roles.results}}
+
+
+        QUARTERLY EARNINGS — verified acquired source metadata:
+        {{acquire_earnings_report.documents}}
+        Acquisition report: {{acquire_earnings_report.report}}
+        Rejected/unavailable candidates (if any): {{acquire_earnings_report.rejected_candidates}}
+
+
+        Task: produce an ABM dossier for this account that:
+        1) Summarizes the company's apparent technology stack and what it
+        implies about technical priorities.
+        2) Summarizes open-role signals and what they imply about growth
+        areas, org gaps, and near-term initiatives.
+        3) Summarizes the quarterly earnings material that was verified and
+        acquired (cite its title/URL from the acquired-source metadata; if
+        acquisition failed, say so plainly instead of inventing figures).
+        4) For EACH decision-maker title listed above, write one custom
+        value proposition that connects our offering to that specific
+        person's likely priorities and pain points, grounded only in the
+        signals above.
+        5) Recommend 3-5 concrete next-step outreach actions for the sales
+        rep.
+      output_schema:
+        company_overview: str
+        technology_stack_signals: list
+        open_roles_signals: list
+        earnings_highlights: str
+        executive_value_propositions: list
+        recommended_next_steps: list
+        dossier_markdown: str
+      temperature: 0.3
+      max_tokens: 8192
+
+edges:
+  - from: search_tech_stack
+    to:
+      - search_open_roles
+      - acquire_earnings_report
+  - from: search_open_roles
+    to: build_dossier
+  - from: acquire_earnings_report
+    to: build_dossier
+
+entry: search_tech_stack
+exit: build_dossier
+
+output:
+  include_input: false
+  nodes:
+    - node_id: acquire_earnings_report
+      flatten: true
+    - node_id: build_dossier
+      flatten: true

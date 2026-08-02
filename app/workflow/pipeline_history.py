@@ -123,7 +123,7 @@ async def list_pipeline_runs(
     return [doc async for doc in cursor]
 
 
-TERMINAL_PIPELINE_STATUSES = {"completed", "failed"}
+TERMINAL_PIPELINE_STATUSES = {"completed", "failed", "abandoned"}
 
 
 async def find_active_pipeline_stage(
@@ -147,6 +147,36 @@ async def find_active_pipeline_stage(
         },
         {"_id": 0},
     )
+
+
+async def abandon_pipeline(
+    db, *, pipeline_run_id: str, session_id: str,
+) -> bool:
+    """Manually move a stuck pipeline out of "running"/"gated" so its stage
+    runs stop being permanently delete-blocked (see find_active_pipeline_stage).
+
+    Needed because reconcile_stage_completion only fires when a stage run
+    itself finalizes — a pipeline can still get stuck if, say, its stage run
+    was deleted or its process died before ever writing a terminal status.
+    A no-op (returns False) if the pipeline doesn't exist or is already
+    terminal, so this is safe to call speculatively.
+    """
+    _require_session(session_id)
+    result = await db["pipeline_runs"].update_one(
+        {
+            "pipeline_run_id": pipeline_run_id,
+            "session_id": session_id,
+            "status": {"$nin": list(TERMINAL_PIPELINE_STATUSES)},
+        },
+        {
+            "$set": {
+                "status": "abandoned",
+                "ended_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+        },
+    )
+    return result.modified_count > 0
 
 
 def _stage_outcome_status(run_status: str) -> str:

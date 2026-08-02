@@ -1114,6 +1114,78 @@ def _compile_dry_run(
     )
 
 
+def _validate_guided_experience(
+    spec: WorkflowSpec,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Validate authored Guided Run copy without penalising legacy workflows.
+
+    Existing YAMLs remain runnable through deterministic frontend fallbacks.
+    Once an author adds an ``experience`` block to a user-visible node, the
+    block becomes a publication contract and must contain enough plain-language
+    information to explain the work, its handoff, and a safe failure state.
+    """
+
+    before = len(report.issues)
+    required_fields = {
+        "display_name": "a business-step name",
+        "purpose": "why the step exists",
+        "contribution": "how its result helps later work",
+        "expected_output": "the user-visible result",
+        "failure_message": "a practical failure explanation",
+    }
+    for node in spec.nodes:
+        experience = node.experience
+        if experience is None or experience.visibility == "advanced":
+            continue
+        for field_name, description in required_fields.items():
+            value = getattr(experience, field_name)
+            if isinstance(value, str) and value.strip():
+                continue
+            _issue(
+                report,
+                "GUIDED_EXPERIENCE_INCOMPLETE",
+                f"Guided Run step {node.id!r} is missing {description}.",
+                node_id=node.id,
+                path=f"nodes.{node.id}.experience.{field_name}",
+                suggestion=(
+                    "Complete the Guided tab in the Builder, or set visibility "
+                    "to advanced when ordinary users should not see this step."
+                ),
+            )
+        display_name = (experience.display_name or "").strip()
+        if display_name and re.search(
+            r"[_/]|(agent|node|\bllm\b|\bapi\b|payload|stack trace)",
+            display_name,
+            flags=re.IGNORECASE,
+        ):
+            _issue(
+                report,
+                "GUIDED_COPY_TECHNICAL",
+                f"Guided Run name {display_name!r} contains technical language.",
+                severity=PreflightSeverity.WARNING,
+                node_id=node.id,
+                path=f"nodes.{node.id}.experience.display_name",
+                suggestion="Use a short business action such as 'Map the call requirements'.",
+            )
+        if experience.show_agent_role and not (experience.agent_role or "").strip():
+            _issue(
+                report,
+                "GUIDED_ROLE_MISSING",
+                f"Guided Run step {node.id!r} is configured to show an empty role.",
+                node_id=node.id,
+                path=f"nodes.{node.id}.experience.agent_role",
+                suggestion="Name the responsibility/review role or hide it.",
+            )
+
+    _add_check(
+        report,
+        "guided_experience",
+        before,
+        "Authored Guided Run steps contain understandable purpose, handoff, output, and recovery copy.",
+    )
+
+
 def preflight_workflow_yaml(
     yaml_text: str,
     *,
@@ -1133,6 +1205,7 @@ def preflight_workflow_yaml(
     forward, _ = _validate_graph(spec, report)
     _validate_templates(spec, report, forward)
     _validate_inputs(spec, provided_inputs, report)
+    _validate_guided_experience(spec, report)
     if compile_graph:
         _compile_dry_run(spec, services, report)
     return report.refresh()

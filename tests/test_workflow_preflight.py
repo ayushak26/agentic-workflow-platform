@@ -17,6 +17,7 @@ from app.nodes.registry import NodeRegistry
 from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import (
     DuplicateYamlKeyError,
+    PreflightSeverity,
     preflight_workflow_for_run,
     preflight_workflow_yaml,
 )
@@ -569,3 +570,75 @@ def test_every_shipped_workflow_passes_structural_preflight():
             )
 
     assert failures == []
+
+
+GUIDED_COMPLETE = """
+name: Guided Preflight Test
+nodes:
+  - id: first
+    type: Literal
+    config:
+      value: hello
+    experience:
+      display_name: Map the call requirements
+      purpose: Identify what the final result must address.
+      contribution: Guides evidence collection and compliance review.
+      expected_output: A checked requirement matrix
+      failure_message: This step could not finish; completed work remains safe.
+      visibility: standard
+edges: []
+"""
+
+
+def test_incomplete_guided_experience_blocks_preflight():
+    incomplete = GUIDED_COMPLETE.replace(
+        "      purpose: Identify what the final result must address.\n", ""
+    )
+    report = preflight_workflow_yaml(incomplete, compile_graph=False)
+
+    assert not report.valid
+    assert "GUIDED_EXPERIENCE_INCOMPLETE" in codes(report)
+
+
+def test_advanced_visibility_skips_guided_experience_checks():
+    incomplete_but_advanced = (
+        GUIDED_COMPLETE
+        .replace("      purpose: Identify what the final result must address.\n", "")
+        .replace("visibility: standard", "visibility: advanced")
+    )
+    report = preflight_workflow_yaml(incomplete_but_advanced, compile_graph=False)
+
+    assert report.valid
+    assert "GUIDED_EXPERIENCE_INCOMPLETE" not in codes(report)
+
+
+def test_technical_guided_display_name_warns_but_does_not_block():
+    technical_name = GUIDED_COMPLETE.replace(
+        "display_name: Map the call requirements",
+        "display_name: Run TransformAgent node",
+    )
+    report = preflight_workflow_yaml(technical_name, compile_graph=False)
+
+    assert report.valid
+    assert "GUIDED_COPY_TECHNICAL" in codes(report)
+    warning = next(
+        issue for issue in report.issues if issue.code == "GUIDED_COPY_TECHNICAL"
+    )
+    assert warning.severity == PreflightSeverity.WARNING
+
+
+def test_show_agent_role_without_role_blocks_preflight():
+    missing_role = GUIDED_COMPLETE.replace(
+        "visibility: standard", "visibility: standard\n      show_agent_role: true"
+    )
+    report = preflight_workflow_yaml(missing_role, compile_graph=False)
+
+    assert not report.valid
+    assert "GUIDED_ROLE_MISSING" in codes(report)
+
+
+def test_legacy_workflow_with_no_experience_has_no_guided_issues():
+    report = preflight_workflow_yaml(VALID, compile_graph=False)
+
+    assert not any(issue.code.startswith("GUIDED_") for issue in report.issues)
+    assert any(check.name == "guided_experience" for check in report.checks)

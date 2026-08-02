@@ -1,0 +1,159 @@
+name: Lead Enrichment & Qualification
+description: >-
+  Evaluates an incoming website sign-up to find high-value corporate targets:
+  searches the public web for company-size, funding, and job-title signals,
+  scores the lead with an LLM, and routes hot leads to a human account
+  executive for hand-off. IMPORTANT: this platform has no dedicated
+  LinkedIn/Clearbit/ZoomInfo enrichment node. The "search_for_signals" step
+  uses generic public web search (WebSearchAgent) as an approximation of that
+  enrichment data — results are unverified web search hits, not a real
+  LinkedIn/Clearbit API integration, and should be treated as directional
+  signal rather than ground truth.
+version: "1.0"
+use_case: sales_ops
+
+inputs:
+  company_name:
+    type: text
+    required: true
+    description: Company name captured on the website sign-up form.
+  contact_name:
+    type: text
+    required: true
+    description: Full name of the person who signed up.
+  job_title:
+    type: text
+    required: false
+    description: Job title the contact entered on the sign-up form, if any.
+  company_domain:
+    type: text
+    required: false
+    description: Work email domain or company website, if captured, to disambiguate the search.
+
+nodes:
+  - id: search_for_signals
+    type: WebSearchAgent
+    config:
+      query: >-
+        {{inputs.company_name}} ({{inputs.company_domain}}) company size
+        employees headcount funding round revenue "{{inputs.contact_name}}"
+        {{inputs.job_title}} LinkedIn Crunchbase
+      provider: auto
+      top_k: 8
+      fallback_to_openai: true
+
+  - id: score_lead
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      system_prompt: >-
+        You are a B2B lead-qualification analyst. You score incoming website
+        sign-ups for sales follow-up using only the sign-up form fields and
+        unverified public web-search snippets supplied to you. Search results
+        are approximate, public-web signal (NOT verified LinkedIn/Clearbit
+        data) — treat conflicting or missing signals conservatively and never
+        invent facts not present in the supplied text.
+      prompt_template: >-
+        Sign-up record:
+        - Company: {{inputs.company_name}}
+        - Contact: {{inputs.contact_name}}
+        - Job title (self-reported): {{inputs.job_title}}
+        - Company domain: {{inputs.company_domain}}
+
+        Public web search results (candidate signal only, unverified):
+        {{search_for_signals.results}}
+
+        Score this lead from 0-100 on likelihood of being a high-value
+        corporate target, using signals such as apparent company size,
+        funding/revenue mentions, and seniority implied by the job title.
+        Set tier to "hot" only when the score is 70 or above AND at least one
+        concrete size/funding/seniority signal was found in the search
+        results; otherwise set tier to "not_hot". List the specific signals
+        you relied on, and explain your reasoning in 2-3 sentences, noting
+        explicitly if the web search turned up little or no evidence.
+      output_schema:
+        score: int
+        tier: str
+        key_signals: list
+        reasoning: str
+      temperature: 0.2
+      max_tokens: 2048
+      max_retries: 1
+
+  - id: route_lead
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: HOT
+          condition: "score_lead.parsed.tier == 'hot'"
+        - name: NOT_HOT
+          default: true
+
+  - id: human_review_hot_leads
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        This lead scored HOT. Review the sign-up details and web-search
+        signal below and decide whether to hand it off to an account
+        executive. Approve to hand off, reject to disqualify, or edit the
+        notes before hand-off.
+      context_fields:
+        - inputs.company_name
+        - inputs.contact_name
+        - inputs.job_title
+        - inputs.company_domain
+        - score_lead.parsed.score
+        - score_lead.parsed.tier
+        - score_lead.parsed.key_signals
+        - score_lead.parsed.reasoning
+        - search_for_signals.results
+      editable_content_field: score_lead.parsed.reasoning
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+
+  - id: archive_not_hot_lead
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      system_prompt: >-
+        You write brief CRM disposition notes for leads that did not qualify
+        as sales-ready in automated scoring.
+      prompt_template: >-
+        Sign-up record:
+        - Company: {{inputs.company_name}}
+        - Contact: {{inputs.contact_name}}
+        - Job title: {{inputs.job_title}}
+
+        Automated score: {{score_lead.parsed.score}} (tier:
+        {{score_lead.parsed.tier}})
+        Reasoning: {{score_lead.parsed.reasoning}}
+
+        Write a one-sentence CRM disposition note explaining why this lead
+        was not routed to an account executive right now, and a short
+        recommendation (e.g. nurture, re-check in N months, discard).
+      output_schema:
+        disposition: str
+        note: str
+      temperature: 0.2
+      max_tokens: 512
+      max_retries: 1
+
+edges:
+  - from: search_for_signals
+    to: score_lead
+  - from: score_lead
+    to: route_lead
+  - from: route_lead
+    condition: route
+    branches:
+      HOT: human_review_hot_leads
+      NOT_HOT: archive_not_hot_lead
+
+entry: search_for_signals
+exit:
+  - human_review_hot_leads
+  - archive_not_hot_lead

@@ -83,6 +83,109 @@ class ModelRoutingPolicy(BaseModel):
     prefer_low_latency: bool = False
     quality_scores: dict[str, float] | None = None
 
+
+class GuidedStageSpec(BaseModel):
+    """Optional business-language grouping used by Guided Run.
+
+    These fields never change graph execution.  They are presentation
+    metadata carried with the workflow so a saved run remains understandable
+    without reconstructing labels from implementation-oriented node ids.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    display_name: str
+    purpose: str = ""
+    node_ids: list[str] = Field(default_factory=list)
+    success_criteria: list[str] = Field(default_factory=list)
+    expected_output: str | None = None
+    visibility: Literal["standard", "summary", "advanced"] = "standard"
+    weight: float = Field(default=1.0, ge=0)
+    may_ask_questions: bool = False
+    may_require_approval: bool = False
+
+
+class WorkflowExperienceSpec(BaseModel):
+    """Workflow-level settings for the non-technical runtime surface."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = "1.0"
+    goal: str | None = None
+    stages: list[GuidedStageSpec] = Field(default_factory=list)
+
+
+class NodeExperienceSpec(BaseModel):
+    """Optional user-facing copy and handoff metadata for one node."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage_id: str | None = None
+    display_name: str | None = None
+    purpose: str | None = None
+    contribution: str | None = None
+    expected_output: str | None = None
+    success_condition: str | None = None
+    quality_checks: list[str] = Field(default_factory=list)
+    failure_message: str | None = None
+    recovery_actions: list[str] = Field(default_factory=list)
+    visibility: Literal["standard", "summary", "advanced"] = "standard"
+    receiving_steps: list[str] = Field(default_factory=list)
+    handoff_fields: list[str] = Field(default_factory=list)
+    agent_role: str | None = None
+    show_agent_role: bool = False
+
+
+class LibraryDurationRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    minimum_minutes: int | None = Field(default=None, ge=0)
+    maximum_minutes: int | None = Field(default=None, ge=0)
+
+
+class LibraryHumanReviews(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    count: int = Field(default=0, ge=0)
+    labels: list[str] = Field(default_factory=list)
+
+
+class LibraryEvidencePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    drafting_requires_verified_evidence: bool | None = None
+    deep_research_is_context_only: bool | None = None
+
+
+class LibraryMetadataSpec(BaseModel):
+    """Optional catalog/presentation metadata for the Workflow Library.
+
+    Purely descriptive — never consulted by the compiler, preflight graph
+    checks, or executor. Every field is optional so existing workflow YAML
+    remains valid; the Library frontend derives honest fallbacks (title from
+    name, "not yet provided" summaries, "unknown" duration) for workflows
+    that don't declare it, rather than guessing evidence or approval facts.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    summary: str | None = None
+    purpose: list[str] = Field(default_factory=list)
+    suitable_for: list[str] = Field(default_factory=list)
+    not_suitable_for: list[str] = Field(default_factory=list)
+    outputs: list[str] = Field(default_factory=list)
+    input_types: list[str] = Field(default_factory=list)
+    typical_duration: LibraryDurationRange | None = None
+    human_reviews: LibraryHumanReviews | None = None
+    evidence_policy: LibraryEvidencePolicy | None = None
+    visibility_status: Literal[
+        "approved", "draft", "in_review", "deprecated", "archived",
+    ] = "draft"
+    owner_team: str | None = None
+
+
 class NodeSpec(BaseModel):
     """One node instance in a workflow.
 
@@ -104,6 +207,7 @@ class NodeSpec(BaseModel):
     )
     selected_model: str | None = None
     model_routing: ModelRoutingPolicy | None = None
+    experience: NodeExperienceSpec | None = None
 
     @model_validator(mode="after")
     def selected_model_must_be_allowed(self) -> "NodeSpec":
@@ -161,6 +265,8 @@ class WorkflowSpec(BaseModel):
     description: str = ""
     version: str = "1.0"
     use_case: str = "generic"
+    experience: WorkflowExperienceSpec | None = None
+    library: LibraryMetadataSpec | None = None
     inputs: dict[str, WorkflowInputSpec] = Field(default_factory=dict)
     static_variables: list[StaticVariable] = Field(default_factory=list)
     nodes: list[NodeSpec]
@@ -229,5 +335,37 @@ class WorkflowSpec(BaseModel):
                 raise ValueError(
                     "output references unknown nodes: "
                     f"{unknown_output_nodes}"
+                )
+
+        if self.experience is not None:
+            stage_ids = [stage.id for stage in self.experience.stages]
+            if len(stage_ids) != len(set(stage_ids)):
+                raise ValueError("guided experience stage ids must be unique")
+            unknown_stage_nodes = [
+                node_id
+                for stage in self.experience.stages
+                for node_id in stage.node_ids
+                if node_id not in known
+            ]
+            if unknown_stage_nodes:
+                raise ValueError(
+                    "guided experience stages reference unknown nodes: "
+                    f"{unknown_stage_nodes}"
+                )
+            known_stages = set(stage_ids)
+            unknown_node_stages = [
+                node.id
+                for node in self.nodes
+                if (
+                    node.experience is not None
+                    and node.experience.stage_id is not None
+                    and known_stages
+                    and node.experience.stage_id not in known_stages
+                )
+            ]
+            if unknown_node_stages:
+                raise ValueError(
+                    "nodes reference unknown guided experience stages: "
+                    f"{unknown_node_stages}"
                 )
         return self

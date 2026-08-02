@@ -216,6 +216,9 @@ async def ensure_indexes(db) -> None:
     await db["run_history"].create_index(
         [("session_id", 1), ("status", 1), ("updated_at", -1)]
     )
+    await db["run_history"].create_index(
+        [("session_id", 1), ("workflow_name", 1), ("created_at", -1)]
+    )
     await db["run_checkpoints"].create_index("run_id", unique=True)
     await db["run_checkpoints"].create_index(
         [("session_id", 1), ("updated_at", -1)]
@@ -1120,6 +1123,24 @@ async def _reconcile_if_stale(db, doc: dict[str, Any] | None) -> dict[str, Any] 
             "active_nodes": [],
         }
     )
+
+    # This run may be a pipeline stage. The normal completion path
+    # (app/workflow/orchestration.py) always syncs the parent pipeline via
+    # reconcile_stage_completion, but that path never runs here — without
+    # this call, a pipeline whose stage run got orphaned would stay
+    # status="running" forever, permanently blocking deletion of the run
+    # (see find_active_pipeline_stage in pipeline_history.py).
+    from app.workflow.pipeline_history import reconcile_stage_completion
+
+    try:
+        await reconcile_stage_completion(db, run_id=run_id, session_id=session_id)
+    except Exception as exc:
+        logger.error(
+            "run_history.stale_reconcile_pipeline_sync_failed",
+            error=str(exc),
+            run_id=run_id,
+        )
+
     return doc
 
 
@@ -1158,6 +1179,96 @@ async def list_runs(
     )
     docs = [doc async for doc in cursor]
     return [await _reconcile_if_stale(db, doc) for doc in docs]
+
+
+_MIN_SAMPLE_FOR_ESTIMATES = 3
+
+
+async def workflow_stats(
+    db,
+    session_id: str,
+    workflow_name: str,
+    *,
+    sample_limit: int = 200,
+) -> dict[str, Any]:
+    """Library "Runs and performance" tab: success rate, median duration, and
+    the most common failure, computed from this session's own run history for
+    one workflow. Session-scoped like every other read in this module — no
+    cross-session exposure. Returns an explicit "not enough data" signal
+    below a minimum sample size rather than a misleading number.
+    """
+
+    _require_session(session_id)
+    projection = {
+        "_id": 0,
+        "run_id": 1,
+        "status": 1,
+        "duration_s": 1,
+        "error": 1,
+        "failed_node": 1,
+        "created_at": 1,
+    }
+    cursor = (
+        db["run_history"]
+        .find({"session_id": session_id, "workflow_name": workflow_name}, projection)
+        .sort("created_at", -1)
+        .limit(sample_limit)
+    )
+    docs = [doc async for doc in cursor]
+    # Sorted client-side too (not just via the query's own `.sort()`) so
+    # "last run"/"last successful run" are correct regardless of driver.
+    docs.sort(
+        key=lambda doc: doc.get("created_at") or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
+    completed = [doc for doc in docs if doc.get("status") == "completed"]
+    failed = [doc for doc in docs if doc.get("status") == "failed"]
+    terminal_count = len(completed) + len(failed)
+    durations = sorted(
+        doc["duration_s"]
+        for doc in completed
+        if isinstance(doc.get("duration_s"), (int, float))
+    )
+
+    def _median(values: list[float]) -> float | None:
+        if not values:
+            return None
+        mid = len(values) // 2
+        if len(values) % 2 == 1:
+            return values[mid]
+        return (values[mid - 1] + values[mid]) / 2
+
+    failure_counts: dict[str, int] = {}
+    for doc in failed:
+        label = doc.get("failed_node") or doc.get("error") or "Unknown"
+        failure_counts[label] = failure_counts.get(label, 0) + 1
+    most_common_failure = (
+        max(failure_counts.items(), key=lambda item: item[1])[0]
+        if failure_counts
+        else None
+    )
+
+    last_run = docs[0] if docs else None
+    last_successful_run = next(
+        (doc for doc in docs if doc.get("status") == "completed"), None
+    )
+    enough_data = terminal_count >= _MIN_SAMPLE_FOR_ESTIMATES
+
+    return {
+        "sample_size": len(docs),
+        "completed_runs": len(completed),
+        "failed_runs": len(failed),
+        "enough_data_for_estimates": enough_data,
+        "success_rate": (len(completed) / terminal_count) if enough_data else None,
+        "median_duration_s": _median(durations) if enough_data else None,
+        "most_common_failure": most_common_failure if enough_data else None,
+        "last_run_at": last_run.get("created_at") if last_run else None,
+        "last_run_status": last_run.get("status") if last_run else None,
+        "last_successful_run_at": (
+            last_successful_run.get("created_at") if last_successful_run else None
+        ),
+    }
 
 
 async def _delete_run_blobs(db, *, run_id: str) -> None:
@@ -1206,3 +1317,63 @@ async def delete_run(db, *, run_id: str, session_id: str) -> bool:
         {"run_id": run_id, "session_id": session_id}
     )
     return history_result.deleted_count > 0 or checkpoint_result.deleted_count > 0
+
+
+async def cleanup_stale_runs(db) -> list[str]:
+    """Periodic sweep (see the background loop started in app/main.py) that
+    hard-deletes runs stuck in "running" or "paused" for at least
+    ``settings.run_auto_cleanup_after_seconds``.
+
+    A "paused" run is deleted by age alone — nothing owns a paused run once
+    its process has parked it awaiting resume/HITL, unlike a "running" run.
+    A "running" run is deleted only if it's ALSO confirmed orphaned (dead
+    owner_pid, via _process_is_alive) — the same signal _reconcile_if_stale
+    uses — so a genuinely still-executing long job is never touched, even if
+    the sweep interval catches it mid-run.
+
+    Any matching run that is a pipeline stage has its parent pipeline synced
+    via reconcile_stage_completion before deletion, exactly like a normal
+    stale-reconcile would, so deleting it never leaves a pipeline pointing at
+    a run_id that no longer exists.
+
+    Returns the run_ids actually deleted.
+    """
+    from app.workflow.pipeline_history import reconcile_stage_completion
+
+    cutoff = datetime.now(timezone.utc).timestamp() - settings.run_auto_cleanup_after_seconds
+    cursor = db["run_history"].find(
+        {"status": {"$in": ["running", "paused"]}},
+        {"_id": 0, "run_id": 1, "session_id": 1, "status": 1, "updated_at": 1, "owner_pid": 1},
+    )
+
+    deleted: list[str] = []
+    async for doc in cursor:
+        updated_at = doc.get("updated_at")
+        if not isinstance(updated_at, datetime):
+            continue
+        if _as_aware_utc(updated_at).timestamp() > cutoff:
+            continue
+        if doc.get("status") == "running" and _process_is_alive(doc.get("owner_pid")):
+            continue
+
+        run_id = doc["run_id"]
+        session_id = doc["session_id"]
+        try:
+            await reconcile_stage_completion(db, run_id=run_id, session_id=session_id)
+            await delete_run(db, run_id=run_id, session_id=session_id)
+        except Exception as exc:
+            logger.error(
+                "run_history.auto_cleanup_failed",
+                error=str(exc),
+                run_id=run_id,
+            )
+            continue
+
+        logger.warning(
+            "run_history.auto_deleted_stale_run",
+            run_id=run_id,
+            status=doc.get("status"),
+        )
+        deleted.append(run_id)
+
+    return deleted

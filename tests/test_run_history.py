@@ -21,6 +21,7 @@ from app.security.dependencies import CurrentUser
 from app.security.rbac import Role
 from app.workflow.run_history import (
     build_node_input,
+    cleanup_stale_runs,
     get_retry_checkpoint,
     get_run,
     initialize_run_checkpoint,
@@ -29,6 +30,7 @@ from app.workflow.run_history import (
     record_node_reused,
     upsert_run,
 )
+from tests.fake_mongo import InMemoryDB
 
 
 class FakeDB:
@@ -699,3 +701,88 @@ async def test_delete_always_allowed_for_non_running_statuses_regardless_of_age(
     result = await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
 
     assert result == {"run_id": "run-1", "deleted": True}
+
+
+async def _seed_run(db: InMemoryDB, *, run_id: str, status: str, age_seconds: float, owner_pid=None):
+    await db["run_history"].insert_one({
+        "run_id": run_id,
+        "session_id": "user@example.com",
+        "status": status,
+        "updated_at": datetime.now(timezone.utc) - timedelta(seconds=age_seconds),
+        "owner_pid": owner_pid,
+        "active_nodes": [],
+    })
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_a_paused_run_stuck_past_the_threshold():
+    db = InMemoryDB()
+    await _seed_run(
+        db, run_id="run-paused-old", status="paused",
+        age_seconds=settings.run_auto_cleanup_after_seconds + 60,
+    )
+
+    deleted = await cleanup_stale_runs(db)
+
+    assert deleted == ["run-paused-old"]
+    assert await db["run_history"].find_one({"run_id": "run-paused-old"}) is None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deletes_a_running_run_only_when_its_owner_is_dead():
+    db = InMemoryDB()
+    await _seed_run(
+        db, run_id="run-running-dead", status="running",
+        age_seconds=settings.run_auto_cleanup_after_seconds + 60,
+        owner_pid=_spawn_and_reap_dead_pid(),
+    )
+    await _seed_run(
+        db, run_id="run-running-alive", status="running",
+        age_seconds=settings.run_auto_cleanup_after_seconds + 60,
+        owner_pid=os.getpid(),
+    )
+
+    deleted = await cleanup_stale_runs(db)
+
+    assert deleted == ["run-running-dead"]
+    assert await db["run_history"].find_one({"run_id": "run-running-dead"}) is None
+    assert await db["run_history"].find_one({"run_id": "run-running-alive"}) is not None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_leaves_young_running_and_paused_runs_alone():
+    db = InMemoryDB()
+    await _seed_run(db, run_id="run-paused-young", status="paused", age_seconds=60)
+    await _seed_run(
+        db, run_id="run-running-young", status="running", age_seconds=60,
+        owner_pid=_spawn_and_reap_dead_pid(),
+    )
+
+    deleted = await cleanup_stale_runs(db)
+
+    assert deleted == []
+    assert await db["run_history"].find_one({"run_id": "run-paused-young"}) is not None
+    assert await db["run_history"].find_one({"run_id": "run-running-young"}) is not None
+
+
+@pytest.mark.asyncio
+async def test_cleanup_unsticks_the_parent_pipeline_before_deleting_its_stage_run():
+    db = InMemoryDB()
+    await _seed_run(
+        db, run_id="run-orphaned-stage", status="running",
+        age_seconds=settings.run_auto_cleanup_after_seconds + 60,
+        owner_pid=_spawn_and_reap_dead_pid(),
+    )
+    await db["pipeline_runs"].insert_one({
+        "pipeline_run_id": "pipeline-1",
+        "session_id": "user@example.com",
+        "status": "running",
+        "current_stage_index": 0,
+        "stages": [{"id": "stage-0", "run_id": "run-orphaned-stage", "status": "running"}],
+    })
+
+    deleted = await cleanup_stale_runs(db)
+
+    assert deleted == ["run-orphaned-stage"]
+    pipeline = await db["pipeline_runs"].find_one({"pipeline_run_id": "pipeline-1"})
+    assert pipeline["status"] == "failed"

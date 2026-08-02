@@ -1,0 +1,138 @@
+name: Competitive Intelligence Tracking
+description: >-
+  Monitors a named competitor for recent product launches, feature updates,
+  and pricing shifts, then drafts a short tactical defense memo. IMPORTANT:
+  this platform has no dedicated competitor-monitoring, web-scraping, or
+  pricing-intelligence integration. This workflow approximates that job with
+  generic building blocks — WebSearchAgent (live public web search) feeding
+  two chained TransformAgent LLM calls (change detection, then memo drafting)
+  — not a bespoke competitor-tracking API. It deliberately skips a
+  fetch/acquire step: the only fetch-capable node in this platform,
+  ResearchSourceAcquirer, is built for the Deep Research academic evidence
+  pipeline and requires each item to already carry claim_id,
+  independence_group, query, source and retrieved_at fields tied to that
+  citation-verification workflow. Raw competitor search hits don't naturally
+  carry that shape, so bolting it on would fabricate data rather than add
+  real verification. As a result, change detection and the memo are both
+  based on live web-search titles/snippets only, not verified full-page
+  fetches — treat every output as a directional early-warning signal that a
+  human must verify against the actual competitor pages before anyone acts
+  on it.
+version: "1.0"
+use_case: competitive_intelligence
+
+inputs:
+  competitor_name:
+    type: text
+    description: >-
+      Name of the competitor to monitor (e.g. "Acme Corp"). Used to seed the
+      live web search for recent pricing pages, product pages, and press
+      releases.
+    required: true
+
+nodes:
+  - id: search_competitor_signals
+    type: WebSearchAgent
+    config:
+      query: >-
+        {{inputs.competitor_name}} pricing changes OR new feature launch OR
+        product update OR press release
+      provider: auto
+      top_k: 10
+      fallback_to_openai: true
+
+  - id: detect_changes
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      system_prompt: >-
+        You are a competitive intelligence analyst. You work only from live
+        web-search titles, URLs, and snippets, which are unverified
+        candidates, not confirmed page content. Never state a change as
+        certain when the snippet only implies it.
+      prompt_template: >-
+        Competitor being monitored: {{inputs.competitor_name}}
+
+
+        Live web search results (title, url, snippet per hit) gathered just
+        now for this competitor's pricing pages, product pages, and press
+        releases:
+
+        {{search_competitor_signals.results}}
+
+
+        Task: review these search hits and identify any indications of
+
+        1) pricing or packaging/tier changes, and
+
+        2) new or updated product features, launches, or announcements.
+
+
+        For each item you flag, state: what appears to have changed, which
+        source URL it came from, and a confidence level (low/medium/high)
+        given that this is based on search snippets only, not a verified
+        fetch of the full page. If nothing meaningful is found, say so
+        plainly instead of inventing a change.
+      output_schema:
+        changes_summary: str
+        key_changes: list
+        confidence_note: str
+      temperature: 0.2
+      max_tokens: 4096
+
+  - id: draft_defense_memo
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      system_prompt: >-
+        You are a product marketing and go-to-market strategy lead writing a
+        short internal tactical memo for your own team, not for the
+        competitor or any external audience.
+      prompt_template: >-
+        Competitor: {{inputs.competitor_name}}
+
+
+        Detected-changes summary (from unverified live web-search snippets):
+
+        {{detect_changes.parsed.changes_summary}}
+
+
+        Key changes identified:
+
+        {{detect_changes.parsed.key_changes}}
+
+
+        Analyst confidence note: {{detect_changes.parsed.confidence_note}}
+
+
+        Task: draft a short tactical defense memo (under 400 words) for the
+        go-to-market team. Clearly flag what changed (and how confident we
+        are, since this is based on search snippets pending human
+        verification), explain why it matters competitively, and recommend
+        2-4 concrete, specific response actions (pricing, positioning,
+        roadmap, or messaging). Open the memo by reminding the reader this is
+        based on automated web search and needs verification against the
+        actual competitor pages before any action is taken.
+      output_schema:
+        memo_title: str
+        memo_body: str
+        recommended_actions: list
+      temperature: 0.3
+      max_tokens: 4096
+
+edges:
+  - from: search_competitor_signals
+    to: detect_changes
+  - from: detect_changes
+    to: draft_defense_memo
+
+entry: search_competitor_signals
+exit: draft_defense_memo
+
+output:
+  include_input: false
+  nodes:
+    - node_id: detect_changes
+      flatten: true
+    - node_id: draft_defense_memo
+      flatten: true

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from app.llm.model_catalog import MODEL_OPTION_LABELS, MODEL_SELECTION_OPTIONS
 
 from .base import NodeType
+from .categories import category_for, icon_for
 
 
 class _EmptySchema(BaseModel):
@@ -63,6 +64,8 @@ class NodeRegistry:
             {
                 "type_name": klass.type_name,
                 "description": klass.description,
+                "category": category_for(klass.type_name),
+                "icon": icon_for(klass.type_name),
                 "input_schema": getattr(
                     klass,
                     "input_schema",

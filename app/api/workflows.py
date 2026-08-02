@@ -1,10 +1,11 @@
 import asyncio
 import json
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Depends, Header
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 import yaml
 from pathlib import Path
 from fastapi.responses import Response, StreamingResponse
@@ -14,6 +15,7 @@ from app.runtime.executor import run_workflow
 from app.runtime.hitl import resume_workflow_durable, HITLResumeError
 from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import (
+    DuplicateYamlKeyError,
     PreflightCheck,
     PreflightIssue,
     PreflightSeverity,
@@ -32,6 +34,9 @@ from app.workflow.orchestration import (
     start_new_run_record,
 )
 from app.security.audit import write_audit_event, HITL_EVENT
+from app.workflow.builder_store import WorkflowBuilderStore
+from app.workflow.library_metadata import library_summary, readiness_summary
+from app.workflow.run_history import workflow_stats
 from app.workflow.file_inputs import (
     WorkflowFileInputError,
     validate_workflow_inputs,
@@ -382,24 +387,56 @@ async def resume(
 
 
 WORKFLOWS_DIR = Path("workflows")
+BUILDER_STORE = WorkflowBuilderStore(WORKFLOWS_DIR)
 
 
 @router.get("/workflows")
 def list_workflows():
-    """Library view in the UI calls this to render the saved-workflow list."""
+    """Library view in the UI calls this to render the workflow collection.
+
+    Adds Library catalog metadata (`library`) and a zero-token structural
+    readiness summary (`readiness`) to each entry, on top of the original
+    name/description/use_case/version/node_count fields the UI already
+    depends on. Both are additive — nothing existing changes shape.
+    """
     out = []
     for p in sorted(WORKFLOWS_DIR.glob("*.yaml")):
+        text = p.read_text()
         try:
-            data = yaml.safe_load(p.read_text()) or {}
+            data = yaml.safe_load(text) or {}
         except yaml.YAMLError:
             continue
-        out.append({
+        entry = {
             "name": p.stem,
             "description": data.get("description", ""),
             "use_case": data.get("use_case", "generic"),
             "version": data.get("version", "1.0"),
             "node_count": len(data.get("nodes", [])),
-        })
+            "updated_at": datetime.fromtimestamp(
+                p.stat().st_mtime, tz=timezone.utc
+            ).isoformat(),
+        }
+        try:
+            spec = load_workflow_from_string(text)
+            entry["library"] = library_summary(spec)
+            entry["readiness"] = readiness_summary(
+                preflight_workflow_yaml(text, compile_graph=False)
+            )
+        except (ValidationError, DuplicateYamlKeyError, yaml.YAMLError) as exc:
+            # The raw YAML parsed enough to list, but doesn't validate as a
+            # WorkflowSpec — still show the card, just mark it not runnable
+            # rather than dropping it from the collection silently.
+            entry["library"] = None
+            entry["readiness"] = {
+                "level": "blocked",
+                "items": [{
+                    "severity": "error",
+                    "code": "WORKFLOW_SCHEMA_INVALID",
+                    "message": f"This workflow file does not parse: {exc}",
+                    "suggestion": "Open it in the Builder to see and fix the issue.",
+                }],
+            }
+        out.append(entry)
     return out
 
 
@@ -414,6 +451,59 @@ def get_workflow(name: str):
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"workflow '{name}' not found")
     return {"name": name, "yaml": p.read_text()}
+
+
+@router.get("/workflows/{name}/detail")
+def get_workflow_detail(name: str):
+    """Workflow Library details panel calls this to refresh `library` and
+    `readiness` for one workflow on demand (e.g. after the list was cached),
+    without re-fetching the whole collection. Everything structural — inputs,
+    stages, node-level Guided Run copy — comes from the existing
+    `GET /workflows/by-name/{name}` YAML fetch the frontend already has (via
+    `parseYaml`/`yamlToReactFlow`); this endpoint intentionally doesn't
+    duplicate that parsing."""
+    p = WORKFLOWS_DIR / f"{name}.yaml"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"workflow '{name}' not found")
+    text = p.read_text()
+    try:
+        spec = load_workflow_from_string(text)
+    except (ValidationError, DuplicateYamlKeyError, yaml.YAMLError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"workflow '{name}' does not parse as a valid workflow: {exc}",
+        )
+    report = preflight_workflow_yaml(text, compile_graph=False)
+    return {
+        "name": name,
+        "description": spec.description,
+        "use_case": spec.use_case,
+        "version": spec.version,
+        "node_count": len(spec.nodes),
+        "updated_at": datetime.fromtimestamp(
+            p.stat().st_mtime, tz=timezone.utc
+        ).isoformat(),
+        "library": library_summary(spec),
+        "readiness": readiness_summary(report),
+    }
+
+
+@router.get("/workflows/{name}/stats")
+async def get_workflow_stats(
+    name: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Library "Runs and performance" tab. Session-scoped like Run History
+    itself — reports only this caller's own past runs of this workflow, and
+    says so honestly when there isn't enough completed history to estimate
+    duration or success rate reliably."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status_code=503, detail="run history is unavailable")
+    session = _scope(user, None)
+    return await workflow_stats(db, session, name)
 
 
 class SaveWorkflowRequest(BaseModel):
@@ -436,8 +526,98 @@ def save_workflow(req: SaveWorkflowRequest):
     if not req.name.replace("_", "").replace("-", "").isalnum():
         raise HTTPException(status_code=400, detail="name must be alphanumeric + _ -")
 
-    (WORKFLOWS_DIR / f"{req.name}.yaml").write_text(req.yaml)
-    return {"ok": True, "name": req.name}
+    # Writes the file, records an immutable version, and clears any stale
+    # autosave draft for this workflow.
+    version_id = BUILDER_STORE.save_workflow(req.name, req.yaml)
+    return {"ok": True, "name": req.name, "version_id": version_id}
+
+
+class SaveDraftRequest(BaseModel):
+    yaml: str
+    canvas: dict[str, Any] | None = None
+
+
+def _builder_name(name: str) -> str:
+    try:
+        return WorkflowBuilderStore.validate_name(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _builder_version_id(version_id: str) -> str:
+    try:
+        return WorkflowBuilderStore.validate_version_id(version_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/workflows/{name}/draft")
+def save_workflow_draft(name: str, req: SaveDraftRequest):
+    """Autosave a recoverable draft. Never compiled/preflighted — a draft may
+    be temporarily incomplete or invalid; it never replaces executable YAML."""
+    safe_name = _builder_name(name)
+    try:
+        return BUILDER_STORE.save_draft(safe_name, req.yaml, canvas=req.canvas)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/workflows/{name}/draft")
+def get_workflow_draft(name: str):
+    """Builder calls this on load to offer 'Resume draft' for a newer autosave."""
+    safe_name = _builder_name(name)
+    document = BUILDER_STORE.read_draft(safe_name)
+    if document is None:
+        raise HTTPException(status_code=404, detail=f"no draft for '{name}'")
+    return document
+
+
+@router.delete("/workflows/{name}/draft")
+def delete_workflow_draft(name: str):
+    safe_name = _builder_name(name)
+    deleted = BUILDER_STORE.delete_draft(safe_name)
+    return {"ok": deleted}
+
+
+@router.get("/workflows/{name}/versions")
+def list_workflow_versions(name: str):
+    safe_name = _builder_name(name)
+    return BUILDER_STORE.list_versions(safe_name)
+
+
+@router.get("/workflows/{name}/versions/{version_id}")
+def get_workflow_version(name: str, version_id: str):
+    safe_name = _builder_name(name)
+    safe_version = _builder_version_id(version_id)
+    try:
+        yaml_text = BUILDER_STORE.get_version(safe_name, safe_version)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"version '{version_id}' not found")
+    return {"yaml": yaml_text}
+
+
+@router.post("/workflows/{name}/versions/{version_id}/restore")
+def restore_workflow_version(name: str, version_id: str):
+    """Restoring an old version is Save-equivalent: it must pass the same
+    zero-token preflight gate before it can become the live workflow again."""
+    safe_name = _builder_name(name)
+    safe_version = _builder_version_id(version_id)
+    try:
+        yaml_text = BUILDER_STORE.get_version(safe_name, safe_version)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"version '{version_id}' not found")
+
+    report = preflight_workflow_yaml(yaml_text, compile_graph=True)
+    if not report.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=_preflight_http_detail(report),
+        )
+
+    restored_yaml, restored_version_id = BUILDER_STORE.restore_version(
+        safe_name, safe_version,
+    )
+    return {"yaml": restored_yaml, "version_id": restored_version_id}
 
 
 def _sse_message(

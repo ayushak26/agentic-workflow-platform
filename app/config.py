@@ -221,6 +221,16 @@ class Settings(BaseSettings):
     # completed, failed, and rejected runs have no such restriction.
     run_delete_min_running_age_seconds: int = Field(default=86_400, ge=0)
 
+    # A background sweep (see cleanup_stale_runs in app/workflow/run_history.py)
+    # periodically hard-deletes runs stuck in "running" or "paused" for at
+    # least this long. A "paused" run is deleted by age alone — nothing owns
+    # a paused run once its process has parked it awaiting resume/HITL. A
+    # "running" run is deleted only if it's ALSO confirmed orphaned (its
+    # owner_pid is dead) so a genuinely still-executing long job is never
+    # touched.
+    run_auto_cleanup_after_seconds: int = Field(default=86_400, ge=60)
+    run_auto_cleanup_interval_seconds: int = Field(default=3_600, ge=60)
+
     dev_bypass_enabled: bool = True
     dev_bypass_username: str = "ayush"
     dev_bypass_password: str = "dev123"
