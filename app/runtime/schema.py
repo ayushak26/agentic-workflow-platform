@@ -208,6 +208,18 @@ class NodeSpec(BaseModel):
     selected_model: str | None = None
     model_routing: ModelRoutingPolicy | None = None
     experience: NodeExperienceSpec | None = None
+    # Confidential entity protection (Phase 1) — per-node override of the
+    # workflow/platform-wide mode. None = inherit WorkflowSpec.
+    # data_protection_mode (or the platform default). Exists for node types
+    # whose whole purpose is external literature/database lookup (e.g.
+    # ScholarlyCandidateDiscoveryAgent, MCPAgent against paper-search-mcp,
+    # StructuredDatasetRetrieverAgent with auto_plan_queries) — tokenizing
+    # their search-query-planning LLM call would hand a real search API a
+    # useless placeholder instead of the author/organisation name it needs
+    # to actually search for. Set explicitly per node instance in the
+    # workflow YAML; concept-note/proposal nodes are unaffected by this
+    # field's mere existence — they simply never set it.
+    data_protection_mode: str | None = None
 
     @model_validator(mode="after")
     def selected_model_must_be_allowed(self) -> "NodeSpec":
@@ -222,6 +234,19 @@ class NodeSpec(BaseModel):
             raise ValueError(
                 f"selected_model {self.selected_model!r} is not in allowed_models"
             )
+        return self
+
+    @model_validator(mode="after")
+    def data_protection_mode_must_be_valid(self) -> "NodeSpec":
+        if self.data_protection_mode is not None:
+            from app.security.entity_tokenizer import ProcessingMode
+
+            valid_modes = {mode.value for mode in ProcessingMode}
+            if self.data_protection_mode not in valid_modes:
+                raise ValueError(
+                    f"data_protection_mode must be one of {sorted(valid_modes)}, "
+                    f"got {self.data_protection_mode!r}"
+                )
         return self
 
     def effective_config(self) -> dict[str, Any]:

@@ -13,7 +13,7 @@ from difflib import get_close_matches
 from enum import Enum
 import inspect
 import re
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, get_args
 
 from pydantic import BaseModel, Field, ValidationError
 import yaml
@@ -951,6 +951,19 @@ def _iter_strings(
             yield from _iter_strings(child, f"{path}.{index}")
 
 
+def _annotation_permits_none(annotation: Any) -> bool:
+    """True if a declared field type allows None (``X | None``/Optional[X]).
+
+    Such a field can hold a value that cannot be traversed by a nested
+    template path, even though the key itself is present in node_outputs.
+    A bare ``None`` annotation counts; ``Any`` deliberately does not, since
+    it carries no claim about nullability either way.
+    """
+    if annotation is None or annotation is type(None):
+        return True
+    return any(arg is type(None) for arg in get_args(annotation))
+
+
 def _validate_template_output_path(
     spec: WorkflowSpec,
     current_node: NodeSpec,
@@ -1121,6 +1134,49 @@ def _validate_template_output_path(
             ),
         )
         return
+
+    # Nested traversal through a field whose declared type permits None.
+    #
+    # `{{gate.content.text}}` resolves `content` and then indexes into it. If
+    # the declared annotation is `X | None` and the node returns None on some
+    # path (e.g. HumanInLoopAgent's `content` is None when no context field
+    # resolves to a value), _lookup fails with "Template path not resolvable
+    # ... <not a dict: NoneType=None>". The compiler now materialises declared
+    # defaults into node_outputs, so the KEY is always present — but a None
+    # default still cannot be traversed, which is why this needs its own
+    # check rather than being covered by that fix.
+    #
+    # WARNING, not an error: whether the field is actually None depends on
+    # runtime data, and these references are usually correct in practice
+    # (shipped workflows rely on them). Blocking them would reject valid
+    # workflows; staying silent hides a real, hard-to-diagnose mid-run
+    # failure. So it is surfaced without failing preflight.
+    if len(parts) >= 3:
+        output_schema = getattr(source_class, "output_schema", None)
+        field_info = (
+            output_schema.model_fields.get(parts[1])
+            if output_schema is not None
+            else None
+        )
+        if field_info is not None and _annotation_permits_none(
+            field_info.annotation
+        ):
+            _issue(
+                report,
+                "TEMPLATE_NULLABLE_NESTED_ACCESS",
+                f"Template traverses into {parts[1]!r} of "
+                f"{node_map[first].type} {first!r}, but that field's declared "
+                f"type permits None. If it is None at runtime, "
+                f"{reference!r} fails mid-run.",
+                severity=PreflightSeverity.WARNING,
+                path=path,
+                node_id=current_node.id,
+                suggestion=(
+                    f"Confirm {first!r} always populates {parts[1]!r} on every "
+                    "path that reaches this node, or reference a "
+                    "non-nullable field instead."
+                ),
+            )
 
     # Nested dotted access (node.field.subfield) is only checked for node
     # types that explicitly opt in by overriding preflight_output_fields

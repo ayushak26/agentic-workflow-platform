@@ -38,6 +38,15 @@ class Authority(str, Enum):
     PEER_REVIEWED = "peer_reviewed"
     OFFICIAL_EU = "official_eu"          # CORDIS, EUR-Lex, WP text, EC guidance
     PREPRINT = "preprint"
+    # A registered scholarly work (resolved DOI/PMID/PMCID/OpenAlex id) whose
+    # publication type and venue have not been confirmed, so peer review
+    # cannot be asserted — a DOI is also minted for datasets, editorials,
+    # corrections, conference abstracts, protocols and book chapters. Ranks
+    # above GREY and PREPRINT (it is an indexed scholarly record) but well
+    # below PEER_REVIEWED (which requires confirming metadata). See
+    # app/evidence/identifiers.py::classify_authority.
+    SCHOLARLY_STATUS_UNCONFIRMED = "scholarly_status_unconfirmed"
+    RETRACTED = "retracted"              # surfaced, never silently dropped
     GREY = "grey"                        # reports, white papers
     PARTNER_CLAIM = "partner_claim"      # asserted by a consortium partner
     UNVERIFIED = "unverified"

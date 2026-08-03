@@ -21,7 +21,12 @@ from app.evidence.models import (
     RejectedCandidate,
     coerce_typed_list_field,
 )
-from app.evidence.retrieval import formatted_citation, stable_id, utc_now
+from app.evidence.retrieval import (
+    deduplicate_candidates,
+    formatted_citation,
+    stable_id,
+    utc_now,
+)
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.tools.pdf_io import extract_text_from_pdf
@@ -35,7 +40,13 @@ class ResearchSourceAcquirerConfig(BaseModel):
     candidates: str | list[CandidateSource] | list[str]
     policy: EvidencePolicy = Field(default_factory=EvidencePolicy)
     max_concurrent_requests: int = Field(default=6, ge=1, le=12)
-    max_sources_per_claim: int = Field(default=4, ge=1, le=10)
+    # 4 was too tight to hold a review, a primary study, a contradictory
+    # study and an official/dataset source for the same claim at once — the
+    # contradiction slot in particular was routinely crowded out. Now that
+    # cross-lane duplicates are removed before selection (see
+    # _bounded_candidates), these slots hold distinct works rather than the
+    # same paper found twice.
+    max_sources_per_claim: int = Field(default=7, ge=1, le=20)
     max_total_sources: int = Field(default=60, ge=1, le=150)
     request_timeout_seconds: float = Field(default=45.0, gt=0, le=180)
     max_redirects: int = Field(default=4, ge=0, le=8)
@@ -270,6 +281,16 @@ def _bounded_candidates(
     per_claim: int,
     total: int,
 ) -> list[CandidateSource]:
+    # Cross-lane deduplication FIRST. This node is the fan-in point for
+    # several independent research lanes (scholarly search, bounded deep
+    # research, prior-project retrieval), each of which only ever deduped
+    # against its OWN output — so the same paper found by two lanes used to
+    # consume two of a claim's scarce per_claim slots and get fetched,
+    # stored, and passage-verified twice. deduplicate_candidates keys on
+    # canonical work identity (see app/evidence/identifiers.py), so the same
+    # work collapses even when the lanes disagree about its URL or resolved
+    # only different subsets of its identifiers.
+    candidates = deduplicate_candidates(candidates)
     by_claim: dict[str, list[CandidateSource]] = defaultdict(list)
     for item in candidates:
         by_claim[item.claim_id].append(item)

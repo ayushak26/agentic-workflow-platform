@@ -32,8 +32,8 @@ class PaperQAEvidenceSynthesizerInput(BaseModel):
 
 class PaperQAEvidenceSynthesizerConfig(BaseModel):
     documents: str | list[FullTextDocument]
-    llm_model: str = "gpt-4o-mini"
-    summary_llm_model: str = "gpt-4o-mini"
+    llm_model: str = "gpt-5.6-luna"
+    summary_llm_model: str = "gpt-5.6-luna"
     embedding_model: str = "text-embedding-3-small"
     evidence_k: int = Field(default=10, ge=1, le=30)
     max_claims: int = Field(default=15, ge=1, le=50)

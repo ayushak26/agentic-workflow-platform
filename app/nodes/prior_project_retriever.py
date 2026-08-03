@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, TypeAdapter, field_validator
 
+from app.evidence.identifiers import extract_identifiers
 from app.evidence.models import (
     CandidateSource,
     SearchAuditRecord,
@@ -229,6 +230,10 @@ class PriorProjectRetrieverAgent(NodeType):
                                     url,
                                     length=12,
                                 ),
+                                canonical_identifiers=extract_identifiers(
+                                    url, metadata=item
+                                ).as_dict(),
+                                discovery_lane="prior_project",
                                 metadata_status="candidate",
                                 retraction_status="unchecked",
                                 evidence_access="metadata_only",

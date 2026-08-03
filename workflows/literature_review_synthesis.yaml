@@ -38,6 +38,11 @@ nodes:
 
   - id: discover_candidates
     type: ScholarlyCandidateDiscoveryAgent
+    # This node searches external literature APIs (Semantic Scholar,
+    # OpenAlex, etc.) by author/organisation name -- tokenizing its
+    # search-query-planning LLM call would hand those APIs a useless
+    # placeholder instead of the real name to search for.
+    data_protection_mode: public
     config:
       model: claude-sonnet-4-5
       sources:

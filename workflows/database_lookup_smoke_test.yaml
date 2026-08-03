@@ -37,6 +37,10 @@ nodes:
 
   - id: database_lookup
     type: StructuredDatasetRetrieverAgent
+    # auto_plan_queries below drives an LLM call that drafts dataset/
+    # dimension codes from research briefs -- exempted from entity
+    # tokenization so it can plan queries against real public database codes.
+    data_protection_mode: public
     selected_model: gpt-5-mini
     config:
       queries: []

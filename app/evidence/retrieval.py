@@ -9,7 +9,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.evidence.identifiers import (
+    ResolvedWork,
+    extract_identifiers,
+    work_identity,
+)
 from app.evidence.models import CandidateSource, RetrievedPassage
+
+# The identifier-carrying fields of ResolvedWork — the only keys accepted
+# out of a candidate's stored canonical_identifiers dict, so a stray key
+# can never blow up ResolvedWork(**...) construction during dedup.
+_RESOLVED_WORK_ID_FIELDS = frozenset(
+    {
+        "doi",
+        "pmid",
+        "pmcid",
+        "arxiv_id",
+        "openalex_id",
+        "semantic_scholar_id",
+    }
+)
 
 
 _DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
@@ -99,6 +118,23 @@ def papers_from_payload(raw: Any) -> list[dict[str, Any]]:
     return []
 
 
+def source_errors_from_payload(raw: Any) -> dict[str, str]:
+    """Per-source failures from a multi-source search payload (e.g.
+    paper-search-mcp's ``search_papers``), which reports an overall success
+    with an ``errors: {source: message}`` map for individual sources that
+    failed internally (auth rejection, rate limit, provider outage) — see
+    SearchAuditRecord.source_errors for why this matters. Returns {} for any
+    payload shape without an ``errors`` dict (single-source tools, or a tool
+    that doesn't report per-source detail at all)."""
+    payload = parse_mcp_payload(raw)
+    if not isinstance(payload, dict):
+        return {}
+    errors = payload.get("errors")
+    if not isinstance(errors, dict):
+        return {}
+    return {str(k): str(v) for k, v in errors.items()}
+
+
 def candidate_from_paper(
     paper: dict[str, Any],
     *,
@@ -106,6 +142,7 @@ def candidate_from_paper(
     query: str,
     purpose: str,
     source_hint: str | None = None,
+    discovery_lane: str | None = None,
 ) -> CandidateSource:
     source = str(
         first_value(paper, "source", "platform") or source_hint or "unknown"
@@ -197,6 +234,16 @@ def candidate_from_paper(
         ),
         authority=authority,
         independence_group=independence_group,
+        # Resolve identifiers from the backend record AND the landing-page
+        # URL, so this lane's candidates carry the same canonical identity
+        # keys the deep-research lane produces — that shared identity is
+        # what lets deduplicate_candidates collapse the same work found by
+        # both lanes instead of acquiring it twice.
+        canonical_identifiers=extract_identifiers(
+            str(canonical_url) if canonical_url else None,
+            metadata=paper,
+        ).as_dict(),
+        discovery_lane=discovery_lane,
         metadata_status="canonical" if doi and title != "(title unavailable)" else "candidate",
         retraction_status=retraction_status,
         retrieved_at=utc_now(),
@@ -216,19 +263,48 @@ def _normalise_title_for_identity(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
 
 
+def candidate_work_identity(candidate: CandidateSource) -> str:
+    """Cross-lane work identity for one candidate.
+
+    Prefers the canonical identifiers resolved by
+    app/evidence/identifiers.py (shared with the deep-research lane, so the
+    same paper found via a publisher landing page, a doi.org link, or an
+    arXiv abs page collapses to one identity). Falls back to this module's
+    historical URL/title identity only when no strong identifier exists —
+    which is the correct behaviour for grey literature and web pages that
+    genuinely have no scholarly identifier.
+    """
+    work = ResolvedWork(**{
+        key: value
+        for key, value in (candidate.canonical_identifiers or {}).items()
+        if key in _RESOLVED_WORK_ID_FIELDS
+    })
+    if not work.has_strong_identifier:
+        # Fill from the flat legacy fields so candidates created before
+        # canonical_identifiers existed still dedupe on their DOI.
+        if candidate.doi:
+            work.doi = candidate.doi
+    if work.has_strong_identifier:
+        return work_identity(work)
+    if candidate.paper_id:
+        return f"paper:{candidate.source}:{candidate.paper_id}"
+    if candidate.canonical_url:
+        return f"url:{candidate.source}:{candidate.canonical_url}"
+    return f"title:{_normalise_title_for_identity(candidate.title)}"
+
+
 def deduplicate_candidates(
     candidates: list[CandidateSource],
 ) -> list[CandidateSource]:
-    """Deduplicate the same source across queries/backends for one claim.
+    """Deduplicate the same work for one claim, across queries AND lanes.
 
-    Identity prefers, in order: DOI; paper_id (both already
-    provider-normalised); the same canonical_url returned by the same
-    source/backend label (the most common real duplicate — the same
-    query fanned out across discovery/contradiction phrasings, or two
-    near-identical query variants, hitting the same backend and getting
-    back the identical record/link); and finally a punctuation/whitespace-
-    normalised title, for the case where two different backends index the
-    same paper under neither a shared DOI nor a shared link.
+    Identity is the canonical work identity (see
+    ``candidate_work_identity``): resolved scholarly identifiers first, then
+    paper_id, then the same canonical_url from the same backend, then a
+    punctuation/whitespace-normalised title. This is what makes the function
+    safe to run on a FUSED list from several research lanes — the same paper
+    found by both the scholarly-search lane and the deep-research lane now
+    collapses to one candidate instead of being acquired twice.
 
     purpose is deliberately NOT part of the identity key: fanning discovery
     and contradiction queries out to the same set of backends means the
@@ -237,32 +313,79 @@ def deduplicate_candidates(
     tagged hit collide, the contradiction tag is kept — that signal is
     scarce and specifically capped downstream, so it must not be silently
     absorbed by an earlier discovery-purpose duplicate.
+
+    When duplicates come from DIFFERENT lanes, the surviving candidate keeps
+    a record of every lane that found it (``discovery_lane`` becomes a
+    comma-joined list) so cross-lane overlap stays measurable after dedup
+    rather than being silently discarded. The richer record wins on merge:
+    a candidate carrying canonical identifiers beats one that resolved none.
     """
 
     kept: dict[tuple[str, str], CandidateSource] = {}
     order: list[tuple[str, str]] = []
+    lanes: dict[tuple[str, str], list[str]] = {}
+    # Per claim, the identity key already claimed by a given normalised
+    # title. This closes the remaining cross-lane gap that identifier
+    # precedence alone cannot: one lane resolves a DOI for a paper while
+    # another lane only has a landing-page URL, so the two produce
+    # DIFFERENT strong/weak identity keys despite being the same work.
+    # Within a single claim, an identical non-placeholder title is a strong
+    # enough signal to treat them as one work.
+    title_alias: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def _lane_list(key: tuple[str, str]) -> list[str]:
+        return lanes.setdefault(key, [])
+
     for candidate in candidates:
-        identity = (
-            candidate.doi
-            or candidate.paper_id
-            or (
-                f"url:{candidate.source}:{candidate.canonical_url}"
-                if candidate.canonical_url
-                else None
-            )
-            or _normalise_title_for_identity(candidate.title)
-        )
-        key = (candidate.claim_id, identity)
+        key = (candidate.claim_id, candidate_work_identity(candidate))
+        normalised_title = _normalise_title_for_identity(candidate.title)
+        # "(title unavailable)" and friends must never merge unrelated
+        # records, so only alias on a substantive title.
+        if normalised_title and normalised_title != "title unavailable":
+            title_key = (candidate.claim_id, normalised_title)
+            aliased = title_alias.get(title_key)
+            if aliased is not None and aliased != key:
+                key = aliased
+            else:
+                title_alias[title_key] = key
+        lane = candidate.discovery_lane
         existing = kept.get(key)
         if existing is None:
             kept[key] = candidate
             order.append(key)
+            if lane:
+                _lane_list(key).append(lane)
+            continue
+
+        if lane and lane not in _lane_list(key):
+            _lane_list(key).append(lane)
+
+        # Prefer the record that actually resolved canonical identifiers;
+        # otherwise prefer a contradiction-tagged hit over a discovery one.
+        replace = False
+        if (
+            not existing.canonical_identifiers
+            and candidate.canonical_identifiers
+        ):
+            replace = True
         elif (
             existing.purpose != "contradiction"
             and candidate.purpose == "contradiction"
         ):
+            replace = True
+        if replace:
             kept[key] = candidate
-    return [kept[key] for key in order]
+
+    result: list[CandidateSource] = []
+    for key in order:
+        candidate = kept[key]
+        found_by = lanes.get(key) or []
+        if len(found_by) > 1:
+            candidate = candidate.model_copy(
+                update={"discovery_lane": ",".join(found_by)}
+            )
+        result.append(candidate)
+    return result
 
 
 def formatted_citation(candidate: CandidateSource) -> str:

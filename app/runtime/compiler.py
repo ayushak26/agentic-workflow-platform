@@ -168,7 +168,10 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     routing_policy=getattr(instance, "_model_routing", None),
                     entity_tokenizer=services.get("entity_tokenizer"),
                     collection_id=state.get("collection_id", "default"),
-                    processing_mode=services.get("entity_protection_mode"),
+                    processing_mode=(
+                        getattr(instance, "_data_protection_mode", None)
+                        or services.get("entity_protection_mode")
+                    ),
                 ),
             }
         else:
@@ -241,7 +244,29 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     )
                 output = await instance.run(state, resolved)
                 extra_state = output.pop("__state__", {}) if isinstance(output, dict) else {}
-                instance.output_schema(**output)
+                validated = instance.output_schema(**output)
+                # Materialise declared-but-omitted output fields.
+                #
+                # Preflight authorises a template reference if the field name
+                # exists on the node's output_schema, but templates resolve at
+                # runtime against the raw dict run() returned. A field that is
+                # declared WITH A DEFAULT and skipped on some code path (e.g.
+                # RAGAgent's early "no sources matched" return omits
+                # grounding_for_drafter) therefore passed preflight and then
+                # died mid-run with "Template path not resolvable" — and only
+                # on the branch where retrieval came back empty, so it never
+                # showed up in a normal test. Validation already computes those
+                # defaults; previously the validated model was discarded and
+                # only the raw dict was stored. Merging raw-over-validated is
+                # strictly additive: every key run() returned is preserved
+                # unchanged (including keys not on the schema), and any
+                # declared field run() omitted appears with its declared
+                # default instead of being absent.
+                if isinstance(output, dict):
+                    output = {
+                        **validated.model_dump(mode="python"),
+                        **output,
+                    }
         except BaseException as e:
             # Log to stdout FIRST, before any client emission. A failure that is
             # only published to the SSE bus vanishes the moment the client
@@ -554,6 +579,7 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
             if node_spec.model_routing is not None
             else None
         )
+        inst._data_protection_mode = node_spec.data_protection_mode
         instances[node_spec.id] = inst
 
     # Which nodes are human-in-loop? Their edges route reject → END.

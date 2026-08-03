@@ -84,6 +84,14 @@ class SearchAuditRecord(BaseModel):
     result_count: int = 0
     purpose: EvidencePurpose = "discovery"
     error: str | None = None
+    # A multi-source search tool (e.g. paper-search-mcp) can succeed overall
+    # (error is None, papers were returned) while individual sources inside
+    # it failed silently — e.g. Semantic Scholar rate-limited while arxiv
+    # succeeded. Without this, a per-source failure was indistinguishable
+    # from "that source legitimately had zero results", which is exactly
+    # what made intermittent Semantic Scholar failures look like "not
+    # working" with no visible cause. Keyed by source name.
+    source_errors: dict[str, str] = Field(default_factory=dict)
 
 
 class CandidateSource(BaseModel):
@@ -104,6 +112,17 @@ class CandidateSource(BaseModel):
     abstract: str | None = None
     authority: str = "unverified"
     independence_group: str
+    # Canonical scholarly identifiers resolved for this work (doi/pmid/
+    # pmcid/arxiv_id/openalex_id/semantic_scholar_id) — see
+    # app/evidence/identifiers.py. Populated so the same work found by
+    # different lanes under different URLs collapses to one candidate
+    # (work_identity), instead of surviving as several "distinct" papers.
+    canonical_identifiers: dict[str, str] = Field(default_factory=dict)
+    # Which research lane produced this candidate ("scholarly_search",
+    # "deep_research", "prior_project", ...). Preserved through cross-lane
+    # dedup so downstream can see lane overlap rather than losing the
+    # provenance of whichever duplicate happened to be dropped.
+    discovery_lane: str | None = None
     metadata_status: Literal[
         "candidate",
         "canonical",

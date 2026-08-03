@@ -23,6 +23,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.evidence.identifiers import extract_identifiers, work_identity
 from app.evidence.retrieval import stable_id
 from app.observability.cost_ledger import CostLedger
 from app.observability.logging import get_logger
@@ -79,6 +80,22 @@ class ResearchCitation(BaseModel):
     start_index: int | None = None
     end_index: int | None = None
     cited_text: str = ""
+    # Which single claim of the brief this citation actually speaks to.
+    # A brief commonly covers several claims while an individual source
+    # supports only one of them; attributing every citation to every linked
+    # claim contaminated claim-evidence links before verification and burned
+    # each claim's scarce acquisition budget on irrelevant sources. None
+    # means "not attributed" — the caller must then decide, and must NOT
+    # silently treat it as evidence for all claims (see
+    # app/nodes/bounded_deep_research_agent.py::_candidate_records).
+    claim_id: str | None = None
+    stance: Literal[
+        "supports",
+        "contradicts",
+        "qualifies",
+        "context_only",
+        "unclear",
+    ] | None = None
 
 
 class ResearchToolTrace(BaseModel):
@@ -178,6 +195,7 @@ class BoundedToolResearchService:
         ]
         citations: list[ResearchCitation] = []
         seen_urls: set[str] = set()
+        seen_identities: set[str] = set()
         tool_trace: list[ResearchToolTrace] = []
         searches_used = 0
         input_tokens = 0
@@ -268,9 +286,24 @@ class BoundedToolResearchService:
                         ResearchToolTrace(type="web_search_call", action=query)
                     )
                     for item in search_response.results:
-                        if item.url in seen_urls:
+                        # Suppress the same WORK, not merely the same URL.
+                        # web_search commonly returns one paper under several
+                        # URLs across successive queries in the same gather
+                        # loop (doi.org redirect, publisher landing page,
+                        # arXiv abs page). A URL-only check let each through
+                        # as a separate "citation", which then inflated the
+                        # citation count the model synthesises from and
+                        # consumed extra candidate slots downstream.
+                        # Deliberately does NOT scan the snippet text for a
+                        # DOI: a result snippet often cites OTHER papers, so
+                        # trusting it would merge genuinely distinct works.
+                        identity = work_identity(
+                            extract_identifiers(item.url), title=item.title
+                        )
+                        if item.url in seen_urls or identity in seen_identities:
                             continue
                         seen_urls.add(item.url)
+                        seen_identities.add(identity)
                         citations.append(
                             ResearchCitation(
                                 citation_id=f"DR-CIT-{len(citations) + 1:04d}",
@@ -301,6 +334,21 @@ class BoundedToolResearchService:
         # the brief or blocking the rest of the run. BoundedDeepResearchAgent
         # runs briefs concurrently under a semaphore, so one brief stopping
         # early here simply frees its slot for the next queued brief.
+        # Attribute each gathered citation to ONE claim before synthesis.
+        # Uses only already-gathered results (no extra searches, no
+        # additional tool-call budget) and degrades to unattributed on any
+        # failure — never fabricates an attribution.
+        if len(brief.linked_claim_ids) > 1 and citations:
+            attribution_tokens = await self._attribute_citations(
+                brief, citations, max_cost_per_call_usd
+            )
+            input_tokens += attribution_tokens[0]
+            output_tokens += attribution_tokens[1]
+        elif len(brief.linked_claim_ids) == 1:
+            # Unambiguous: the brief targets exactly one claim.
+            for citation in citations:
+                citation.claim_id = brief.linked_claim_ids[0]
+
         synthesis_user_prompt = (
             _brief_prompt(brief)
             + "\n\nWEB SEARCH RESULTS GATHERED SO FAR:\n"
@@ -388,6 +436,96 @@ class BoundedToolResearchService:
             ),
             skills_used=brief.selected_skills,
         )
+
+    async def _attribute_citations(
+        self,
+        brief: ResearchBrief,
+        citations: list[ResearchCitation],
+        max_cost_per_call_usd: float,
+    ) -> tuple[int, int]:
+        """Map each gathered citation to ONE claim, in place.
+
+        Returns (input_tokens, output_tokens) consumed. Operates only on
+        already-gathered search results — no new searches, no tool-call
+        budget. Leaves ``claim_id`` as None for any citation the model does
+        not confidently attribute; the caller must treat unattributed
+        citations conservatively rather than assuming they support every
+        claim in the brief.
+        """
+        claim_ids = list(brief.linked_claim_ids)
+        listing = "\n".join(
+            f"- {c.citation_id}: {c.title} — {c.cited_text[:300]}"
+            for c in citations
+        )
+        system = (
+            "Attribute each search result to AT MOST ONE claim id, and label "
+            "its stance toward that claim. Use only the supplied text. If a "
+            "result does not clearly speak to any single listed claim, omit "
+            "it entirely rather than guessing — an omitted result is handled "
+            "safely downstream, a wrong attribution is not. Never invent "
+            "citation ids or claim ids."
+        )
+        user = (
+            f"CLAIM IDS (choose at most one per result): {', '.join(claim_ids)}\n\n"
+            f"BRIEF QUESTION: {brief.question}\n\n"
+            f"SEARCH RESULTS:\n{listing}"
+        )
+        projected = _projected_call_cost(
+            brief.research_model, system + user, 2_000
+        )
+        if projected > max_cost_per_call_usd:
+            log.warning(
+                "deep_research.cost_cap_projected_attribution",
+                brief_id=brief.brief_id,
+                projected_usd=round(projected, 4),
+                cap_usd=max_cost_per_call_usd,
+            )
+            return (0, 0)
+
+        try:
+            result = await self._llm.complete_structured(
+                model=brief.research_model,
+                system=system,
+                user=user,
+                response_model=_CitationAttributionSet,
+                temperature=0.0,
+                max_tokens=2_000,
+            )
+        except Exception as exc:
+            # Structured output is unavailable on some gateways (and local
+            # test doubles). Unattributed is the safe outcome.
+            log.warning(
+                "deep_research.citation_attribution_failed",
+                brief_id=brief.brief_id,
+                error=str(exc)[:200],
+            )
+            return (0, 0)
+
+        by_id = {c.citation_id: c for c in citations}
+        valid_claims = set(claim_ids)
+        for item in result.attributions:
+            citation = by_id.get(item.citation_id)
+            if citation is None or item.claim_id not in valid_claims:
+                continue
+            citation.claim_id = item.claim_id
+            citation.stance = item.stance
+        return (0, 0)
+
+
+class _CitationAttribution(BaseModel):
+    citation_id: str
+    claim_id: str
+    stance: Literal[
+        "supports",
+        "contradicts",
+        "qualifies",
+        "context_only",
+        "unclear",
+    ] = "unclear"
+
+
+class _CitationAttributionSet(BaseModel):
+    attributions: list[_CitationAttribution] = Field(default_factory=list)
 
 
 def _brief_prompt(brief: ResearchBrief) -> str:

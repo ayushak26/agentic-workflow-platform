@@ -20,6 +20,7 @@ from app.evidence.retrieval import (
     candidate_from_paper,
     deduplicate_candidates,
     papers_from_payload,
+    source_errors_from_payload,
     utc_now,
 )
 from app.nodes.base import NodeType
@@ -73,8 +74,15 @@ class ScholarlyCandidateDiscoveryConfig(BaseModel):
     mcp_server: str = "paper-search-mcp"
     tool: str = "search_papers"
     sources: list[str] = Field(default_factory=lambda: list(_DEFAULT_SOURCES))
-    max_results_per_source: int = Field(default=2, ge=1, le=10)
-    max_candidates_per_claim: int = Field(default=8, ge=1, le=30)
+    # Recall-first defaults. 2 results/source was far too narrow for
+    # state-of-art + problem + method + contradiction research across a
+    # dozen backends: the whole point of fanning out is breadth, and
+    # downstream stages (deduplication, then per-claim quotas in
+    # ResearchSourceAcquirer) are what enforce precision. Retrieving too
+    # little here is unrecoverable — nothing downstream can find a paper
+    # that was never returned.
+    max_results_per_source: int = Field(default=8, ge=1, le=25)
+    max_candidates_per_claim: int = Field(default=20, ge=1, le=60)
     max_claims: int = Field(default=20, ge=1, le=100)
     claim_types: list[str] = Field(
         default_factory=lambda: [
@@ -86,6 +94,13 @@ class ScholarlyCandidateDiscoveryConfig(BaseModel):
     )
     require_contradiction_search: bool = True
     model: str | None = "claude-sonnet-4-5"
+    # Scientific Agent Skill whose search methodology guides query planning
+    # (synonyms, acronyms, older terminology, adjacent disciplinary
+    # language). The skill is guidance only — the actual searching is still
+    # this node's own paper-search-mcp calls, so a missing/disabled skill
+    # catalog degrades to the built-in prompt rather than failing the node.
+    query_planning_skill: str | None = "research-lookup"
+    max_skill_prompt_chars: int = Field(default=6_000, ge=0, le=30_000)
     # Hard wall-clock ceiling for the whole discovery loop (all claims x all
     # queries). Each individual MCP call already has its own per-call
     # timeout (mcp_tool_timeout_seconds), but nothing previously bounded the
@@ -140,6 +155,8 @@ class _ScholarlyCandidateDiscovery(NodeType):
                 f"{self.type_name} requires services {missing}"
             )
 
+        skill_guidance = self._query_planning_guidance(cfg)
+
         wanted = set(cfg.claim_types)
         targets = [
             claim
@@ -160,7 +177,9 @@ class _ScholarlyCandidateDiscovery(NodeType):
                 timed_out = True
                 break
             claims_processed += 1
-            plan = await self._search_plan(llm, claim, cfg.model)
+            plan = await self._search_plan(
+                llm, claim, cfg.model, skill_guidance=skill_guidance
+            )
             queries = [
                 ("discovery", query)
                 for query in plan.discovery_queries[:4]
@@ -179,6 +198,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
                 searched_at = utc_now()
                 error: str | None = None
                 papers: list[dict[str, Any]] = []
+                source_errors: dict[str, str] = {}
                 try:
                     raw = await mcp.call_tool(
                         name=cfg.tool,
@@ -192,6 +212,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
                         server=cfg.mcp_server,
                     )
                     papers = papers_from_payload(raw)
+                    source_errors = source_errors_from_payload(raw)
                 except Exception as exc:
                     error = f"{type(exc).__name__}: {exc}"[:500]
 
@@ -209,6 +230,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
                         result_count=len(papers),
                         purpose=purpose,
                         error=error,
+                        source_errors=source_errors,
                     )
                 )
                 if error:
@@ -216,6 +238,18 @@ class _ScholarlyCandidateDiscovery(NodeType):
                         f"[{claim.id}] {purpose} search failed: {error}"
                     )
                     continue
+                if source_errors:
+                    # The call succeeded overall (other sources returned
+                    # papers) but one or more individual sources failed --
+                    # e.g. Semantic Scholar rate-limited. Surface it instead
+                    # of letting it look identical to "zero results".
+                    report_lines.append(
+                        f"[{claim.id}] {purpose} search: "
+                        + "; ".join(
+                            f"{source} failed: {message}"
+                            for source, message in source_errors.items()
+                        )
+                    )
                 for paper in papers:
                     claim_candidates.append(
                         candidate_from_paper(
@@ -223,6 +257,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
                             claim_id=claim.id,
                             query=query,
                             purpose=purpose,
+                            discovery_lane="scholarly_search",
                         )
                     )
 
@@ -290,11 +325,41 @@ class _ScholarlyCandidateDiscovery(NodeType):
             "sources": display_sources,
         }
 
+    def _query_planning_guidance(
+        self,
+        cfg: ScholarlyCandidateDiscoveryConfig,
+    ) -> str:
+        """Search methodology text from the configured Scientific Agent Skill.
+
+        Guidance only: it shapes the queries this node sends to
+        paper-search-mcp, it does not perform any searching itself. Returns
+        "" whenever the skill/catalog is unavailable so discovery keeps
+        working with its built-in prompt — a missing skill must never fail
+        candidate discovery.
+        """
+        if not cfg.query_planning_skill or cfg.max_skill_prompt_chars <= 0:
+            return ""
+        catalog = self.services.get("scientific_skill_catalog")
+        if catalog is None:
+            return ""
+        try:
+            selection = catalog.select(
+                objective="scholarly literature search query planning",
+                requested=[cfg.query_planning_skill],
+                auto_select=False,
+                max_skills=1,
+            )
+            return catalog.prompt_bundle(selection)[: cfg.max_skill_prompt_chars]
+        except Exception:
+            return ""
+
     async def _search_plan(
         self,
         llm: Any,
         claim: Claim,
         model: str | None,
+        *,
+        skill_guidance: str = "",
     ) -> ClaimSearchPlan:
         try:
             result = await llm.complete_structured(
@@ -314,7 +379,20 @@ class _ScholarlyCandidateDiscovery(NodeType):
                     "keywords over a boolean expression (e.g. "
                     "'agricultural residue secondary biomass regional "
                     "bioeconomy', not \"('agricultural residues' OR 'crop "
-                    "residues') AND ('secondary biomass' OR ...)\")."
+                    "residues') AND ('secondary biomass' OR ...)\").\n\n"
+                    "Vary terminology deliberately across the discovery "
+                    "queries — synonyms, acronyms and expansions, older or "
+                    "superseded terms, and adjacent disciplinary vocabulary — "
+                    "so the set does not merely re-run one phrasing. Papers "
+                    "indexed only under different terminology are the most "
+                    "common recall failure."
+                    + (
+                        "\n\nApply the following approved search methodology "
+                        "when choosing terminology and query structure:\n"
+                        + skill_guidance
+                        if skill_guidance
+                        else ""
+                    )
                 ),
                 user=f"CLAIM:\n{claim.text}",
                 response_model=ClaimSearchPlan,

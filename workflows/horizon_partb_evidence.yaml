@@ -286,6 +286,13 @@ nodes:
 
   - id: discover_candidates
     type: ScholarlyCandidateDiscoveryAgent
+    # This node searches Semantic Scholar/OpenAlex/OpenAIRE by author,
+    # organisation, and project name -- tokenizing its search-query-planning
+    # LLM call would hand those external APIs a useless placeholder instead
+    # of the real name they need to search for. Every OTHER node in this
+    # workflow (partner/organisation names in the actual proposal content)
+    # is unaffected -- this override is scoped to this node instance only.
+    data_protection_mode: public
     selected_model: gpt-5.6-luna
     allowed_models:
       - gpt-5.6-luna
@@ -296,8 +303,11 @@ nodes:
       prefer_low_latency: true
     config:
       model: gpt-5.6-luna
-      max_results_per_source: 3
-      max_candidates_per_claim: 10
+      # Recall-first: 3/source was a main reason relevant papers were
+      # missing. Retrieve broadly, then let cross-lane dedup and the
+      # per-claim quotas in acquire_research_sources enforce precision.
+      max_results_per_source: 8
+      max_candidates_per_claim: 20
       max_claims: 30
       claim_types: [state_of_art, problem, impact, method]
       require_contradiction_search: true
@@ -317,6 +327,10 @@ nodes:
 
   - id: structured_dataset_research
     type: StructuredDatasetRetrieverAgent
+    # auto_plan_queries below drives an LLM call that drafts dataset/
+    # dimension codes from research briefs -- exempted for the same reason
+    # as discover_candidates above (see its comment).
+    data_protection_mode: public
     selected_model: gpt-5.6-terra
     config:
       queries: []
@@ -356,8 +370,11 @@ nodes:
         - "{{discover_candidates.candidates}}"
         - "{{prior_project_research.candidates}}"
       max_concurrent_requests: 6
-      max_sources_per_claim: 4
-      max_total_sources: 60
+      # Room for a review + primary study + contradictory study + official/
+      # dataset source on the same claim. Cross-lane duplicates are removed
+      # before selection, so these are distinct works.
+      max_sources_per_claim: 7
+      max_total_sources: 90
       request_timeout_seconds: 45
       max_redirects: 4
       fail_when_none_acquired: false
@@ -366,8 +383,8 @@ nodes:
     type: PaperQAEvidenceSynthesizerAgent
     config:
       documents: "{{acquire_research_sources.documents}}"
-      llm_model: gpt-4o-mini
-      summary_llm_model: gpt-4o-mini
+      llm_model: gpt-5.6-luna
+      summary_llm_model: gpt-5.6-luna
       embedding_model: text-embedding-3-small
       evidence_k: 10
       max_claims: 15

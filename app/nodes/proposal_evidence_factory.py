@@ -149,13 +149,43 @@ def _evidence_score(
     exact_locator: bool,
     corroborated: bool,
 ) -> int:
+    # Authority weighting. Open-web and grey literature are a first-class
+    # part of the evidence base for this domain, not a fallback: official
+    # policy texts, standards, JRC/EEA/IEA technical reports, statistical
+    # datasets and implementation evidence from funded projects are often the
+    # ONLY authoritative sources for policy, market and regulatory claims,
+    # and are frequently better evidence for those claims than a journal
+    # article. They were previously scored 8 (grey) and 4 (unclassified web)
+    # against 18 for peer review, which made web-derived evidence land at or
+    # near "unusable" on the _strength scale even after it had passed exact
+    # passage verification.
+    #
+    # This weighting affects only how strongly an ALREADY-VERIFIED passage is
+    # labelled. It does not relax the verification boundary: the locator,
+    # stance and confidence terms below still require a real exact-passage
+    # match, and ProposalTruthGraphAgent's drafting_allowed gate keys on
+    # accepted claims, evidence approval and blockers — never on this score.
     authority = {
         "official_eu": 20,
         "peer_reviewed": 18,
+        # Institutional/technical reports, standards, datasets, white papers.
+        "grey": 14,
+        # An indexed scholarly work (resolved DOI/PMID/OpenAlex id) whose
+        # venue and publication type could not be confirmed, so peer review
+        # cannot be asserted — a DOI is also minted for datasets, editorials,
+        # corrections, conference abstracts, protocols and book chapters.
+        "scholarly_status_unconfirmed": 13,
+        # A fetched, passage-verified web source with no scholarly identifier.
+        "unverified": 10,
         "preprint": 10,
-        "grey": 8,
+        # Self-asserted by a consortium partner — a different trust basis
+        # from third-party web evidence, so deliberately not raised.
         "partner_claim": 8,
-    }.get(document.authority, 4)
+        # Explicitly floored rather than left to the fallback so a retraction
+        # can never be scored as if its status were merely unknown.
+        "retracted": 0,
+        # Unknown/unmapped authority strings stay conservative.
+    }.get(document.authority, 6)
     entailment = {
         "supports_directly": 30,
         "supports_with_conditions": 23,
@@ -182,6 +212,21 @@ def _evidence_score(
     )
     if document.retraction_status == "retracted":
         return 0
+    if entailment == 0:
+        # The passage does not establish the claim at all: the stance is
+        # insufficient, not_relevant, or cannot_assess — which is also where
+        # the fail-closed path lands when a verifier's quote could not be
+        # found verbatim in the stored source version (see the caller, which
+        # rewrites such pairs to stance="insufficient", confidence=0.0).
+        #
+        # Without this floor, the unconditional directness (15), locator (15)
+        # and version_fit (3) terms plus the authority term still summed to
+        # "limited" evidence — e.g. an official_eu source whose verification
+        # FAILED scored 53. That reads as usable supporting evidence for
+        # something that was explicitly not verified, which is exactly what
+        # the fail-closed design is meant to prevent. Held below the "weak"
+        # threshold (25) so it always labels as unusable.
+        return min(score, 24)
     if not exact_locator:
         score = min(score, 65)
     return max(0, min(100, score))

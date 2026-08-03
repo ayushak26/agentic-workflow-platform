@@ -4,12 +4,20 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from typing import Any
-from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.evidence.identifiers import (
+    classify_authority,
+    extract_identifiers,
+    work_identity,
+)
 from app.evidence.models import CandidateSource, SearchAuditRecord
-from app.evidence.retrieval import normalise_doi, stable_id, utc_now
+from app.evidence.retrieval import (
+    deduplicate_candidates,
+    stable_id,
+    utc_now,
+)
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.observability.cost_ledger import CostLedger, LedgerEntry
@@ -277,24 +285,58 @@ def _candidate_records(
     seen: set[tuple[str, str]] = set()
     for dossier in dossiers:
         for citation in dossier.citations[:max_citations_per_brief]:
-            doi = _doi_from_url(citation.url)
-            source, authority = _classify_source(citation.url, doi)
-            purpose = (
-                "contradiction"
-                if any(
-                    token in citation.cited_text.lower()
-                    for token in (
-                        "contradict",
-                        "limitation",
-                        "null result",
-                        "no significant",
-                        "boundary condition",
+            work = extract_identifiers(citation.url)
+            doi = work.doi
+            source, authority = classify_authority(citation.url, work)
+            # Stance from the attribution step is a real signal about the
+            # source's relation to the claim; the old substring scan over
+            # the snippet ("limitation" etc.) both missed most contradictory
+            # evidence and misfired on ordinary limitation boilerplate. Fall
+            # back to it only when no stance was resolved.
+            if citation.stance in {"contradicts", "qualifies"}:
+                purpose = "contradiction"
+            elif citation.stance in {"supports", "context_only"}:
+                purpose = "discovery"
+            else:
+                purpose = (
+                    "contradiction"
+                    if any(
+                        token in citation.cited_text.lower()
+                        for token in (
+                            "contradict",
+                            "null result",
+                            "no significant",
+                            "boundary condition",
+                        )
                     )
+                    else "discovery"
                 )
-                else "discovery"
-            )
-            for claim_id in dossier.linked_claim_ids:
-                source_key = (claim_id, citation.url)
+
+            # One citation supports one claim. Only fall back to the
+            # brief's full claim list when attribution produced nothing at
+            # all, and mark those as unresolved so downstream fusion can
+            # tell precise attributions from broad ones.
+            if citation.claim_id:
+                target_claims = [citation.claim_id]
+                metadata_status = "candidate"
+            else:
+                target_claims = list(dossier.linked_claim_ids)
+                metadata_status = (
+                    "candidate" if len(target_claims) <= 1 else "unresolved"
+                )
+
+            for claim_id in target_claims:
+                # Key on canonical work identity, not the raw URL. web_search
+                # routinely returns the same paper under several URLs (a
+                # doi.org redirect, the publisher landing page, an arXiv abs
+                # page), and a URL-keyed check treated each as a distinct
+                # candidate — silently consuming several of this claim's
+                # max_candidates_per_claim slots for one work. The other two
+                # lanes already dedupe their own output; this one did not.
+                source_key = (
+                    claim_id,
+                    work_identity(work, title=citation.title),
+                )
                 if source_key in seen:
                     continue
                 if counts[claim_id] >= max_candidates_per_claim:
@@ -319,7 +361,9 @@ def _candidate_records(
                         doi or citation.url,
                         length=12,
                     ),
-                    metadata_status="candidate",
+                    canonical_identifiers=work.as_dict(),
+                    discovery_lane="deep_research",
+                    metadata_status=metadata_status,
                     retraction_status="unchecked",
                     evidence_access="metadata_only",
                     retrieved_at=utc_now(),
@@ -327,7 +371,10 @@ def _candidate_records(
                 retained.append(candidate)
                 seen.add(source_key)
                 counts[claim_id] += 1
-    return retained
+    # Consistent with the scholarly-search and prior-project lanes, which
+    # both dedupe their own output before handing it on. Also merges the
+    # discovery/contradiction purpose tags for a work that surfaced as both.
+    return deduplicate_candidates(retained)
 
 
 def _search_audit(
@@ -368,29 +415,10 @@ def _search_audit(
     return audit
 
 
-def _doi_from_url(url: str) -> str | None:
-    parsed = urlsplit(url)
-    if parsed.hostname and parsed.hostname.lower() in {"doi.org", "dx.doi.org"}:
-        return normalise_doi(parsed.path.lstrip("/"))
-    return None
-
-
-def _classify_source(
-    url: str,
-    doi: str | None,
-) -> tuple[str, str]:
-    host = (urlsplit(url).hostname or "").lower()
-    if host.endswith(
-        (
-            ".europa.eu",
-            "europa.eu",
-            "cordis.europa.eu",
-            "eur-lex.europa.eu",
-        )
-    ):
-        return "official_eu", "official_eu"
-    if doi:
-        return "doi", "peer_reviewed"
-    if host.endswith(("arxiv.org", "biorxiv.org", "medrxiv.org")):
-        return "preprint", "preprint"
-    return "web", "unverified"
+# _doi_from_url/_classify_source were replaced by
+# app/evidence/identifiers.py's extract_identifiers/classify_authority: the
+# old pair only recognised a bare doi.org/dx.doi.org hostname (missing DOIs
+# on publisher landing pages entirely) and treated "has a DOI" as proof of
+# peer review, which is wrong for datasets, preprints, editorials,
+# corrections, conference abstracts, protocols, book chapters and retracted
+# items. The shared resolver is also what makes cross-lane dedup work.
