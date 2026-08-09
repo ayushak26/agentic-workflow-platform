@@ -7,6 +7,7 @@ three pydantic schemas and one async method. That is the entire surface.
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Type
+from app.runtime.state import WorkflowState  # Adjust the import path as necessary
 from pydantic import BaseModel
 
 
