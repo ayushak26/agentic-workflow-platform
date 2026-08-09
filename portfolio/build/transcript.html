@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Eurskem AI — 10-Minute Technical Walkthrough</title>
+<link rel="stylesheet" href="transcript.css">
+</head>
+<body>
+
+<!-- ============================== COVER ============================== -->
+<section class="cover">
+  <p class="eyebrow">Presenter script and shot list</p>
+  <h1>Eurskem AI</h1>
+  <h2>10-Minute Technical Walkthrough</h2>
+  <p class="lede">The spoken script, the screen to be on for every beat, the code to open, and the
+  exact artefact that backs each claim — with every screenshot captured from the running
+  application.</p>
+
+  <table class="meta-table">
+    <tbody>
+      <tr><td>Purpose</td><td>Portfolio or technical interview video</td></tr>
+      <tr><td>Target length</td><td>About 1,300 spoken words · 10 minutes at 125–135 wpm</td></tr>
+      <tr><td>Style</td><td>Calm, clear, business-first, then technical depth</td></tr>
+      <tr><td>Demo workflow</td><td>Concept Note to 10-Page Methodology Section (14 nodes, 18 edges)</td></tr>
+      <tr><td>Demo run</td><td><code>ed462b3e</code> — completed, 23 min 33 s, $6.6495</td></tr>
+      <tr><td>Failure demo</td><td><code>3d46a8ee</code> — failed at <code>graphnormalizer_1</code></td></tr>
+      <tr><td>Evidence demo</td><td><code>1f2c3a4d</code> — evidence stage, 19 claims, 0 verified</td></tr>
+      <tr><td>Code snapshot</td><td><code>main</code> at <code>7ca16b2</code></td></tr>
+      <tr><td>Document date</td><td>9 August 2026</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <span class="t">How to use this document</span>
+    Each beat gives you three things in a fixed order: <strong>On screen</strong> (what to have open
+    before you start talking), <strong>Say</strong> (the words, verbatim), and the supporting
+    screenshot or code. Amber <em>presenter notes</em> flag places where the original script promised
+    something the current build does not surface, along with what to show instead. Rehearse from the
+    Say blocks alone; use the rest to set up.
+  </div>
+
+  <p class="strip">Prepare the run &nbsp;|&nbsp; open the tabs &nbsp;|&nbsp; then speak</p>
+</section>
+
+<!-- ============================== PREP ============================== -->
+<section class="section">
+  <h1>Before you record</h1>
+  <p class="standfirst">Every claim in the script has a specific artefact behind it. Have them open.</p>
+
+  <h2>Services and tabs</h2>
+  <table>
+    <thead><tr><th style="width:26%">Tab</th><th style="width:38%">Route</th><th>Used in beat</th></tr></thead>
+    <tbody>
+      <tr><td>Workflow Library</td><td><code>/library</code></td><td>1, 2</td></tr>
+      <tr><td>Guided Run</td><td><code>/history</code> → run <code>ed462b3e</code> → Open in Guided</td><td>3</td></tr>
+      <tr><td>Cockpit (completed)</td><td>same run → Open in Cockpit</td><td>3</td></tr>
+      <tr><td>Cockpit (failed)</td><td><code>/history</code> → run <code>3d46a8ee</code> → Open in Cockpit</td><td>3, 8</td></tr>
+      <tr><td>Builder</td><td><code>/builder/concept_note_to_10-page_methodology_section1</code></td><td>4</td></tr>
+      <tr><td>Editor</td><td><code>app/runtime/compiler.py</code> at <code>_make_runtime_fn</code> (line 63)</td><td>5</td></tr>
+      <tr><td>Evidence record</td><td>run <code>1f2c3a4d</code> → <code>verify_evidence.qa_report</code></td><td>6</td></tr>
+      <tr><td>Cost ledger</td><td>Mongo <code>cost_ledger</code>, filtered to <code>ed462b3e</code></td><td>7</td></tr>
+    </tbody>
+  </table>
+
+  <p>Bring up MongoDB, Weaviate, MinIO and Redis from <code>docker-compose.yml</code>, start the
+  FastAPI backend and the Vite dev server, and confirm <code>/health</code> reports
+  <code>ready: true</code> before recording — a readiness failure mid-take is the one interruption
+  that cannot be edited out.</p>
+
+  <div class="note">
+    <span class="t">Three corrections to the original script, resolved here</span>
+    <strong>1. Per-node cost is not in the UI.</strong> The Cockpit node inspector says so itself:
+    "Token/cost breakdown isn't joined into this view yet." Beat 7 therefore reads the ledger record
+    directly and says so out loud, rather than implying a panel that does not exist.<br>
+    <strong>2. A fallback record does exist.</strong> The original script said to show one only if it
+    is real. It is: <code>outline</code> requested <code>claude-sonnet-4-5</code> and
+    <code>gpt-5.6-terra</code> ran. Beat 7 uses it.<br>
+    <strong>3. The demo run has no verified claims to trace.</strong> Its evidence base is bounded
+    Deep Research dossiers; Cockpit shows <code>Sources (0)</code>. Beat 6 therefore traces the
+    evidence lifecycle in a run that genuinely exercised it — and the honest result there is
+    <em>zero</em> verified claims, which is a stronger demonstration than a happy path.
+  </div>
+
+  <h2>Pacing</h2>
+  <p>Rehearse at 125–135 words per minute and pause when changing screens. The Say blocks total about
+  1,300 words. Claim nothing about adoption, accuracy, savings or production health — the parts that
+  <em>are</em> evidenced are more persuasive without it.</p>
+</section>
+
+<!-- ============================== BEAT 1 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">0:00–0:35</span>
+    <h1>Introduction</h1>
+    <span class="dur">~85 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    Workflow Library at <code>/library</code>, with the concept-note workflow visible in the grid.
+    Sidebar expanded. Cost badge reading <code>$0.0000 this run</code>.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"Hello, I am Ayush Khandelwal. This is Eurskem AI, a reusable platform for building and
+    operating evidence-grounded AI workflows.</p>
+    <p>I will demonstrate it through proposal development, where research, evidence checking,
+    drafting, review, and cost control must work together. A chatbot hides these steps. This platform
+    makes them visible, configurable, testable, and recoverable.</p>
+    <p>I will begin with the non-technical user experience and then move into the Builder, runtime,
+    research integrity, and cost controls."</p>
+  </div>
+
+  <figure>
+    <img src="../screenshots/01-workflow-library.png" alt="Workflow Library">
+    <figcaption><span class="lbl">Shot 1 · <code>/library</code></span> — twenty workflows discovered
+    from the <code>workflows/</code> directory, grouped by outcome rather than by graph shape. Let the
+    category counts sit on screen for a beat: they are the registry's own capability declarations, and
+    they make "reusable platform" visible before you have to assert it.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================== BEAT 2 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">0:35–1:20</span>
+    <h1>Workflow Library and business goal</h1>
+    <span class="dur">~120 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    Type "Concept Note" into the library search so the flagship card is isolated. Point at the
+    description, the <code>14 steps</code> badge and the <code>DOCX</code> output tag.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"I start in the Workflow Library. Workflows are presented by their business goal, not only by a
+    technical graph.</p>
+    <p>This workflow takes a call or request for proposal, gathers relevant evidence, develops
+    structured content, introduces human review points, and produces a cited deliverable. Its
+    definition is versioned, while the underlying node types and runtime are reusable. Proposal
+    generation is therefore one use case of the platform; it is not hard-coded as the platform itself.</p>
+    <p>For this recording, I am using prepared data and an existing run so the demonstration remains
+    repeatable and does not depend on live provider response times."</p>
+  </div>
+
+  <figure>
+    <img src="../screenshots/02-library-concept-note-card.png" alt="Concept note workflow card">
+    <figcaption><span class="lbl">Shot 2 · library filtered to the flagship</span> — the card leads
+    with the outcome, the step count and the output format. The neighbouring cards
+    (<em>Horizon Europe Part B Verified Evidence</em>, <em>Database Lookup Smoke Test</em>) are worth
+    a half-second of screen time: they are the same runtime, and they are what "platform, not product"
+    means in practice.</figcaption>
+  </figure>
+
+  <div class="note ok">
+    <span class="t">If asked "is this workflow special-cased anywhere?"</span>
+    Open <code>workflows/concept_note_to_10-page_methodology_section1.yaml</code>. It is 352 lines of
+    the same <code>WorkflowSpec</code> contract every other workflow uses — typed inputs, nodes,
+    edges, and Guided Run copy. There is no proposal-specific branch in the runtime.
+  </div>
+</section>
+
+<!-- ============================== BEAT 3 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">1:20–2:25</span>
+    <h1>Guided Run, and the same run in Cockpit</h1>
+    <span class="dur">~185 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    <code>/history</code> → run <code>ed462b3e</code> → <strong>Open in Guided</strong>. Show the
+    stage rail, the attention panel and the outputs. Then <strong>Open in Cockpit</strong> from the
+    same run, and switch to the failed run <code>3d46a8ee</code> to show live node states.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"Guided Run is designed for project administrators and domain experts. Instead of node IDs and
+    raw payloads, it shows business stages: understanding the request, collecting evidence, developing
+    content, reviewing, and producing the output.</p>
+    <p>For the current stage, the user can see what is happening, why it matters, and what will
+    receive its result. Approvals and failures appear in one attention area, so the user does not need
+    to inspect a technical graph.</p>
+    <p>I will now open the same run in Cockpit. This does not start another execution. The run ID,
+    workflow version, outputs, and audit context remain the same.</p>
+    <p>Cockpit answers a more technical question: which node is running, paused, completed, or failed?
+    Live events update the graph, while a human-review node can pause execution for approval,
+    rejection with a reason, or an edited response. Guided Run and Cockpit therefore support different
+    users without creating two workflow engines."</p>
+  </div>
+
+  <figure>
+    <img src="../screenshots/03-guided-run-overview.png" alt="Guided Run">
+    <figcaption><span class="lbl">Shot 3 · Guided Run, run <code>ed462b3e</code></span> — five stages
+    complete, 23 min 33 s elapsed, a plain-language account of the current work and why it matters, and
+    a single "What needs you" panel holding the one item that requires a decision. Nothing in the
+    primary reading path is a node ID, a prompt or a payload.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="../screenshots/06-cockpit-graph.png" alt="Cockpit graph">
+    <figcaption><span class="lbl">Shot 4 · Cockpit, run <code>3d46a8ee</code></span> — the same
+    workflow rendered as execution state: lifecycle counters, a per-node status list, the live graph,
+    and the failure that stopped this run with a retry route beside it.</figcaption>
+  </figure>
+
+  <div class="note">
+    <span class="t">Presenter note — which run to use for the Cockpit graph</span>
+    Cockpit switches to the <strong>output viewer</strong> when a run's status is
+    <code>completed</code> (<code>ui/src/modes/studio/Cockpit.tsx:370</code>). Opening
+    <code>ed462b3e</code> lands on the rendered DOCX and its Variables / Sources / Audit / Score tabs —
+    good for beat 6, wrong for showing node lifecycle. Use the failed run <code>3d46a8ee</code> for the
+    graph. Say the quiet part out loud: <em>"this is an earlier attempt that failed, which is the
+    honest way to show what the graph does when something goes wrong."</em> It costs four seconds and
+    buys credibility.
+  </div>
+</section>
+
+<!-- ============================== BEAT 4 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">2:25–3:55</span>
+    <h1>Builder controls</h1>
+    <span class="dur">~240 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    <code>/builder/concept_note_to_10-page_methodology_section1</code>. Show the four areas, then
+    select <code>deep_research</code> and step the inspector through <strong>Configure</strong> →
+    <strong>Map data</strong> → <strong>Test</strong> → <strong>Checks</strong>, then
+    <strong>Versions</strong>.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"The Builder has four stable areas: the action bar, a searchable and categorised node library,
+    the canvas, and a persistent Inspector.</p>
+    <p>The library is populated from the backend node registry. Each capability declares its
+    configuration, inputs, and outputs. Selecting a node creates a typed form from that contract, which
+    reduces invalid free-text configuration.</p>
+    <p>In Map Data, I can connect an input to an upstream output. The variable picker only exposes data
+    available at this point in the graph, and the saved reference remains explicit.</p>
+    <p>Before saving or running, preflight validates the workflow without spending model tokens. It
+    catches missing configuration, unsafe references, orphaned edges, invalid routes, or incomplete
+    user guidance. Each issue links back to the affected node.</p>
+    <p>I can also prepare a node-level or branch-level test instead of executing the complete workflow.
+    It still uses the normal preflight and runtime path.</p>
+    <p>Incomplete changes are autosaved as a recoverable draft, separately from the last executable
+    workflow. A strict save creates an immutable version. Version history lets me compare, restore, or
+    recover work without allowing an incomplete draft to replace a known runnable version."</p>
+  </div>
+
+  <figure>
+    <img src="../screenshots/09-builder-canvas-palette.png" alt="Builder four areas">
+    <figcaption><span class="lbl">Shot 5 · the four areas</span> — action bar, registry-driven node
+    library, canvas, persistent inspector. Say the counts as you scroll the library: Control &amp; Flow
+    7, Research &amp; Discovery 5, Evidence &amp; Retrieval 9, Proposal Engineering 9, Multimodal 4,
+    Document Rendering &amp; Export 7, Integrations 2 — 43 node types, all discovered, none
+    hand-listed.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="../screenshots/12-builder-preflight.png" alt="Preflight">
+    <figcaption><span class="lbl">Shot 6 · the line that carries this beat</span> —
+    <strong>"Preflight passed · 14 nodes · 18 edges · 0 tokens used."</strong> Pause on it. Nine checks
+    ran, including a real LangGraph compile, and the token counter is a product surface rather than an
+    implementation detail. Point at <code>run_inputs</code>, the one neutral dot: no run inputs were
+    supplied for a structural check, and it is deliberately not an error.</figcaption>
+  </figure>
+
+  <div class="figpair">
+    <figure>
+      <img src="../screenshots/11-builder-configure.png" alt="Configure">
+      <figcaption><span class="lbl">Shot 7 · typed configuration</span> — the research node's bounds
+      are declared numeric fields, not prose in a prompt.</figcaption>
+    </figure>
+    <figure>
+      <img src="../screenshots/14-builder-map-data.png" alt="Map data">
+      <figcaption><span class="lbl">Shot 8 · explicit mapping</span> — the picker offers only what is
+      reachable here and writes the reference preflight will check.</figcaption>
+    </figure>
+  </div>
+
+  <figure>
+    <img src="../screenshots/13-builder-versions.png" alt="Version history">
+    <figcaption><span class="lbl">Shot 9 · immutable versions</span> — three recorded versions of this
+    workflow. Restoring one runs preflight first; the autosaved draft lives elsewhere, so an
+    incomplete edit can never overwrite a runnable definition.</figcaption>
+  </figure>
+
+  <div class="codeblock">
+    <div class="cap">If asked how the save is made safe
+      <span class="src">app/workflow/builder_store.py:34–144 @ 7ca16b2</span></div>
+<pre>def _atomic_write(path: Path, text: str) -&gt; None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)          # atomic — no half-written workflow
+
+def save_workflow(self, name: str, yaml_text: str) -&gt; str:
+    path = self.workflow_path(name)
+    if path.exists():
+        current = path.read_text(encoding="utf-8")
+        if current != yaml_text:
+            self.record_version(name, current)    # keep what is being replaced
+    _atomic_write(path, yaml_text)
+    version_id = self.record_version(name, yaml_text)
+    self.delete_draft(name)
+    return version_id</pre>
+  </div>
+</section>
+
+<!-- ============================== BEAT 5 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">3:55–5:25</span>
+    <h1>Trace a node through <code>_make_runtime_fn</code></h1>
+    <span class="dur">~230 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    Editor at <code>app/runtime/compiler.py</code>, line 63. Scroll slowly through the reuse branch,
+    the <code>with_context</code> binding, the pause check, and
+    <code>output_schema(**output)</code>. Do not read the code aloud — narrate what each region
+    guarantees.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"The most important runtime boundary is <code>_make_runtime_fn</code> in the compiler.</p>
+    <p>The validated workflow is compiled into a LangGraph state graph, and every node is added through
+    this wrapper rather than being executed directly. This gives all node types the same operational
+    controls.</p>
+    <p>The wrapper receives shared typed state containing the run ID, previous outputs, citations, and
+    audit information. Large files are represented by object-store keys rather than raw bytes, keeping
+    the state smaller and serialisable.</p>
+    <p>The LLM gateway is then bound to the current run and node. Any model call made through it can be
+    attributed correctly. Node lifecycle events — started, completed, paused, or failed — are published
+    to the event layer and update Cockpit.</p>
+    <p>Typed configuration and structured outputs provide validation boundaries. If execution fails,
+    the error stays connected to the node and run. The executor and checkpointer retain the state
+    needed for an allowed retry, resume, or human decision.</p>
+    <p>This single boundary keeps context, events, audit, validation, cost attribution, and recovery
+    consistent. Implementing these separately inside each node would create drift as the library
+    grew."</p>
+  </div>
+
+  <div class="codeblock tall">
+    <div class="cap">Code · the one node boundary, abridged
+      <span class="src">app/runtime/compiler.py:63–260 @ 7ca16b2</span></div>
+<pre>def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
+    node_id   = instance.node_id
+    type_name = instance.type_name
+
+    async def runtime_fn(state: dict) -&gt; dict:
+        run_id     = state.get("inputs", {}).get("SYSTEM.run_id")
+        session_id = state.get("session_id", "unknown")
+        audit      = services.get("audit_db")
+
+        # (1) RETRY REUSE — returns before any gateway is bound,
+        #     so a replayed LLM node consumes zero new tokens.
+        cached_result = (services.get("reused_node_results") or {}).get(node_id)
+        if cached_result is not None:
+            ...  # publish node_reused, write audit, re-checkpoint, return
+
+        # (2) COST ATTRIBUTION — with_context() returns a shallow clone,
+        #     so parallel branches get isolated context without locking.
+        llm = services.get("llm")
+        node_services = {**services, "llm": llm.with_context(
+            run_id=run_id or "unknown", session_id=session_id, node_id=node_id,
+            ledger=services.get("cost_ledger"), event_bus=bus, node_type=type_name,
+            allowed_models=getattr(instance, "_allowed_models", None),
+            routing_policy=getattr(instance, "_model_routing", None),
+            entity_tokenizer=services.get("entity_tokenizer"),
+            collection_id=state.get("collection_id", "default"),
+            processing_mode=(getattr(instance, "_data_protection_mode", None)
+                             or services.get("entity_protection_mode")),
+        )}
+        instance.services = node_services
+
+        # (3) EVENTS + AUDIT — one publish/write pair for every node type.
+        await bus.publish(RunEvent(type="node_started", run_id=run_id, ...))
+        await write_audit_event(audit, run_id, session_id, node_id, NODE_START)
+
+        with metrics.track_node(type_name):
+            # (4) TEMPLATE RESOLUTION against live state.
+            resolved = resolve(instance.config.model_dump(), state)
+            await record_node_started(audit, ...,
+                                      node_input=build_node_input(state, resolved))
+
+            # (5) COOPERATIVE PAUSE — checked at the node boundary, because
+            #     nothing can interrupt an in-flight provider call.
+            if await is_pause_requested(audit, run_id=run_id, session_id=session_id):
+                interrupt({"kind": "user_requested_pause", "node_id": node_id})
+
+            # (6) INVOKE + VALIDATE.
+            output    = await instance.run(state, resolved)
+            validated = instance.output_schema(**output)</pre>
+  </div>
+
+  <div class="note ok">
+    <span class="t">The sentence to land this beat</span>
+    "Three of these are only correct <em>because</em> they live in one place. Retry reuse returns
+    before a gateway exists, so a replayed node cannot spend money. Cost context is cloned per call, so
+    five parallel drafting branches attribute correctly without a lock. And pause is checked at the
+    node boundary, because you cannot interrupt an in-flight provider call. Written per node type,
+    those would drift across forty-three node types — and drift here is silent."
+  </div>
+</section>
+
+<!-- ============================== BEAT 6 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">5:25–7:05</span>
+    <h1>Trace a claim to exact evidence — and to a refusal</h1>
+    <span class="dur">~260 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    The evidence-stage run <code>1f2c3a4d</code>: its <code>acquire_research_sources.report</code>,
+    then <code>verify_evidence.qa_report</code>, then a single <code>verified_claims</code> entry.
+    Have <code>app/evidence/models.py</code> open in a second tab for <code>EvidencePolicy</code>.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"Next, I will trace one research claim. The central rule is that discovering a source is not the
+    same as verifying evidence.</p>
+    <p>Candidate discovery searches approved scholarly and other sources and records identifiers and
+    metadata. These are candidates only. A matching title or abstract does not automatically become a
+    proposal citation.</p>
+    <p>The following stages obtain available content, remove duplicates, and rank passages for the
+    research question. Exact-passage verification then records the source, the supporting passage, its
+    location, and the claim it is intended to support.</p>
+    <p>I want to show you a run where that gate actually held. This evidence stage examined nineteen
+    critical claims. Source acquisition resolved no canonical URLs into immutable full text, so
+    verification had nothing to quote against. The result is nineteen unresolved claims, nineteen
+    blocking issues, and zero verified claims. The acquisition node records it in one line: no search
+    snippet and no Deep Research prose was promoted to verified evidence.</p>
+    <p>That is the behaviour I designed for. A system optimised to look productive would have cited the
+    dossier prose it already had, and nineteen plausible sentences with plausible references are
+    indistinguishable from good work until an evaluator checks them.</p>
+    <p>There is an important distinction: retrieval says a passage is relevant; exact-passage
+    verification says it supports the stated claim. Neither alone proves that the source is
+    authoritative. Important decisions still require source-quality rules and domain review."</p>
+  </div>
+
+  <div class="codeblock">
+    <div class="cap">Artefact 1 · the acquisition node's own report
+      <span class="src">run 1f2c3a4d · acquire_research_sources.report</span></div>
+<pre>"Acquired 0 immutable cited source version(s) directly from canonical URLs;
+ rejected 0. No search snippet or Deep Research prose was promoted to
+ verified evidence."</pre>
+  </div>
+
+  <div class="codeblock">
+    <div class="cap">Artefact 2 · the QA report that refuses to certify the run
+      <span class="src">run 1f2c3a4d · verify_evidence.qa_report</span></div>
+<pre>{
+  "policy_version": "eurskem-evidence-v2.0",
+  "claims_examined": 19,   "critical_claims": 19,
+  "verified_claims": 0,    "qualified_claims": 0,
+  "unresolved_claims": 19,
+  "sources_retained": 0,   "sources_rejected": 0,
+  "full_text_evidence_rate": 0.0,
+  "exact_locator_rate": 0.0,
+  "critical_independent_support_rate": 0.0,
+  "warnings": ["No proposal-grade citations passed all hard gates."]
+}</pre>
+  </div>
+
+  <div class="codeblock">
+    <div class="cap">Artefact 3 · one claim, refusing to be cited
+      <span class="src">run 1f2c3a4d · verify_evidence.verified_claims[0]</span></div>
+<pre>{
+  "claim_id": "CL-1",
+  "materiality": "critical",
+  "evidence_requirement": "2 independent full-text source(s), exact locator,
+                           contradiction search",
+  "final_status": "not_found",
+  "verified_sentence": "",
+  "source_ids": [], "evidence_link_ids": [],
+  "unresolved_issue": "0/2 independent supporting sources;
+                       contradiction search not completed",
+  "human_review_required": true
+}</pre>
+  </div>
+
+  <div class="codeblock">
+    <div class="cap">Why it refused — the defaults are fail-closed
+      <span class="src">app/evidence/models.py:46–70 @ 7ca16b2</span></div>
+<pre>class EvidencePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")     # a typo fails loudly
+
+    policy_version: str = "eurskem-evidence-v2.0"
+    minimum_independent_sources_for_critical_claim: int = Field(default=2, ge=1, le=5)
+    minimum_full_text_sources_for_state_of_art_claim: int = Field(default=1, ge=1, le=5)
+    minimum_support_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
+    allow_abstract_only_support:   bool = False
+    allow_preprint_as_sole_support: bool = False
+    allow_search_snippet_as_evidence: bool = False
+    require_exact_locator: bool = True</pre>
+  </div>
+
+  <div class="note">
+    <span class="t">Presenter note — do not use the concept-note run for this beat</span>
+    Run <code>ed462b3e</code> shows <code>Sources (0)</code> in Cockpit, and that is correct: its
+    evidence base is bounded Deep Research dossiers, and it never invokes the acquire/verify chain.
+    Tracing a claim there would mean narrating a pipeline the run did not execute. Use
+    <code>1f2c3a4d</code>, which did.<br><br>
+    Expect the follow-up: <em>"so evidence acquisition doesn't work?"</em> The honest answer is the
+    strong one — <strong>verification works and acquisition is the weak link.</strong> The gates held
+    under pressure and reported a specific, actionable gap per claim
+    (<code>recommended_action: search_again</code>, <code>blocking: true</code>). Source resolution
+    coverage is the next piece of engineering, and it is the limitation you raise yourself in beat 8.
+  </div>
+</section>
+
+<!-- ============================== BEAT 7 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">7:05–8:20</span>
+    <h1>Intended model, actual model, and cost</h1>
+    <span class="dur">~200 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    The application header showing <code>$6.6495 this run</code> for <code>ed462b3e</code>, then the
+    <code>cost_ledger</code> rows for that run — sorted by cost, with the <code>outline</code> row in
+    view.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"Every model call made through the gateway is written to the cost ledger with its run ID and
+    node ID. The record includes the intended model, actual model, input and output tokens, and
+    calculated cost.</p>
+    <p>Intended and actual model are stored separately because a configured fallback may execute during
+    a provider failure or rate limit. In this run, one did. The outline node requested Claude Sonnet
+    four-five, and a different model actually ran. The workflow still completed and the deliverable was
+    still produced — but that substitution is a recorded fact rather than an invisible one, which is
+    the entire point of storing both fields.</p>
+    <p>Per-node telemetry turns cost into an engineering control. Discovery is forty-three percent of
+    the spend on this run, and the five parallel drafting chunks are another forty-five percent, at
+    almost identical input sizes — which is what a correct fan-out should look like. I can then use a
+    smaller model for classification, batch compression, cache stable retrieval results, or reserve a
+    stronger model for final synthesis.</p>
+    <p>It also supports debugging. If a node produces output but has no cost entry, I would check
+    whether its call bypassed the context-bound gateway."</p>
+  </div>
+
+  <table>
+    <thead><tr>
+      <th style="width:22%">Node</th><th style="width:20%">Intended</th><th style="width:20%">Actual</th>
+      <th class="num">Calls</th><th class="num">In</th><th class="num">Out</th><th class="num">USD</th>
+    </tr></thead>
+    <tbody>
+      <tr><td><code>deep_research</code></td><td>gpt-5.6-sol</td><td>gpt-5.6-sol</td><td class="num">4</td><td class="num">357,723</td><td class="num">35,249</td><td class="num">2.8461</td></tr>
+      <tr><td><code>draft_chunk_4</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,129</td><td class="num">8,000</td><td class="num">0.6544</td></tr>
+      <tr><td><code>draft_chunk_5</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,126</td><td class="num">4,872</td><td class="num">0.6075</td></tr>
+      <tr><td><code>draft_chunk_3</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">177,987</td><td class="num">4,072</td><td class="num">0.5950</td></tr>
+      <tr><td><code>draft_chunk_1</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,115</td><td class="num">3,519</td><td class="num">0.5871</td></tr>
+      <tr><td><code>draft_chunk_2</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,167</td><td class="num">3,076</td><td class="num">0.5806</td></tr>
+      <tr><td><code>outline</code></td><td><strong>claude-sonnet-4-5</strong></td><td><strong>gpt-5.6-terra</strong></td><td class="num">1</td><td class="num">142,614</td><td class="num">3,523</td><td class="num">0.3275</td></tr>
+      <tr><td><code>planner</code></td><td>claude-opus-5</td><td>claude-opus-5</td><td class="num">1</td><td class="num">36,228</td><td class="num">3,595</td><td class="num">0.2830</td></tr>
+      <tr><td><code>graphnormalizer_1</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">9,015</td><td class="num">7,859</td><td class="num">0.1683</td></tr>
+      <tr><td colspan="3"><strong>Total — run ed462b3e</strong></td><td class="num"><strong>12</strong></td><td class="num"><strong>1,436,104</strong></td><td class="num"><strong>73,765</strong></td><td class="num"><strong>6.6495</strong></td></tr>
+    </tbody>
+  </table>
+
+  <div class="codeblock">
+    <div class="cap">Artefact 4 · the single ledger record behind the fallback claim
+      <span class="src">Mongo <code>eurskem_ai.cost_ledger</code> · run ed462b3e</span></div>
+<pre>{
+  "run_id": "ed462b3e-4b25-4e54-a0be-c8e46b516e05",
+  "node_id": "outline",
+  "intended_model": "claude-sonnet-4-5",
+  "model":          "gpt-5.6-terra",     &lt;-- a fallback actually ran
+  "input_tokens": 142614, "output_tokens": 3523,
+  "cost_usd": 0.327504
+}</pre>
+  </div>
+
+  <div class="note">
+    <span class="t">Presenter note — say where this number comes from</span>
+    The <strong>run-level</strong> total is in the application header. The <strong>per-node</strong>
+    breakdown is not yet joined into the Cockpit node inspector, which states as much in the UI:
+    <em>"Token/cost breakdown isn't joined into this view yet — see the run's overall cost summary for
+    now."</em> So show the ledger query, and say the sentence: <em>"the data is recorded per node and
+    per call; the panel that joins it into the node inspector is not built yet."</em> Claiming a UI
+    that is not there is the one thing that would undermine a beat about telemetry honesty.
+  </div>
+</section>
+
+<!-- ============================== BEAT 8 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">8:20–9:30</span>
+    <h1>Limitation and concrete engineering change</h1>
+    <span class="dur">~200 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    Back to the evidence record from beat 6, or a short roadmap slide titled
+    <em>Evidence-quality gate</em>. Optionally the failed Cockpit node as a reminder that failures are
+    localised rather than hidden.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"One limitation I would address next is that traceability is not the same as source authority.</p>
+    <p>The platform can show that a sentence is linked to an exact passage. However, that passage may
+    come from a weak study, an outdated publication, or evidence that is unsuitable for the claim.
+    Exact matching cannot make that judgement reliably.</p>
+    <p>My engineering change would be an evidence-quality gate before drafting. I would add structured
+    fields for source type, date, peer-review status, study design, retraction or correction status,
+    and domain-specific quality criteria. Deterministic rules would block clearly unsuitable evidence,
+    while a domain expert would review high-impact or uncertain claims.</p>
+    <p>The truth graph would store both passage support and the quality decision, including who
+    approved it and under which policy version. I would test it with a versioned evaluation set
+    containing supported and unsupported claims, conflicting evidence, retracted sources, and passages
+    that appear relevant but do not justify the conclusion."</p>
+  </div>
+
+  <figure>
+    <img src="../screenshots/07-cockpit-node-detail.png" alt="Failed node">
+    <figcaption><span class="lbl">Shot 10 · failure stays attached to a node</span> —
+    <code>graphnormalizer_1</code> failed after 244.9 s; upstream work is preserved as COMPLETED and
+    everything downstream is explicitly SKIPPED rather than silently missing. Use this if you want a
+    second limitation: the provider-level cause is surfaced verbatim, which is honest but not yet
+    self-explanatory to a non-engineer.</figcaption>
+  </figure>
+
+  <div class="note ok">
+    <span class="t">Two other limitations that answer well, if pressed</span>
+    <strong>Live environment evidence.</strong> The repository documents an IONOS topology, readiness
+    gates and rollback; this walkthrough demonstrates a local build. Do not present deployment tooling
+    as a running production service.<br>
+    <strong>Source-access coverage.</strong> Beat 6 showed the gates holding because acquisition
+    returned nothing. Broadening canonical-URL resolution and licensed full-text access is the change
+    that would turn a correct refusal into a correct citation.
+  </div>
+</section>
+
+<!-- ============================== BEAT 9 ============================== -->
+<section class="beat">
+  <div class="beat-head">
+    <span class="time">9:30–10:00</span>
+    <h1>Closing</h1>
+    <span class="dur">~100 words</span>
+  </div>
+
+  <div class="onscreen">
+    <span class="t">On screen</span>
+    Either a prepared slide showing Library, Guided Run, Cockpit, Builder, Evidence and Cost together,
+    or — stronger — the rendered deliverable, so the last thing on screen is the thing the platform
+    produced.
+  </div>
+
+  <div class="say">
+    <span class="t">Say</span>
+    <p>"To summarise, Eurskem AI connects the business experience and engineering controls around one
+    workflow definition and one run. Non-technical users work in Guided Run, operators inspect Cockpit,
+    authors use typed Builder controls, and reviewers can trace evidence, model choices, cost, and
+    human decisions.</p>
+    <p>The central design choice is visibility: the work, evidence, failures, decisions, and cost
+    remain inspectable instead of being hidden inside one model response. Thank you for watching."</p>
+  </div>
+
+  <figure>
+    <img src="../screenshots/23-output-proposal-cover-toc.png" alt="Rendered deliverable">
+    <figcaption><span class="lbl">Shot 11 · what the run produced</span> — a Horizon Europe Part B
+    methodology section, roughly 11,900 words across a 24-entry contents, rendered to DOCX from the
+    five assembled chunks. The renderer flags its own overrun (25 pages against a configured limit of
+    10) and marks the run <code>NEEDS INPUT</code> rather than truncating silently — a good last frame,
+    because it is the whole thesis in one screen.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================== APPENDIX ============================== -->
+<section class="section">
+  <p class="kicker">Appendix</p>
+  <h1>Shot list, artefacts, and honesty notes</h1>
+
+  <h2>Shot list</h2>
+  <table>
+    <thead><tr><th style="width:8%">Shot</th><th style="width:44%">File</th><th>Beat</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>01-workflow-library.png</code></td><td>1 — Introduction</td></tr>
+      <tr><td>2</td><td><code>02-library-concept-note-card.png</code></td><td>2 — Business goal</td></tr>
+      <tr><td>3</td><td><code>03-guided-run-overview.png</code></td><td>3 — Guided Run</td></tr>
+      <tr><td>4</td><td><code>06-cockpit-graph.png</code></td><td>3 — Cockpit</td></tr>
+      <tr><td>5</td><td><code>09-builder-canvas-palette.png</code></td><td>4 — Builder layout</td></tr>
+      <tr><td>6</td><td><code>12-builder-preflight.png</code></td><td>4 — Zero-token preflight</td></tr>
+      <tr><td>7</td><td><code>11-builder-configure.png</code></td><td>4 — Typed configuration</td></tr>
+      <tr><td>8</td><td><code>14-builder-map-data.png</code></td><td>4 — Data mapping</td></tr>
+      <tr><td>9</td><td><code>13-builder-versions.png</code></td><td>4 — Version history</td></tr>
+      <tr><td>10</td><td><code>07-cockpit-node-detail.png</code></td><td>8 — Failure localisation</td></tr>
+      <tr><td>11</td><td><code>23-output-proposal-cover-toc.png</code></td><td>9 — Closing</td></tr>
+    </tbody>
+  </table>
+  <p class="small">Optional B-roll from the same capture set: <code>10b-builder-graph-fanout.png</code>
+  (the five-way drafting fan-out, excellent under beat 4's "branch test" line),
+  <code>17-run-detail-nodes.png</code> (per-node durations, good under beat 7's cost narration),
+  <code>20-cockpit-audit.png</code>, <code>24-output-proposal-body.png</code>.</p>
+
+  <h2>Artefacts referenced in the script</h2>
+  <table>
+    <thead><tr><th style="width:30%">Artefact</th><th style="width:34%">Where it lives</th><th>Beat</th></tr></thead>
+    <tbody>
+      <tr><td>Node execution boundary</td><td><code>app/runtime/compiler.py:63</code></td><td>5</td></tr>
+      <tr><td>Atomic save + version record</td><td><code>app/workflow/builder_store.py:34,135</code></td><td>4</td></tr>
+      <tr><td>Fail-closed evidence policy</td><td><code>app/evidence/models.py:46</code></td><td>6</td></tr>
+      <tr><td>Acquisition report</td><td>run <code>1f2c3a4d</code> · <code>acquire_research_sources.report</code></td><td>6</td></tr>
+      <tr><td>QA report, 0 verified claims</td><td>run <code>1f2c3a4d</code> · <code>verify_evidence.qa_report</code></td><td>6</td></tr>
+      <tr><td>Fallback ledger record</td><td><code>eurskem_ai.cost_ledger</code> · <code>ed462b3e</code> / <code>outline</code></td><td>7</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Recording and honesty notes</h2>
+  <ul>
+    <li>Rehearse at roughly 125–135 words per minute and pause briefly when changing screens.</li>
+    <li>Prepare the workflow, run, evidence record, cost query and code tabs before recording.</li>
+    <li>Show a fallback because one genuinely exists in run <code>ed462b3e</code> — not as a hypothetical.</li>
+    <li>Say "this is a local build" once, early. It costs two seconds and removes an entire class of doubt.</li>
+    <li>Do not claim production adoption, measured accuracy, time savings, live deployment health, or regulatory approval.</li>
+    <li>When a surface does not exist yet — per-node cost in the inspector — say so. The script is stronger for it.</li>
+  </ul>
+
+  <div class="callout">
+    <span class="t">Strong closing line, if you need one beyond the script</span>
+    I built the reusable orchestration and evidence-control platform; proposal generation is one
+    demanding use case that proves the abstraction. The design keeps provider automation bounded,
+    sources traceable, people accountable, and failures recoverable — and when the evidence gates could
+    not be satisfied, the system returned nineteen blocking issues instead of nineteen plausible
+    citations.
+  </div>
+</section>
+
+</body>
+</html>

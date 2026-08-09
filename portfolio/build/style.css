@@ -1,0 +1,200 @@
+/* Eurskem AI — print stylesheet for WeasyPrint
+   Palette taken from the product itself (ui/src/styles/globals.css). */
+
+:root {
+  --navy:       #092536;
+  --navy-mid:   #12384a;
+  --navy-soft:  #1b4b5e;
+  --teal:       #007f7b;
+  --teal-mid:   #009b96;
+  --teal-light: #27c5bf;
+  --ink:        #1c2b33;
+  --ink-soft:   #4a5c66;
+  --ink-faint:  #6d7d86;
+  --rule:       #d7dee2;
+  --rule-soft:  #e8edef;
+  --paper-soft: #f5f8f9;
+  --amber:      #a5670a;
+  --amber-bg:   #fdf7e8;
+  --red:        #a32d2d;
+  --red-bg:     #fdf1f1;
+  --green-bg:   #eef7f4;
+}
+
+@page {
+  size: A4;
+  margin: 20mm 18mm 18mm 18mm;
+  @top-left {
+    content: "EURSKEM AI  |  Technical Portfolio Reference";
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 7.5pt;
+    color: var(--ink-faint);
+    padding-bottom: 3mm;
+  }
+  @bottom-right {
+    content: "Ayush Khandelwal  |  Portfolio snapshot  |  " counter(page);
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 7.5pt;
+    color: var(--ink-faint);
+    padding-top: 3mm;
+  }
+}
+
+@page cover {
+  margin: 24mm 18mm 18mm 18mm;
+  @top-left { content: ""; }
+  @bottom-right { content: ""; }
+}
+
+html { font-size: 10pt; }
+
+body {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  line-height: 1.5;
+  hyphens: none;
+}
+
+/* ---------- cover ---------- */
+.cover { page: cover; page-break-after: always; }
+.cover .eyebrow {
+  font-size: 8.5pt; font-weight: 700; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--teal); margin: 0 0 14mm;
+}
+.cover h1 {
+  font-size: 34pt; line-height: 1.05; color: var(--navy);
+  margin: 0 0 2mm; font-weight: 700; border: 0; padding: 0;
+}
+.cover h2 {
+  font-size: 19pt; color: var(--navy-soft); margin: 0 0 6mm;
+  font-weight: 600; border: 0; padding: 0;
+}
+.cover .lede {
+  font-size: 11pt; color: var(--ink-soft); max-width: 135mm;
+  line-height: 1.55; margin: 0 0 12mm;
+}
+.cover .strip {
+  margin-top: 14mm; padding-top: 5mm; border-top: 2px solid var(--teal);
+  font-size: 10pt; font-weight: 600; color: var(--teal); letter-spacing: .04em;
+}
+
+/* ---------- headings ---------- */
+h1 {
+  font-size: 19pt; color: var(--navy); font-weight: 700;
+  margin: 0 0 1mm; padding-bottom: 2.5mm;
+  border-bottom: 2.5pt solid var(--teal);
+  page-break-after: avoid;
+}
+h1 .num { color: var(--teal); margin-right: 3mm; }
+h2 {
+  font-size: 12.5pt; color: var(--teal); font-weight: 700;
+  margin: 8mm 0 2.5mm; page-break-after: avoid;
+}
+h3 {
+  font-size: 10.5pt; color: var(--navy); font-weight: 700;
+  margin: 5mm 0 1.5mm; page-break-after: avoid;
+}
+.standfirst {
+  font-size: 10.5pt; font-style: italic; color: var(--ink-soft);
+  margin: 3mm 0 5mm;
+}
+.section { page-break-before: always; }
+
+p { margin: 0 0 3mm; }
+ul, ol { margin: 0 0 3mm; padding-left: 6mm; }
+li { margin-bottom: 1.4mm; }
+a { color: var(--teal); text-decoration: none; }
+code, .mono {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 8.6pt; background: var(--paper-soft);
+  padding: 0 .6mm; border-radius: 1.5px; color: var(--navy-mid);
+}
+
+/* ---------- tables ---------- */
+table {
+  width: 100%; border-collapse: collapse; margin: 3mm 0 5mm;
+  font-size: 8.8pt; page-break-inside: avoid;
+}
+thead th {
+  background: var(--navy); color: #fff; text-align: left;
+  padding: 2.2mm 2.5mm; font-weight: 700; font-size: 8.6pt;
+}
+tbody td {
+  padding: 2.2mm 2.5mm; border-bottom: .5pt solid var(--rule);
+  vertical-align: top;
+}
+tbody tr:nth-child(even) td { background: #fafcfc; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.num { text-align: right; }
+
+/* ---------- callouts ---------- */
+.callout {
+  border-left: 3pt solid var(--teal); background: var(--green-bg);
+  padding: 3mm 4mm; margin: 4mm 0; font-size: 9pt;
+  page-break-inside: avoid;
+}
+.callout.warn  { border-left-color: var(--amber); background: var(--amber-bg); }
+.callout.alert { border-left-color: var(--red);   background: var(--red-bg); }
+.callout .t {
+  font-weight: 700; color: var(--navy); display: block; margin-bottom: 1.2mm;
+}
+
+/* ---------- code ---------- */
+.codeblock { margin: 3mm 0 5mm; page-break-inside: avoid; }
+.codeblock .cap {
+  font-size: 8.4pt; color: var(--navy); font-weight: 700; margin-bottom: 1.5mm;
+}
+.codeblock .cap .src {
+  font-weight: 400; color: var(--ink-faint);
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 7.8pt;
+}
+.codeblock pre {
+  margin: 0; padding: 3mm 3.5mm; background: #f7fafb;
+  border: .5pt solid var(--rule-soft); border-left: 2.5pt solid var(--teal-light);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 7.6pt; line-height: 1.42; color: #17313d;
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+.codeblock.tall pre { font-size: 7.1pt; line-height: 1.36; }
+
+/* ---------- figures / screenshots ---------- */
+figure { margin: 4mm 0 5mm; page-break-inside: avoid; }
+figure img {
+  width: 84%; border: .5pt solid var(--rule);
+  border-radius: 2px; display: block; margin: 0 auto;
+}
+figcaption {
+  font-size: 8.2pt; color: var(--ink-soft); margin-top: 1.8mm;
+  line-height: 1.4; padding: 0 8%;
+}
+figcaption .lbl { font-weight: 700; color: var(--navy); }
+figcaption .proof {
+  display: block; margin-top: .8mm; color: var(--teal);
+  font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 7.4pt;
+}
+.figpair { display: flex; gap: 4mm; page-break-inside: avoid; }
+.figpair figure { flex: 1; margin-top: 0; }
+
+/* diagram figures */
+figure.diagram img, figure.diagram svg {
+  border: none; width: 100%; height: auto;
+}
+svg { display: block; }
+
+/* ---------- contents ---------- */
+.toc { font-size: 10pt; }
+.toc li { margin-bottom: 2mm; }
+.toc .sub { color: var(--ink-faint); font-size: 9pt; }
+
+/* ---------- misc ---------- */
+.meta-table td { border-bottom: .5pt solid var(--rule-soft); }
+.meta-table td:first-child {
+  font-weight: 700; color: var(--teal); width: 38mm;
+}
+.meta-table tbody tr:nth-child(even) td { background: transparent; }
+.kicker {
+  font-size: 8pt; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--teal); margin: 0 0 1mm;
+}
+.tight { margin-bottom: 1.5mm; }
+.small { font-size: 8.6pt; color: var(--ink-soft); }

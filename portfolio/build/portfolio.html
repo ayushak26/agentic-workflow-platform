@@ -1,0 +1,1407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Eurskem AI — Technical Portfolio Reference</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============================== COVER ============================== -->
+<section class="cover">
+  <p class="eyebrow">Technical Portfolio Reference</p>
+  <h1>Eurskem AI</h1>
+  <h2>Agentic Workflow Platform</h2>
+  <p class="lede">Architecture, workflow runtime, evidence integrity, guided user experience,
+  security, operations, and defensible engineering decisions — illustrated throughout with
+  screenshots captured from the running application.</p>
+
+  <div class="callout">
+    <span class="t">Positioning</span>
+    Eurskem AI is the reusable platform. Project Alex is a flagship proposal-generation use case
+    built on that platform, not the platform itself.
+  </div>
+
+  <table class="meta-table">
+    <tbody>
+      <tr><td>Owner</td><td>Ayush Khandelwal</td></tr>
+      <tr><td>Repository</td><td>github.com/ayushak26/agentic-workflow-platform</td></tr>
+      <tr><td>Code snapshot</td><td><code>main</code> at <code>7ca16b2</code> — 3 August 2026</td></tr>
+      <tr><td>Screenshot basis</td><td>Local instance of <code>7ca16b2</code>, captured 9 August 2026</td></tr>
+      <tr><td>Worked example</td><td>Run <code>ed462b3e</code> — Concept Note to 10-Page Methodology Section</td></tr>
+      <tr><td>Document date</td><td>9 August 2026</td></tr>
+    </tbody>
+  </table>
+
+  <p class="strip">Scientific&nbsp; | &nbsp;Trustworthy&nbsp; | &nbsp;Observable&nbsp; | &nbsp;Human-controlled</p>
+</section>
+
+<!-- ============================== CONTENTS ============================== -->
+<section class="section">
+  <h1>Contents</h1>
+  <ol class="toc">
+    <li>Executive summary and truth boundary</li>
+    <li>Problem, users, and product thesis</li>
+    <li>Product experience: Guided Run, Builder, and Cockpit</li>
+    <li>System architecture and runtime boundary</li>
+    <li>Workflow contract, Builder durability, and preflight</li>
+    <li>Research, retrieval, and evidence integrity</li>
+    <li>Model routing, cost, and evaluation</li>
+    <li>Security, confidentiality, and data responsibilities</li>
+    <li>Deployment, observability, and recovery</li>
+    <li>Testing, failure modes, and engineering decisions</li>
+    <li>Interview and portfolio walkthrough</li>
+  </ol>
+  <p class="toc"><strong>Appendix A.</strong> Worked example — concept note to a 10-page methodology section<br>
+  <strong>Appendix B.</strong> Code and repository reference map<br>
+  <strong>Appendix C.</strong> Screenshot index and capture method</p>
+
+  <div class="callout warn">
+    <span class="t">Evidence basis and version note</span>
+    This document reconciles three supplied references with the current public repository. The June
+    Source of Truth describes the earlier local-only build. Current <code>main</code> includes
+    additional Guided Run, Builder recovery/versioning, zero-token preflight, bounded research,
+    evidence-integrity contracts, Redis-backed durability, and IONOS deployment tooling.
+    <br><br>
+    <strong>New in this revision:</strong> every screenshot is a real capture from a local instance of
+    <code>7ca16b2</code> on 9 August 2026, and the run figures in Appendix A are read from that
+    instance's MongoDB <code>run_history</code> and <code>cost_ledger</code> collections. They are
+    evidence of a working local build. They remain <em>local</em> evidence: live production server
+    health was not independently inspected while preparing this document.
+  </div>
+</section>
+
+<!-- ============================== 1 ============================== -->
+<section class="section">
+  <h1><span class="num">1</span>Executive summary and truth boundary</h1>
+  <p class="standfirst">What the platform is, what the repository proves, and what must not be overclaimed.</p>
+
+  <p>Eurskem AI is a node-typed platform for composing and operating high-stakes AI workflows.
+  Business users can start work through a guided experience; workflow authors can edit the graph and
+  its data mappings; technical users can inspect the same run in a live Cockpit. A validated YAML
+  contract is compiled to LangGraph at runtime, and every node passes through common execution,
+  audit, event, cost, and output-validation boundaries.</p>
+
+  <p>The distinctive engineering idea is not a single proposal generator. It is the combination of
+  reusable workflow primitives with a strict evidence lifecycle. Search and Deep Research improve
+  recall, but they produce candidates. Claims enter drafting only after the platform has acquired
+  source content, located supporting passages, evaluated stance and confidence, and created a
+  traceable claim-evidence relationship.</p>
+
+  <table>
+    <thead><tr><th style="width:24%">Claim type</th><th style="width:47%">Safe statement</th><th>Required qualification</th></tr></thead>
+    <tbody>
+      <tr><td>Implemented in current repository</td>
+          <td>Typed workflow schema, Builder, Guided Run, Cockpit, preflight, evidence contracts, bounded research, security and operational controls.</td>
+          <td>Describe against a commit or file path.</td></tr>
+      <tr><td>Demonstrated on a local instance</td>
+          <td>The screenshots and Appendix A figures come from a running local build of <code>7ca16b2</code>: a 14-node workflow completed in 23 min 33 s and produced a 25-page DOCX for $6.65 of recorded model spend.</td>
+          <td>One run on one machine. Not a benchmark, not a service-level claim.</td></tr>
+      <tr><td>Documented production topology</td>
+          <td>The repository provides an IONOS deployment, readiness, rollback, backup, and security package.</td>
+          <td>Do not infer current server health from code alone.</td></tr>
+      <tr><td>Earlier working build</td>
+          <td>The supplied Source of Truth records end-to-end validation against local Docker services.</td>
+          <td>Treat it as a June snapshot, not current <code>main</code>.</td></tr>
+      <tr><td>Business or scientific impact</td>
+          <td>No claim is made here about adoption, accuracy, savings, throughput, or regulatory approval.</td>
+          <td>Add only independently verifiable evidence.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout alert">
+    <span class="t">Honesty rule</span>
+    Say what the code and tests demonstrate. Label documented targets as targets. Label deployment
+    tooling as tooling. A screenshot proves that a surface renders and that one run behaved a certain
+    way on one machine — it does not prove production readiness, accuracy, or adoption. Do not convert
+    a design, test fixture, or demo dataset into a production outcome.
+  </div>
+</section>
+
+<!-- ============================== 2 ============================== -->
+<section class="section">
+  <h1><span class="num">2</span>Problem, users, and product thesis</h1>
+  <p class="standfirst">Why a workflow platform is a better fit than a one-prompt application.</p>
+
+  <p>Consulting, scientific research, and proposal development combine repetitive effort with high
+  consequence. A single prompt hides source selection, reasoning transitions, failure recovery, and
+  human responsibility. A fully manual process is slow and hard to audit. Eurskem AI is designed for
+  the middle ground: visible automation with typed steps, explicit evidence, bounded provider use,
+  and human control at material decisions.</p>
+
+  <h2>User groups</h2>
+  <table>
+    <thead><tr><th style="width:22%">User</th><th style="width:33%">Primary question</th><th>Platform response</th></tr></thead>
+    <tbody>
+      <tr><td>Project administrator</td><td>What is happening, what needs attention, and what is ready?</td><td>Guided stages, consolidated attention queue, durable history, and outputs.</td></tr>
+      <tr><td>Domain expert</td><td>Is the content correct and is the evidence appropriate?</td><td>Plain-language contribution summaries, source context, and edit/approve/reject gates.</td></tr>
+      <tr><td>Workflow author</td><td>How is work assembled, mapped, validated, and versioned?</td><td>Four-area Builder, visual mapping, preflight, tests, autosave, and immutable versions.</td></tr>
+      <tr><td>Technical reviewer</td><td>Which node ran, failed, retried, or used a fallback?</td><td>Cockpit graph, node details, events, model/cost telemetry, audit, and safe retry.</td></tr>
+      <tr><td>Operator</td><td>Is the service healthy, secure, and within limits?</td><td>Readiness, logs, Prometheus/Grafana, rate limits, cost records, backups, and release gates.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Platform versus flagship</h2>
+  <p>Project Alex demonstrates the platform through proposal generation: understand a request, gather
+  relevant material, pause for review, draft in parallel, compile, and render a document. The reusable
+  product is the runtime, registry, Builder, Guided Run, Cockpit, evidence layer, security layer, and
+  operational tooling. Future workflows can reuse those components without becoming copies of
+  Project Alex.</p>
+  <ul>
+    <li>Node types declare inputs, configuration, outputs, and an asynchronous <code>run</code> method.</li>
+    <li>The registry supplies capabilities to the Builder and compiler.</li>
+    <li>Workflow YAML is the stable bridge between visual authoring and execution.</li>
+    <li>Presentation metadata improves the non-technical experience but never changes graph semantics.</li>
+    <li>Run history, evidence and outputs are shared across views rather than duplicated.</li>
+  </ul>
+
+  <figure>
+    <img src="../screenshots/01-workflow-library.png" alt="Workflow Library">
+    <figcaption><span class="lbl">Screenshot 1. The library is organised by outcome, not by graph.</span>
+    Workflows are grouped into capability categories (Research and Evidence, Proposal Development,
+    Scientific Drafting, …) and each card leads with the business result and its step count. The same
+    20 workflows are the reusable product; proposal generation is one entry among them.
+    <span class="proof">Live capture · /library · 20 workflows discovered from the workflows/ directory</span></figcaption>
+  </figure>
+</section>
+
+<!-- ============================== 3 ============================== -->
+<section class="section">
+  <h1><span class="num">3</span>Product experience</h1>
+  <p class="standfirst">Guided Run, Builder, and Cockpit are different views of one workflow truth.</p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+      <text x="0" y="18" font-size="19" font-weight="700" fill="#092536">One run, three complementary product views</text>
+      <text x="0" y="36" font-size="11" fill="#4a5c66">The interface changes by audience; workflow identity, state, approvals and outputs do not.</text>
+
+      <g>
+        <rect x="0" y="56" width="310" height="118" rx="7" fill="#ffffff" stroke="#007f7b" stroke-width="1.6"/>
+        <rect x="0" y="56" width="5" height="118" rx="2.5" fill="#007f7b"/>
+        <text x="18" y="80" font-size="14" font-weight="700" fill="#092536">Guided Run</text>
+        <text x="18" y="96" font-size="10" fill="#6d7d86">For non-technical users</text>
+        <text x="18" y="118" font-size="10" fill="#1c2b33">Business stages and progress</text>
+        <text x="18" y="133" font-size="10" fill="#1c2b33">Plain-language explanations</text>
+        <text x="18" y="148" font-size="10" fill="#1c2b33">One attention queue</text>
+        <text x="18" y="163" font-size="10" fill="#1c2b33">Review and final outputs</text>
+      </g>
+      <g>
+        <rect x="345" y="56" width="310" height="118" rx="7" fill="#ffffff" stroke="#009b96" stroke-width="1.6"/>
+        <rect x="345" y="56" width="5" height="118" rx="2.5" fill="#009b96"/>
+        <text x="363" y="80" font-size="14" font-weight="700" fill="#092536">Builder</text>
+        <text x="363" y="96" font-size="10" fill="#6d7d86">For workflow authors</text>
+        <text x="363" y="118" font-size="10" fill="#1c2b33">Searchable node library</text>
+        <text x="363" y="133" font-size="10" fill="#1c2b33">Canvas + persistent inspector</text>
+        <text x="363" y="148" font-size="10" fill="#1c2b33">Data mapping and tests</text>
+        <text x="363" y="163" font-size="10" fill="#1c2b33">Autosave and version history</text>
+      </g>
+      <g>
+        <rect x="690" y="56" width="310" height="118" rx="7" fill="#ffffff" stroke="#12384a" stroke-width="1.6"/>
+        <rect x="690" y="56" width="5" height="118" rx="2.5" fill="#12384a"/>
+        <text x="708" y="80" font-size="14" font-weight="700" fill="#092536">Cockpit</text>
+        <text x="708" y="96" font-size="10" fill="#6d7d86">For technical review</text>
+        <text x="708" y="118" font-size="10" fill="#1c2b33">Live graph and node status</text>
+        <text x="708" y="133" font-size="10" fill="#1c2b33">Events, model and cost</text>
+        <text x="708" y="148" font-size="10" fill="#1c2b33">Failure diagnosis and retry</text>
+        <text x="708" y="163" font-size="10" fill="#1c2b33">Audit and output inspection</text>
+      </g>
+
+      <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#12384a"/></marker></defs>
+      <path d="M155,174 L155,196 L440,196 L440,222" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar)"/>
+      <path d="M500,174 L500,222" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar)"/>
+      <path d="M845,174 L845,196 L560,196 L560,222" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar)"/>
+
+      <rect x="120" y="226" width="760" height="58" rx="7" fill="#092536"/>
+      <text x="145" y="252" font-size="13" font-weight="700" fill="#ffffff">Shared runtime contract</text>
+      <text x="145" y="270" font-size="9.5" fill="#9fc9c7">Same workflow version  |  same run ID  |  same node outputs  |  same approvals  |  same durable history</text>
+    </svg>
+    <figcaption><span class="lbl">Figure 1.</span> Audience-specific interfaces share the same workflow,
+    run, outputs and approvals.</figcaption>
+  </figure>
+
+  <h2>Guided Run for non-technical users</h2>
+  <p>Guided Run translates nodes into business stages such as understand, gather, create, check, and
+  finalise. It shows why the current step matters, what has been contributed, what requires a decision,
+  and which output is ready. Node IDs, payloads, prompts and stack traces stay out of the main
+  experience. An optional Process Map opens the same run in Cockpit for technical inspection.</p>
+
+  <figure>
+    <img src="../screenshots/03-guided-run-overview.png" alt="Guided Run">
+    <figcaption><span class="lbl">Screenshot 2. The same run, told as business stages.</span>
+    Five stages (Prepare, Understand, Gather, Create, Finalise), a plain-language description of the
+    current work and why it matters, a single "What needs you" attention panel, and the ready
+    deliverables. No node ID, prompt or payload appears in the primary reading path; the audience
+    switcher (Project Administrator / Domain Expert) and the "Process map" link are the only routes
+    to deeper detail.
+    <span class="proof">Live capture · run ed462b3e · 5 of 5 stages complete · 23 min 33 sec elapsed</span></figcaption>
+  </figure>
+
+  <h2>Builder for authors</h2>
+  <p>The Builder uses a stable four-area layout: global action bar, searchable categorised node
+  library, workflow canvas, and persistent inspector. It supports data mapping from upstream outputs,
+  variable selection, node/branch test preparation, issue-to-node preflight navigation, explicit
+  auto-layout, undo/redo, autosave recovery and immutable versions.</p>
+
+  <figure>
+    <img src="../screenshots/09-builder-canvas-palette.png" alt="Builder four-area layout">
+    <figcaption><span class="lbl">Screenshot 3. The four Builder areas, all visible at once.</span>
+    Action bar (Inputs, Auto-layout, Versions, Preflight, Run in Cockpit, Save), the node library
+    grouped by capability family, the canvas, and the persistent inspector. The library is populated
+    from the backend registry — the counts shown (Control &amp; Flow 7, Research &amp; Discovery 5,
+    Evidence &amp; Retrieval 9, Proposal Engineering 9, Multimodal 4, Document Rendering &amp; Export 7,
+    Integrations 2) are the registry's own capability declarations, not a hand-maintained menu.
+    <span class="proof">Live capture · /builder · 43 node types discovered</span></figcaption>
+  </figure>
+
+  <h2>Cockpit and Run History</h2>
+  <p>Cockpit is the technical execution view. It combines graph state, node lifecycle, outputs, events,
+  failures, cost and review context. Run History preserves the same durable record after the live
+  stream ends. A user can move from Guided Run to Cockpit and back without starting another run or
+  losing the selected step.</p>
+
+  <figure>
+    <img src="../screenshots/06-cockpit-graph.png" alt="Cockpit live graph">
+    <figcaption><span class="lbl">Screenshot 4. The same workflow, told as execution state.</span>
+    Lifecycle counters (Running / Completed / Waiting / Paused / Failed / Skipped / Cancelled), a
+    searchable per-node status list, the live graph, and — on the right — the failure that stopped this
+    run, with a retry route. Cockpit and Guided Run are two renderings of one run record, not two
+    engines.
+    <span class="proof">Live capture · run 3d46a8ee · 2 completed, 1 failed, 11 skipped</span></figcaption>
+  </figure>
+</section>
+
+<!-- ============================== 4 ============================== -->
+<section class="section">
+  <h1><span class="num">4</span>System architecture and runtime boundary</h1>
+  <p class="standfirst">The runtime wrapper is where cross-cutting concerns become consistent.</p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 400" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+      <text x="0" y="18" font-size="19" font-weight="700" fill="#092536">Eurskem AI system architecture</text>
+      <text x="0" y="36" font-size="11" fill="#4a5c66">One workflow truth, presented through business and technical surfaces.</text>
+
+      <rect x="30" y="54" width="940" height="52" rx="7" fill="#092536"/>
+      <text x="50" y="76" font-size="13" font-weight="700" fill="#ffffff">React application</text>
+      <text x="50" y="93" font-size="9.5" fill="#9fc9c7">Workflow Library | Guided Run | Builder | Cockpit | Run History | Evidence and Evaluation</text>
+
+      <defs><marker id="ar2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#12384a"/></marker></defs>
+      <path d="M500,106 L500,128" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar2)"/>
+      <text x="512" y="122" font-size="8.5" fill="#6d7d86">authenticated actions and live events</text>
+
+      <rect x="60" y="132" width="880" height="50" rx="7" fill="#ffffff" stroke="#009b96" stroke-width="1.6"/>
+      <text x="80" y="153" font-size="12.5" font-weight="700" fill="#092536">FastAPI control plane</text>
+      <text x="80" y="170" font-size="9.5" fill="#4a5c66">JWT and RBAC | REST | WebSocket/SSE | run ownership | files | health and readiness</text>
+
+      <path d="M300,182 L250,212" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar2)"/>
+      <path d="M700,182 L750,212" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar2)"/>
+
+      <rect x="30" y="216" width="450" height="62" rx="7" fill="#ffffff" stroke="#007f7b" stroke-width="1.6"/>
+      <text x="50" y="238" font-size="12.5" font-weight="700" fill="#092536">Workflow runtime</text>
+      <text x="50" y="254" font-size="9.5" fill="#4a5c66">YAML contract → zero-token preflight → LangGraph</text>
+      <text x="50" y="268" font-size="9.5" fill="#4a5c66">Durable history, checkpoints, retry and audit</text>
+
+      <rect x="520" y="216" width="450" height="62" rx="7" fill="#ffffff" stroke="#007f7b" stroke-width="1.6"/>
+      <text x="540" y="238" font-size="12.5" font-weight="700" fill="#092536">Typed capability registry</text>
+      <text x="540" y="254" font-size="9.5" fill="#4a5c66">Research, RAG, HITL, routing, transformations,</text>
+      <text x="540" y="268" font-size="9.5" fill="#4a5c66">document tools, evaluation and guardrails</text>
+
+      <path d="M480,247 L520,247" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar2)"/>
+      <path d="M200,278 L170,308" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar2)"/>
+      <path d="M745,278 L775,308" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar2)"/>
+
+      <rect x="30" y="312" width="450" height="62" rx="7" fill="#f5f8f9" stroke="#d7dee2"/>
+      <rect x="30" y="312" width="5" height="62" rx="2.5" fill="#12384a"/>
+      <text x="50" y="334" font-size="12.5" font-weight="700" fill="#092536">Platform data services</text>
+      <text x="50" y="350" font-size="9.5" fill="#4a5c66">MongoDB (history/audit) | Weaviate (retrieval)</text>
+      <text x="50" y="364" font-size="9.5" fill="#4a5c66">MinIO (artifacts) | Redis (events/cache/checkpoints)</text>
+
+      <rect x="520" y="312" width="450" height="62" rx="7" fill="#f5f8f9" stroke="#d7dee2"/>
+      <rect x="520" y="312" width="5" height="62" rx="2.5" fill="#007f7b"/>
+      <text x="540" y="334" font-size="12.5" font-weight="700" fill="#092536">External capabilities</text>
+      <text x="540" y="350" font-size="9.5" fill="#4a5c66">Compatible LLM endpoints | web search</text>
+      <text x="540" y="364" font-size="9.5" fill="#4a5c66">scientific databases | image/vision services</text>
+    </svg>
+    <figcaption><span class="lbl">Figure 2.</span> Current platform architecture at a component level.</figcaption>
+  </figure>
+
+  <p>FastAPI is the control plane. It handles authentication and authorisation, workflow and run APIs,
+  files, WebSocket/SSE delivery, health, readiness, and the composition of shared services. The runtime
+  parses a <code>WorkflowSpec</code>, instantiates registered nodes, wires edges and routing, then
+  executes the compiled <code>StateGraph</code> with a checkpointer.</p>
+
+  <h2>The one node boundary</h2>
+  <p>Every node passes through <code>_make_runtime_fn</code>. That boundary is deliberately responsible
+  for context binding, event publication, audit, cooperative pause checks, configuration template
+  resolution, node invocation, output validation, durable node history, and checkpoint data.
+  Centralising these concerns prevents each node from implementing its own incomplete version.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 1. The node execution boundary, abridged
+      <span class="src">app/runtime/compiler.py:63–260 @ 7ca16b2</span></div>
+<pre>def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
+    node_id = instance.node_id
+    type_name = instance.type_name
+
+    async def runtime_fn(state: dict) -&gt; dict:
+        run_id = state.get("inputs", {}).get("SYSTEM.run_id")
+        session_id = state.get("session_id", "unknown")
+        audit = services.get("audit_db")
+
+        # A retry replays exact outputs from completed nodes. This branch
+        # returns before a gateway is bound, so reused LLM nodes cost 0 tokens.
+        cached_result = (services.get("reused_node_results") or {}).get(node_id)
+        if cached_result is not None:
+            ...  # publish node_reused, write audit, re-checkpoint, return
+
+        # Bind cost-tracking context for this specific node call.
+        llm = services.get("llm")
+        node_services = {**services, "llm": llm.with_context(
+            run_id=run_id or "unknown", session_id=session_id, node_id=node_id,
+            ledger=services.get("cost_ledger"), event_bus=bus,
+            node_type=type_name,
+            allowed_models=getattr(instance, "_allowed_models", None),
+            routing_policy=getattr(instance, "_model_routing", None),
+            entity_tokenizer=services.get("entity_tokenizer"),
+            collection_id=state.get("collection_id", "default"),
+            processing_mode=(getattr(instance, "_data_protection_mode", None)
+                             or services.get("entity_protection_mode")),
+        )}
+        instance.services = node_services
+
+        await bus.publish(RunEvent(type="node_started", run_id=run_id, ...))
+        await write_audit_event(audit, run_id, session_id, node_id, NODE_START)
+
+        with metrics.track_node(type_name):
+            resolved = resolve(instance.config.model_dump(), state)
+            await record_node_started(audit, ..., node_input=build_node_input(state, resolved))
+            if await is_pause_requested(audit, run_id=run_id, session_id=session_id):
+                interrupt({"kind": "user_requested_pause", "node_id": node_id})
+            output    = await instance.run(state, resolved)
+            validated = instance.output_schema(**output)</pre>
+  </div>
+
+  <div class="callout">
+    <span class="t">Why this boundary earns its complexity</span>
+    Three behaviours in the code above are only correct <em>because</em> they live in one place. Retry
+    reuse returns before a provider gateway is bound, so a replayed node cannot spend tokens.
+    Cost context is bound per node call — <code>with_context()</code> returns a shallow clone, so
+    parallel branches get isolated attribution without locking. Cooperative pause is checked at the
+    node boundary, because nothing can interrupt an in-flight provider call. Implemented per node
+    type, these would drift as the library grew from 1 to 43 types.
+  </div>
+</section>
+
+<!-- ============================== 5 ============================== -->
+<section class="section">
+  <h1><span class="num">5</span>Workflow contract, Builder durability, and preflight</h1>
+  <p class="standfirst">Human-editable definitions become executable only after deterministic checks.</p>
+
+  <p><code>WorkflowSpec</code> is the use-case-neutral contract. It holds typed inputs, static
+  variables, nodes, edges, entry and exit points, output selection, optional library and Guided Run
+  metadata, and optional data-protection policy. <code>EdgeSpec</code> supports plain targets, fan-out
+  lists, conditions and named router branches.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 2. Stable workflow and edge contracts
+      <span class="src">app/runtime/schema.py:275–307 @ 7ca16b2</span></div>
+<pre>class EdgeSpec(BaseModel):
+    """Edges support simple, fan-out, and conditional routing."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_: str = Field(alias="from")
+    to: str | list[str] | None = None
+    condition: str | None = None
+    branches: dict[str, str] | None = None
+
+
+class WorkflowSpec(BaseModel):
+    """The stable, use-case-neutral workflow contract."""
+    name: str
+    description: str = ""
+    version: str = "1.0"
+    use_case: str = "generic"
+    experience: WorkflowExperienceSpec | None = None
+    library: LibraryMetadataSpec | None = None
+    inputs: dict[str, WorkflowInputSpec] = Field(default_factory=dict)
+    static_variables: list[StaticVariable] = Field(default_factory=list)
+    nodes: list[NodeSpec]
+    edges: list[EdgeSpec] = Field(default_factory=list)
+    entry: str | None = None
+    exit: str | list[str] | None = None
+    output: WorkflowOutputSpec | None = None
+    data_protection_mode: str | None = None</pre>
+  </div>
+
+  <h2>Autosave versus executable save</h2>
+  <p>Incomplete drafts are stored under <code>workflows/.builder</code> and do not appear as executable
+  workflows. Manual save writes the strict YAML and records a content-addressed immutable version.
+  Recovery reports whether the autosave differs from the current workflow. Atomic temporary-file
+  replacement prevents partial writes.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 3. Atomic Builder save and immutable version record
+      <span class="src">app/workflow/builder_store.py:34–144 @ 7ca16b2</span></div>
+<pre>def _atomic_write(path: Path, text: str) -&gt; None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(path)
+
+
+def save_workflow(self, name: str, yaml_text: str) -&gt; str:
+    path = self.workflow_path(name)
+    if path.exists():
+        current = path.read_text(encoding="utf-8")
+        if current != yaml_text:
+            self.record_version(name, current)      # keep what was replaced
+    _atomic_write(path, yaml_text)
+    version_id = self.record_version(name, yaml_text)
+    self.delete_draft(name)
+    return version_id</pre>
+  </div>
+
+  <figure>
+    <img src="../screenshots/13-builder-versions.png" alt="Version history">
+    <figcaption><span class="lbl">Screenshot 5. Immutable versions are a recovery surface, not a log.</span>
+    Every manual save records a version; the panel previews a version before restoring it, and
+    restoring runs preflight first. The autosaved draft is stored separately, so an incomplete edit can
+    never replace a known-runnable workflow.
+    <span class="proof">Live capture · 3 recorded versions of concept_note_to_10-page_methodology_section1</span></figcaption>
+  </figure>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+      <text x="0" y="18" font-size="19" font-weight="700" fill="#092536">Workflow lifecycle and recovery</text>
+      <text x="0" y="36" font-size="11" fill="#4a5c66">Strict saves remain executable; incomplete work is preserved separately as a recoverable draft.</text>
+      <defs><marker id="ar3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#12384a"/></marker>
+        <marker id="ar3r" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#a32d2d"/></marker></defs>
+
+      <g font-size="10">
+        <rect x="0" y="56" width="176" height="76" rx="6" fill="#ffffff" stroke="#12384a" stroke-width="1.5"/>
+        <rect x="0" y="56" width="4.5" height="76" rx="2" fill="#12384a"/>
+        <text x="16" y="78" font-size="12.5" font-weight="700" fill="#092536">Draft</text>
+        <text x="16" y="95" fill="#4a5c66">Autosave</text><text x="16" y="109" fill="#4a5c66">Undo/redo</text><text x="16" y="123" fill="#4a5c66">Version preview</text>
+
+        <rect x="206" y="56" width="176" height="76" rx="6" fill="#eef7f4" stroke="#007f7b" stroke-width="1.5"/>
+        <text x="222" y="78" font-size="12.5" font-weight="700" fill="#092536">Preflight</text>
+        <text x="222" y="95" fill="#4a5c66">Schema · Templates</text><text x="222" y="109" fill="#4a5c66">Topology · Services</text><text x="222" y="123" fill="#007f7b">0 tokens</text>
+
+        <rect x="412" y="56" width="176" height="76" rx="6" fill="#ffffff" stroke="#009b96" stroke-width="1.5"/>
+        <text x="428" y="78" font-size="12.5" font-weight="700" fill="#092536">Running</text>
+        <text x="428" y="95" fill="#4a5c66">Node events</text><text x="428" y="109" fill="#4a5c66">Cost + audit</text><text x="428" y="123" fill="#4a5c66">Checkpoints</text>
+
+        <rect x="618" y="56" width="176" height="76" rx="6" fill="#fdf7e8" stroke="#a5670a" stroke-width="1.5"/>
+        <text x="634" y="78" font-size="12.5" font-weight="700" fill="#092536">Human review</text>
+        <text x="634" y="95" fill="#4a5c66">Approve</text><text x="634" y="109" fill="#4a5c66">Reject</text><text x="634" y="123" fill="#4a5c66">Edit</text>
+
+        <rect x="824" y="56" width="176" height="76" rx="6" fill="#ffffff" stroke="#12384a" stroke-width="1.5"/>
+        <text x="840" y="78" font-size="12.5" font-weight="700" fill="#092536">Completed</text>
+        <text x="840" y="95" fill="#4a5c66">Outputs</text><text x="840" y="109" fill="#4a5c66">Sources</text><text x="840" y="123" fill="#4a5c66">Scorecards</text>
+
+        <path d="M176,94 L206,94" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <path d="M382,94 L412,94" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <path d="M588,94 L618,94" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <path d="M794,94 L824,94" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar3)"/>
+
+        <rect x="110" y="188" width="250" height="66" rx="6" fill="#fdf1f1" stroke="#a32d2d" stroke-width="1.4"/>
+        <text x="126" y="209" font-size="11.5" font-weight="700" fill="#092536">Actionable validation issues</text>
+        <text x="126" y="226" fill="#4a5c66">Issue code, node, path and suggestion.</text>
+        <text x="126" y="240" fill="#4a5c66">No provider call is made.</text>
+
+        <rect x="386" y="188" width="250" height="66" rx="6" fill="#eef7f4" stroke="#009b96" stroke-width="1.4"/>
+        <text x="402" y="209" font-size="11.5" font-weight="700" fill="#092536">Safe retry and reuse</text>
+        <text x="402" y="226" fill="#4a5c66">Reuse completed node outputs.</text>
+        <text x="402" y="240" fill="#4a5c66">Resume from the failed boundary.</text>
+
+        <rect x="662" y="188" width="250" height="66" rx="6" fill="#ffffff" stroke="#12384a" stroke-width="1.4"/>
+        <text x="678" y="209" font-size="11.5" font-weight="700" fill="#092536">Run History</text>
+        <text x="678" y="226" fill="#4a5c66">Reopen the same durable run,</text>
+        <text x="678" y="240" fill="#4a5c66">audit trail and outputs.</text>
+
+        <path d="M294,132 L250,188" fill="none" stroke="#a32d2d" stroke-width="1.3" marker-end="url(#ar3r)"/>
+        <path d="M110,215 L40,215 L40,132" fill="none" stroke="#a32d2d" stroke-width="1.3" marker-end="url(#ar3r)"/>
+        <text x="36" y="270" font-size="10" font-weight="700" fill="#a32d2d">Fix and validate again</text>
+        <path d="M480,132 L500,188" fill="none" stroke="#009b96" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <path d="M700,132 L560,188" fill="none" stroke="#009b96" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <path d="M900,132 L800,188" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar3)"/>
+      </g>
+    </svg>
+    <figcaption><span class="lbl">Figure 3.</span> Draft, validation, execution, review, output and recovery lifecycle.</figcaption>
+  </figure>
+
+  <h2>Zero-token preflight</h2>
+  <p>Preflight runs before any model call. It checks duplicate YAML keys, the Pydantic workflow
+  contract, registry discovery, node schemas, configuration, compatible models, templates, graph
+  topology, compilation, required inputs and service readiness. Issues carry a code, severity, path,
+  node ID and suggestion so the Builder can navigate directly to the problem.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 4. Preflight returns structured, zero-token evidence
+      <span class="src">app/runtime/preflight.py:89–97 @ 7ca16b2</span></div>
+<pre>class WorkflowPreflightReport(BaseModel):
+    valid: bool
+    workflow_name: str | None = None
+    node_count: int = 0
+    edge_count: int = 0
+    required_services: list[str] = Field(default_factory=list)
+    checks: list[PreflightCheck] = Field(default_factory=list)
+    issues: list[PreflightIssue] = Field(default_factory=list)
+    tokens_spent: int = 0</pre>
+  </div>
+
+  <figure>
+    <img src="../screenshots/12-builder-preflight.png" alt="Preflight panel">
+    <figcaption><span class="lbl">Screenshot 6. <code>tokens_spent: 0</code> is a product surface, not just a field.</span>
+    Nine checks run against the 14-node workflow — YAML uniqueness, workflow contract, registry
+    discovery (43 node types), per-node config and model compatibility, graph topology, template roots
+    and upstream ordering, Guided Run copy quality, and a real LangGraph compile — and the panel
+    reports "0 tokens used". <code>run_inputs</code> is deliberately a neutral dot rather than an
+    error: no run inputs were supplied for a structural check, and turning runtime-dependent
+    uncertainty into a false error would train authors to ignore the panel.
+    <span class="proof">Live capture · Preflight passed · 14 nodes · 18 edges · 0 tokens used</span></figcaption>
+  </figure>
+
+  <ul>
+    <li>Unknown nodes, fields, edges, entries, exits and output references are blocked.</li>
+    <li>Template checks distinguish guaranteed upstream values from conditional or nullable paths.</li>
+    <li>Unsafe router and fan-in shapes are detected before the graph silently skips work or races.</li>
+    <li>Strict run/retry routes can require services; the Builder can run structural checks while editing.</li>
+    <li>Warnings remain visible without turning all runtime-dependent uncertainty into false errors.</li>
+  </ul>
+
+  <p>The most recent additions to preflight came from real mid-run failures, and each was closed at the
+  cheapest layer that could see the problem. <code>TEMPLATE_NULLABLE_NESTED_ACCESS</code> is the last
+  of that family: it fires when a template traverses into a field whose declared type permits
+  <code>None</code> — the one shape neither graph ordering nor default materialisation can catch,
+  because materialising a <code>None</code> default still leaves nothing to index into.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 5. A warning that names the exact runtime failure it prevents
+      <span class="src">app/runtime/preflight.py:1164–1179 @ 7ca16b2</span></div>
+<pre>_issue(
+    report,
+    "TEMPLATE_NULLABLE_NESTED_ACCESS",
+    f"Template traverses into {parts[1]!r} of "
+    f"{node_map[first].type} {first!r}, but that field's declared "
+    f"type permits None. If it is None at runtime, "
+    f"{reference!r} fails mid-run.",
+    severity=PreflightSeverity.WARNING,
+    path=path,
+    node_id=current_node.id,
+    suggestion=(
+        f"Confirm {first!r} always populates {parts[1]!r} on every "
+        "path that reaches this node, or reference a "
+        "non-nullable field instead."
+    ),
+)</pre>
+  </div>
+
+  <h2>Typed configuration and explicit data mapping</h2>
+  <p>Selecting a node builds its form from the registry contract, so configuration is typed rather
+  than free text. Mapping an input to an upstream output is an explicit, saved reference — the
+  variable picker only offers values that are actually available at that point in the graph.</p>
+
+  <div class="figpair">
+    <figure>
+      <img src="../screenshots/11-builder-configure.png" alt="Node configuration">
+      <figcaption><span class="lbl">Screenshot 7. Typed configuration.</span>
+      <code>BoundedDeepResearchAgent</code>'s bounds — <code>max_jobs</code>,
+      <code>max_parallel_jobs</code>, <code>max_total_tool_calls</code>,
+      <code>max_tool_calls_per_job</code>, <code>max_citations_per_brief</code> — are declared fields
+      with numeric inputs, not prose in a prompt.</figcaption>
+    </figure>
+    <figure>
+      <img src="../screenshots/14-builder-map-data.png" alt="Data mapping">
+      <figcaption><span class="lbl">Screenshot 8. Visual data mapping.</span>
+      The picker lists only upstream values reachable here, and writes the explicit
+      <code>{{outputs.node.field}}</code> reference that preflight will later check.</figcaption>
+    </figure>
+  </div>
+
+  <figure>
+    <img src="../screenshots/22-builder-test.png" alt="Node test panel">
+    <figcaption><span class="lbl">Screenshot 9. Testing a branch without committing the workflow.</span>
+    "Test through <code>deep_research</code>" builds a temporary slice of the graph and runs it through
+    the normal preflight and Cockpit path — the saved workflow is never rewritten, so a test cannot
+    leave a half-edited definition behind.</figcaption>
+  </figure>
+</section>
+
+<!-- ============================== 6 ============================== -->
+<section class="section">
+  <h1><span class="num">6</span>Research, retrieval, and evidence integrity</h1>
+  <p class="standfirst">Research improves coverage; verification controls what may be believed and drafted.</p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 292" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+      <text x="0" y="18" font-size="19" font-weight="700" fill="#092536">Evidence integrity pipeline</text>
+      <text x="0" y="36" font-size="11" fill="#4a5c66">Discovery increases recall; only verified, traceable claims may enter drafting.</text>
+      <defs><marker id="ar4" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#007f7b"/></marker></defs>
+      <g font-size="9.5">
+        <rect x="0" y="56" width="180" height="80" rx="6" fill="#ffffff" stroke="#12384a" stroke-width="1.5"/>
+        <rect x="0" y="56" width="4.5" height="80" rx="2" fill="#12384a"/>
+        <text x="16" y="78" font-size="12" font-weight="700" fill="#092536">Discover</text>
+        <text x="16" y="96" fill="#4a5c66">Web and scholarly</text><text x="16" y="110" fill="#4a5c66">search candidates</text><text x="16" y="124" fill="#4a5c66">Research dossiers</text>
+
+        <rect x="205" y="56" width="180" height="80" rx="6" fill="#ffffff" stroke="#007f7b" stroke-width="1.5"/>
+        <text x="221" y="78" font-size="12" font-weight="700" fill="#092536">Acquire</text>
+        <text x="221" y="96" fill="#4a5c66">Canonical identity</text><text x="221" y="110" fill="#4a5c66">Immutable full text</text><text x="221" y="124" fill="#4a5c66">Content hash</text>
+
+        <rect x="410" y="56" width="180" height="80" rx="6" fill="#eef7f4" stroke="#007f7b" stroke-width="1.8"/>
+        <text x="426" y="78" font-size="12" font-weight="700" fill="#092536">Verify</text>
+        <text x="426" y="96" fill="#4a5c66">Exact passage</text><text x="426" y="110" fill="#4a5c66">Locator + stance</text><text x="426" y="124" fill="#4a5c66">Confidence + reason</text>
+
+        <rect x="615" y="56" width="180" height="80" rx="6" fill="#ffffff" stroke="#007f7b" stroke-width="1.5"/>
+        <text x="631" y="78" font-size="12" font-weight="700" fill="#092536">Truth graph</text>
+        <text x="631" y="96" fill="#4a5c66">Approved wording</text><text x="631" y="110" fill="#4a5c66">Qualifications</text><text x="631" y="124" fill="#4a5c66">Gaps + blockers</text>
+
+        <rect x="820" y="56" width="180" height="80" rx="6" fill="#ffffff" stroke="#12384a" stroke-width="1.5"/>
+        <text x="836" y="78" font-size="12" font-weight="700" fill="#092536">Draft</text>
+        <text x="836" y="96" fill="#4a5c66">Cited sections</text><text x="836" y="110" fill="#4a5c66">No candidate-only</text><text x="836" y="124" fill="#4a5c66">authority</text>
+
+        <path d="M180,96 L205,96" fill="none" stroke="#007f7b" stroke-width="1.4" marker-end="url(#ar4)"/>
+        <path d="M385,96 L410,96" fill="none" stroke="#007f7b" stroke-width="1.4" marker-end="url(#ar4)"/>
+        <path d="M590,96 L615,96" fill="none" stroke="#007f7b" stroke-width="1.4" marker-end="url(#ar4)"/>
+        <path d="M795,96 L820,96" fill="none" stroke="#007f7b" stroke-width="1.4" marker-end="url(#ar4)"/>
+
+        <rect x="0" y="170" width="235" height="54" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="0" y="170" width="4.5" height="54" rx="2" fill="#12384a"/>
+        <text x="16" y="190" font-size="11" font-weight="700" fill="#092536">CandidateSource</text>
+        <text x="16" y="208" fill="#4a5c66">Useful lead, explicitly unverified.</text>
+
+        <rect x="255" y="170" width="235" height="54" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="255" y="170" width="4.5" height="54" rx="2" fill="#007f7b"/>
+        <text x="271" y="190" font-size="11" font-weight="700" fill="#092536">ClaimEvidenceLink</text>
+        <text x="271" y="208" fill="#4a5c66">Claim ↔ exact passage relationship.</text>
+
+        <rect x="510" y="170" width="235" height="54" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="510" y="170" width="4.5" height="54" rx="2" fill="#007f7b"/>
+        <text x="526" y="190" font-size="11" font-weight="700" fill="#092536">VerifiedClaim</text>
+        <text x="526" y="208" fill="#4a5c66">Final status and approved sentence.</text>
+
+        <rect x="765" y="170" width="235" height="54" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="765" y="170" width="4.5" height="54" rx="2" fill="#12384a"/>
+        <text x="781" y="190" font-size="11" font-weight="700" fill="#092536">Evidence package</text>
+        <text x="781" y="208" fill="#4a5c66">Citations, gaps, QA and blockers.</text>
+
+        <rect x="0" y="248" width="1000" height="30" rx="5" fill="#fdf1f1" stroke="#a32d2d" stroke-width="1.2"/>
+        <text x="500" y="268" font-size="10.5" font-weight="700" fill="#a32d2d" text-anchor="middle">Fail-closed boundary: snippets, metadata, abstracts and research summaries do not become evidence by promotion.</text>
+      </g>
+    </svg>
+    <figcaption><span class="lbl">Figure 4.</span> Candidate discovery is separated from verified drafting authority.</figcaption>
+  </figure>
+
+  <h2>Bounded Deep Research</h2>
+  <p>The current research service is an in-process, tool-calling loop. A <code>ResearchBrief</code>
+  specifies the track, question, linked claims and call requirements, required source types, geography,
+  date priority, selected scientific skills, model and tool-call budget. Time, iteration and per-call
+  cost caps prevent an open-ended research agent. Early stopping produces an incomplete dossier from
+  gathered material rather than a false claim of exhaustiveness.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 6. Time, iteration, tool and cost bounds in the research loop
+      <span class="src">app/research/deep_research.py:209–231 @ 7ca16b2</span></div>
+<pre>for _ in range(max_iterations):
+    if time.monotonic() &gt;= deadline:
+        break
+    prompt_text = instructions + " ".join(
+        str(m.get("content") or "") for m in messages
+    )
+    projected_cost = _projected_call_cost(
+        brief.research_model, prompt_text, _MAX_TURN_TOKENS
+    )
+    if projected_cost &gt; max_cost_per_call_usd:
+        log.warning(
+            "deep_research.cost_cap_projected",
+            brief_id=brief.brief_id, model=brief.research_model,
+            projected_usd=round(projected_cost, 4), cap_usd=max_cost_per_call_usd,
+        )
+        break
+    tools = [_WEB_SEARCH_TOOL] if searches_used &lt; brief.max_tool_calls else []
+    response = await self._llm.chat_with_tools(
+        model=brief.research_model, system=instructions,
+        messages=messages, tools=tools, max_tokens=_MAX_TURN_TOKENS,
+    )</pre>
+  </div>
+
+  <p class="small">The cost cap is checked against a <em>projection</em> before the call, not against
+  the bill afterwards. Once the budget is gone the loop stops and the tool list empties — the agent
+  degrades to synthesising what it already gathered rather than failing or quietly continuing to spend.</p>
+
+  <h2>Evidence contracts</h2>
+  <p><code>CandidateSource</code> is explicitly a discovered record, not verified evidence. A
+  <code>FullTextDocument</code> carries an immutable version and content hash.
+  <code>RetrievedPassage</code> provides page, section, text and retrieval score.
+  <code>ClaimEvidenceLink</code> binds a claim to an exact passage with locator, stance, confidence,
+  score, strength, qualification, limitation and verifier identity. <code>VerifiedClaim</code> records
+  final status and approved wording.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 7. Fail-closed evidence policy defaults
+      <span class="src">app/evidence/models.py:46–70 @ 7ca16b2</span></div>
+<pre>class EvidencePolicy(BaseModel):
+    """Hard evidence rules applied before drafting may use a citation."""
+    model_config = ConfigDict(extra="forbid")
+
+    policy_version: str = "eurskem-evidence-v2.0"
+    minimum_independent_sources_for_critical_claim: int = Field(default=2, ge=1, le=5)
+    minimum_full_text_sources_for_state_of_art_claim: int = Field(default=1, ge=1, le=5)
+    minimum_support_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
+    allow_abstract_only_support: bool = False
+    allow_preprint_as_sole_support: bool = False
+    allow_search_snippet_as_evidence: bool = False
+    require_exact_locator: bool = True</pre>
+  </div>
+
+  <p class="small">Every permissive flag defaults to <code>False</code> and every threshold defaults to
+  its stricter value, so a policy that is never configured is the safe one. <code>extra="forbid"</code>
+  means a misspelt override fails loudly instead of silently leaving the default in place, and
+  <code>policy_version</code> travels with the decision so an approval can be read back against the
+  rules that were actually in force.</p>
+
+  <h2>Hybrid retrieval and isolation</h2>
+  <p>The retrieval read path combines metadata pre-filtering, BM25 and vector search, reranking,
+  contextual compression and grounded generation. The query is embedded with the same embedding
+  mechanism used at ingestion. Session and collection scope are part of the database filter, so another
+  scope's chunks do not become candidates even if a model tries to request them.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 8. Retrieval scope is enforced in the database filter
+      <span class="src">app/retrieval/hybrid_search.py:21–38 @ 7ca16b2</span></div>
+<pre>def _build_where_filter(f: RetrievalFilters) -&gt; Filter:
+    """Translate filters into a Weaviate Filter expression.
+    Always pins session_id — this is a security boundary."""
+    clauses = [
+        Filter.by_property("session_id").equal(f.session_id),
+        Filter.by_property("collection_id").equal(f.collection_id),
+    ]
+    if f.industry:
+        clauses.append(Filter.by_property("industry").equal(f.industry))
+    if f.doc_types:
+        clauses.append(Filter.by_property("doc_type").contains_any(f.doc_types))
+    if f.collection_ids:
+        clauses.append(Filter.by_property("collection_id").contains_any(f.collection_ids))
+    if f.date_after:
+        clauses.append(Filter.by_property("ingested_at").greater_than(f.date_after))
+    if f.date_before:
+        clauses.append(Filter.by_property("ingested_at").less_than(f.date_before))
+    return Filter.all_of(clauses)</pre>
+  </div>
+
+  <div class="callout alert">
+    <span class="t">Evidence rule</span>
+    Search results, snippets, abstracts, model summaries and Deep Research dossiers may guide
+    acquisition. They do not become verified evidence merely because several stages repeat them.
+  </div>
+
+  <h2>The fail-closed boundary, observed</h2>
+  <p>A rule of this kind is only worth stating if the system obeys it when obedience is expensive. Run
+  <code>1f2c3a4d</code> — the Horizon Europe Part B evidence stage, 14 of 14 nodes, 509.7 s — is the
+  case where it was. Deep Research produced dossiers, but source acquisition resolved no canonical URLs
+  into immutable full-text versions, so verification had nothing to quote. The pipeline completed
+  successfully and promoted nothing.</p>
+
+  <table>
+    <thead><tr><th style="width:52%">QA report field</th><th class="num">Value</th></tr></thead>
+    <tbody>
+      <tr><td><code>policy_version</code></td><td class="num">eurskem-evidence-v2.0</td></tr>
+      <tr><td><code>claims_examined</code> / <code>critical_claims</code></td><td class="num">19 / 19</td></tr>
+      <tr><td><code>verified_claims</code></td><td class="num">0</td></tr>
+      <tr><td><code>qualified_claims</code></td><td class="num">0</td></tr>
+      <tr><td><code>unresolved_claims</code></td><td class="num">19</td></tr>
+      <tr><td><code>sources_retained</code> / <code>sources_rejected</code></td><td class="num">0 / 0</td></tr>
+      <tr><td><code>full_text_evidence_rate</code>, <code>exact_locator_rate</code></td><td class="num">0.0, 0.0</td></tr>
+      <tr><td><code>critical_independent_support_rate</code></td><td class="num">0.0</td></tr>
+      <tr><td><code>numeric_traceability_rate</code></td><td class="num">1.0</td></tr>
+      <tr><td><code>warnings</code></td><td class="num">"No proposal-grade citations passed all hard gates."</td></tr>
+    </tbody>
+  </table>
+
+  <p>Each of the nineteen claims carries its own refusal rather than a generic failure. The first is
+  representative:</p>
+
+  <div class="codeblock">
+    <div class="cap">Record 1. A <code>VerifiedClaim</code> that refuses to be cited
+      <span class="src">run 1f2c3a4d · verify_evidence.verified_claims[0] · read from run_history</span></div>
+<pre>{
+  "claim_id": "CL-1",
+  "claim_type": "problem",
+  "section_id": "Challenge and Rationale",
+  "materiality": "critical",
+  "evidence_requirement": "2 independent full-text source(s), exact locator, contradiction search",
+  "final_status": "not_found",
+  "verified_sentence": "",
+  "source_ids": [],
+  "evidence_link_ids": [],
+  "unresolved_issue": "0/2 independent supporting sources; contradiction search not completed",
+  "human_review_required": true
+}</pre>
+  </div>
+
+  <p>The paired <code>evidence_gap</code> states the consequence in the reviewer's language — <em>"A
+  critical evaluator-facing claim cannot be cited safely"</em> — with <code>recommended_action:
+  search_again</code> and <code>blocking: true</code>. The acquisition node's own report closes the
+  loop in one sentence:</p>
+
+  <div class="callout">
+    <span class="t">acquire_research_sources.report — run 1f2c3a4d</span>
+    "Acquired 0 immutable cited source version(s) directly from canonical URLs; rejected 0.
+    <strong>No search snippet or Deep Research prose was promoted to verified evidence.</strong>"
+  </div>
+
+  <p>This is the outcome the architecture is designed to produce. A system optimised for looking
+  productive would have cited the dossier prose it already had; nineteen plausible sentences with
+  plausible references would have been indistinguishable from good work until an evaluator checked
+  them. Returning nineteen blocking issues and <code>verified_claims: 0</code> is the more useful
+  failure, and it is the one the code actually produces.</p>
+
+  <div class="callout warn">
+    <span class="t">Read this honestly in both directions</span>
+    It demonstrates that the gates hold. It also shows that end-to-end evidence acquisition did not
+    succeed on this input in this environment — source resolution is the weak link, not verification.
+    That is exactly the limitation the evidence-quality gate on the roadmap is aimed at, and it is why
+    §7's evaluation posture insists on separating retrieval quality from grounding quality.
+  </div>
+</section>
+
+<!-- ============================== 7 ============================== -->
+<section class="section">
+  <h1><span class="num">7</span>Model routing, cost, and evaluation</h1>
+  <p class="standfirst">Capability compatibility and intended-versus-actual telemetry make model use explainable.</p>
+
+  <p>The current registry separates text generation, embeddings, images and specialised research
+  capabilities. This prevents an endpoint-incompatible model from entering the generic text router.
+  Nodes can select a model directly or use an automatic policy with accuracy, cost, latency and quality
+  preferences. Access-aware and provider fallbacks are recorded rather than hidden.</p>
+
+  <table>
+    <thead><tr><th style="width:18%">Concern</th><th style="width:42%">Mechanism</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td>Compatibility</td><td>Model definitions carry capability kind and endpoint-relevant features.</td><td>Embedding, image and research-only models cannot accidentally handle text nodes.</td></tr>
+      <tr><td>Intent</td><td>The workflow records the selected model or Auto policy.</td><td>The author can explain the requested quality/cost choice.</td></tr>
+      <tr><td>Resolution</td><td>The runtime selects an available compatible model and applies retries/fallbacks.</td><td>Provider access or transient errors do not silently change semantics.</td></tr>
+      <tr><td>Telemetry</td><td>Cost records include intended and actual model, tokens, node and run.</td><td>Fallback, spend and hotspots are reviewable.</td></tr>
+      <tr><td>Evaluation</td><td>Pinned judge model and prompt version accompany scorecards.</td><td>Comparisons are not made across changing judges as though they were identical.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Intended versus actual, on a real run</h2>
+  <p>The table below is the complete <code>cost_ledger</code> for the worked example in Appendix A, read
+  from MongoDB rather than reconstructed. It is included because it makes one design decision concrete:
+  <code>intended_model</code> and <code>model</code> are stored separately, and in this run they
+  diverge exactly once.</p>
+
+  <table>
+    <thead><tr>
+      <th style="width:20%">Node</th><th style="width:19%">Intended model</th><th style="width:19%">Actual model</th>
+      <th class="num">Calls</th><th class="num">In</th><th class="num">Out</th><th class="num">USD</th>
+    </tr></thead>
+    <tbody>
+      <tr><td><code>deep_research</code></td><td>gpt-5.6-sol</td><td>gpt-5.6-sol</td><td class="num">4</td><td class="num">357,723</td><td class="num">35,249</td><td class="num">2.8461</td></tr>
+      <tr><td><code>draft_chunk_4</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,129</td><td class="num">8,000</td><td class="num">0.6544</td></tr>
+      <tr><td><code>draft_chunk_5</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,126</td><td class="num">4,872</td><td class="num">0.6075</td></tr>
+      <tr><td><code>draft_chunk_3</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">177,987</td><td class="num">4,072</td><td class="num">0.5950</td></tr>
+      <tr><td><code>draft_chunk_1</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,115</td><td class="num">3,519</td><td class="num">0.5871</td></tr>
+      <tr><td><code>draft_chunk_2</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">178,167</td><td class="num">3,076</td><td class="num">0.5806</td></tr>
+      <tr><td><code>outline</code></td><td><strong>claude-sonnet-4-5</strong></td><td><strong>gpt-5.6-terra</strong></td><td class="num">1</td><td class="num">142,614</td><td class="num">3,523</td><td class="num">0.3275</td></tr>
+      <tr><td><code>planner</code></td><td>claude-opus-5</td><td>claude-opus-5</td><td class="num">1</td><td class="num">36,228</td><td class="num">3,595</td><td class="num">0.2830</td></tr>
+      <tr><td><code>graphnormalizer_1</code></td><td>claude-sonnet-4-5</td><td>claude-sonnet-4-5</td><td class="num">1</td><td class="num">9,015</td><td class="num">7,859</td><td class="num">0.1683</td></tr>
+      <tr><td colspan="3"><strong>Total — 9 nodes, 12 recorded calls</strong></td><td class="num"><strong>12</strong></td><td class="num"><strong>1,436,104</strong></td><td class="num"><strong>73,765</strong></td><td class="num"><strong>6.6495</strong></td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <span class="t">What this table shows, and what it does not</span>
+    <strong>A fallback happened.</strong> The <code>outline</code> node requested
+    <code>claude-sonnet-4-5</code> and <code>gpt-5.6-terra</code> actually ran. The workflow still
+    completed and the deliverable was still produced — but the substitution is a recorded fact rather
+    than an invisible one, which is the entire point of storing both fields.<br><br>
+    <strong>Cost is concentrated, and the concentration is legible.</strong> Discovery
+    (<code>deep_research</code>) is 43% of spend across 4 calls; the five parallel drafting chunks are
+    another 45% and are near-identical in input size, which is what a correct fan-out should look like.
+    That is the signal an engineer acts on — cache retrieval, shrink the drafting context, or move
+    classification to a smaller model.<br><br>
+    <strong>Scope limit.</strong> This is one run on one machine on 4 August 2026. It is evidence that
+    the telemetry works, not a price list.
+  </div>
+
+  <h2>Evaluation posture</h2>
+  <p>The evaluation layer supports criteria such as faithfulness, relevance, completeness and citation
+  accuracy. A score is useful only with the question, sources, reason, judge identity and prompt
+  version. Automated evaluation supplements human review; it does not certify scientific truth or
+  proposal success.</p>
+  <ul>
+    <li>Use deterministic schema and citation checks before an LLM judge.</li>
+    <li>Separate retrieval quality, grounding quality, document quality and business acceptance.</li>
+    <li>Version golden sets, judges and prompts so score changes remain interpretable.</li>
+    <li>Track latency, cost, fallback and cache behaviour alongside quality.</li>
+    <li>Use production-like documents only under an approved data-governance process.</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="t">Known gap — per-node cost is not yet joined into the Cockpit node inspector</span>
+    The ledger above is complete and queryable, and the run-level total is surfaced in the application
+    header ($6.6495 for this run). The Cockpit node inspector currently says so in as many words:
+    <em>"Token/cost breakdown isn't joined into this view yet — see the run's overall cost summary for
+    now."</em> The data exists per node; the join into that panel does not. It is listed here rather
+    than omitted, because a portfolio that only shows finished surfaces is not a useful engineering
+    document.
+  </div>
+</section>
+
+<!-- ============================== 8 ============================== -->
+<section class="section">
+  <h1><span class="num">8</span>Security, confidentiality, and data responsibilities</h1>
+  <p class="standfirst">Controls should reduce disclosure risk without being presented as certification.</p>
+
+  <p>The platform combines authentication, role-based permissions, tenant/run ownership, retrieval
+  scoping, guardrails, audit logging, secret handling, internal service networking, timeouts, readiness
+  checks and production configuration gates. These controls are engineering evidence. They still
+  require organisational policies, legal review, access governance, retention decisions and incident
+  response.</p>
+
+  <h2>Confidential entity tokenisation</h2>
+  <p>The entity-protection service can replace known or detected protected entities with stable
+  placeholders before an external model call and restore them afterward. Detection uses the scoped
+  registry first, then regex safety nets, then spaCy NER over unclaimed spans. Replacements are applied
+  right-to-left so earlier offsets remain valid. A restricted-local mode that is not implemented fails
+  toward pseudonymisation instead of silently sending plaintext.</p>
+
+  <div class="codeblock">
+    <div class="cap">Code 9. Scoped placeholder replacement before external model use
+      <span class="src">app/security/entity_tokenizer.py:120–139 @ 7ca16b2</span></div>
+<pre>if not spans:
+    return TokenizeResult(text=text)
+
+# Right-to-left so earlier offsets stay valid as we splice.
+spans_sorted = sorted(spans, key=lambda s: s.start, reverse=True)
+rewritten = text
+placeholders_used: set[str] = set()
+for span in spans_sorted:
+    placeholder = await self._vault.get_or_create_placeholder(
+        session_id=session_id,
+        collection_id=collection_id,
+        entity_type=span.entity_type,
+        real_value=span.value,
+        source=span.source,
+    )
+    placeholders_used.add(placeholder)
+    rewritten = rewritten[: span.start] + placeholder + rewritten[span.end :]
+return TokenizeResult(
+    text=rewritten, placeholders_used=frozenset(placeholders_used)
+)</pre>
+  </div>
+
+  <p class="small">Detection precedence matters as much as replacement order: the scoped registry is
+  applied first, longest known value first, so a curated entity always beats an overlapping NER or
+  regex guess. The vault issues <em>stable</em> placeholders per scope, so the same real value maps to
+  the same token across calls and the model can still reason about identity without seeing it.</p>
+
+  <h2>Data store responsibilities</h2>
+  <table>
+    <thead><tr><th style="width:16%">Store</th><th style="width:45%">Primary data</th><th>Operational responsibility</th></tr></thead>
+    <tbody>
+      <tr><td>MongoDB</td><td>Workflows/runs, durable history, audit, manifests, scorecards and cost.</td><td>Indexes, tenant scoping, backups and retention.</td></tr>
+      <tr><td>Weaviate</td><td>Chunks, vectors, BM25 index and retrieval metadata.</td><td>Scope filters, schema compatibility and rebuild procedures.</td></tr>
+      <tr><td>MinIO</td><td>Uploaded bytes, source versions and generated artifacts.</td><td>Content integrity, encryption, backup and access control.</td></tr>
+      <tr><td>Redis</td><td>Events, cache, rate limits and workflow checkpoints.</td><td>Authentication, persistence choice, memory and failover.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout warn">
+    <span class="t">Compliance boundary</span>
+    GDPR-oriented controls and auditability do not equal GDPR compliance. A real deployment needs
+    purpose limitation, lawful basis, data minimisation, processor agreements, DPIA where applicable,
+    subject-rights processes, retention, breach procedures and evidence of operation.
+  </div>
+</section>
+
+<!-- ============================== 9 ============================== -->
+<section class="section">
+  <h1><span class="num">9</span>Deployment, observability, and recovery</h1>
+  <p class="standfirst">The repository provides a production topology and release controls; live status remains environment evidence.</p>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 1000 300" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+      <text x="0" y="18" font-size="19" font-weight="700" fill="#092536">Documented IONOS production topology</text>
+      <text x="0" y="36" font-size="11" fill="#4a5c66">Only the edge proxy is public; data services remain on an internal network.</text>
+      <defs><marker id="ar5" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#12384a"/></marker></defs>
+      <g font-size="9.5">
+        <rect x="0" y="56" width="200" height="62" rx="6" fill="#ffffff" stroke="#12384a" stroke-width="1.5"/>
+        <rect x="0" y="56" width="4.5" height="62" rx="2" fill="#12384a"/>
+        <text x="16" y="78" font-size="12" font-weight="700" fill="#092536">Internet users</text>
+        <text x="16" y="96" fill="#4a5c66">HTTPS application access</text>
+
+        <rect x="255" y="56" width="200" height="62" rx="6" fill="#eef7f4" stroke="#007f7b" stroke-width="1.5"/>
+        <text x="271" y="78" font-size="12" font-weight="700" fill="#092536">Caddy edge</text>
+        <text x="271" y="96" fill="#4a5c66">Ports 80/443</text>
+        <text x="271" y="110" fill="#4a5c66">TLS + reverse proxy</text>
+
+        <rect x="510" y="56" width="200" height="62" rx="6" fill="#ffffff" stroke="#009b96" stroke-width="1.5"/>
+        <text x="526" y="78" font-size="12" font-weight="700" fill="#092536">Application</text>
+        <text x="526" y="96" fill="#4a5c66">React assets + FastAPI</text>
+        <text x="526" y="110" fill="#4a5c66">Non-root container</text>
+
+        <rect x="765" y="56" width="235" height="62" rx="6" fill="#fdf7e8" stroke="#a5670a" stroke-width="1.5"/>
+        <text x="781" y="78" font-size="12" font-weight="700" fill="#092536">Release controls</text>
+        <text x="781" y="96" fill="#4a5c66">CI gate, checksum,</text>
+        <text x="781" y="110" fill="#4a5c66">readiness, smoke, rollback</text>
+
+        <path d="M200,87 L255,87" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar5)"/>
+        <text x="212" y="80" font-size="8.5" fill="#6d7d86">TLS</text>
+        <path d="M455,87 L510,87" fill="none" stroke="#12384a" stroke-width="1.3" marker-end="url(#ar5)"/>
+        <path d="M765,87 L712,87" fill="none" stroke="#a5670a" stroke-width="1.3" marker-end="url(#ar5)"/>
+
+        <line x1="0" y1="152" x2="1000" y2="152" stroke="#007f7b" stroke-width="1" stroke-dasharray="4 3"/>
+        <rect x="300" y="140" width="400" height="24" fill="#ffffff"/>
+        <text x="500" y="157" font-size="10.5" font-weight="700" fill="#007f7b" text-anchor="middle">Internal Docker network — no public database ports</text>
+
+        <rect x="0" y="196" width="235" height="76" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="0" y="196" width="4.5" height="76" rx="2" fill="#12384a"/>
+        <text x="16" y="218" font-size="12" font-weight="700" fill="#092536">MongoDB</text>
+        <text x="16" y="236" fill="#4a5c66">Runs, audit, manifests,</text><text x="16" y="250" fill="#4a5c66">scorecards and cost</text>
+
+        <rect x="255" y="196" width="235" height="76" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="255" y="196" width="4.5" height="76" rx="2" fill="#007f7b"/>
+        <text x="271" y="218" font-size="12" font-weight="700" fill="#092536">Weaviate</text>
+        <text x="271" y="236" fill="#4a5c66">Hybrid retrieval and</text><text x="271" y="250" fill="#4a5c66">metadata filters</text>
+
+        <rect x="510" y="196" width="235" height="76" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="510" y="196" width="4.5" height="76" rx="2" fill="#009b96"/>
+        <text x="526" y="218" font-size="12" font-weight="700" fill="#092536">MinIO</text>
+        <text x="526" y="236" fill="#4a5c66">Uploads, immutable sources</text><text x="526" y="250" fill="#4a5c66">and generated artifacts</text>
+
+        <rect x="765" y="196" width="235" height="76" rx="6" fill="#f5f8f9" stroke="#d7dee2"/>
+        <rect x="765" y="196" width="4.5" height="76" rx="2" fill="#a5670a"/>
+        <text x="781" y="218" font-size="12" font-weight="700" fill="#092536">Redis</text>
+        <text x="781" y="236" fill="#4a5c66">Events, cache, rate limits</text><text x="781" y="250" fill="#4a5c66">and checkpoints</text>
+
+        <path d="M560,118 L120,196" fill="none" stroke="#12384a" stroke-width="1.1" marker-end="url(#ar5)"/>
+        <path d="M580,118 L375,196" fill="none" stroke="#12384a" stroke-width="1.1" marker-end="url(#ar5)"/>
+        <path d="M610,118 L625,196" fill="none" stroke="#12384a" stroke-width="1.1" marker-end="url(#ar5)"/>
+        <path d="M640,118 L870,196" fill="none" stroke="#12384a" stroke-width="1.1" marker-end="url(#ar5)"/>
+      </g>
+    </svg>
+    <figcaption><span class="lbl">Figure 5.</span> Documented IONOS topology keeps data services off the public network.</figcaption>
+  </figure>
+
+  <p>The deployment guide targets one Ubuntu 24.04 IONOS VPS. Caddy exposes ports 80/443 and manages
+  TLS. MongoDB, Weaviate, MinIO and Redis remain on an internal Docker network. Grafana and Prometheus
+  bind to loopback and are reached through an SSH tunnel. The release workflow is documented to run
+  after CI, build an immutable release, wait for readiness, run a no-LLM load gate, switch the current
+  release and perform an HTTPS smoke test, with rollback on failure.</p>
+
+  <h2>Operational signals</h2>
+  <table>
+    <thead><tr><th style="width:20%">Signal</th><th style="width:20%">Primary consumer</th><th>Examples</th></tr></thead>
+    <tbody>
+      <tr><td>Workflow state</td><td>End user</td><td>Stage/node status, attention items, outputs and approvals.</td></tr>
+      <tr><td>Audit and history</td><td>Reviewer</td><td>Node start/end/error/reuse, decisions, source run and durations.</td></tr>
+      <tr><td>Cost ledger</td><td>Owner/operator</td><td>Run, node, intended/actual model, tokens, cache and cost.</td></tr>
+      <tr><td>Metrics</td><td>Operator</td><td>Aggregate latency, errors, provider health and low-cardinality workflow metrics.</td></tr>
+      <tr><td>Logs</td><td>Engineer</td><td>Structured request, run, node and provider events without high-cardinality metric labels.</td></tr>
+      <tr><td>Readiness</td><td>Release system</td><td>Mongo, Weaviate, MinIO, Redis, checkpointer, cache and MCP probes.</td></tr>
+    </tbody>
+  </table>
+
+  <figure>
+    <img src="../screenshots/20-cockpit-audit.png" alt="Audit trail">
+    <figcaption><span class="lbl">Screenshot 10. The audit trail is per node, and it is the same record the other views read.</span>
+    All fourteen nodes of the completed run are listed with their durable output references. Run
+    History, Guided Run's contribution cards and this audit panel are three renderings of one stored
+    record — which is why moving between them does not start a second run.
+    <span class="proof">Live capture · run ed462b3e · Audit (14)</span></figcaption>
+  </figure>
+
+  <h2>Recovery</h2>
+  <ul>
+    <li>Builder drafts and immutable versions recover authoring work independently of executable YAML.</li>
+    <li>Durable run records and checkpoint support recover paused or failed execution paths.</li>
+    <li>Safe retry can reuse completed outputs and records the source run rather than replaying every provider call.</li>
+  </ul>
+</section>
+
+<!-- ============================== 10 ============================== -->
+<section class="section">
+  <h1><span class="num">10</span>Testing, failure modes, and engineering decisions</h1>
+  <p class="standfirst">Tests localise risk; they do not replace live-path verification.</p>
+
+  <h2>Test layers</h2>
+  <table>
+    <thead><tr><th style="width:20%">Layer</th><th style="width:42%">What it proves</th><th>What it does not prove</th></tr></thead>
+    <tbody>
+      <tr><td>Schema/preflight</td><td>YAML, contracts, templates, topology, model and service prerequisites before tokens.</td><td>Provider behaviour or data quality.</td></tr>
+      <tr><td>Unit</td><td>Node logic, routing, stores, helpers and UI state with controlled dependencies.</td><td>Live service interfaces or deployment wiring.</td></tr>
+      <tr><td>Service integration</td><td>MongoDB, Weaviate, MinIO, Redis and checkpointer compatibility.</td><td>External provider access and quality.</td></tr>
+      <tr><td>Frontend</td><td>Rendering, interaction, accessibility-oriented behaviour, lint and production build.</td><td>Human comprehension without usability testing.</td></tr>
+      <tr><td>Live provider</td><td>Actual credentials, endpoints, rate limits and response contracts.</td><td>Long-term reliability or output correctness across all data.</td></tr>
+      <tr><td>Production smoke/load</td><td>Deployment readiness, HTTPS path and no-LLM concurrency gate.</td><td>Scientific or business outcome quality.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Representative failure modes</h2>
+  <table>
+    <thead><tr><th style="width:22%">Failure</th><th style="width:36%">Where to localise</th><th>Expected response</th></tr></thead>
+    <tbody>
+      <tr><td>Invalid YAML or graph</td><td>Preflight report and WorkflowSpec path.</td><td>Block before run creation or model use.</td></tr>
+      <tr><td>Conditional upstream value missing</td><td>Template analysis and node output contract.</td><td>Actionable warning/error; avoid runtime surprise.</td></tr>
+      <tr><td>Provider rate limit</td><td>Gateway retry policy and fallback telemetry.</td><td>Backoff, compatible fallback or clear failure.</td></tr>
+      <tr><td>Research budget exhausted</td><td>Bounded research dossier status and usage.</td><td>Return incomplete synthesis from gathered candidates.</td></tr>
+      <tr><td>No retrieved sources</td><td>Scope filters, ingestion metadata and retrieval trace.</td><td>Refuse grounded answer rather than fabricate.</td></tr>
+      <tr><td>Human rejection</td><td>HITL decision and audit record.</td><td>End or route according to workflow; preserve reason.</td></tr>
+      <tr><td>Node failure after partial run</td><td>Cockpit, history, checkpoint and output reuse.</td><td>Retry from safe boundary with completed work preserved.</td></tr>
+      <tr><td>Service unavailable</td><td>Readiness and dependency probe.</td><td>Block dependent run or degrade explicitly.</td></tr>
+    </tbody>
+  </table>
+
+  <figure>
+    <img src="../screenshots/07-cockpit-node-detail.png" alt="Failed node in Cockpit">
+    <figcaption><span class="lbl">Screenshot 11. A real failure, localised to one node.</span>
+    An earlier attempt at the same workflow failed at <code>graphnormalizer_1</code> after 244.9 s. The
+    graph keeps the shape of what happened: the upstream <code>concept_frame</code> is COMPLETED, the
+    failing node is outlined in red with its duration, and everything downstream is marked skipped
+    rather than silently absent. The provider-level cause — <em>"OpenAIGateway: empty structured
+    response for GraphExtraction"</em> — is attached to the run alongside a retry route that can reuse
+    the two completed nodes. This is what the "node failure after partial run" row above looks like in
+    practice.
+    <span class="proof">Live capture · run 3d46a8ee · failed node graphnormalizer_1 · 2 completed, 11 skipped</span></figcaption>
+  </figure>
+
+  <h2>Decisions worth defending in an interview</h2>
+  <ul>
+    <li>YAML compiles to LangGraph, while one runtime wrapper centralises events, cost, audit, pause, output validation and retry semantics.</li>
+    <li>Guided Run and Cockpit present the same durable run instead of creating a second simplified engine.</li>
+    <li>Deep Research remains candidate discovery; verified passages and claim links control drafting authority.</li>
+    <li>Files stay in object storage and graph state carries stable references, not bytes.</li>
+    <li>Intended-versus-actual model telemetry makes fallback auditable — and in the run in Appendix A, it caught one.</li>
+    <li>Preflight is a product surface with a token counter on it, so the cheapest checks are the ones authors actually run.</li>
+  </ul>
+</section>
+
+<!-- ============================== 11 ============================== -->
+<section class="section">
+  <h1><span class="num">11</span>Interview and portfolio walkthrough</h1>
+  <p class="standfirst">A 12-minute route that demonstrates product judgment and engineering depth.</p>
+
+  <ol>
+    <li>Start with the problem: high-stakes work needs evidence, visible steps and human responsibility, not one opaque prompt.</li>
+    <li>Show the Workflow Library and explain the chosen workflow's business goal, inputs, outputs and review points.</li>
+    <li>Open Guided Run and explain business stages, plain-language progress and the consolidated attention queue.</li>
+    <li>Open the same run in Cockpit to prove that the business view and technical graph share one run ID and history.</li>
+    <li>Open Builder and show typed nodes, upstream data mapping, explicit auto-layout, preflight, autosave and version recovery.</li>
+    <li>Trace <code>_make_runtime_fn</code> to explain where context, events, audit, cost, pause and output validation are enforced.</li>
+    <li>Trace one claim from candidate discovery through immutable source acquisition, exact passage verification and <code>VerifiedClaim</code>.</li>
+    <li>Show model selection and intended-versus-actual telemetry, then explain why capability families are separated.</li>
+    <li>End with one limitation and its engineering response. Good examples: live environment evidence, usability research, restoration drills, or source-access coverage.</li>
+  </ol>
+
+  <div class="callout">
+    <span class="t">Strong closing line</span>
+    I built the reusable orchestration and evidence-control platform; proposal generation is one
+    demanding use case that proves the abstraction. The design keeps provider automation bounded,
+    sources traceable, people accountable, and failures recoverable.
+  </div>
+
+  <h2>Questions this portfolio can support</h2>
+  <table>
+    <thead><tr><th style="width:38%">Interview question</th><th>Evidence to open</th></tr></thead>
+    <tbody>
+      <tr><td>How do you make agents production-ready?</td><td>Preflight, runtime boundary, checkpoints, retry, cost, audit, readiness and deployment controls.</td></tr>
+      <tr><td>How do you prevent hallucinated evidence?</td><td>Candidate/evidence distinction, exact passages, <code>EvidencePolicy</code>, truth graph and drafting blockers.</td></tr>
+      <tr><td>How do business users operate a graph system?</td><td>Guided Run stages, contribution cards, attention queue and same-run Cockpit handoff.</td></tr>
+      <tr><td>How do you control cost and providers?</td><td>Model capability registry, routing policy, retry/fallback and the intended-versus-actual ledger in §7.</td></tr>
+      <tr><td>Show me it actually runs.</td><td>Appendix A: one 14-node run, 23 min 33 s, 12 model calls, $6.65, a 25-page cited deliverable, and one recorded fallback.</td></tr>
+      <tr><td>What did testing teach you?</td><td>Preflight topology checks, service-integration boundaries and the difference between stubs and live paths.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================== APPENDIX A ============================== -->
+<section class="section">
+  <p class="kicker">Appendix A</p>
+  <h1>Worked example: concept note to a 10-page methodology section</h1>
+  <p class="standfirst">One workflow, one run, one deliverable — with the numbers read back from the run record.</p>
+
+  <p>The workflow takes an uploaded concept note, plans bounded research briefs, runs bounded deep
+  research as the <em>only</em> evidence source, drafts a methodology section in five parallel chunks,
+  deterministically assembles them, generates figures for any image markers, and renders an editable
+  Horizon-style DOCX. It is fully autonomous — there are no human gates — which makes it a clean test
+  of the runtime rather than of the review UI.</p>
+
+  <table>
+    <thead><tr><th style="width:34%">Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>Workflow</td><td>Concept Note to 10-Page Methodology Section (<code>v1.0</code>, 14 nodes, 18 edges)</td></tr>
+      <tr><td>Run ID</td><td><code>ed462b3e-4b25-4e54-a0be-c8e46b516e05</code></td></tr>
+      <tr><td>Status</td><td>Completed — 14 of 14 nodes, 0 failed, 0 skipped</td></tr>
+      <tr><td>Duration</td><td>1,413.1 s (23 min 33 s), 4 August 2026</td></tr>
+      <tr><td>Input</td><td><code>Concept Note MATCH-BIO _1_.pdf</code> — 240,536 bytes, sha256 <code>f9e13a00…20ec8</code></td></tr>
+      <tr><td>Output</td><td><code>proposal.docx</code> — 83,235 bytes, ~25 pages, sha256 <code>adb5efba…f7f30</code></td></tr>
+      <tr><td>Template</td><td><code>horizon_part_b_docx</code> v1.0; source HTML also retained (103,316 bytes)</td></tr>
+      <tr><td>Recorded model spend</td><td>$6.6495 across 12 calls (full breakdown in §7)</td></tr>
+      <tr><td>Renderer warning</td><td>"Rendered proposal is 25 pages; configured limit is 10 pages."</td></tr>
+    </tbody>
+  </table>
+
+  <figure>
+    <img src="../screenshots/16-run-detail-overview.png" alt="Run detail overview">
+    <figcaption><span class="lbl">Screenshot 12. The durable run record.</span>
+    Run History keeps the workflow YAML, inputs, per-node outputs and audit for the run, and exposes
+    the routes back into it — View outputs, Open in Guided, Open in Cockpit, Auto-fix, Proposal review,
+    Evidence. The input file is stored as a content-addressed object-storage reference
+    (<code>minio_key</code> + <code>sha256</code>), not as bytes in graph state.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="../screenshots/17-run-detail-nodes.png" alt="Per-node execution record">
+    <figcaption><span class="lbl">Screenshot 13. Where the 23 minutes went.</span>
+    Per-node durations make the shape of the run legible: <code>load_files</code> 554 ms,
+    <code>concept_frame</code> 6 ms, <code>planner</code> 57.3 s, <code>deep_research</code> 467.6 s,
+    <code>outline</code> 499.3 s, then the five drafting chunks marked <code>parallel ×3</code>.
+    Bounded research and outlining dominate; the deterministic nodes cost milliseconds.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="../screenshots/10b-builder-graph-fanout.png" alt="Fan-out in the Builder">
+    <figcaption><span class="lbl">Screenshot 14. The parallel-drafting shape, as authored.</span>
+    <code>deep_research</code> → <code>outline</code> ("Fans out to 5 nodes") →
+    <code>draft_chunk_1…5</code>, each pinned to <code>claude-sonnet-4-5</code> →
+    <code>assemble</code> ("Fans out to 2 nodes"). Assembly is a
+    <code>TextAssemblerAgent</code> — a deterministic join, not an LLM call — precisely so the
+    final document cannot be truncated by a <code>max_tokens</code> ceiling after five chunks were
+    generated correctly.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="../screenshots/23-output-proposal-cover-toc.png" alt="Rendered proposal cover and contents">
+    <figcaption><span class="lbl">Screenshot 15. The deliverable — cover and generated contents.</span>
+    Horizon Europe Part B cover furniture and a 24-entry table of contents spanning the five planned
+    chunks: concept and state of the art, methods per objective, data and sampling, validation and
+    KPIs, then risk, ethics and open science. The renderer flags its own overrun (25 pages against a
+    10-page limit) rather than silently truncating — the run is marked <code>NEEDS INPUT</code> for
+    that reason.</figcaption>
+  </figure>
+
+  <figure>
+    <img src="../screenshots/24-output-proposal-body.png" alt="Rendered proposal body">
+    <figcaption><span class="lbl">Screenshot 16. The prose the pipeline actually produced.</span>
+    Objectives 1–4 of the methodology, at roughly 11,900 words in total. The passage names concrete
+    instruments and datasets (SIGPAC/LPIS parcel identification, Sentinel-1 C-band SAR, Sentinel-2
+    time series, NIRS screening), states baselines and success criteria, and explicitly declines to
+    promise an accuracy threshold ex ante — the drafting nodes were constrained to the bounded research
+    dossiers as their only evidence base.</figcaption>
+  </figure>
+
+  <div class="callout warn">
+    <span class="t">What this worked example is evidence of</span>
+    A 14-node graph compiled and executed end to end; parallel fan-out and deterministic assembly
+    behaved as authored; object storage, cost ledger, audit and durable history were all populated;
+    a provider fallback was recorded rather than hidden; and the renderer reported a constraint breach
+    instead of quietly truncating. It is <strong>not</strong> evidence that the methodology text is
+    scientifically correct, that the citations would survive expert review, or that the workflow
+    behaves this way on other inputs. Those require the evidence-quality gate described in §6 and
+    domain review.
+  </div>
+</section>
+
+<!-- ============================== APPENDIX B ============================== -->
+<section class="section">
+  <p class="kicker">Appendix B</p>
+  <h1>Code and repository reference map</h1>
+
+  <table>
+    <thead><tr><th style="width:32%">Topic</th><th>Primary current files</th></tr></thead>
+    <tbody>
+      <tr><td>Workflow contract</td><td><code>app/runtime/schema.py</code></td></tr>
+      <tr><td>Zero-token validation</td><td><code>app/runtime/preflight.py</code></td></tr>
+      <tr><td>Compilation and node boundary</td><td><code>app/runtime/compiler.py</code>; <code>app/runtime/executor.py</code></td></tr>
+      <tr><td>Builder durability</td><td><code>app/workflow/builder_store.py</code>; <code>ui/src/modes/studio/Builder.tsx</code></td></tr>
+      <tr><td>Guided user experience</td><td><code>ui/src/modes/studio/GuidedRun.tsx</code>; <code>ui/src/modes/studio/guided/runtime-model.ts</code></td></tr>
+      <tr><td>Cockpit and run history</td><td><code>ui/src/modes/studio/Cockpit.tsx</code>; <code>ui/src/modes/studio/run-history/</code></td></tr>
+      <tr><td>Research</td><td><code>app/research/deep_research.py</code>; <code>app/research/skills.py</code></td></tr>
+      <tr><td>Evidence contracts</td><td><code>app/evidence/models.py</code>; related evidence nodes</td></tr>
+      <tr><td>Retrieval</td><td><code>app/retrieval/hybrid_search.py</code>; <code>reranker.py</code>; <code>compressor.py</code></td></tr>
+      <tr><td>Model routing</td><td><code>app/llm/openai_registry.py</code>; <code>model_router.py</code>; <code>registry.py</code></td></tr>
+      <tr><td>Confidential entities</td><td><code>app/security/entity_tokenizer.py</code>; <code>entity_registry.py</code>; <code>entity_vault.py</code></td></tr>
+      <tr><td>Deployment</td><td><code>docker-compose.production.yml</code>; <code>deploy/ionos</code>; <code>docs/IONOS_PRODUCTION_DEPLOYMENT.md</code></td></tr>
+      <tr><td>Production controls</td><td><code>docs/PRODUCTION_READINESS_MATRIX.md</code>; <code>docs/SECURITY_CONFIGURATION.md</code></td></tr>
+      <tr><td>Worked-example workflow</td><td><code>workflows/concept_note_to_10-page_methodology_section1.yaml</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Reference material used</h2>
+  <ul>
+    <li><code>Eurskem_AI_Source_of_Truth(1).pdf</code> — earlier June implementation snapshot and architectural rationale.</li>
+    <li><code>Eurskem_AI_Codebase_Reference(1).md</code> — code map, wiring and troubleshooting context.</li>
+    <li><code>Eurskem_AI_Interview_Playbooks(1).md</code> — interview framing and honesty calibration.</li>
+    <li>Public repository <code>main</code> at <code>7ca16b2</code> — current code and deployment documentation inspected for this update.</li>
+    <li>A local instance of that commit — screenshots, run record and cost ledger, 9 August 2026.</li>
+  </ul>
+
+  <div class="callout warn">
+    <span class="t">Use commit-specific language</span>
+    If <code>main</code> changes, update the snapshot and recheck every code sample, screenshot and
+    implementation claim. Do not keep a moving <code>latest</code> label on a static portfolio document.
+    Screenshots age faster than prose: a UI change invalidates an image silently, whereas a code sample
+    at least carries its file and line numbers.
+  </div>
+</section>
+
+<!-- ============================== APPENDIX C ============================== -->
+<section class="section">
+  <p class="kicker">Appendix C</p>
+  <h1>Screenshot index and capture method</h1>
+  <p class="standfirst">Every image in this document is reproducible from the repository.</p>
+
+  <p>Screenshots were captured with a headless Chromium session driving the application at
+  <code>localhost:5173</code> against a local backend at <code>localhost:8000</code>, with MongoDB,
+  Weaviate, MinIO and Redis running from <code>docker-compose.yml</code>. The viewport was 1680×1050 at
+  a device pixel ratio of 2, so each PNG is 3360×2100. No image has been retouched, composed or
+  annotated; the two graph close-ups are the application's own zoom, not a crop.</p>
+
+  <table>
+    <thead><tr><th style="width:9%">Shot</th><th style="width:40%">File</th><th>Surface</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>01-workflow-library.png</code></td><td>Workflow Library, all 20 workflows</td></tr>
+      <tr><td>2</td><td><code>03-guided-run-overview.png</code></td><td>Guided Run, completed run, five stages</td></tr>
+      <tr><td>3</td><td><code>09-builder-canvas-palette.png</code></td><td>Builder, four-area layout</td></tr>
+      <tr><td>4</td><td><code>06-cockpit-graph.png</code></td><td>Cockpit, live graph and lifecycle counters</td></tr>
+      <tr><td>5</td><td><code>13-builder-versions.png</code></td><td>Builder, immutable version history</td></tr>
+      <tr><td>6</td><td><code>12-builder-preflight.png</code></td><td>Builder, zero-token preflight report</td></tr>
+      <tr><td>7</td><td><code>11-builder-configure.png</code></td><td>Builder, typed node configuration</td></tr>
+      <tr><td>8</td><td><code>14-builder-map-data.png</code></td><td>Builder, visual data mapping</td></tr>
+      <tr><td>9</td><td><code>22-builder-test.png</code></td><td>Builder, node/branch test panel</td></tr>
+      <tr><td>10</td><td><code>20-cockpit-audit.png</code></td><td>Cockpit, per-node audit trail</td></tr>
+      <tr><td>11</td><td><code>07-cockpit-node-detail.png</code></td><td>Cockpit, failed node and diagnosis</td></tr>
+      <tr><td>12</td><td><code>16-run-detail-overview.png</code></td><td>Run History, durable run record</td></tr>
+      <tr><td>13</td><td><code>17-run-detail-nodes.png</code></td><td>Run History, per-node durations</td></tr>
+      <tr><td>14</td><td><code>10b-builder-graph-fanout.png</code></td><td>Builder, five-way drafting fan-out</td></tr>
+      <tr><td>15</td><td><code>23-output-proposal-cover-toc.png</code></td><td>Rendered deliverable, cover and contents</td></tr>
+      <tr><td>16</td><td><code>24-output-proposal-body.png</code></td><td>Rendered deliverable, methodology body</td></tr>
+    </tbody>
+  </table>
+
+  <p class="small">The full capture set contains 25 images, including surfaces not reproduced in this
+  document (run timeline, run outputs tab, Guided Run outputs, Cockpit output viewer and scoring
+  panel, library card detail, and the full-screen graph). They ship alongside this PDF in
+  <code>portfolio/screenshots/</code> so a reviewer can inspect any surface at full resolution.</p>
+
+  <div class="callout">
+    <span class="t">Reproducing these captures</span>
+    Bring up the data services, start the backend and the Vite dev server, sign in with the
+    development bypass account, then drive the same routes: <code>/library</code>,
+    <code>/history</code> → open a run → <em>Open in Guided</em> / <em>Open in Cockpit</em>, and
+    <code>/builder/&lt;workflow&gt;</code>. Cockpit switches to the output viewer for a completed run,
+    so the live graph in Screenshots 4 and 11 comes from a failed run of the same workflow —
+    <code>3d46a8ee</code> — which is also why it is the honest place to show failure diagnosis.
+  </div>
+</section>
+
+</body>
+</html>

@@ -1,0 +1,353 @@
+name: Concept Note to 10-Page Methodology Section
+description: Loads the uploaded concept note, plans bounded research briefs, runs bounded deep research
+  as the only evidence source, drafts a ~10-page methodology section in five parallel chunks, deterministically
+  assembles it, generates figures for any image markers, and renders an editable Horizon-style DOCX. Fully
+  autonomous - no human gates.
+version: '1.0'
+use_case: proposal_engineering
+inputs:
+  files:
+    type: file
+nodes:
+- id: load_files
+  type: WorkflowFileLoader
+  config:
+    files: '{{inputs.files}}'
+    max_chars_per_file: 40000
+    fail_on_unreadable: false
+- id: concept_frame
+  type: Echo
+  config:
+    template: '=== CONCEPT NOTE (uploaded documents) ===
+
+      {{load_files.text}}
+
+      '
+- id: planner
+  type: ScientificResearchPlannerAgent
+  config:
+    call_context: '{{concept_frame.text}}'
+    concept_context: '{{concept_frame.text}}'
+    model: claude-opus-5
+    max_briefs: 5
+    max_total_tool_calls: 60
+    standard_tool_calls: 10
+    critical_tool_calls: 16
+    max_skills_per_brief: 3
+- id: deep_research
+  type: BoundedDeepResearchAgent
+  config:
+    research_briefs: '{{planner.research_briefs}}'
+    max_jobs: 5
+    max_parallel_jobs: 3
+    max_total_tool_calls: 60
+    max_tool_calls_per_job: 16
+    max_citations_per_brief: 12
+    max_candidates_per_claim: 4
+    max_duration_seconds: 1800
+    max_iterations: 8
+- id: outline
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    system_prompt: You are a senior Horizon Europe methodology architect. You plan methodology sections
+      that are specific, testable, and grounded only in the supplied research dossiers. Never invent citations.
+    prompt_template: "Plan a ~10-page (approx. 5,500-6,500 word) methodology section.\n\nCONCEPT NOTE:\n\
+      {{concept_frame.text}}\n\nRESEARCH DOSSIERS (the ONLY permitted evidence base):\n{{deep_research.dossiers}}\n\
+      \nUNRESOLVED QUESTIONS FROM PLANNING:\n{{planner.unresolved_questions}}\n\nProduce:\n- section_title:\
+      \ the section heading.\n- overall_approach: 200-word statement of the methodological logic and\n\
+      \  how the parts interlock.\n- five drafting briefs (chunk_1_brief .. chunk_5_brief). Each brief\
+      \ must\n  name the subsection headings to write, the target word count (~1,200\n  words each), the\
+      \ specific methods/instruments/datasets to describe,\n  the baselines and validation logic, and\
+      \ which dossier findings to lean\n  on. Ensure the five chunks do not overlap and together cover:\n\
+      \  (1) overall concept, state of the art positioning and research\n  questions; (2) methods and\
+      \ technical approach per objective;\n  (3) data, datasets, sampling and quality assurance;\n  (4)\
+      \ validation, baselines, KPIs and statistical treatment;\n  (5) risk, uncertainty handling, ethics,\
+      \ open science and feasibility.\n"
+    output_schema:
+      section_title: str
+      overall_approach: str
+      chunk_1_brief: str
+      chunk_2_brief: str
+      chunk_3_brief: str
+      chunk_4_brief: str
+      chunk_5_brief: str
+    temperature: 0.3
+    max_tokens: 6000
+- id: draft_chunk_1
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    system_prompt: 'Write publication-grade Horizon Europe methodology prose in Markdown. Use only the
+      supplied dossiers as evidence. Where evidence is missing, write an explicit "[EVIDENCE GAP: ...]"
+      marker instead of inventing a source. No filler, no repetition of other chunks.'
+    prompt_template: 'OVERALL APPROACH (shared frame, do not restate at length):
+
+      {{outline.parsed.overall_approach}}
+
+
+      YOUR DRAFTING BRIEF (chunk 1 of 5):
+
+      {{outline.parsed.chunk_1_brief}}
+
+
+      CONCEPT NOTE:
+
+      {{concept_frame.text}}
+
+
+      RESEARCH DOSSIERS:
+
+      {{deep_research.dossiers}}
+
+
+      Write ~1,200 words of Markdown starting at heading level "##".
+
+      Cover the overall concept, state-of-the-art positioning and the research
+
+      questions/hypotheses. Insert at most one figure request as
+
+      [[IMAGE PROMPT: ...]] if a diagram genuinely clarifies the logic.
+
+      Output only the section text.
+
+      '
+    temperature: 0.4
+    max_tokens: 8000
+- id: draft_chunk_2
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    system_prompt: 'Write publication-grade Horizon Europe methodology prose in Markdown. Use only the
+      supplied dossiers as evidence. Where evidence is missing, write an explicit "[EVIDENCE GAP: ...]"
+      marker instead of inventing a source. No filler, no repetition of other chunks.'
+    prompt_template: 'OVERALL APPROACH (shared frame, do not restate at length):
+
+      {{outline.parsed.overall_approach}}
+
+
+      YOUR DRAFTING BRIEF (chunk 2 of 5):
+
+      {{outline.parsed.chunk_2_brief}}
+
+
+      CONCEPT NOTE:
+
+      {{concept_frame.text}}
+
+
+      RESEARCH DOSSIERS:
+
+      {{deep_research.dossiers}}
+
+
+      Write ~1,300 words of Markdown starting at heading level "##".
+
+      Describe each method concretely: inputs, procedure, tooling, baseline,
+
+      expected output, and failure condition. Include a Markdown table
+
+      mapping objectives to methods. Output only the section text.
+
+      '
+    temperature: 0.4
+    max_tokens: 8000
+- id: draft_chunk_3
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    system_prompt: 'Write publication-grade Horizon Europe methodology prose in Markdown. Use only the
+      supplied dossiers as evidence. Where evidence is missing, write an explicit "[EVIDENCE GAP: ...]"
+      marker instead of inventing a source. No filler, no repetition of other chunks.'
+    prompt_template: 'OVERALL APPROACH (shared frame, do not restate at length):
+
+      {{outline.parsed.overall_approach}}
+
+
+      YOUR DRAFTING BRIEF (chunk 3 of 5):
+
+      {{outline.parsed.chunk_3_brief}}
+
+
+      CONCEPT NOTE:
+
+      {{concept_frame.text}}
+
+
+      RESEARCH DOSSIERS:
+
+      {{deep_research.dossiers}}
+
+
+      Write ~1,200 words of Markdown starting at heading level "##".
+
+      Be precise about datasets, provenance, sampling frames, volumes,
+
+      preprocessing and quality control. Include a Markdown data table.
+
+      Output only the section text.
+
+      '
+    temperature: 0.4
+    max_tokens: 8000
+- id: draft_chunk_4
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    system_prompt: 'Write publication-grade Horizon Europe methodology prose in Markdown. Use only the
+      supplied dossiers as evidence. Where evidence is missing, write an explicit "[EVIDENCE GAP: ...]"
+      marker instead of inventing a source. No filler, no repetition of other chunks.'
+    prompt_template: 'OVERALL APPROACH (shared frame, do not restate at length):
+
+      {{outline.parsed.overall_approach}}
+
+
+      YOUR DRAFTING BRIEF (chunk 4 of 5):
+
+      {{outline.parsed.chunk_4_brief}}
+
+
+      CONCEPT NOTE:
+
+      {{concept_frame.text}}
+
+
+      RESEARCH DOSSIERS:
+
+      {{deep_research.dossiers}}
+
+
+      Write ~1,200 words of Markdown starting at heading level "##".
+
+      Give quantified baselines, KPI targets, measurement protocols,
+
+      statistical tests, power/sample-size reasoning and acceptance criteria.
+
+      Include a KPI table with baseline, target and measurement method.
+
+      Output only the section text.
+
+      '
+    temperature: 0.4
+    max_tokens: 8000
+- id: draft_chunk_5
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    system_prompt: 'Write publication-grade Horizon Europe methodology prose in Markdown. Use only the
+      supplied dossiers as evidence. Where evidence is missing, write an explicit "[EVIDENCE GAP: ...]"
+      marker instead of inventing a source. No filler, no repetition of other chunks.'
+    prompt_template: 'OVERALL APPROACH (shared frame, do not restate at length):
+
+      {{outline.parsed.overall_approach}}
+
+
+      YOUR DRAFTING BRIEF (chunk 5 of 5):
+
+      {{outline.parsed.chunk_5_brief}}
+
+
+      CONCEPT NOTE:
+
+      {{concept_frame.text}}
+
+
+      RESEARCH DOSSIERS:
+
+      {{deep_research.dossiers}}
+
+
+      Write ~1,200 words of Markdown starting at heading level "##".
+
+      Give quantified baselines, KPI targets, measurement protocols,
+
+      statistical tests, power/sample-size reasoning and acceptance criteria.
+
+      Include a KPI table with baseline, target and measurement method.
+
+      Output only the section text.
+
+      '
+    temperature: 0.4
+    max_tokens: 8000
+- id: assemble
+  type: TextAssemblerAgent
+  config:
+    parts:
+    - '# {{outline.parsed.section_title}}'
+    - '{{draft_chunk_1.raw}}'
+    - '{{draft_chunk_2.raw}}'
+    - '{{draft_chunk_3.raw}}'
+    - '{{draft_chunk_4.raw}}'
+    - '{{draft_chunk_5.raw}}'
+    separator: '
+
+
+      '
+- id: figures
+  type: DynamicFigureAgent
+  config:
+    content: '{{assemble.text}}'
+    size: 1024x1024
+    quality: medium
+    output_format: png
+    max_images: 4
+    fail_open: true
+- id: render_docx
+  type: HorizonDOCXProposalRenderer
+  config:
+    content: '{{figures.illustrated_content}}'
+    content_format: markdown
+    metadata:
+      title: '{{outline.parsed.section_title}}'
+      section: Methodology
+    include_toc: true
+    include_bibliography: false
+    include_evidence_annex: false
+    page_limit: 10
+    enforce_page_limit: false
+    enable_footnotes: true
+- id: graphnormalizer_1
+  type: GraphNormalizer
+  config:
+    model: claude-sonnet-4-5
+    max_tokens: 16384
+    concept_note: '{{concept_frame.text}}'
+    call_facts: ''
+edges:
+- from: load_files
+  to: concept_frame
+- from: planner
+  to: deep_research
+- from: deep_research
+  to: outline
+- from: outline
+  to: draft_chunk_1
+- from: outline
+  to: draft_chunk_2
+- from: outline
+  to: draft_chunk_3
+- from: outline
+  to: draft_chunk_4
+- from: outline
+  to: draft_chunk_5
+- from: draft_chunk_1
+  to: assemble
+- from: draft_chunk_2
+  to: assemble
+- from: draft_chunk_3
+  to: assemble
+- from: draft_chunk_4
+  to: assemble
+- from: assemble
+  to: figures
+- from: figures
+  to: render_docx
+- from: assemble
+  to: render_docx
+- from: draft_chunk_5
+  to: assemble
+- from: graphnormalizer_1
+  to: planner
+- from: concept_frame
+  to: graphnormalizer_1
