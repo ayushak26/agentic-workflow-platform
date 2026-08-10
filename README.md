@@ -46,9 +46,6 @@ Proposal generation is the flagship use case. It is not the platform.
 - [Evidence integrity](#evidence-integrity)
 - [Cost and model routing](#cost-and-model-routing)
 - [Testing and verification](#testing-and-verification)
-- [Production](#production)
-- [Documentation](#documentation)
-- [Project status and honesty boundary](#project-status-and-honesty-boundary)
 
 ---
 
@@ -369,75 +366,11 @@ cd ui && npm ci && npm run lint -- --max-warnings=0 && npm run build
 `scripts/preflight_workflows.py` validates every workflow in the repository without spending a single
 token — the cheapest CI gate in the project and the one that catches the most.
 
----
-
-## Production
-
-- [IONOS deployment guide](docs/IONOS_PRODUCTION_DEPLOYMENT.md)
-- [Production readiness evidence](docs/PRODUCTION_READINESS_MATRIX.md)
-- [Security configuration](docs/SECURITY_CONFIGURATION.md)
-- [Cloud migration map](docs/cloud-migration-map.md)
-
-The documented topology puts Caddy on ports 80/443 for TLS termination and keeps MongoDB, Weaviate,
-MinIO and Redis on an internal Docker network with no public database ports. Grafana and Prometheus
-bind to loopback and are reached over an SSH tunnel. The release workflow runs after CI, builds an
-immutable release, waits for readiness, runs a no-LLM load gate, switches the current release, and
-performs an HTTPS smoke test with rollback on failure.
-
-Start from `.env.example`, or generate a complete secret file with
-`scripts/generate_production_env.py`. The production startup gate refuses development credentials,
-unsafe origins, missing rate limits, missing guardrails or cache, and missing provider configuration.
-
-**Confidentiality** — the entity-protection service replaces known or detected protected entities with
-stable, scope-bound placeholders before an external model call and restores them afterwards. Detection
-runs registry-first (longest known value wins), then regex, then NER over unclaimed spans; a
-restricted-local mode that is not implemented fails toward pseudonymisation rather than silently
-sending plaintext.
 
 > GDPR-oriented controls and auditability are **not** GDPR compliance. A real deployment still needs
 > purpose limitation, lawful basis, data minimisation, processor agreements, DPIA where applicable,
 > subject-rights processes, retention, and breach procedures.
 
----
-
-## Documentation
-
-| Document | What it is |
-|---|---|
-| **[Technical Portfolio Reference](portfolio/Eurskem_AI_Technical_Portfolio_Reference_v2.pdf)** (41 pp) | Architecture and engineering reference — runtime boundary, contract, preflight, evidence lifecycle, cost, security, deployment, failure modes, plus a fully worked example |
-| **[10-Minute Walkthrough Transcript](portfolio/Eurskem_AI_Walkthrough_Transcript_v2.pdf)** (24 pp) | Presenter script and shot list — verbatim script, the screen for each beat, and the artefact behind every claim |
-| [`portfolio/screenshots/`](portfolio/screenshots/) | 25 unretouched captures at 3360 × 2100 |
-| [`portfolio/README.md`](portfolio/README.md) | Bundle index and rebuild instructions |
-| [`docs/architecture.md`](docs/architecture.md) | Component-level architecture notes |
-| [`docs/evaluation.md`](docs/evaluation.md) | Evaluation posture and scorecards |
-| [`docs/security.md`](docs/security.md) | Security model |
-| [`docs/adrs/`](docs/adrs/) | Architecture decision records |
-
----
-
-## Project status and honesty boundary
-
-This is a working portfolio build, and the documentation is deliberately explicit about what the
-evidence supports.
-
-**Demonstrated.** A 14-node graph compiled and executed end to end in 23 min 33 s. Parallel fan-out
-and deterministic assembly behaved as authored. Object storage, cost ledger, audit and durable history
-were all populated. A provider fallback was recorded rather than hidden. The renderer reported a
-constraint breach (25 pages against a 10-page limit) instead of truncating silently. The evidence
-gates refused to promote unverified material when acquisition returned nothing.
-
-**Not demonstrated.** These are single runs on a developer machine — not benchmarks, service levels or
-a price list. The repository documents a production topology with readiness gates, rollback and
-backups; live production server health has not been independently inspected, and deployment tooling is
-not a running service. No claim is made about adoption, accuracy, savings, throughput or regulatory
-approval.
-
-**Known gaps**, stated rather than omitted: per-node cost is not yet joined into the Cockpit node
-inspector; end-to-end evidence *acquisition* did not succeed on the input tested — verification held,
-source resolution is the weak link, and an evidence-quality gate (source type, date, peer-review
-status, study design, retraction status) is the planned response.
-
----
 
 <p align="center">
   <strong>Scientific &nbsp;·&nbsp; Trustworthy &nbsp;·&nbsp; Observable &nbsp;·&nbsp; Human-controlled</strong><br>
