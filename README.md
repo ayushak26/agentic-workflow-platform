@@ -27,7 +27,6 @@ through one runtime boundary that binds cost context, publishes lifecycle events
 records, checks for cooperative pause, resolves configuration templates, validates output against a
 schema, and checkpoints for recovery.
 
-Proposal generation is the flagship use case. It is not the platform.
 
 <p align="center">
   <img src="portfolio/screenshots/01-workflow-library.png" width="88%" alt="Workflow Library">
