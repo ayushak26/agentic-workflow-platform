@@ -12,10 +12,12 @@ reconciliation exactly one place to hook in rather than three.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from typing import Any, Awaitable
 
 from app.observability.logging import get_logger
+from app.runtime.coordination import RedisLease
 from app.runtime.schema import WorkflowSpec
 from app.workflow.run_history import (
     initialize_run_checkpoint,
@@ -190,7 +192,7 @@ async def run_and_finalize(
     except asyncio.CancelledError as e:
         # Only reaches here when something cancels the task actually running
         # the workflow (e.g. process shutdown) — a dropped HTTP request no
-        # longer does this, since launch_background_run() detaches execution
+        # longer does this, since BackgroundRunManager detaches execution
         # from the request task. Still record it rather than leaving the run
         # stuck "running" forever, then let the cancellation keep propagating.
         await record_run_failure(db, run_id=run_id, session=session, error=e)
@@ -206,18 +208,8 @@ async def run_and_finalize(
     )
 
 
-_BACKGROUND_RUN_TASKS: set[asyncio.Task] = set()
-
-
-def launch_background_run(
-    coro: Awaitable[dict[str, Any]],
-    *,
-    db: Any,
-    run_id: str,
-    session: str,
-    record_rejection_reason: bool = False,
-) -> None:
-    """Run ``coro`` to completion detached from the request that triggered it.
+class BackgroundRunManager:
+    """Own detached run tasks with a Redis lease shared by all workers.
 
     A workflow run can take minutes; holding the HTTP request open for that
     long means any idle-connection timeout upstream (reverse proxy, browser,
@@ -226,28 +218,143 @@ def launch_background_run(
     ``asyncio.CancelledError`` inside the OpenAI client mid-run. Detaching
     execution into its own task means a dropped request no longer touches
     it; Run History (``start_new_run_record``) and the SSE event bus are how
-    callers observe progress and the terminal result instead.
+    callers observe progress and the terminal result instead. The Redis lease
+    makes a repeated launch of the same run_id a no-op on every worker, while
+    the local task set is only lifecycle bookkeeping for graceful shutdown.
     """
-    task = asyncio.create_task(
-        run_and_finalize(
-            coro,
-            db=db,
-            run_id=run_id,
-            session=session,
-            record_rejection_reason=record_rejection_reason,
+
+    def __init__(self, redis: Any | None, *, lease_seconds: int = 120) -> None:
+        self._redis = redis
+        self._lease_seconds = max(30, lease_seconds)
+        self._tasks: set[asyncio.Task[None]] = set()
+
+    def launch(
+        self,
+        coro: Awaitable[dict[str, Any]],
+        *,
+        db: Any,
+        run_id: str,
+        session: str,
+        record_rejection_reason: bool = False,
+    ) -> None:
+        task = asyncio.create_task(
+            self._run_owned(
+                coro,
+                db=db,
+                run_id=run_id,
+                session=session,
+                record_rejection_reason=record_rejection_reason,
+            ),
+            name=f"workflow-run:{run_id}",
         )
-    )
-    _BACKGROUND_RUN_TASKS.add(task)
+        self._tasks.add(task)
 
-    def _on_done(t: asyncio.Task) -> None:
-        _BACKGROUND_RUN_TASKS.discard(t)
-        if t.cancelled():
+        def _on_done(done: asyncio.Task[None]) -> None:
+            self._tasks.discard(done)
+            if done.cancelled():
+                return
+            exc = done.exception()
+            if exc is not None:
+                log.error(
+                    "background_run.task_failed",
+                    run_id=run_id,
+                    error=str(exc),
+                )
+
+        task.add_done_callback(_on_done)
+
+    async def _run_owned(
+        self,
+        coro: Awaitable[dict[str, Any]],
+        *,
+        db: Any,
+        run_id: str,
+        session: str,
+        record_rejection_reason: bool,
+    ) -> None:
+        if self._redis is None:
+            await run_and_finalize(
+                coro,
+                db=db,
+                run_id=run_id,
+                session=session,
+                record_rejection_reason=record_rejection_reason,
+            )
             return
-        exc = t.exception()
-        if exc is not None:
-            log.error("background_run.task_failed", run_id=run_id, error=str(exc))
 
-    task.add_done_callback(_on_done)
+        lease = RedisLease(
+            self._redis,
+            f"awp:run-owner:{run_id}",
+            ttl_seconds=self._lease_seconds,
+        )
+        try:
+            acquired = await lease.acquire()
+        except Exception as exc:
+            close = getattr(coro, "close", None)
+            if close is not None:
+                close()
+            await record_run_failure(
+                db,
+                run_id=run_id,
+                session=session,
+                error=f"Distributed run ownership is unavailable: {exc}",
+            )
+            log.error(
+                "background_run.lease_unavailable",
+                run_id=run_id,
+                error_type=type(exc).__name__,
+            )
+            return
+        if not acquired:
+            close = getattr(coro, "close", None)
+            if close is not None:
+                close()
+            log.warning("background_run.already_owned", run_id=run_id)
+            return
+
+        execution = asyncio.create_task(
+            run_and_finalize(
+                coro,
+                db=db,
+                run_id=run_id,
+                session=session,
+                record_rejection_reason=record_rejection_reason,
+            )
+        )
+        heartbeat = asyncio.create_task(lease.keep_alive())
+        try:
+            done, _ = await asyncio.wait(
+                {execution, heartbeat},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if execution in done:
+                heartbeat.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await heartbeat
+                await execution
+                return
+
+            # Ownership expired or was replaced. Stop this worker before a new
+            # owner can execute the same run concurrently.
+            execution.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await execution
+            log.error("background_run.lease_lost", run_id=run_id)
+        finally:
+            heartbeat.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat
+            with contextlib.suppress(Exception):
+                await lease.release()
+
+    async def close(self) -> None:
+        """Cancel owned work and let run_and_finalize persist interruption."""
+
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def _reconcile_pipeline_stage(db: Any, run_id: str, session: str) -> None:

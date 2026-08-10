@@ -21,6 +21,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.config import settings
+from app.db.migrations import CURRENT_RUN_SCHEMA_VERSION
 from app.observability.logging import get_logger
 
 logger = get_logger(__name__)
@@ -339,6 +340,7 @@ async def upsert_run(
         "reused_nodes": [],
         "attempt": 1,
         "error": None,
+        "schema_version": CURRENT_RUN_SCHEMA_VERSION,
     }
     for key in fields:
         set_on_insert.pop(key, None)
@@ -778,6 +780,7 @@ async def initialize_run_checkpoint(
         "approvals": [],
         "created_at": now,
         "updated_at": now,
+        "schema_version": CURRENT_RUN_SCHEMA_VERSION,
     }
     try:
         await db["run_checkpoints"].update_one(
@@ -909,7 +912,7 @@ async def record_checkpoint_approval(
     node_id: str,
     decision: dict[str, Any],
     actor: str,
-) -> None:
+) -> bool:
     """Append an immutable human decision before resuming execution."""
 
     _require_session(session_id)
@@ -919,7 +922,7 @@ async def record_checkpoint_approval(
         "actor": actor,
         "decided_at": datetime.now(timezone.utc),
     }
-    await db["run_checkpoints"].update_one(
+    result = await db["run_checkpoints"].update_one(
         {
             "run_id": run_id,
             "session_id": session_id,
@@ -934,6 +937,7 @@ async def record_checkpoint_approval(
             },
         },
     )
+    return getattr(result, "modified_count", 0) == 1
 
 
 async def mark_checkpoint_status(

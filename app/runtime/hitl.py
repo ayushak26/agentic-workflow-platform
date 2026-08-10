@@ -26,6 +26,10 @@ class HITLResumeError(KeyError):
     pass
 
 
+class HITLResumeConflict(RuntimeError):
+    """Another worker already claimed this paused checkpoint."""
+
+
 def _find_rejection(state: dict) -> dict | None:
     """Any node output carrying decision == 'reject' means a HITL gate was rejected."""
     for node_id, out in (state.get("node_outputs") or {}).items():
@@ -95,7 +99,7 @@ async def resume_workflow_durable(
         checkpoint = await get_resume_checkpoint(db, session_id, run_id)
         if checkpoint is not None:
             _validate_saved_decision(checkpoint, decision)
-            await record_checkpoint_approval(
+            claimed = await record_checkpoint_approval(
                 db,
                 run_id=run_id,
                 session_id=session_id,
@@ -103,6 +107,17 @@ async def resume_workflow_durable(
                 decision=decision,
                 actor=actor,
             )
+            if not claimed:
+                raise HITLResumeConflict(
+                    f"Workflow {run_id} is already being resumed"
+                )
+
+    persistent_checkpointer = services.get("langgraph_checkpointer")
+    if checkpoint is not None and persistent_checkpointer is not None:
+        # Never depend on the worker-local graph when durable state exists.
+        # This also guarantees the same branch is used whether resume lands on
+        # the original worker or a different one.
+        _PAUSED_GRAPHS.pop(run_id, None)
 
     if run_id not in _PAUSED_GRAPHS:
         if checkpoint is None:
@@ -111,7 +126,6 @@ async def resume_workflow_durable(
             )
 
         spec = load_workflow_from_string(checkpoint["workflow_yaml"])
-        persistent_checkpointer = services.get("langgraph_checkpointer")
         if persistent_checkpointer is not None:
             # Recompile a fresh graph (the state lives in Redis, not in this
             # Python process) and resume the exact saved LangGraph thread.
@@ -126,7 +140,6 @@ async def resume_workflow_durable(
                 config=config,
             )
             if "__interrupt__" in final_state:
-                _PAUSED_GRAPHS[run_id] = graph
                 return {
                     "status": "paused",
                     "run_id": run_id,

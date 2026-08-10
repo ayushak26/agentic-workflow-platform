@@ -17,7 +17,11 @@ from app.runtime.autofix import (
     repair_with_llm,
 )
 from app.runtime.executor import run_workflow
-from app.runtime.hitl import resume_workflow_durable, HITLResumeError
+from app.runtime.hitl import (
+    HITLResumeConflict,
+    HITLResumeError,
+    resume_workflow_durable,
+)
 from app.runtime.loader import load_workflow_from_string
 from app.runtime.pipeline_loader import PIPELINES_DIR, load_pipeline_from_string
 from app.runtime.preflight import (
@@ -36,10 +40,10 @@ from app.security.dependencies import (
 # Phase 11A — run history + durable retry checkpoints
 from app.workflow.orchestration import (
     finalize_run_result,
-    launch_background_run,
     record_run_failure,
     start_new_run_record,
 )
+from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 from app.security.audit import write_audit_event, HITL_EVENT
 from app.workflow.builder_store import WorkflowBuilderStore
 from app.workflow.library_metadata import library_summary, readiness_summary
@@ -382,9 +386,13 @@ async def get_preflight_stats(
 @router.post("/workflows/run")
 async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(require_consultant)):
     services = getattr(request.app.state, "services", {})
+    try:
+        guarded_inputs = check_workflow_inputs(req.inputs).value
+    except GuardrailViolation as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     preflight = await preflight_workflow_for_run(
         req.workflow_yaml,
-        provided_inputs=req.inputs,
+        provided_inputs=guarded_inputs,
         services=services,
         probe_services=True,
         require_run_history=True,
@@ -405,12 +413,19 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
     try:
         validated_inputs = await validate_workflow_inputs(
             spec.inputs,
-            req.inputs,
+            guarded_inputs,
             session_id=session,
             object_store=services.get("object_store"),
         )
     except WorkflowFileInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    run_manager = services.get("background_run_manager")
+    if run_manager is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Background run service is unavailable",
+        )
 
     # Client-supplied run_ids are reserved per-tenant (idempotent re-POST safe,
     # cross-tenant claims blocked). Auto-generated ids need no reservation.
@@ -433,8 +448,8 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
         collection_id=req.collection_id,
     )
 
-    # Execution is detached from this request (launch_background_run) rather
-    # than awaited here: a run can take minutes, and holding the HTTP request
+    # Execution is detached from this request through the leased run manager
+    # rather than awaited here: a run can take minutes, and holding the request
     # open that long means any idle-connection timeout upstream (reverse
     # proxy, browser, NAT) cancels the request task — and with it whatever
     # call the workflow was in the middle of, surfacing as a raw
@@ -442,7 +457,7 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
     # record (start_new_run_record, above) and the SSE event bus at
     # /runs/{run_id}/events are how the Cockpit observes progress and the
     # terminal result instead of this response body.
-    launch_background_run(
+    run_manager.launch(
         run_workflow(
             spec,
             validated_inputs,
@@ -450,6 +465,7 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
             collection_id=req.collection_id,
             services=services,
             run_id=run_id,
+            inputs_guarded=True,
         ),
         db=db,
         run_id=run_id,
@@ -480,27 +496,34 @@ async def resume(
     actor = user.username   # real JWT subject (CurrentUser, not a dict)
 
     try:
+        guarded_decision = check_workflow_inputs(req.decision).value
+    except GuardrailViolation as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
         result = await resume_workflow_durable(
             run_id,
-            req.decision,
+            guarded_decision,
             services=services,
             session_id=session,
             actor=actor,
         )
     except HITLResumeError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except HITLResumeConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         # A node failed after resume.
         return await record_run_failure(db, run_id=run_id, session=session, error=e)
 
     # Phase 11A — HITL audit event: the human decision, now that session is in scope.
-    action = req.decision.get("decision")
+    action = guarded_decision.get("decision")
     if db is not None and action in HITL_EVENT:
         audit_payload: dict[str, Any] = {}
         if action == "reject" and result.get("reason"):
             audit_payload["reason"] = result.get("reason")
         if action == "edit":
-            edited = req.decision.get("edited_content") or {}
+            edited = guarded_decision.get("edited_content") or {}
             source_document = edited.get("source_document") or {}
             audit_payload = {
                 "source": edited.get("source", "editor"),
@@ -514,7 +537,7 @@ async def resume(
             node_id=(
                 result.get("node_id")
                 or result.get("resumed_node_id")
-                or req.decision.get("node_id")
+                or guarded_decision.get("node_id")
                 or "unknown"
             ),
             event_type=HITL_EVENT[action],

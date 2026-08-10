@@ -30,6 +30,7 @@ from app.observability.logging import configure_logging, get_logger
 from app.observability.cost_ledger import CostLedger
 from app.llm.registry import configured_local_model_probes, get_llm_gateway
 from app.runtime.events import RunEventBus
+from app.runtime.coordination import RedisLease
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
 from app.workflow.pipeline_history import ensure_pipeline_indexes
@@ -39,6 +40,13 @@ from app.workflow.preflight_stats import ensure_indexes as ensure_preflight_stat
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 from app.security.entity_tokenizer import EntityTokenizerService
 from app.security.entity_protection_errors import VaultKeyMisconfiguredError
+from app.security.middleware import (
+    RedisRateLimitMiddleware,
+    RequestContextMiddleware,
+    RequestSizeLimitMiddleware,
+)
+from app.workflow.orchestration import BackgroundRunManager
+from app.db.migrations import MigrationError, run_migrations
 
 from app.api import health
 from app.api.auth import router as auth_router
@@ -90,6 +98,11 @@ async def lifespan(app: FastAPI):
         services["mongo"] = AsyncMongo(settings.mongo_uri)
         services["collection_registry"] = CollectionRegistry(services["mongo"])
         services["audit_db"] = services["mongo"]._ensure_client()[DB_NAME]
+        applied_migrations = await run_migrations(services["audit_db"])
+        logger.info(
+            "mongo.migrations_ready",
+            applied=len(applied_migrations),
+        )
         try:
             await ensure_run_indexes(services["audit_db"])
             await ensure_pipeline_indexes(services["audit_db"])
@@ -137,6 +150,9 @@ async def lifespan(app: FastAPI):
         services["db"] = db                 # raw pymongo Database for CostLedger
         services["cost_ledger"] = CostLedger(db)
         logger.info("mongo.connected")
+    except MigrationError:
+        logger.exception("mongo.migrations_failed")
+        raise
     except Exception as exc:
         logger.warning(
             "mongo.unavailable",
@@ -319,27 +335,66 @@ async def lifespan(app: FastAPI):
         logger.warning("retriever.unavailable", reason="weaviate not connected")
 
     # ── Event bus ─────────────────────────────────────────────────────────────
-    # In-process pub/sub with bounded replay for SSE live run streaming.
+    # Redis streams + pub/sub provide replay and live delivery across all
+    # Uvicorn workers. Local memory remains a development-only fallback.
     services["event_bus"] = RunEventBus(
+        redis=services.get("redis"),
         max_events_per_run=settings.sse_replay_events_per_run,
         max_run_histories=settings.sse_replay_run_limit,
+        replay_ttl_seconds=settings.sse_replay_ttl_seconds,
+    )
+    services["background_run_manager"] = BackgroundRunManager(
+        services.get("redis"),
+        lease_seconds=settings.distributed_lease_seconds,
     )
     services["sse_heartbeat_seconds"] = settings.sse_heartbeat_seconds
     logger.info("event_bus.ready")
 
     # ── Stale-run auto-cleanup ──────────────────────────────────────────────────
-    # No external scheduler in this deployment (no APScheduler/celery/cron) —
-    # an in-process periodic task matches how everything else in this
-    # lifespan is already wired. See cleanup_stale_runs in
-    # app/workflow/run_history.py for the actual deletion rules.
+    # Every worker has a timer so leadership can move after a worker exits, but
+    # only the worker holding the renewable Redis lease performs a sweep.
     cleanup_task: asyncio.Task | None = None
     if services.get("audit_db") is not None:
         async def _run_cleanup_loop() -> None:
             from app.workflow.run_history import cleanup_stale_runs
             while True:
                 await asyncio.sleep(settings.run_auto_cleanup_interval_seconds)
+                lease = None
+                heartbeat = None
                 try:
-                    deleted = await cleanup_stale_runs(services["audit_db"])
+                    redis = services.get("redis")
+                    if redis is not None:
+                        lease = RedisLease(
+                            redis,
+                            "awp:leader:stale-run-cleanup",
+                            ttl_seconds=settings.distributed_lease_seconds,
+                        )
+                        if not await lease.acquire():
+                            continue
+                        heartbeat = asyncio.create_task(lease.keep_alive())
+                    elif settings.environment.lower() == "production":
+                        logger.error(
+                            "run_history.auto_cleanup_skipped",
+                            reason="distributed lease service unavailable",
+                        )
+                        continue
+                    cleanup_job = asyncio.create_task(
+                        cleanup_stale_runs(services["audit_db"])
+                    )
+                    if heartbeat is not None:
+                        done, _ = await asyncio.wait(
+                            {cleanup_job, heartbeat},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if heartbeat in done and cleanup_job not in done:
+                            cleanup_job.cancel()
+                            with contextlib.suppress(asyncio.CancelledError):
+                                await cleanup_job
+                            logger.error(
+                                "run_history.auto_cleanup_lease_lost"
+                            )
+                            continue
+                    deleted = await cleanup_job
                     if deleted:
                         logger.warning(
                             "run_history.auto_cleanup_swept", count=len(deleted)
@@ -348,6 +403,13 @@ async def lifespan(app: FastAPI):
                     logger.error(
                         "run_history.auto_cleanup_loop_failed", error=str(exc)
                     )
+                finally:
+                    if heartbeat is not None:
+                        heartbeat.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await heartbeat
+                    if lease is not None:
+                        await lease.release()
 
         cleanup_task = asyncio.create_task(_run_cleanup_loop())
 
@@ -360,6 +422,10 @@ async def lifespan(app: FastAPI):
         cleanup_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await cleanup_task
+    if "background_run_manager" in services:
+        await services["background_run_manager"].close()
+    if "event_bus" in services:
+        await services["event_bus"].close()
     if "database_lookup" in services:
         await services["database_lookup"].close()
     if "mongo" in services:
@@ -386,7 +452,11 @@ app = FastAPI(
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
 # Origins and hosts are explicit settings. Settings refuses localhost, wildcard,
-# or test hosts when ENVIRONMENT=production.
+# or test hosts when ENVIRONMENT=production. Starlette executes the last-added
+# middleware first, so the additions below are intentionally inside-out:
+# request context -> CORS -> trusted host -> body limit -> rate limit -> router.
+app.add_middleware(RedisRateLimitMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=list(settings.allowed_hosts),
@@ -402,8 +472,20 @@ app.add_middleware(
         "Accept",
         "Cache-Control",
         "Last-Event-ID",
+        "X-Request-ID",
+    ],
+    expose_headers=[
+        "X-Request-ID",
+        "X-RateLimit-Limit",
+        "X-RateLimit-Remaining",
+        "X-RateLimit-Reset",
+        "Retry-After",
     ],
 )
+
+# RequestContext is outermost, so size/rate-limit rejections receive correlation
+# and security headers. CORS also wraps those rejections for browser clients.
+app.add_middleware(RequestContextMiddleware)
 
 # ── Prometheus ─────────────────────────────────────────────────────────────────
 if settings.metrics_enabled:

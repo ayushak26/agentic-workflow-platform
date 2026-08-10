@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     sse_heartbeat_seconds: float = 15.0
     sse_replay_events_per_run: int = 1000
     sse_replay_run_limit: int = 1000
+    # How long a run's Redis replay stream survives after its last event, so a
+    # reconnecting client can still resume from its Last-Event-ID.
+    sse_replay_ttl_seconds: int = Field(default=86_400, ge=60)
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
@@ -246,6 +249,12 @@ class Settings(BaseSettings):
     # touched.
     run_auto_cleanup_after_seconds: int = Field(default=86_400, ge=60)
     run_auto_cleanup_interval_seconds: int = Field(default=3_600, ge=60)
+
+    # TTL of the Redis leases that make cross-worker ownership exclusive — the
+    # stale-run cleanup leader and BackgroundRunManager's per-run launch lease.
+    # Both renew while they hold it, so this only bounds how long a dead
+    # worker's claim blocks another worker from taking over.
+    distributed_lease_seconds: int = Field(default=120, ge=30)
 
     dev_bypass_enabled: bool = True
     dev_bypass_username: str = "ayush"
