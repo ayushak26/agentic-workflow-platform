@@ -30,6 +30,7 @@ class Settings(BaseSettings):
 
     retrieval_reranker_model: str = "claude-sonnet-4-5"
     retrieval_compressor_model: str = "claude-sonnet-4-5"
+    retrieval_trace_retention_days: int = 30
 
     weaviate_host: str = "weaviate"
     weaviate_port: int = 8080
@@ -71,6 +72,20 @@ class Settings(BaseSettings):
     paper_search_mcp_module: str = "paper_search_mcp.server"
     mcp_startup_timeout_seconds: float = 30.0
     mcp_tool_timeout_seconds: float = 90.0
+
+    # ── Dynamics 365 CRM, exposed through MCP ────────────────────────────────
+    # The workflow references the server by id; these credentials are handed to
+    # the MCP subprocess and never appear in workflow YAML, the Builder, or a
+    # run record. `mock` is the default so a demo or a fresh checkout works
+    # without a tenant, and a misconfigured live connection surfaces as an
+    # obvious demo backend rather than a half-working production one.
+    dynamics_mcp_enabled: bool = True
+    dynamics_mcp_mode: str = "mock"        # "mock" | "live"
+    dynamics_url: str = ""                 # https://your-org.crm.dynamics.com
+    dynamics_tenant_id: str = ""
+    dynamics_client_id: str = ""
+    dynamics_client_secret: str = ""
+    dynamics_fixtures_path: str = ""       # overrides the bundled demo fixtures
 
     # Research API credentials for paper-search-mcp. These never reach the
     # subprocess by ambient inheritance in local dev (pydantic-settings' own

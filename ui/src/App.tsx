@@ -7,10 +7,11 @@ import { BrandMark } from "./components/ui/BrandMark";
 import { StudioRoot } from "./modes/studio/StudioRoot";
 import { EvalRoot } from "./modes/eval/EvalRoot";
 import { OperatorRoot } from "./modes/operator/OperatorRoot";
+import { KnowledgeRoot } from "./modes/knowledge/KnowledgeRoot";
 import { RunCostContext } from "./RunCostContext";
 import { currentUsername, isAuthed, rehydrate } from "./api/client";
 
-type Mode = "studio" | "eval" | "operator";
+type Mode = "studio" | "eval" | "operator" | "knowledge";
 
 export default function App() {
   const [username, setUsername] = useState(currentUsername());
@@ -83,6 +84,7 @@ export default function App() {
         <RunCostContext.Provider value={setRunCost}>
           <main className="app-content">
             {mode === "studio" && <StudioRoot />}
+            {mode === "knowledge" && <KnowledgeRoot />}
             {mode === "eval" && <EvalRoot />}
             {mode === "operator" && <OperatorRoot />}
           </main>

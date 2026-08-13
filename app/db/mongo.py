@@ -29,6 +29,22 @@ MANIFESTS_COLLECTION = "manifests"
 SCORECARDS_COLLECTION = "scorecards"
 COLLECTIONS_COLLECTION = "collections"
 
+# Knowledge Studio control-plane collections. The legacy `manifests` and
+# `collections` collections above stay authoritative for existing provenance;
+# these add separately lifecycle-managed resources beside them. Logical
+# Collection resources get their own collection rather than reusing the
+# legacy `collections` one, whose documents follow the older CollectionConfig
+# shape and must not be overwritten by the newer, stricter schema.
+KNOWLEDGE_COLLECTIONS_COLLECTION = "knowledge_collections"
+KNOWLEDGE_DOCUMENTS_COLLECTION = "knowledge_documents"
+KNOWLEDGE_SOURCE_VERSIONS_COLLECTION = "knowledge_source_versions"
+KNOWLEDGE_PROFILES_COLLECTION = "knowledge_profiles"
+KNOWLEDGE_INDEXES_COLLECTION = "knowledge_indexes"
+KNOWLEDGE_INDEX_DOCUMENTS_COLLECTION = "knowledge_index_documents"
+INGESTION_JOBS_COLLECTION = "ingestion_jobs"
+RAG_AGENTS_COLLECTION = "rag_agents"
+RETRIEVAL_TRACES_COLLECTION = "retrieval_traces"
+
 
 class MongoClient:
     """Async Mongo wrapper. One per app instance.

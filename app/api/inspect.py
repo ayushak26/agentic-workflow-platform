@@ -223,16 +223,22 @@ async def _run_retrieval(
     req: RetrieveRequest,
     user: CurrentUser,
 ):
-    """Call the REAL retrieve() pipeline.
+    """Run the query through the canonical retrieval path.
 
-    >>> VERIFY: this assumes app.retrieval.retriever.retrieve has signature
-        retrieve(query, *, filters, session_id, llm, top_k) and returns a
-        RetrievalResult with a .chunks list of RetrievedChunk. If yours differs
-        (e.g. retrieve(query, filters, llm) with session_id inside filters),
-        change ONLY this function. Everything else is generic.
+    Delegates to ``services["retrieval_service"]`` — the same
+    ``RetrievalService.retrieve()`` used by RAG, workflows and the
+    Playground — so this view can never drift from production behaviour.
+    ``req.collection_id`` is almost always a legacy CollectionConfig id
+    rather than a Knowledge Studio ``col_...`` resource; RetrievalService
+    handles that by falling back to its legacy-compatible path (no resolved
+    Retrieval Profile/Index) whenever the id isn't a known logical Collection.
+
+    Falls back to the older ``app.retrieval.retriever.retrieve`` compatibility
+    adapter only when ``retrieval_service`` was never wired (e.g. Mongo/
+    Weaviate unavailable at startup) — this route must still degrade rather
+    than 503 in that case.
     """
-    from app.retrieval.retriever import retrieve
-    from app.retrieval.models import RetrievalFilters
+    from app.retrieval.models import RetrievalFilters, RetrievalQuery
 
     services = getattr(request.app.state, "services", {}) or {}
     llm = services.get("llm") or services.get("llm_gateway")
@@ -250,6 +256,16 @@ async def _run_retrieval(
         session_id=req.session_id,
         doc_types=req.doc_types or None,
     )
+
+    retrieval_service = services.get("retrieval_service")
+    if retrieval_service is not None:
+        return await retrieval_service.retrieve(
+            RetrievalQuery(query=req.query, filters=filters, top_k_candidates=req.top_k),
+            owner_scope_id=req.session_id,
+            llm=llm,
+        )
+
+    from app.retrieval.retriever import retrieve
 
     # Try the keyword-rich signature first; fall back to positional.
     try:

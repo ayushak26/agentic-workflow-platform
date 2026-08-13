@@ -32,6 +32,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from app.config import Settings, settings
+from app.mcp.registry import load_servers
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -75,6 +76,29 @@ def _paper_search_mcp_env(app_settings: Settings) -> dict[str, str]:
     return env
 
 
+def _dynamics_env(app_settings: Settings) -> dict[str, str]:
+    """Environment for the Dynamics 365 MCP subprocess.
+
+    Credentials come from the platform's own settings and are handed to the
+    subprocess here. They never appear in workflow YAML, never reach the
+    Builder, and never cross the MCP protocol boundary — the workflow references
+    the server by id and the server holds the connection.
+    """
+    env = dict(os.environ)
+    env["DYNAMICS_MODE"] = app_settings.dynamics_mcp_mode
+    if app_settings.dynamics_url:
+        env["DYNAMICS_URL"] = app_settings.dynamics_url
+    if app_settings.dynamics_tenant_id:
+        env["DYNAMICS_TENANT_ID"] = app_settings.dynamics_tenant_id
+    if app_settings.dynamics_client_id:
+        env["DYNAMICS_CLIENT_ID"] = app_settings.dynamics_client_id
+    if app_settings.dynamics_client_secret:
+        env["DYNAMICS_CLIENT_SECRET"] = app_settings.dynamics_client_secret
+    if app_settings.dynamics_fixtures_path:
+        env["DYNAMICS_FIXTURES"] = app_settings.dynamics_fixtures_path
+    return env
+
+
 def build_server_specs(
     app_settings: Settings = settings,
 ) -> dict[str, StdioServerParameters]:
@@ -86,6 +110,31 @@ def build_server_specs(
             args=["-m", "app.mcp.server"],
         )
     }
+
+    if app_settings.dynamics_mcp_enabled:
+        specs["dynamics365"] = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "app.mcp.dynamics.server"],
+            env=_dynamics_env(app_settings),
+        )
+
+    # Servers declared through MCP_SERVERS join the same launch table, so a
+    # third-party MCP server is configured exactly like a first-party one and
+    # gets the same policy, timeout and audit treatment.
+    for connection in load_servers().values():
+        if connection.id in specs:
+            log.warning(
+                "mcp.client.duplicate_server_id",
+                server=connection.id,
+                detail="a configured server shadows a built-in one; built-in kept",
+            )
+            continue
+        specs[connection.id] = StdioServerParameters(
+            command=connection.command,
+            args=list(connection.args),
+            env={**os.environ, **connection.resolve_environment()},
+        )
+
     if not app_settings.paper_search_mcp_enabled:
         return specs
 
@@ -232,17 +281,35 @@ class MCPClient:
         """Call a tool on `server` (default: primary). Returns the first
         TextContent's text — identical unwrap to the original client, so
         existing callers get byte-identical behaviour."""
-        try:
-            async with asyncio.timeout(self._tool_timeout_seconds):
-                resp = await self._require(server).call_tool(name, arguments)
-        except TimeoutError as exc:
-            raise TimeoutError(
-                f"MCP tool '{server}.{name}' exceeded "
-                f"{self._tool_timeout_seconds:g} seconds"
-            ) from exc
+        resp = await self.call_tool_raw(name, arguments, server=server)
         if resp.content and hasattr(resp.content[0], "text"):
             return resp.content[0].text
         return ""
+
+    async def call_tool_raw(
+        self,
+        name: str,
+        arguments: dict,
+        *,
+        server: str = DEFAULT_SERVER,
+        timeout_seconds: float | None = None,
+    ) -> Any:
+        """Call a tool and return the full CallToolResult.
+
+        Exists because `call_tool` above throws away everything except the first
+        text block — which was fine when every server serialised its answer into
+        text, and is exactly the lossy step to avoid now that servers can return
+        `structuredContent`. Existing callers keep the old unwrap; the MCP Tool
+        node uses this one and normalises through app/mcp/results.py.
+        """
+        limit = timeout_seconds or self._tool_timeout_seconds
+        try:
+            async with asyncio.timeout(limit):
+                return await self._require(server).call_tool(name, arguments)
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"MCP tool '{server}.{name}' exceeded {limit:g} seconds"
+            ) from exc
 
 
 async def launch_mcp_session(servers: list[str] | None = None) -> MCPClient:

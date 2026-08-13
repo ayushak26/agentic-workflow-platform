@@ -48,7 +48,10 @@ ui/.vite/
 # Local data (volumes mount through Docker)
 data/
 *.log
-samples/
+# Ignore local sample/scratch data, but keep the committed Knowledge Studio
+# demo corpus (fictional Dura 25 documents only, no customer files).
+samples/*
+!samples/knowledge_demo/
 
 # Workflow Builder autosave drafts + immutable manual-save versions
 workflows/.builder/

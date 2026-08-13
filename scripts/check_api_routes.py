@@ -16,6 +16,21 @@ REQUIRED_ROUTES: set[tuple[str, str]] = {
     ("GET", "/api/workflow-input-files/content"),
     ("GET", "/api/llm/models"),
     ("POST", "/api/llm/models/{model}/probe"),
+    # Builder authoring surface: the schema builder, rule editor, mapping
+    # picker, Test tab and Simulator each depend on one of these, so a UI
+    # shipped without them looks broken in exactly the demo it was built for.
+    ("GET", "/api/builder/operators"),
+    ("POST", "/api/builder/output-contract"),
+    ("POST", "/api/builder/schema-preview"),
+    ("POST", "/api/builder/node-test"),
+    ("POST", "/api/builder/simulate"),
+    ("GET", "/api/builder/email/connections"),
+    # MCP integration surface: the server picker, tool discovery and the tool
+    # test panel are how a CRM capability is added to a workflow at all.
+    ("GET", "/api/builder/mcp/servers"),
+    ("GET", "/api/builder/mcp/servers/{server_id}/tools"),
+    ("GET", "/api/builder/mcp/servers/{server_id}/health"),
+    ("POST", "/api/builder/mcp/test-tool"),
 }
 
 

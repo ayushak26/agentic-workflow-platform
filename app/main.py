@@ -65,7 +65,11 @@ from app.api import candidates as candidates_api
 from app.api import run_chat as run_chat_api
 from app.api import node_types_chat as node_types_chat_api
 from app.api import workflow_generation as workflow_generation_api
+from app.api import builder as builder_api
 from app.api import entity_registry as entity_registry_api
+from app.api import knowledge as knowledge_api
+from app.api import retrieval as retrieval_api
+from app.api import rag_agents as rag_agents_api
 
 from app.db.mongo import DB_NAME
 
@@ -261,6 +265,21 @@ async def lifespan(app: FastAPI):
     logger.info("image_generator.ready")
     logger.info("kimi_vision.ready")
 
+    # ── Email integration ─────────────────────────────────────────────────────
+    # One capability, adapters per provider. Connections come from configuration
+    # (EMAIL_CONNECTIONS), never from workflow YAML, so a workflow references a
+    # mailbox by name and can be exported without leaking access. Always
+    # constructed: with no connections configured, a workflow using EmailAgent
+    # is blocked by preflight with the missing connection named, rather than the
+    # API failing to start.
+    from app.integrations.email import build_email_service
+
+    services["email"] = build_email_service(db=services.get("audit_db"))
+    logger.info(
+        "email.ready",
+        connection_count=len(services["email"].connections),
+    )
+
     # ── Scientific Agent Skills ──────────────────────────────────────────────
     if settings.scientific_skills_enabled:
         from app.research.skills import ScientificSkillCatalog
@@ -297,6 +316,20 @@ async def lifespan(app: FastAPI):
     try:
         from app.mcp.client import launch_mcp_session
         services["mcp_client"] = await launch_mcp_session()
+
+        # MCP integration service: server registry, policy gate, structured
+        # results, write ledger and audit. Every MCP tool call the Builder or a
+        # workflow makes goes through this one object.
+        from app.mcp.connections import build_mcp_service
+
+        services["mcp"] = build_mcp_service(
+            client=services["mcp_client"],
+            db=services.get("audit_db"),
+        )
+        logger.info(
+            "mcp_integration.ready",
+            servers=len(services["mcp"].registry),
+        )
         logger.info("mcp_client.ready")
     except Exception as exc:
         logger.warning(
@@ -333,6 +366,74 @@ async def lifespan(app: FastAPI):
             )
     else:
         logger.warning("retriever.unavailable", reason="weaviate not connected")
+
+    # ── Knowledge Studio: repository, retrieval, RAG, ingestion coordinator ───
+    # Builds on the same Mongo/Weaviate/embedder/LLM clients wired above —
+    # no second connection, no second FastAPI app.
+    if "mongo" in services:
+        from app.knowledge.repository import KnowledgeRepository
+        from app.knowledge.service import KnowledgeService
+
+        knowledge_db = services["mongo"]._ensure_client()[DB_NAME]
+        knowledge_repository = KnowledgeRepository(knowledge_db)
+        try:
+            await knowledge_repository.ensure_indexes()
+        except Exception as exc:
+            logger.warning(
+                "knowledge_repository.ensure_indexes_failed", error_type=type(exc).__name__
+            )
+        services["knowledge_repository"] = knowledge_repository
+        services["knowledge_service"] = KnowledgeService(knowledge_repository)
+        logger.info("knowledge_repository.ready")
+
+        if "weaviate_client" in services and "embedder" in services:
+            from app.rag.service import RAGService
+            from app.retrieval.service import RetrievalService
+
+            retrieval_service = RetrievalService(
+                weaviate_client=services["weaviate_client"],
+                embedder=services["embedder"],
+                llm=services["llm"],
+                repository=knowledge_repository,
+            )
+            services["retrieval_service"] = retrieval_service
+            services["rag_service"] = RAGService(
+                repository=knowledge_repository,
+                retrieval_service=retrieval_service,
+                llm=services["llm"],
+            )
+            logger.info("retrieval_service.ready")
+        else:
+            logger.warning(
+                "retrieval_service.unavailable",
+                reason="weaviate or embedder not available",
+            )
+
+        if all(key in services for key in ("object_store", "embedder", "weaviate_client")):
+            from app.ingestion.coordinator import IngestionCoordinator
+
+            ingestion_coordinator = IngestionCoordinator(
+                repository=knowledge_repository,
+                object_store=services["object_store"],
+                embedder=services["embedder"],
+                weaviate_client=services["weaviate_client"],
+                redis=services.get("redis"),
+            )
+            services["ingestion_coordinator"] = ingestion_coordinator
+            try:
+                recovered = await ingestion_coordinator.recover()
+                logger.info("ingestion_coordinator.ready", recovered_jobs=recovered)
+            except Exception as exc:
+                logger.warning(
+                    "ingestion_coordinator.recover_failed", error_type=type(exc).__name__
+                )
+        else:
+            logger.warning(
+                "ingestion_coordinator.unavailable",
+                reason="object store, embedder or weaviate not available",
+            )
+    else:
+        logger.warning("knowledge_repository.unavailable", reason="mongo not connected")
 
     # ── Event bus ─────────────────────────────────────────────────────────────
     # Redis streams + pub/sub provide replay and live delivery across all
@@ -511,3 +612,7 @@ app.include_router(run_chat_api.router)
 app.include_router(node_types_chat_api.router)
 app.include_router(workflow_generation_api.router)
 app.include_router(entity_registry_api.router)
+app.include_router(builder_api.router)
+app.include_router(knowledge_api.router)
+app.include_router(retrieval_api.router)
+app.include_router(rag_agents_api.router)

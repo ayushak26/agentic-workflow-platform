@@ -143,6 +143,55 @@ LLM_CACHE = Counter(
     labelnames=("status",),  # hit | miss | error
 )
 
+# ── Knowledge Studio: retrieval / ingestion ─────────────────────────────────
+#
+# Same low-cardinality discipline as above: strategy/stage/status only.
+# Never label with query text, collection_id, document_id, filename or user —
+# those are unbounded and belong in the retrieval trace, not a metric label.
+
+RAG_RETRIEVAL_REQUESTS = Counter(
+    "awp_rag_retrieval_requests_total",
+    "Canonical RetrievalService.retrieve() calls, partitioned by outcome.",
+    labelnames=("strategy", "status"),  # status: success | failed
+)
+
+RAG_RETRIEVAL_LATENCY = Histogram(
+    "awp_rag_retrieval_latency_seconds",
+    "End-to-end latency of one retrieve() call.",
+    labelnames=("strategy",),
+    buckets=(0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20),
+)
+
+RAG_CANDIDATES = Counter(
+    "awp_rag_candidates_total",
+    "Candidate chunks surfaced before reranking, partitioned by strategy.",
+    labelnames=("strategy",),
+)
+
+RAG_CONTEXT_CHUNKS = Counter(
+    "awp_rag_context_chunks_total",
+    "Chunks that survived into the final assembled context.",
+    labelnames=("strategy",),
+)
+
+INGESTION_JOBS = Counter(
+    "awp_ingestion_jobs_total",
+    "Completed ingestion jobs, partitioned by terminal status.",
+    labelnames=("status",),
+)
+
+INGESTION_DOCUMENTS = Counter(
+    "awp_ingestion_documents_total",
+    "Per-document ingestion outcomes.",
+    labelnames=("status",),  # completed | failed
+)
+
+INGESTION_FAILURES = Counter(
+    "awp_ingestion_failures_total",
+    "Document ingestion failures, partitioned by the stage they failed in.",
+    labelnames=("stage",),
+)
+
 
 @contextmanager
 def track_node(node_type: str) -> Iterator[None]:

@@ -1,0 +1,611 @@
+name: Multilingual Customer Request Triage
+description: >-
+  Understands an incoming customer communication in any language, extracts a structured business
+  representation of it, decides deterministically whether it can be handled automatically, and
+  routes it to the right department — with unclear or low-confidence cases going to a person.
+
+  Every step here is one of the platform's generic primitives, configured. There is no node type in
+  this workflow that is specific to customer triage, to a language, to a department, or to an
+  industry: the schema, the intent labels, the escalation rules, the confidence threshold and the
+  routing table are all configuration, so the next business process needs configuration too, not
+  Python.
+
+  Read the graph top to bottom and it is the business process:
+
+      Incoming Request
+              ↓
+      Understand Customer Request        (AI: one call detects the language,
+              ↓                           classifies, and extracts)
+      Check Automation Safety            (deterministic: escalation rules)
+              ↓
+      Route Customer Request             (deterministic: intent → department)
+        ┌─────┬────────┬─────────┬──────────────┐
+      Sales  Support  Service  Customer Service  Human Review
+version: '1.0'
+use_case: customer_request_triage
+library:
+  title: Multilingual Customer Request Triage
+  summary: >-
+    Route incoming customer communications to the right department, in any language, escalating
+    uncertain cases to a person.
+  purpose:
+    - Understand customer requests written in any language
+    - Turn them into a structured, auditable business object
+    - Route them deterministically, with an explainable reason
+    - Escalate low-confidence, incomplete and sensitive cases to a person
+  suitable_for:
+    - Shared inbox triage for industrial / B2B customer communication
+    - Requests that mix commercial and technical content
+  not_suitable_for:
+    - Sending replies without review (add a Human Review before any send)
+  outputs:
+    - Structured request representation
+    - Chosen department and the reason for it
+    - Escalation flags with the rule that set them
+  input_types:
+    - Customer email or message text
+  human_reviews:
+    count: 1
+    labels:
+      - Review uncertain requests
+  visibility_status: draft
+inputs:
+  subject:
+    type: text
+    description: Subject line of the incoming communication.
+    required: false
+  message:
+    type: text
+    description: Full body of the incoming customer communication, in its original language. May mix languages.
+    required: true
+  customer_email:
+    type: text
+    description: Sender address, when known.
+    required: false
+entry: incoming_request
+exit:
+  - sales
+  - technical_support
+  - spare_parts
+  - customer_service
+  - human_review
+output:
+  include_input: false
+  nodes:
+    - node_id: understand_request
+      flatten: false
+    - node_id: automation_safety
+      flatten: false
+    - node_id: route_request
+      flatten: false
+nodes:
+  - id: incoming_request
+    type: WorkflowInputAgent
+    config:
+      source: email
+      fields:
+        - name: subject
+          source: inputs.subject
+          type: string
+          description: Subject line as received.
+        - name: message
+          source: inputs.message
+          type: text
+          required: true
+          description: Original message body, untranslated.
+        - name: customer_email
+          source: inputs.customer_email
+          type: string
+          description: Sender address.
+    experience:
+      display_name: Incoming Request
+      purpose: Receive the customer communication and give it a known shape.
+      contribution: Everything downstream reads the request from here.
+      expected_output: The subject, message body and sender address.
+      failure_message: No message text arrived. Paste a customer message and run again.
+  - id: understand_request
+    type: AITaskAgent
+    config:
+      task: extract
+      model: auto
+      fail_on_error: false
+      instruction: >-
+        Understand the incoming customer communication and extract the information described by the
+        output schema.
+
+        Extract only information that is explicitly stated or unambiguously implied. Never invent a
+        value: if the customer did not state something, return null for it and name it in
+        missing_information.
+
+        Set production_stopped to true only when the customer states that production, a plant, a
+        line or a process is currently stopped or down — not merely that something is faulty or
+        slow.
+
+        Judge urgency from stated business impact, not from tone or politeness.
+      input: '{{outputs.incoming_request.data.message}}'
+      context:
+        Subject: '{{outputs.incoming_request.data.subject}}'
+      language:
+        input_language: auto
+        process_in_original_language: true
+        output_language: en
+        preserve_original: true
+      include_confidence: true
+      output_fields:
+        - name: language
+          type: string
+          required: true
+          description: >-
+            ISO 639-1 code of the language the customer wrote in (de, fr, nl, en, es …). Use the
+            dominant language if several are mixed.
+        - name: intent
+          type: enum
+          required: true
+          description: What the customer wants from us.
+          enum_values:
+            - quotation_request
+            - technical_support
+            - spare_part_request
+            - complaint
+            - order_status
+            - general_inquiry
+            - other
+        - name: summary
+          type: text
+          required: true
+          description: 'Two sentences in English: what the customer wants and why it matters to them.'
+        - name: customer
+          type: object
+          required: false
+          description: Who is writing, as far as the message states.
+          fields:
+            - name: name
+              type: string
+              required: false
+              nullable: true
+            - name: company
+              type: string
+              required: false
+              nullable: true
+              description: Company name as written in the message.
+            - name: email
+              type: string
+              required: false
+              nullable: true
+            - name: phone
+              type: string
+              required: false
+              nullable: true
+        - name: equipment
+          type: object
+          required: false
+          description: The product or installation the request concerns.
+          fields:
+            - name: product_family
+              type: string
+              required: false
+              nullable: true
+            - name: model
+              type: string
+              required: false
+              nullable: true
+              description: >-
+                Model designation exactly as written (e.g. "Dura 15"). Never normalise or translate
+                it.
+            - name: serial_number
+              type: string
+              required: false
+              nullable: true
+        - name: process
+          type: object
+          required: false
+          description: Process conditions, when the customer states them.
+          fields:
+            - name: medium
+              type: string
+              required: false
+              nullable: true
+            - name: flow_rate
+              type: object
+              required: false
+              fields:
+                - name: value
+                  type: number
+                  required: false
+                  nullable: true
+                - name: unit
+                  type: string
+                  required: false
+                  nullable: true
+                  description: Unit exactly as written (m³/h, l/min, gpm).
+        - name: production_stopped
+          type: boolean
+          required: true
+          description: True only if the customer states that production or a process is currently stopped.
+        - name: urgency
+          type: enum
+          required: true
+          description: Business urgency implied by the stated impact.
+          enum_values:
+            - low
+            - normal
+            - high
+            - critical
+        - name: requested_action
+          type: text
+          required: true
+          description: In one sentence, what the customer is asking us to do.
+        - name: missing_information
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            Machine-readable names of information a colleague would still need before acting — for
+            example product_model, serial_number, flow_rate, quantity, delivery_address. Empty list
+            if nothing is missing.
+    selected_model: auto
+    model_routing:
+      accuracy_priority: balanced
+    experience:
+      display_name: Understand Customer Request
+      purpose: >-
+        Read the message in its original language and produce a structured business representation
+        of what the customer wants.
+      contribution: The business rules and the router act on these fields, never on the raw text.
+      expected_output: >-
+        Language, intent, customer and equipment details, urgency signals, missing information and a
+        confidence score.
+      success_condition: A schema-valid result with a confidence score.
+      failure_message: The request could not be understood well enough to act on. It will be sent to a person.
+  - id: automation_safety
+    type: DecisionAgent
+    config:
+      defaults:
+        human_review: false
+        clarification_required: false
+        urgency: normal
+        escalation_reason: ''
+        automation_allowed: true
+      rules:
+        - name: The AI step could not produce a usable result
+          description: >-
+            A refusal, an invalid response or a provider failure must reach a person, not be treated
+            as "nothing to escalate".
+          when:
+            operator: or
+            conditions:
+              - field: outputs.understand_request.status
+                operator: not_equals
+                value: ok
+              - field: outputs.understand_request.result.intent
+                operator: does_not_exist
+          then:
+            - field: human_review
+              value: true
+            - field: automation_allowed
+              value: false
+            - field: escalation_reason
+              value: The request could not be understood automatically.
+        - name: Low confidence needs a person
+          description: Below 0.80 we do not act on the extraction automatically.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.confidence
+                operator: less_than
+                value: 0.8
+          then:
+            - field: human_review
+              value: true
+            - field: automation_allowed
+              value: false
+            - field: escalation_reason
+              value: The extraction confidence was below the 0.80 threshold for automatic handling.
+        - name: Complaints are always handled by a person
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: complaint
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: Complaints are reviewed by a person before any reply.
+        - name: Stopped production is critical
+          description: Urgency comes from stated business impact, not from how the message is phrased.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.production_stopped
+                operator: is_true
+          then:
+            - field: urgency
+              value: critical
+        - name: High urgency for a strategic account is critical
+          description: 'Demonstrates nested logic: an OR of a direct signal and an AND of two weaker ones.'
+          when:
+            operator: or
+            conditions:
+              - field: outputs.understand_request.result.urgency
+                operator: equals
+                value: critical
+              - operator: and
+                conditions:
+                  - field: outputs.understand_request.result.urgency
+                    operator: equals
+                    value: high
+                  - field: outputs.understand_request.result.equipment.serial_number
+                    operator: is_not_empty
+          then:
+            - field: urgency
+              value: critical
+        - name: A spare part request without a model cannot be quoted
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: spare_part_request
+              - field: outputs.understand_request.result.missing_information
+                operator: contains
+                value: product_model
+          then:
+            - field: clarification_required
+              value: true
+            - field: escalation_reason
+              value: A spare part cannot be identified without the product model.
+    experience:
+      display_name: Check Automation Safety
+      purpose: Decide whether this request can safely be handled automatically.
+      contribution: The router uses these conclusions to send uncertain work to a person.
+      expected_output: Whether a human must look at it, the effective urgency, and why.
+      failure_message: The safety rules could not be evaluated.
+  - id: route_request
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: human_review
+          description: The safety rules require a person to look at this.
+          when:
+            operator: or
+            conditions:
+              - field: outputs.automation_safety.decisions.human_review
+                operator: is_true
+              - field: outputs.automation_safety.decisions.automation_allowed
+                operator: is_false
+        - route: sales
+          description: Commercial requests go to Sales.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: in
+                value:
+                  - quotation_request
+                  - order_status
+        - route: technical_support
+          description: Technical problems go to Support.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: technical_support
+        - route: spare_parts
+          description: Parts requests go to Service.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: spare_part_request
+        - route: customer_service
+          description: Complaints go to Customer Service.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: complaint
+      fallback: human_review
+    experience:
+      display_name: Route Customer Request
+      purpose: >-
+        Send the request to the department that handles it — or to a person when the safety rules
+        said it cannot be handled automatically.
+      contribution: The receiving department gets a structured request.
+      expected_output: One branch, with the conditions that chose it recorded.
+      failure_message: The request could not be routed.
+  - id: sales
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Sales
+        - target: title
+          operation: format
+          value: >-
+            [{{outputs.automation_safety.decisions.urgency}}]
+            {{outputs.understand_request.result.requested_action}}
+        - target: company
+          operation: coalesce
+          sources:
+            - outputs.understand_request.result.customer.company
+            - outputs.incoming_request.data.customer_email
+          default: unknown
+        - target: contact_email
+          operation: coalesce
+          sources:
+            - outputs.understand_request.result.customer.email
+            - outputs.incoming_request.data.customer_email
+          default: unknown
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+        - target: needs_clarification
+          operation: boolean
+          source: outputs.automation_safety.decisions.clarification_required
+        - target: original_language
+          operation: copy
+          source: outputs.understand_request.result.language
+    experience:
+      display_name: Sales
+      purpose: Hand a structured commercial request to Sales.
+      contribution: Sales receives a request they can act on without re-reading the email.
+      expected_output: A commercial hand-off packet.
+      failure_message: The Sales hand-off could not be built.
+  - id: technical_support
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Technical Support
+        - target: title
+          operation: format
+          value: >-
+            [{{outputs.automation_safety.decisions.urgency}}]
+            {{outputs.understand_request.result.equipment.model}} —
+            {{outputs.understand_request.result.requested_action}}
+        - target: model
+          operation: copy
+          source: outputs.understand_request.result.equipment.model
+          default: not stated
+        - target: serial_number
+          operation: copy
+          source: outputs.understand_request.result.equipment.serial_number
+          default: not stated
+        - target: production_stopped
+          operation: boolean
+          source: outputs.understand_request.result.production_stopped
+        - target: urgency
+          operation: copy
+          source: outputs.automation_safety.decisions.urgency
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+        - target: missing_information
+          operation: copy
+          source: outputs.understand_request.result.missing_information
+    experience:
+      display_name: Technical Support
+      purpose: Hand a structured technical case to Support.
+      contribution: Support sees the equipment and impact without re-reading the email.
+      expected_output: A technical case packet.
+      failure_message: The Support hand-off could not be built.
+  - id: spare_parts
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Service / Spare Parts
+        - target: model
+          operation: copy
+          source: outputs.understand_request.result.equipment.model
+          default: not stated
+        - target: serial_number
+          operation: copy
+          source: outputs.understand_request.result.equipment.serial_number
+          default: not stated
+        - target: clarification_required
+          operation: boolean
+          source: outputs.automation_safety.decisions.clarification_required
+        - target: missing_information
+          operation: copy
+          source: outputs.understand_request.result.missing_information
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+    experience:
+      display_name: Service and Spare Parts
+      purpose: Hand a structured parts request to Service.
+      contribution: Service can identify the part or ask one precise question.
+      expected_output: A spare-parts hand-off packet.
+      failure_message: The Service hand-off could not be built.
+  - id: customer_service
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Customer Service
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+        - target: original_message
+          operation: copy
+          source: outputs.incoming_request.data.message
+        - target: escalation_reason
+          operation: copy
+          source: outputs.automation_safety.decisions.escalation_reason
+    experience:
+      display_name: Customer Service
+      purpose: Hand a complaint to Customer Service with its context.
+      contribution: A person handles the complaint with the facts already gathered.
+      expected_output: A complaint hand-off packet.
+      failure_message: The Customer Service hand-off could not be built.
+  - id: human_review
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        This request could not be handled automatically. Check the extracted information and decide
+        how to proceed.
+      review_purpose: >-
+        Either the AI step was not confident enough, the request is a complaint, or the intent has
+        no automatic route. Approve to accept the extraction as it stands, edit it to correct what
+        the AI got wrong, or reject to stop the workflow.
+      allowed_actions:
+        - approve
+        - edit
+        - reject
+      context_fields:
+        - outputs.incoming_request.data.message
+        - outputs.understand_request.result
+        - outputs.automation_safety.decisions
+      editable_content_field: outputs.understand_request.result
+      review_panels:
+        - label: Original communication
+          field: outputs.incoming_request.data.message
+          hint: Exactly as the customer wrote it, untranslated.
+        - label: Extracted information
+          field: outputs.understand_request.result
+          hint: What the AI understood. Correct anything wrong before approving.
+          editable: true
+        - label: Confidence
+          field: outputs.understand_request.confidence
+          hint: Below 0.80 the workflow does not act automatically.
+        - label: Missing information
+          field: outputs.understand_request.result.missing_information
+          hint: What a colleague would still need to act on this.
+        - label: Suggested route
+          field: outputs.understand_request.result.intent
+          hint: Where this would have gone if it had been handled automatically.
+        - label: Reason for escalation
+          field: outputs.automation_safety.decisions.escalation_reason
+          hint: Which rule sent this request to you.
+    experience:
+      display_name: Human Review
+      purpose: A person decides what happens with requests we are unsure about.
+      contribution: Nothing uncertain is handled automatically.
+      expected_output: An approval, an edit, or a rejection with a reason.
+      failure_message: The review could not be presented.
+edges:
+  - from: incoming_request
+    to: understand_request
+  - from: understand_request
+    to: automation_safety
+  - from: automation_safety
+    to: route_request
+  - from: route_request
+    condition: route
+    branches:
+      sales: sales
+      technical_support: technical_support
+      spare_parts: spare_parts
+      customer_service: customer_service
+      human_review: human_review

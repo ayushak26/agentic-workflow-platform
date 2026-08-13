@@ -1,11 +1,19 @@
 import { useMemo, useState } from 'react';
 import type { NodeTypeManifest } from '../../api/types';
 import { Icon, type IconName } from '../../components/ui/Icon';
+import { ExecutionKindBadge } from './builder/ExecutionKindBadge';
 import { NodeTypeAskAi } from './NodeTypeAskAi';
 
 // Fixed display order — otherwise groups would shuffle on every reload
 // based on whatever order the registry happens to iterate in.
+//
+// "Core Building Blocks" leads, and the specialized capabilities are collapsed
+// behind a disclosure. That ordering is the product argument made visible: a new
+// business workflow should be expressible in the small reusable vocabulary, and
+// an author who scrolls past forty domain agents to find it will not believe
+// that. Nothing is removed — existing workflows keep every node type they use.
 const CATEGORY_ORDER = [
+  'Core Building Blocks',
   'Control & Flow',
   'Research & Discovery',
   'Evidence & Retrieval',
@@ -15,6 +23,21 @@ const CATEGORY_ORDER = [
   'Integrations',
   'Other',
 ];
+
+// Business-language names for the core primitives. The registry key is the
+// technical contract (and stays visible in the inspector); the palette is where
+// a non-technical author decides what to drag, so it reads as the capability
+// rather than as a class name.
+const PALETTE_LABELS: Record<string, string> = {
+  WorkflowInputAgent: 'Input',
+  AITaskAgent: 'AI Task',
+  DecisionAgent: 'Decision',
+  RouterAgent: 'Router',
+  DataTransformAgent: 'Transform',
+  HumanInLoopAgent: 'Human Review',
+  EmailAgent: 'Email',
+  MCPToolAgent: 'MCP Tool',
+};
 
 function groupByCategory(types: NodeTypeManifest[]): [string, NodeTypeManifest[]][] {
   const groups = new Map<string, NodeTypeManifest[]>();
@@ -30,7 +53,8 @@ function groupByCategory(types: NodeTypeManifest[]): [string, NodeTypeManifest[]
 
 function matchesQuery(t: NodeTypeManifest, query: string): boolean {
   if (!query) return true;
-  const haystack = `${t.type_name} ${t.description} ${t.category}`.toLowerCase();
+  const label = PALETTE_LABELS[t.type_name] ?? '';
+  const haystack = `${t.type_name} ${label} ${t.description} ${t.category}`.toLowerCase();
   return haystack.includes(query);
 }
 
@@ -66,7 +90,12 @@ function NodeTypeCard({
           <Icon name={(t.icon as IconName) ?? 'topology'} size={14} />
         </span>
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-ink-900">{t.type_name}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-sm font-medium text-ink-900">
+              {PALETTE_LABELS[t.type_name] ?? t.type_name}
+            </span>
+            {t.execution_kind && <ExecutionKindBadge compact kind={t.execution_kind} />}
+          </div>
           <div className="mt-0.5 line-clamp-2 text-xs text-ink-500">{t.description}</div>
         </div>
       </div>

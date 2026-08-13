@@ -13,6 +13,31 @@ import app.nodes  # noqa: F401 - populates the registry via discovery
 from app.nodes.registry import NodeRegistry
 
 ACKNOWLEDGED_NODE_TYPES: frozenset[str] = frozenset({
+    # Core primitives. Each was reviewed against both extension points:
+    #   AITaskAgent          — required_services {llm, cost_ledger};
+    #                          preflight_output_fields exposes result.<path>
+    #                          from its visual output schema.
+    #   DecisionAgent        — no services (deterministic);
+    #                          preflight_output_fields exposes decisions.<field>
+    #                          for every field its rules and defaults can set.
+    #   DataTransformAgent   — no services; preflight_output_fields exposes
+    #                          data.<target> per configured operation.
+    #   WorkflowInputAgent   — no services; preflight_output_fields exposes
+    #                          data.<field> per declared field.
+    #   EmailAgent           — required_services {email}; preflight_output_fields
+    #                          exposes the message shape as message.<field> and
+    #                          messages.items.<field>.
+    "AITaskAgent",
+    "DataTransformAgent",
+    "DecisionAgent",
+    #   MCPToolAgent         — required_services {mcp}; preflight_output_fields
+    #                          declares `data.*`/`first.*` as prefixes because
+    #                          the sub-shape comes from the MCP server's own
+    #                          output schema, which preflight does not contact.
+    "EmailAgent",
+    "MCPToolAgent",
+    "WorkflowInputAgent",
+
     "BoundedDeepResearchAgent",
     "CallCoverageMatrixAgent",
     "CitationRegistryBuilder",
@@ -32,6 +57,11 @@ ACKNOWLEDGED_NODE_TYPES: frozenset[str] = frozenset({
     "HumanInLoopAgent",
     "InternalProjectEvidenceRetrieverAgent",
     "KimiVisionAgent",
+    #   KnowledgeRetrieval   — required_services {retrieval_service}; no
+    #                          preflight_output_fields override needed — every
+    #                          output field is statically declared on its
+    #                          output_schema, none come from a dynamic sub-shape.
+    "KnowledgeRetrieval",
     "Literal",
     "MCPAgent",
     "MethodologyEngineeringAgent",

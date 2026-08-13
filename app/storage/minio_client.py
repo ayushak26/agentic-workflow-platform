@@ -57,6 +57,18 @@ def key_for_path(path: Path) -> str:
     return f"sha256:{h}{path.suffix.lower()}"
 
 
+def knowledge_key_for_path(path: Path, owner_scope_id: str) -> str:
+    """Content-addressed key for a Knowledge Studio upload, scoped by owner.
+
+    Isolating by an opaque digest of ``owner_scope_id`` (rather than the raw
+    scope name) means two owners uploading byte-identical files never collide
+    on the same key, without leaking a raw workspace/user name into storage.
+    """
+    scope_digest = hashlib.sha256(owner_scope_id.encode()).hexdigest()[:16]
+    h = content_hash(path)
+    return f"knowledge/{scope_digest}/sha256:{h}{path.suffix.lower()}"
+
+
 # ---------- The store ---------------------------------------------------------
 
 

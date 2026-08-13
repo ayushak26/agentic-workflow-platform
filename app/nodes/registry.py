@@ -13,7 +13,12 @@ from pydantic import BaseModel
 from app.llm.model_catalog import MODEL_OPTION_LABELS, MODEL_SELECTION_OPTIONS
 
 from .base import NodeType
-from .categories import category_for, icon_for
+from .categories import (
+    category_for,
+    execution_kind_for,
+    family_for,
+    icon_for,
+)
 
 
 class _EmptySchema(BaseModel):
@@ -58,30 +63,70 @@ class NodeRegistry:
 
     @classmethod
     def manifest(cls) -> list[dict]:
-        """Return the JSON schemas used by the Builder."""
+        """Return the JSON schemas and presentation metadata used by the Builder.
 
-        return [
-            {
-                "type_name": klass.type_name,
-                "description": klass.description,
-                "category": category_for(klass.type_name),
-                "icon": icon_for(klass.type_name),
-                "input_schema": getattr(
-                    klass,
-                    "input_schema",
-                    _EmptySchema,
-                ).model_json_schema(),
-                "output_schema": getattr(
-                    klass,
-                    "output_schema",
-                    _EmptySchema,
-                ).model_json_schema(),
-                "config_schema": _with_model_catalog(
-                    klass.config_schema.model_json_schema()
-                ),
-            }
-            for klass in cls._registry.values()
-        ]
+        Beyond the three schemas, each entry carries `family` (core vocabulary
+        vs. specialized capability), `execution_kind` (ai / deterministic /
+        external / human / input / output) and `about`. Those three are what let
+        the Builder present a small mental model, make the automation boundary
+        visible on the canvas, and explain a node without the author reading its
+        source.
+        """
+
+        return [_manifest_entry(klass) for klass in cls._registry.values()]
+
+
+def _manifest_entry(klass: Type[NodeType]) -> dict:
+    uses_llm = _uses_llm(klass)
+    about = dict(getattr(klass, "about", {}) or {})
+    return {
+        "type_name": klass.type_name,
+        "description": klass.description,
+        "category": category_for(klass.type_name),
+        "icon": icon_for(klass.type_name),
+        # A class's *own* declaration wins; the lookup tables cover the node
+        # types that predate the ClassVars. `klass.__dict__` rather than
+        # getattr, because NodeType declares documented defaults that every
+        # subclass inherits — getattr would return the base default and the
+        # table would never be consulted.
+        "family": klass.__dict__.get("family") or family_for(klass.type_name),
+        "execution_kind": (
+            klass.__dict__.get("execution_kind")
+            or execution_kind_for(klass.type_name, uses_llm=uses_llm)
+        ),
+        "uses_ai": bool(about.get("uses_ai", uses_llm)),
+        "external_action": bool(about.get("external_action", False)),
+        "about": about,
+        "presets": about.get("presets") or [],
+        "input_schema": getattr(
+            klass,
+            "input_schema",
+            _EmptySchema,
+        ).model_json_schema(),
+        "output_schema": getattr(
+            klass,
+            "output_schema",
+            _EmptySchema,
+        ).model_json_schema(),
+        "config_schema": _with_model_catalog(
+            klass.config_schema.model_json_schema()
+        ),
+    }
+
+
+def _uses_llm(klass: Type[NodeType]) -> bool:
+    """Whether this node type needs a model, per its own preflight declaration.
+
+    Read from `required_services` rather than a hand-maintained list, so it
+    cannot drift: a node that starts calling a model has to declare the `llm`
+    service to pass preflight anyway. Called with an empty config, so a node
+    whose model use is conditional on config (RouterAgent's llm mode) reports
+    its default — which is the right answer for a palette entry.
+    """
+    try:
+        return "llm" in klass.required_services({})
+    except Exception:
+        return False
 
 
 def _with_model_catalog(schema: dict) -> dict:

@@ -460,6 +460,27 @@ def _validate_nodes(
                 node_id=node_spec.id,
             )
 
+        if node_spec.type in {"RAGAgent", "KnowledgeRetrieval"}:
+            runtime_filters = validated_config.get("runtime_filters")
+            if isinstance(runtime_filters, dict):
+                from app.retrieval.filters import RESERVED_METADATA_FIELDS
+
+                unsafe = sorted(set(runtime_filters) & RESERVED_METADATA_FIELDS)
+                for field_name in unsafe:
+                    _issue(
+                        report,
+                        "RAG_RUNTIME_FILTER_UNSAFE",
+                        f"runtime_filters cannot set {field_name!r} — it is a "
+                        "reserved security/provenance field.",
+                        path=f"{path}.config.runtime_filters.{field_name}",
+                        node_id=node_spec.id,
+                        suggestion=(
+                            "Remove this key; retrieval scope is always resolved "
+                            "server-side and can only be narrowed, never widened, "
+                            "by a runtime filter."
+                        ),
+                    )
+
         models = list(_iter_model_values(validated_config))
         if node_spec.selected_model:
             models.append((f"{path}.selected_model", node_spec.selected_model))
@@ -690,7 +711,15 @@ def _validate_router_edges(
             )
 
         if source.type == "RouterAgent":
-            rules = source.effective_config().get("rules") or []
+            config = source.effective_config()
+            mode = config.get("mode", "rule")
+            if mode in ("field", "conditions"):
+                _validate_typed_router(
+                    source, config, mode, edge, edge_path, report
+                )
+                continue
+
+            rules = config.get("rules") or []
             names = [
                 rule.get("name")
                 for rule in rules
@@ -742,6 +771,84 @@ def _validate_router_edges(
                     node_id=source.id,
                     suggestion="Add one rule with default: true.",
                 )
+
+
+def _validate_typed_router(
+    source: NodeSpec,
+    config: dict[str, Any],
+    mode: str,
+    edge: EdgeSpec,
+    edge_path: str,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Branch/route agreement for the Builder's visual router modes.
+
+    The legacy `rule` mode names a route per rule, so route names and branch
+    names are the same list. `field` mode maps *values* to route names (several
+    values may share a branch) and `conditions` mode names a route per case, so
+    the comparison has to go through RouterConfig.route_names() rather than
+    reading `rules`.
+    """
+    from app.nodes.router import RouterConfig
+
+    try:
+        parsed = RouterConfig(**config)
+    except ValidationError:
+        # Config validation already reported this with field-level detail; a
+        # second, vaguer message here would just be noise.
+        return
+
+    route_names = parsed.route_names()
+    branch_names = set(edge.branches or {})
+    declared = set(route_names)
+
+    missing_targets = sorted(declared - branch_names)
+    if missing_targets:
+        _issue(
+            report,
+            "ROUTER_BRANCH_WITHOUT_TARGET",
+            f"Router can return {missing_targets} but the edge declares no "
+            f"branch for them; those runs would fail at the branch.",
+            path=edge_path,
+            node_id=source.id,
+            suggestion=(
+                "Draw an edge for each branch, or remove the route from the "
+                "router's configuration."
+            ),
+        )
+
+    unreachable = sorted(branch_names - declared)
+    if unreachable:
+        _issue(
+            report,
+            "UNREACHABLE_BRANCH",
+            f"Edge declares branch(es) {unreachable} that this router can never "
+            "return.",
+            severity=PreflightSeverity.WARNING,
+            path=edge_path,
+            node_id=source.id,
+            suggestion=(
+                "Rename the branch to match a configured route, or delete the "
+                "edge."
+            ),
+        )
+
+    if not parsed.fallback:
+        _issue(
+            report,
+            "MISSING_DEFAULT_ROUTE",
+            (
+                f"Router has no fallback branch. In {mode} mode an unexpected "
+                "value fails the run instead of being handled."
+            ),
+            severity=PreflightSeverity.WARNING,
+            path=f"nodes.{source.id}.config.fallback",
+            node_id=source.id,
+            suggestion=(
+                "Set a fallback branch — routing unclear cases to a human "
+                "review step is the usual choice."
+            ),
+        )
 
 
 def _exclusive_branch_groups(
@@ -1194,7 +1301,7 @@ def _validate_template_output_path(
         return
 
     remainder = ".".join(parts[1:])
-    if len(parts) >= 3 and remainder not in fields:
+    if len(parts) >= 3 and not _matches_declared_field(remainder, fields):
         _issue(
             report,
             "TEMPLATE_UNKNOWN_STRUCTURED_FIELD",
@@ -1207,6 +1314,46 @@ def _validate_template_output_path(
                 "the template path."
             ),
         )
+
+
+def _matches_declared_field(reference: str, declared: set[str]) -> bool:
+    """Does a dotted reference match one of a node's declared output paths?
+
+    Exact match, plus two extensions that exist because some output shapes are
+    genuinely not knowable at preflight time:
+
+    *   **`prefix.*`** — "anything under here". An MCP tool's result shape is
+        defined by the *server*, which preflight deliberately does not contact
+        (a Builder check must not depend on a CRM being reachable). The node
+        declares `data.*`; the Builder's discovery panel, which can reach the
+        server, is what validates the sub-path properly.
+    *   **numeric segments** — a list index (`accounts.0.account_id`) matches a
+        declaration written without it (`accounts.account_id`), since the
+        declared schema describes the item shape, not each position.
+    """
+    if reference in declared:
+        return True
+
+    without_indices = ".".join(
+        part for part in reference.split(".") if not part.lstrip("-").isdigit()
+    )
+    if without_indices in declared:
+        return True
+    # `items` is the convention field_schema and results use for a list's
+    # element shape, so `accounts.0.id` should also match `accounts.items.id`.
+    segments = reference.split(".")
+    with_items = ".".join(
+        "items" if part.lstrip("-").isdigit() else part for part in segments
+    )
+    if with_items in declared:
+        return True
+
+    for entry in declared:
+        if entry.endswith(".*") and (
+            reference.startswith(entry[:-1]) or reference == entry[:-2]
+        ):
+            return True
+    return False
 
 
 def _validate_templates(
@@ -1449,9 +1596,92 @@ def preflight_workflow_yaml(
     _validate_templates(spec, report, forward, reverse)
     _validate_inputs(spec, provided_inputs, report)
     _validate_guided_experience(spec, report)
+    _validate_business_logic(spec, report, forward, reverse)
     if compile_graph:
         _compile_dry_run(spec, services, report)
     return report.refresh()
+
+
+def _validate_business_logic(
+    spec: WorkflowSpec,
+    report: WorkflowPreflightReport,
+    forward: dict[str, set[str]],
+    reverse: dict[str, set[str]],
+) -> None:
+    """Check visually authored rules, routes and schemas (zero tokens).
+
+    Delegated to app/runtime/logic_preflight.py: those checks need the typed
+    field index built from node configs, which is the same index the Builder's
+    mapping picker and rule editor read. Keeping them in one module is what stops
+    the editor from offering an operator preflight would then reject.
+    """
+    from app.runtime.logic_preflight import validate_business_logic
+
+    before = len(report.issues)
+
+    def record(
+        code: str,
+        message: str,
+        *,
+        severity: str = "error",
+        path: str | None = None,
+        node_id: str | None = None,
+        suggestion: str | None = None,
+    ) -> None:
+        _issue(
+            report,
+            code,
+            message,
+            severity=(
+                PreflightSeverity.WARNING
+                if severity == "warning"
+                else PreflightSeverity.ERROR
+            ),
+            path=path,
+            node_id=node_id,
+            suggestion=suggestion,
+        )
+
+    # Reuse the AND-join-aware ordering the template checks already rely on, so
+    # "this value is always available here" means the same thing to a rule as it
+    # does to a template reference.
+    entry = spec.entry or (spec.nodes[0].id if spec.nodes else "")
+    try:
+        guaranteed = _guaranteed_before(entry, forward, reverse) if entry else {}
+    except Exception:
+        guaranteed = {}
+
+    def always_before(source: str, target: str) -> bool:
+        # An unknown target means the graph checks already reported a problem
+        # with it; don't pile a second, less useful message on top.
+        if target not in guaranteed:
+            return True
+        return source in guaranteed[target]
+
+    try:
+        validate_business_logic(
+            spec,
+            issue=record,
+            guaranteed_before=always_before,
+        )
+    except Exception as exc:
+        # A crash in a *validator* must not block a workflow that may be fine.
+        # Report it as a warning so the gap is visible rather than silent.
+        _issue(
+            report,
+            "LOGIC_CHECK_FAILED",
+            f"Business-logic checks could not complete: {type(exc).__name__}: {exc}",
+            severity=PreflightSeverity.WARNING,
+            suggestion="The workflow may still be valid; report this diagnostic.",
+        )
+
+    _add_check(
+        report,
+        "business_logic",
+        before,
+        "Rules, routes and output schemas checked against the workflow's own "
+        "typed contracts without spending tokens.",
+    )
 
 
 def preflight_workflow_spec(

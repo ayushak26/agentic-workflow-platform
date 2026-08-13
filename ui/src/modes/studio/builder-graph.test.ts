@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Node } from 'reactflow';
 import type { NodeTypeManifest } from '../../api/types';
+import { manifestFixture } from './builder/test-fixtures';
 import {
   buildVariableOptions,
   outgoingEdges,
@@ -49,24 +50,11 @@ describe('upstreamNodeIds', () => {
 
 describe('buildVariableOptions', () => {
   const manifests: NodeTypeManifest[] = [
-    {
+    manifestFixture({
       type_name: 'Fetcher',
-      description: '',
-      category: 'Other',
-      icon: 'topology',
-      input_schema: {},
       output_schema: { properties: { text: {}, score: {} } },
-      config_schema: {},
-    },
-    {
-      type_name: 'Blank',
-      description: '',
-      category: 'Other',
-      icon: 'topology',
-      input_schema: {},
-      output_schema: {},
-      config_schema: {},
-    },
+    }),
+    manifestFixture({ type_name: 'Blank' }),
   ];
 
   it('excludes sibling and downstream nodes, only including upstream ones', () => {

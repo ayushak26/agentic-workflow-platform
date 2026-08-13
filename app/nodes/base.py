@@ -19,6 +19,27 @@ class NodeType(ABC):
     config_schema: ClassVar[Type[BaseModel]]    # YAML config shape, validated at load
     description: ClassVar[str] = ""             # shown in the Builder palette
 
+    # ----- presentation metadata read by the Builder -----
+    # "core" node types are the small reusable vocabulary a new workflow should
+    # normally be built from; "specialized" ones are existing domain capabilities
+    # that remain available but are not where an author starts. The palette
+    # groups on this, which is how the user-facing mental model stays small
+    # without deleting anything that works.
+    family: ClassVar[str] = "specialized"
+
+    # What kind of thing happens here: "ai" (a model decides), "deterministic"
+    # (code decides, repeatably), "external" (something outside the platform
+    # changes), "human" (a person decides), "input"/"output" (data crosses the
+    # boundary). The canvas renders this so the automation boundary is visible
+    # rather than buried in config.
+    execution_kind: ClassVar[str] = "deterministic"
+
+    # Concise, author-facing explanation rendered in the inspector's About tab:
+    # keys `what`, `why`, `receives`, `produces`, `uses_ai`, `external_action`,
+    # and optionally `presets` (configuration starting points, never new node
+    # types) and `operators`.
+    about: ClassVar[dict[str, Any]] = {}
+
     def __init__(self, node_id: str, raw_config: dict[str, Any],services: dict[str, Any] | None = None):
         # Pydantic validates the config on construction. If the YAML is wrong,
         # we fail at compile time, not in the middle of an LLM call.

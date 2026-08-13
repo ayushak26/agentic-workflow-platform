@@ -1,12 +1,322 @@
 // Mirrors app/runtime/schema.py and app/nodes/registry.py manifest output.
+/** How a node reaches its result. Drives the canvas badge that makes the
+ *  automation boundary visible: a model decided this, code decided this,
+ *  something outside the platform changed, a person decided. */
+export type ExecutionKind =
+  | 'ai'
+  | 'deterministic'
+  | 'external'
+  | 'human'
+  | 'input'
+  | 'output';
+
+/** A configuration starting point offered in the inspector. Presets are never
+ *  separate node types — picking one only writes config. */
+export type NodePreset = {
+  id: string;
+  label: string;
+  summary?: string;
+  task?: string;
+  instruction?: string;
+  include_confidence?: boolean;
+  config?: Record<string, unknown>;
+  rules?: unknown[];
+  external_action?: boolean;
+};
+
+export type NodeAbout = {
+  what?: string;
+  why?: string;
+  receives?: string;
+  produces?: string;
+  uses_ai?: boolean;
+  external_action?: boolean;
+  safety?: string;
+  presets?: NodePreset[];
+  operators?: Record<string, string[]>;
+};
+
 export type NodeTypeManifest = {
   type_name: string;
   description: string;
   category: string;
   icon: string;
+  /** 'core' = the small reusable vocabulary a new workflow starts from;
+   *  'specialized' = an existing domain capability, still available. */
+  family: 'core' | 'specialized';
+  execution_kind: ExecutionKind;
+  uses_ai: boolean;
+  external_action: boolean;
+  about: NodeAbout;
+  presets: NodePreset[];
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   config_schema: Record<string, unknown>;
+};
+
+// ---- Visual structured-output schema (mirrors app/runtime/field_schema.py) ----
+
+export type FieldKind =
+  | 'string'
+  | 'text'
+  | 'number'
+  | 'integer'
+  | 'boolean'
+  | 'enum'
+  | 'object'
+  | 'list'
+  | 'date';
+
+export type FieldSpec = {
+  name: string;
+  type: FieldKind;
+  description?: string;
+  required?: boolean;
+  nullable?: boolean;
+  enum_values?: string[];
+  fields?: FieldSpec[];
+  item_type?: FieldKind | null;
+  item_enum_values?: string[];
+  minimum?: number | null;
+  maximum?: number | null;
+};
+
+export type SchemaPreview = {
+  json_schema: Record<string, unknown>;
+  contract: string;
+  paths: Array<{
+    path: string;
+    type: string;
+    description: string;
+    required: boolean;
+    nullable: boolean;
+    enum_values: string[];
+    may_be_unavailable: boolean;
+  }>;
+};
+
+// ---- Rules (mirrors app/runtime/rules.py) ----
+
+export type RuleOperator = string;
+
+export type RuleCondition = {
+  field: string;
+  operator: RuleOperator;
+  value?: unknown;
+};
+
+export type RuleConditionGroup = {
+  operator: 'and' | 'or' | 'not';
+  conditions: Array<RuleCondition | RuleConditionGroup>;
+};
+
+export type RuleAction = {
+  field: string;
+  operation?: 'set' | 'append' | 'increase' | 'decrease';
+  value?: unknown;
+};
+
+export type BusinessRule = {
+  name: string;
+  description?: string;
+  when?: RuleConditionGroup | null;
+  then: RuleAction[];
+  default?: boolean;
+  stop_on_match?: boolean;
+};
+
+export type OperatorCatalog = {
+  by_type: Record<string, string[]>;
+  labels: Record<string, string>;
+  /** 'none' = no value input, 'one' = a single value, 'many' = a value list. */
+  arity: Record<string, 'none' | 'one' | 'many'>;
+};
+
+// ---- Output contract / mapping ----
+
+export type ContractField = {
+  path: string;
+  /** The template reference to write into config — the author never types it. */
+  reference: string;
+  type: string;
+  description: string;
+  required: boolean;
+  may_be_unavailable: boolean;
+  enum_values: string[];
+  item_type: string | null;
+  operators: string[];
+};
+
+export type ContractNode = {
+  node_id: string;
+  type_name: string;
+  label: string;
+  execution_kind: ExecutionKind;
+  typed: boolean;
+  fields: ContractField[];
+};
+
+export type OutputContract = {
+  nodes: ContractNode[];
+  inputs: Array<{
+    name: string;
+    reference: string;
+    type: string;
+    description: string;
+    required: boolean;
+  }>;
+  variables: Array<{ name: string; reference: string; type: string }>;
+};
+
+// ---- Node test / simulation ----
+
+export type StepExplanation = {
+  kind: ExecutionKind;
+  decided_by?: string;
+  status?: string;
+  confidence?: number | null;
+  detected_language?: string | null;
+  model_used?: string | null;
+  reasoning?: string | null;
+  route?: string;
+  route_value?: unknown;
+  used_fallback?: boolean;
+  matched_rules?: string[];
+  decisions?: Record<string, unknown>;
+  decision?: string;
+  operation?: string;
+  deduplicated?: boolean;
+  defaulted?: string[];
+  summary: string[];
+  rules?: unknown[];
+  conditions?: unknown[];
+};
+
+export type NodeTestResult = {
+  status: 'completed' | 'failed';
+  node_id: string;
+  type_name: string;
+  output?: Record<string, unknown>;
+  error?: string;
+  error_type?: string;
+  duration_s: number;
+  resolved_config?: Record<string, unknown>;
+  explanation?: StepExplanation;
+};
+
+export type SimulationStep = {
+  node_id: string;
+  label: string;
+  type_name: string;
+  execution_kind: ExecutionKind;
+  stubbed: boolean;
+  status?: 'waiting';
+  duration_s: number | null;
+  output: Record<string, unknown> | null;
+  review?: Record<string, unknown>;
+  explanation: StepExplanation;
+};
+
+export type SimulationResult = {
+  simulation_id: string;
+  status: string;
+  duration_s: number;
+  steps: SimulationStep[];
+  path: string[];
+  output?: unknown;
+  interrupt?: unknown;
+  waiting_for?: string[];
+  stubbed?: string[];
+  error?: string;
+  error_type?: string;
+};
+
+// ---- MCP integration ----
+
+/** How a tool affects the outside world. Rendered on the canvas so the
+ *  automation boundary is visible before anything runs. */
+export type MCPOperationClass = 'read' | 'write' | 'destructive' | 'unknown';
+
+export type MCPServerInfo = {
+  id: string;
+  display_name: string;
+  description: string;
+  transport: string;
+  environment_label: string;
+  /** True when the connection is backed by fixtures rather than a live system.
+   *  Shown prominently — a "Connected" badge over a mock is how a demo becomes
+   *  a lie. */
+  is_mock: boolean;
+  write_policy: 'read_only' | 'require_approval' | 'allow';
+  tool_allowlist: string[];
+  timeout_seconds: number;
+  running: boolean;
+  /** Which credentials the connection expects, and whether each is set. Never
+   *  a credential value. */
+  credentials: Array<{
+    variable: string;
+    reference: string;
+    configured: boolean;
+  }>;
+  status: {
+    healthy: boolean | null;
+    tool_count: number;
+    error: string | null;
+    checked_at: string | null;
+  };
+};
+
+export type MCPToolField = {
+  path: string;
+  type: string;
+  description: string;
+  required: boolean;
+  enum_values: string[];
+};
+
+export type MCPToolInfo = {
+  server_id: string;
+  server_label: string;
+  name: string;
+  title: string;
+  description: string;
+  operation: MCPOperationClass;
+  external_action: boolean;
+  requires_approval: boolean;
+  system: string;
+  typical_uses: string[];
+  mode: string;
+  /** JSON Schema the Builder renders as a form — never hardcoded in React. */
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  /** Typed result paths for the mapping picker. */
+  output_fields: MCPToolField[];
+};
+
+export type MCPToolTestResult = {
+  status: 'completed' | 'failed';
+  server_id: string;
+  tool: string;
+  operation?: MCPOperationClass;
+  mode?: string;
+  duration_s?: number;
+  is_structured?: boolean;
+  data?: unknown;
+  text?: unknown;
+  error?: {
+    code?: string;
+    message?: string;
+    retryable?: boolean;
+    suggested_action?: string;
+  };
+};
+
+export type EmailConnectionInfo = {
+  id: string;
+  provider: string;
+  display_name: string;
+  address: string;
+  allow_send: boolean;
 };
 
 export type LLMModelInfo = {

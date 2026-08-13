@@ -1,7 +1,7 @@
 import type { FC } from "react";
 import { Icon } from "../ui/Icon";
 
-type Mode = "studio" | "eval" | "operator";
+type Mode = "studio" | "eval" | "operator" | "knowledge";
 
 interface Props {
   mode: Mode;
@@ -11,6 +11,7 @@ interface Props {
 
 const TITLES: Record<Mode, string> = {
   studio: "Workflow Studio",
+  knowledge: "Knowledge Studio",
   eval: "Evaluation Lab",
   operator: "Operator Console",
 };

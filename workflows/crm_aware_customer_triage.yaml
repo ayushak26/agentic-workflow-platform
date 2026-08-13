@@ -1,0 +1,762 @@
+name: CRM-Aware Customer Request Triage
+description: >-
+  Understands an incoming customer communication in any language, identifies the
+  customer in Dynamics 365, retrieves the business facts the message left
+  implicit, and routes the request — sending anything uncertain to a person.
+
+  The separation this workflow demonstrates is the whole argument:
+
+      AI     understands language and uncertainty
+      MCP    supplies enterprise facts
+      Rules  decide business policy
+      Human  handles risky ambiguity
+
+  A customer writing "another pump like the one we bought last time" is the case
+  that makes it concrete. The AI must not guess which pump — it does not know,
+  and a plausible guess is worse than no answer. It reports what is missing; the
+  CRM lookup supplies the actual order history; the rules decide whether that was
+  enough; a person handles it when it wasn't.
+
+  Every CRM step is the same generic MCP Tool node with different configuration.
+  There is no Dynamics node type in this workflow, in this repository, or in the
+  Builder's palette.
+
+      Customer Email
+            ↓
+      Understand Request            AI Task
+            ↓
+      Find CRM Account              MCP Tool · Dynamics · READ
+            ↓
+      Retrieve CRM Context          MCP Tool · Dynamics · READ
+            ↓
+      Assess Request                Decision (deterministic)
+            ↓
+      Route Request
+      ┌─────┬──────────┬───────────────┐
+    Sales  Support  Spare Parts   Human Review
+version: "1.0"
+use_case: crm_aware_customer_triage
+
+library:
+  title: CRM-Aware Customer Request Triage
+  summary: >-
+    Route customer emails using both what the message says and what the CRM
+    knows, escalating anything the two together cannot settle.
+  purpose:
+    - Understand customer requests written in any language
+    - Identify the customer in Dynamics 365 rather than guessing
+    - Resolve vague product references from recorded order history
+    - Route deterministically, with an explainable reason
+  suitable_for:
+    - Shared inbox triage where customers are already in a CRM
+    - Enquiries that reference past purchases or existing opportunities
+  not_suitable_for:
+    - Writing to the CRM without review (add a Human Review before any write)
+  outputs:
+    - Structured request representation
+    - CRM account, open opportunities and order history
+    - Chosen department and the reason for it
+  input_types:
+    - Customer email or message text
+  human_reviews:
+    count: 1
+    labels:
+      - Review requests the CRM could not settle
+  visibility_status: draft
+
+inputs:
+  subject:
+    type: text
+    description: Subject line of the incoming communication.
+    required: false
+  message:
+    type: text
+    description: >-
+      Full body of the incoming customer communication, in its original
+      language.
+    required: true
+  sender_email:
+    type: text
+    description: Sender address, when known.
+    required: false
+
+nodes:
+  # ── 1. Information entering the workflow ────────────────────────────────────
+  - id: incoming_request
+    type: WorkflowInputAgent
+    experience:
+      display_name: Customer Email
+      purpose: Receive the customer communication and give it a known shape.
+      contribution: Everything downstream reads the request from here.
+      expected_output: The subject, message body and sender address.
+      failure_message: No message text arrived. Paste a customer message and run again.
+    config:
+      source: email
+      fields:
+        - name: subject
+          source: inputs.subject
+          type: string
+        - name: message
+          source: inputs.message
+          type: text
+          required: true
+        - name: sender_email
+          source: inputs.sender_email
+          type: string
+
+  # ── 2. Understand the language, not the business facts ──────────────────────
+  # The instruction is explicit that the model must not resolve a product from
+  # memory. Its job is to report what the customer said and what is missing; the
+  # CRM's job is to supply what the customer left implicit.
+  - id: understand_request
+    type: AITaskAgent
+    selected_model: auto
+    model_routing:
+      accuracy_priority: balanced
+    experience:
+      display_name: Understand Customer Request
+      purpose: >-
+        Read the message in its original language and extract what the customer
+        actually stated.
+      contribution: >-
+        The CRM lookups and the business rules act on these fields, never on the
+        raw text.
+      expected_output: >-
+        Language, intent, company, equipment as stated, urgency signals, and
+        what is missing.
+      success_condition: A schema-valid result with a confidence score.
+      failure_message: >-
+        The request could not be understood well enough to act on. It will be
+        sent to a person.
+    config:
+      task: extract
+      model: auto
+      fail_on_error: false
+      instruction: >-
+        Understand the incoming customer communication and extract the
+        information described by the output schema.
+
+        Extract only what the customer states or unambiguously implies. This is
+        the important part: if the customer refers to a previous purchase
+        ("the same as last time", "another one of those", "our existing pump")
+        without naming it, do NOT guess a product, model or serial number. Leave
+        those fields null, set refers_to_previous_purchase to true, and name
+        what is missing in missing_information. The CRM is consulted for those
+        facts; a plausible guess would be worse than no answer.
+
+        Set production_stopped to true only when the customer states that
+        production, a plant, a line or a process is currently stopped.
+
+        Judge urgency from stated business impact, not from tone.
+      input: "{{outputs.incoming_request.data.message}}"
+      context:
+        Subject: "{{outputs.incoming_request.data.subject}}"
+        Sender: "{{outputs.incoming_request.data.sender_email}}"
+      language:
+        input_language: auto
+        process_in_original_language: true
+        output_language: en
+        preserve_original: true
+      include_confidence: true
+      output_fields:
+        - name: language
+          type: string
+          required: true
+          description: ISO 639-1 code of the language the customer wrote in.
+
+        - name: intent
+          type: enum
+          required: true
+          description: What the customer wants from us.
+          enum_values:
+            - quotation_request
+            - technical_support
+            - spare_part_request
+            - complaint
+            - order_status
+            - general_inquiry
+            - other
+
+        - name: summary
+          type: text
+          required: true
+          description: Two sentences in English on what the customer wants and why it matters.
+
+        - name: company_name
+          type: string
+          required: false
+          nullable: true
+          description: >-
+            Company name exactly as written in the message or signature. Used to
+            look the customer up in the CRM, so reproduce it verbatim.
+
+        - name: contact_name
+          type: string
+          required: false
+          nullable: true
+          description: Name of the person writing, from the signature.
+
+        - name: equipment
+          type: object
+          required: false
+          description: Equipment the request concerns, only as far as stated.
+          fields:
+            - name: model
+              type: string
+              required: false
+              nullable: true
+              description: >-
+                Model designation exactly as written. Null if the customer
+                referred to a previous purchase without naming it.
+            - name: serial_number
+              type: string
+              required: false
+              nullable: true
+              description: Serial number exactly as written, or null.
+
+        - name: refers_to_previous_purchase
+          type: boolean
+          required: true
+          description: >-
+            True when the customer refers to something they bought before
+            without naming it — "the same as last time", "our existing pump".
+
+        - name: production_stopped
+          type: boolean
+          required: true
+          description: True only if the customer states production is currently stopped.
+
+        - name: urgency
+          type: enum
+          required: true
+          description: Business urgency implied by the stated impact.
+          enum_values: [low, normal, high, critical]
+
+        - name: requested_action
+          type: text
+          required: true
+          description: In one sentence, what the customer is asking us to do.
+
+        - name: missing_information
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            Machine-readable names of information still needed before acting —
+            product_model, serial_number, quantity, delivery_address. Empty list
+            if nothing is missing.
+
+  # ── 3. Identify the customer in the CRM ─────────────────────────────────────
+  # Generic MCP Tool node. The workflow names a capability, not an HTTP request.
+  - id: find_crm_account
+    type: MCPToolAgent
+    experience:
+      display_name: Find CRM Account
+      purpose: Identify the customer in Dynamics 365 from the company they named.
+      contribution: >-
+        Everything the CRM knows about this customer hangs off the account id
+        this step resolves.
+      expected_output: A matching CRM account, or nothing if they are not a customer.
+      failure_message: >-
+        The CRM could not be reached or the company was not found. The request
+        goes to a person.
+    config:
+      server_id: dynamics365
+      tool: find_account
+      # A CRM lookup failing is a business outcome ("we do not know this
+      # company"), not a reason to end the run.
+      fail_on_error: false
+      arguments:
+        company_name: "{{outputs.understand_request.result.company_name}}"
+        limit: 3
+
+  # ── 4. Retrieve the facts the message left implicit ─────────────────────────
+  - id: crm_order_history
+    type: MCPToolAgent
+    experience:
+      display_name: Retrieve Order History
+      purpose: >-
+        Look up what this customer has actually bought, so a vague reference can
+        be resolved from record rather than from guesswork.
+      contribution: Supplies the product and serial number the message omitted.
+      expected_output: Past orders with their line items and serial numbers.
+      failure_message: The order history could not be retrieved.
+    config:
+      server_id: dynamics365
+      tool: find_previous_orders
+      fail_on_error: false
+      arguments:
+        account_id: "{{outputs.find_crm_account.first.account_id?}}"
+        limit: 5
+
+  - id: crm_opportunities
+    type: MCPToolAgent
+    experience:
+      display_name: Retrieve Open Opportunities
+      purpose: See whether a commercial conversation is already under way.
+      contribution: Stops a second opportunity being opened alongside an existing one.
+      expected_output: Open opportunities for this account.
+      failure_message: The opportunities could not be retrieved.
+    config:
+      server_id: dynamics365
+      tool: get_open_opportunities
+      fail_on_error: false
+      arguments:
+        account_id: "{{outputs.find_crm_account.first.account_id?}}"
+        limit: 10
+
+  # ── 5. Deterministic policy over AI output AND CRM facts ────────────────────
+  - id: assess_request
+    type: DecisionAgent
+    experience:
+      display_name: Assess Request
+      purpose: >-
+        Decide, from what the customer said and what the CRM knows, whether this
+        can be handled automatically.
+      contribution: The router acts on these conclusions.
+      expected_output: Whether a person is needed, the effective urgency, and why.
+      failure_message: The assessment rules could not be evaluated.
+    config:
+      defaults:
+        human_review: false
+        customer_known: false
+        product_resolved: true
+        urgency: normal
+        escalation_reason: ""
+        has_open_opportunity: false
+      rules:
+        - name: The AI step could not produce a usable result
+          when:
+            operator: or
+            conditions:
+              - field: outputs.understand_request.status
+                operator: not_equals
+                value: ok
+              - field: outputs.understand_request.result.intent
+                operator: does_not_exist
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: The request could not be understood automatically.
+
+        - name: Low confidence needs a person
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.confidence
+                operator: less_than
+                value: 0.8
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: >-
+                The extraction confidence was below the 0.80 threshold for
+                automatic handling.
+
+        - name: The customer is a known CRM account
+          when:
+            operator: and
+            conditions:
+              - field: outputs.find_crm_account.found
+                operator: is_true
+          then:
+            - field: customer_known
+              value: true
+
+        - name: We could not identify the customer in the CRM
+          description: >-
+            An unknown company is not an error, but it is not something to route
+            to a department either — a person decides whether it is a new
+            prospect or a misspelled existing customer.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.find_crm_account.found
+                operator: is_false
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: >-
+                The company named in the message is not in the CRM, so this may
+                be a new prospect or a misspelling.
+
+        - name: Several CRM accounts matched the company name
+          description: >-
+            "ABC Chemicals GmbH" and "ABC Chemicals B.V." are different legal
+            entities with different contracts. Taking the first match silently
+            would be a plausible-looking mistake, so a person picks.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.find_crm_account.count
+                operator: greater_than
+                value: 1
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: >-
+                More than one CRM account matches this company name, so the
+                right one cannot be chosen automatically.
+
+        - name: A vague product reference with no order history at all
+          description: >-
+            The customer referred to a previous purchase without naming it, and
+            no order history came back. Nothing may be guessed from here.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.refers_to_previous_purchase
+                operator: is_true
+              - field: outputs.crm_order_history.found
+                operator: is_false
+          then:
+            - field: product_resolved
+              value: false
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: >-
+                The customer referred to a previous purchase and no order
+                history was found, so the product cannot be identified.
+
+        - name: A vague product reference with several possible orders
+          description: >-
+            The honest case. "Another pump like last time" with three orders in
+            the history is genuinely ambiguous — the newest order might be a
+            hose set, not the pump. Taking the most recent line item would look
+            confident and be wrong, so a person picks from the history the CRM
+            supplied. The workflow narrowed it from "unknowable" to "choose one
+            of these", which is the value it adds.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.refers_to_previous_purchase
+                operator: is_true
+              - field: outputs.crm_order_history.count
+                operator: greater_than
+                value: 1
+          then:
+            - field: product_resolved
+              value: false
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: >-
+                The customer referred to a previous purchase and more than one
+                past order could be meant. The order history is shown below so
+                the right one can be chosen.
+
+        - name: A spare part request with no model and no order history
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: spare_part_request
+              - field: outputs.understand_request.result.equipment.model
+                operator: is_empty
+              - field: outputs.crm_order_history.found
+                operator: is_false
+          then:
+            - field: product_resolved
+              value: false
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: A spare part cannot be identified without a product model.
+
+        - name: Complaints are always handled by a person
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: complaint
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: Complaints are reviewed by a person before any reply.
+
+        - name: Stopped production is critical
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.production_stopped
+                operator: is_true
+          then:
+            - field: urgency
+              value: critical
+
+        - name: The account already has an open opportunity
+          description: >-
+            Sales should join the existing conversation rather than starting a
+            second one.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.crm_opportunities.found
+                operator: is_true
+          then:
+            - field: has_open_opportunity
+              value: true
+
+  # ── 6. One deterministic router, escalation case first ──────────────────────
+  - id: route_request
+    type: RouterAgent
+    experience:
+      display_name: Route Request
+      purpose: >-
+        Send the request to the department that handles it — or to a person when
+        the rules said it cannot be handled automatically.
+      contribution: The receiving department gets the message and the CRM context.
+      expected_output: One branch, with the conditions that chose it recorded.
+      failure_message: The request could not be routed.
+    config:
+      mode: conditions
+      cases:
+        - route: human_review
+          description: The assessment rules require a person to look at this.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.assess_request.decisions.human_review
+                operator: is_true
+
+        - route: sales
+          description: Commercial requests from known customers go to Sales.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: in
+                value: [quotation_request, order_status]
+
+        - route: technical_support
+          description: Technical problems go to Support.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: technical_support
+
+        - route: spare_parts
+          description: Parts requests go to Service.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.intent
+                operator: equals
+                value: spare_part_request
+
+      fallback: human_review
+
+  # ── 7. Department hand-offs, carrying the CRM context ───────────────────────
+  - id: sales
+    type: DataTransformAgent
+    experience:
+      display_name: Sales
+      purpose: Hand a commercial request to Sales with its CRM context.
+      contribution: Sales sees the account and any open opportunity immediately.
+      expected_output: A commercial hand-off packet.
+      failure_message: The Sales hand-off could not be built.
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Sales
+        - target: crm_account
+          operation: copy
+          source: outputs.find_crm_account.first.account_name
+          default: not identified
+        - target: crm_account_id
+          operation: copy
+          source: outputs.find_crm_account.first.account_id
+          default: ""
+        - target: has_open_opportunity
+          operation: boolean
+          source: outputs.assess_request.decisions.has_open_opportunity
+        - target: open_opportunity
+          operation: copy
+          source: outputs.crm_opportunities.first.name
+          default: none
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+        - target: urgency
+          operation: copy
+          source: outputs.assess_request.decisions.urgency
+
+  - id: technical_support
+    type: DataTransformAgent
+    experience:
+      display_name: Technical Support
+      purpose: Hand a technical case to Support with the equipment identified.
+      contribution: >-
+        Support sees the model and serial number, resolved from the CRM when the
+        customer did not state them.
+      expected_output: A technical case packet.
+      failure_message: The Support hand-off could not be built.
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Technical Support
+        - target: crm_account
+          operation: copy
+          source: outputs.find_crm_account.first.account_name
+          default: not identified
+        # Stated model first, CRM order history second. That order is the point:
+        # what the customer told us wins, and the CRM fills the gap they left.
+        - target: model
+          operation: coalesce
+          sources:
+            - outputs.understand_request.result.equipment.model
+            - outputs.crm_order_history.first.products.0.name
+          default: not identified
+        - target: serial_number
+          operation: coalesce
+          sources:
+            - outputs.understand_request.result.equipment.serial_number
+            - outputs.crm_order_history.first.products.0.serial_number
+          default: not identified
+        - target: production_stopped
+          operation: boolean
+          source: outputs.understand_request.result.production_stopped
+        - target: urgency
+          operation: copy
+          source: outputs.assess_request.decisions.urgency
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+
+  - id: spare_parts
+    type: DataTransformAgent
+    experience:
+      display_name: Service and Spare Parts
+      purpose: Hand a parts request to Service with the equipment identified.
+      contribution: Service can identify the part from recorded order history.
+      expected_output: A spare-parts hand-off packet.
+      failure_message: The Service hand-off could not be built.
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: Service and Spare Parts
+        - target: crm_account
+          operation: copy
+          source: outputs.find_crm_account.first.account_name
+          default: not identified
+        - target: model
+          operation: coalesce
+          sources:
+            - outputs.understand_request.result.equipment.model
+            - outputs.crm_order_history.first.products.0.name
+          default: not identified
+        - target: serial_number
+          operation: coalesce
+          sources:
+            - outputs.understand_request.result.equipment.serial_number
+            - outputs.crm_order_history.first.products.0.serial_number
+          default: not identified
+        - target: previous_orders
+          operation: count
+          source: outputs.crm_order_history.data.orders
+        - target: summary
+          operation: copy
+          source: outputs.understand_request.result.summary
+
+  # ── 8. A person, with both the message and the CRM in front of them ─────────
+  - id: human_review
+    type: HumanInLoopAgent
+    experience:
+      display_name: Human Review
+      purpose: A person decides what happens with requests the rules could not settle.
+      contribution: Nothing uncertain is handled automatically.
+      expected_output: An approval, an edit, or a rejection with a reason.
+      failure_message: The review could not be presented.
+    config:
+      question: >-
+        This request could not be handled automatically. Check what the customer
+        wrote against what the CRM knows, and decide how to proceed.
+      review_purpose: >-
+        Either the AI step was not confident enough, the company is not in the
+        CRM, or the customer referred to a purchase we could not identify.
+        Approve to accept the extraction, edit it to correct what is wrong, or
+        reject to stop the workflow.
+      allowed_actions: [approve, edit, reject]
+      context_fields:
+        - outputs.incoming_request.data.message
+        - outputs.understand_request.result
+        - outputs.find_crm_account.data
+        - outputs.assess_request.decisions
+      editable_content_field: outputs.understand_request.result
+      review_panels:
+        - label: Original communication
+          field: outputs.incoming_request.data.message
+          hint: Exactly as the customer wrote it, untranslated.
+        - label: What the AI understood
+          field: outputs.understand_request.result
+          hint: Correct anything wrong before approving.
+          editable: true
+        - label: Confidence
+          field: outputs.understand_request.confidence
+          hint: Below 0.80 the workflow does not act automatically.
+        - label: CRM account
+          field: outputs.find_crm_account.data
+          hint: What Dynamics knows about this company, if anything.
+        - label: Order history
+          field: outputs.crm_order_history.data
+          hint: >-
+            What they have actually bought. When the customer said "the same as
+            last time", the product they meant is one of these — pick it rather
+            than letting the workflow guess.
+        - label: Reason for escalation
+          field: outputs.assess_request.decisions.escalation_reason
+          hint: Which rule sent this request to you.
+
+edges:
+  - from: incoming_request
+    to: understand_request
+  - from: understand_request
+    to: find_crm_account
+  # Both CRM context lookups run in parallel off the account lookup, then join.
+  - from: find_crm_account
+    to: [crm_order_history, crm_opportunities]
+  - from: crm_order_history
+    to: assess_request
+  - from: crm_opportunities
+    to: assess_request
+  - from: assess_request
+    to: route_request
+  - from: route_request
+    condition: route
+    branches:
+      sales: sales
+      technical_support: technical_support
+      spare_parts: spare_parts
+      human_review: human_review
+
+entry: incoming_request
+exit:
+  - sales
+  - technical_support
+  - spare_parts
+  - human_review
+
+output:
+  include_input: false
+  nodes:
+    - node_id: understand_request
+      flatten: false
+    - node_id: find_crm_account
+      flatten: false
+    - node_id: assess_request
+      flatten: false
+    - node_id: route_request
+      flatten: false

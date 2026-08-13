@@ -71,11 +71,41 @@ async def _backfill_run_documents_v1(db: Any) -> None:
         await _set_missing(db["run_checkpoints"], field, value)
 
 
+async def _backfill_knowledge_resources_v2(db: Any) -> None:
+    """Expand legacy ``collections`` (CollectionConfig) records with the
+    lifecycle fields Knowledge Studio needs.
+
+    Identifiers, names and ownership are never touched — this only adds
+    fields that are missing (``$exists: false``), the same idempotent
+    pattern as the v1 run-document backfill above. Legacy records that were
+    always globally scoped (no ``owner_scope_id``) are expanded the same
+    way; this migration never assigns one where none exists.
+    """
+
+    defaults = {
+        "status": "ready",
+        "document_count": 0,
+        "chunk_count": 0,
+        "active_index_id": None,
+        "metadata_schema": {},
+        "doc_types": ["general"],
+        "legacy_aliases": [],
+        "schema_version": 2,
+    }
+    for field, value in defaults.items():
+        await _set_missing(db["collections"], field, value)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         migration_id="0001_run_documents_v1",
         description="Backfill explicit v1 run-history and checkpoint fields",
         apply=_backfill_run_documents_v1,
+    ),
+    Migration(
+        migration_id="0002_knowledge_resources_v2",
+        description="Expand legacy collection records with Knowledge Studio v2 lifecycle fields",
+        apply=_backfill_knowledge_resources_v2,
     ),
 )
 

@@ -45,6 +45,26 @@ class Chunk:
     token_count: int
     metadata: dict[str, str | int] = field(default_factory=dict)
 
+    # Knowledge Studio ingestion-strategy surface. All optional so the
+    # original 4-field Chunk keeps working unchanged for every caller that
+    # never sets them.
+    retrieval_content: str | None = None   # what actually gets embedded/searched
+    context_content: str | None = None     # sentence-window / parent surround
+    title: str | None = None
+    section: str | None = None
+    parent_chunk_id: str | None = None
+    chunk_role: str = "child"              # "child" | "parent"
+
+    @property
+    def embedding_content(self) -> str:
+        """The text that should actually be embedded for this chunk.
+
+        Falls back to the raw ``text`` when no strategy set a distinct
+        ``retrieval_content`` (contextual enrichment, parent summarization).
+        """
+
+        return self.retrieval_content or self.text
+
 
 # ---------- Config ------------------------------------------------------------
 
@@ -62,6 +82,8 @@ class ChunkConfig:
     overlap_tokens: int = 64        # ~12% overlap, defended in ADR 0002
     min_tokens: int = 50            # discard chunks smaller than this
     tokenizer_name: str = "cl100k_base"  # matches text-embedding-3-small
+    parent_tokens: int = 1536       # parent_child strategy: parent record ceiling
+    sentence_window: int = 2        # sentence_window strategy: sentences either side
 
 
 # ---------- Internals: tokenizer + sentence splitter --------------------------

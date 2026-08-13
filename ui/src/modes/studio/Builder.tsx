@@ -148,6 +148,16 @@ export function Builder() {
   const [paletteOpen, setPaletteOpen] = useState(() => window.innerWidth > 1020);
   const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth > 1020);
   const [inspectorTab, setInspectorTab] = useState<BuilderInspectorTab>('configure');
+  // Steps the most recent simulation actually executed, and the gate it is
+  // parked at. Lighting the real path on the canvas is what turns a simulation
+  // from a JSON dump into a demonstration of the process.
+  const [simulationPath, setSimulationPath] = useState<Set<string>>(new Set());
+  const [simulationWaiting, setSimulationWaiting] = useState<Set<string>>(new Set());
+  // Operation class per "<server>:<tool>", discovered from the MCP servers the
+  // workflow actually uses. Lets the canvas show READ or WRITE on a step
+  // without opening it — the classification lives on the server and in the
+  // deployment's policy, so it cannot be derived in the browser.
+  const [mcpOperations, setMcpOperations] = useState<Map<string, string>>(new Map());
   const [showInputs, setShowInputs] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -708,6 +718,42 @@ export function Builder() {
   const issueNodes = useMemo(() => new Set(
     (preflight?.issues ?? []).map(issue => issue.node_id).filter(Boolean) as string[],
   ), [preflight]);
+  // What kind of work each step does, read from the node-type manifest rather
+  // than stored in the YAML — the registry is the source of truth for whether a
+  // step calls a model, acts outside the platform, or waits for a person.
+  const executionKinds = useMemo(() => new Map(
+    manifests.map(manifest => [manifest.type_name, manifest.execution_kind]),
+  ), [manifests]);
+  // Discover once per set of MCP servers the canvas references.
+  const mcpServerIds = useMemo(() => {
+    const found = new Set<string>();
+    for (const node of nodes) {
+      if (node.data.typeName !== 'MCPToolAgent') continue;
+      const serverId = node.data.config.server_id;
+      if (typeof serverId === 'string' && serverId) found.add(serverId);
+    }
+    return [...found].sort().join(',');
+  }, [nodes]);
+
+  useEffect(() => {
+    if (!mcpServerIds) return;
+    const ids = mcpServerIds.split(',');
+    let cancelled = false;
+    Promise.all(
+      ids.map(id => api.mcpTools(id).catch(() => ({ tools: [] }))),
+    ).then(results => {
+      if (cancelled) return;
+      const next = new Map<string, string>();
+      for (const [index, result] of results.entries()) {
+        for (const tool of result.tools ?? []) {
+          next.set(`${ids[index]}:${tool.name}`, tool.operation);
+        }
+      }
+      setMcpOperations(next);
+    });
+    return () => { cancelled = true; };
+  }, [mcpServerIds]);
+
   const displayNodes = useMemo(() => nodes.map(node => ({
     ...node,
     data: {
@@ -715,8 +761,29 @@ export function Builder() {
       downstreamCount: edges.filter(edge => edge.source === node.id).length,
       hasIssue: issueNodes.has(node.id),
       faded: selectedId != null && !path.has(node.id),
+      executionKind: executionKinds.get(node.data.typeName),
+      mcpOperation: node.data.typeName === 'MCPToolAgent'
+        ? mcpOperations.get(
+            `${String(node.data.config.server_id ?? '')}:${String(node.data.config.tool ?? '')}`,
+          )
+        : undefined,
+      simulationState: simulationWaiting.has(node.id)
+        ? ('waiting' as const)
+        : simulationPath.has(node.id)
+          ? ('ran' as const)
+          : undefined,
     },
-  })), [edges, issueNodes, nodes, path, selectedId]);
+  })), [
+    edges,
+    executionKinds,
+    issueNodes,
+    mcpOperations,
+    nodes,
+    path,
+    selectedId,
+    simulationPath,
+    simulationWaiting,
+  ]);
   const displayEdges = useMemo(() => edges.map(edge => {
     const highlighted = selectedId != null && path.has(edge.source) && path.has(edge.target);
     return {
@@ -931,6 +998,10 @@ export function Builder() {
               onModelRoutingChange={onModelRoutingChange}
               onModelSelectionChange={onModelSelectionChange}
               onRunWorkflow={() => void prepareRun(currentWorkflow, 'Full workflow')}
+              onHighlightPath={(executed, waiting) => {
+                setSimulationPath(new Set(executed));
+                setSimulationWaiting(new Set(waiting));
+              }}
               onSelectNode={nodeId => {
                 setSelectedId(nodeId);
                 setShowInputs(false);
@@ -949,6 +1020,7 @@ export function Builder() {
               tab={inspectorTab}
               validating={validating}
               workflow={currentWorkflow}
+              workflowYaml={currentYaml}
             />
           </aside>
         )}

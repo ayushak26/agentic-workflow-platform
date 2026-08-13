@@ -1,0 +1,210 @@
+{
+  "accounts": [
+    {
+      "accountid": "a1b2c3d4-0000-4000-8000-000000000001",
+      "name": "ABC Chemicals B.V.",
+      "accountnumber": "ACC-1042",
+      "industrycode": "Chemicals",
+      "address1_city": "Rotterdam",
+      "address1_country": "Netherlands",
+      "telephone1": "+31 10 555 0142",
+      "websiteurl": "https://abc-chemicals.example",
+      "statecode": 0
+    },
+    {
+      "accountid": "a1b2c3d4-0000-4000-8000-000000000002",
+      "name": "ABC Chemicals GmbH",
+      "accountnumber": "ACC-1043",
+      "industrycode": "Chemicals",
+      "address1_city": "Düsseldorf",
+      "address1_country": "Germany",
+      "telephone1": "+49 211 555 0198",
+      "websiteurl": "https://abc-chemicals.example/de",
+      "statecode": 0
+    },
+    {
+      "accountid": "a1b2c3d4-0000-4000-8000-000000000003",
+      "name": "Nordvand Process AS",
+      "accountnumber": "ACC-2210",
+      "industrycode": "Water Treatment",
+      "address1_city": "Bergen",
+      "address1_country": "Norway",
+      "telephone1": "+47 55 555 021",
+      "websiteurl": "https://nordvand.example",
+      "statecode": 0
+    },
+    {
+      "accountid": "a1b2c3d4-0000-4000-8000-000000000004",
+      "name": "Verder Liquids Demo Account",
+      "accountnumber": "ACC-0001",
+      "industrycode": "Manufacturing",
+      "address1_city": "Vleuten",
+      "address1_country": "Netherlands",
+      "telephone1": "+31 30 555 0100",
+      "websiteurl": "https://verderliquids.example",
+      "statecode": 1
+    }
+  ],
+  "contacts": [
+    {
+      "contactid": "c0000000-0000-4000-8000-000000000001",
+      "fullname": "Thomas Becker",
+      "emailaddress1": "t.becker@abc-chemicals.example",
+      "telephone1": "+49 211 555 0177",
+      "jobtitle": "Head of Maintenance",
+      "_parentcustomerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    },
+    {
+      "contactid": "c0000000-0000-4000-8000-000000000002",
+      "fullname": "Marieke de Vries",
+      "emailaddress1": "m.devries@abc-chemicals.example",
+      "telephone1": "+31 10 555 0143",
+      "jobtitle": "Procurement Manager",
+      "_parentcustomerid_value": "a1b2c3d4-0000-4000-8000-000000000001"
+    },
+    {
+      "contactid": "c0000000-0000-4000-8000-000000000003",
+      "fullname": "John Halvorsen",
+      "emailaddress1": "john@nordvand.example",
+      "telephone1": "+47 55 555 022",
+      "jobtitle": "Plant Engineer",
+      "_parentcustomerid_value": "a1b2c3d4-0000-4000-8000-000000000003"
+    }
+  ],
+  "opportunities": [
+    {
+      "opportunityid": "0pp00000-0000-4000-8000-000000000001",
+      "name": "Pump Replacement 2026",
+      "estimatedvalue": 48500.0,
+      "estimatedclosedate": "2026-11-30",
+      "statecode": 0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    },
+    {
+      "opportunityid": "0pp00000-0000-4000-8000-000000000002",
+      "name": "Dosing Skid Upgrade",
+      "estimatedvalue": 112000.0,
+      "estimatedclosedate": "2027-02-15",
+      "statecode": 0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001"
+    },
+    {
+      "opportunityid": "0pp00000-0000-4000-8000-000000000003",
+      "name": "Service Contract Renewal 2025",
+      "estimatedvalue": 9800.0,
+      "estimatedclosedate": "2025-12-01",
+      "statecode": 1,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    }
+  ],
+  "salesorders": [
+    {
+      "salesorderid": "0rd00000-0000-4000-8000-000000000001",
+      "ordernumber": "SO-2024-0881",
+      "name": "Dura 25 peristaltic pump",
+      "createdon": "2024-09-17T09:12:00Z",
+      "totalamount": 18750.0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
+      "products": [
+        {
+          "name": "Verderflex Dura 25",
+          "product_number": "VF-DURA-25",
+          "serial_number": "VF-29831",
+          "quantity": 1
+        },
+        {
+          "name": "Dura 25 hose set (NR)",
+          "product_number": "VF-DURA-25-HOSE",
+          "serial_number": null,
+          "quantity": 4
+        }
+      ]
+    },
+    {
+      "salesorderid": "0rd00000-0000-4000-8000-000000000002",
+      "ordernumber": "SO-2023-0417",
+      "name": "Dura 15 peristaltic pump",
+      "createdon": "2023-04-02T13:40:00Z",
+      "totalamount": 12400.0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001",
+      "products": [
+        {
+          "name": "Verderflex Dura 15",
+          "product_number": "VF-DURA-15",
+          "serial_number": "VF-18402",
+          "quantity": 1
+        }
+      ]
+    },
+    {
+      "salesorderid": "0rd00000-0000-4000-8000-000000000003",
+      "ordernumber": "SO-2025-0290",
+      "name": "Spare hose kit",
+      "createdon": "2025-06-11T08:05:00Z",
+      "totalamount": 1180.0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
+      "products": [
+        {
+          "name": "Dura 25 hose set (NR)",
+          "product_number": "VF-DURA-25-HOSE",
+          "serial_number": null,
+          "quantity": 2
+        }
+      ]
+    }
+  ],
+  "products": [
+    {
+      "productid": "p0000000-0000-4000-8000-000000000001",
+      "name": "Verderflex Dura 25",
+      "productnumber": "VF-DURA-25",
+      "description": "Peristaltic hose pump, 25 mm bore, up to 8 m³/h."
+    },
+    {
+      "productid": "p0000000-0000-4000-8000-000000000002",
+      "name": "Verderflex Dura 15",
+      "productnumber": "VF-DURA-15",
+      "description": "Peristaltic hose pump, 15 mm bore, up to 2.6 m³/h."
+    },
+    {
+      "productid": "p0000000-0000-4000-8000-000000000003",
+      "name": "Dura 25 hose set (NR)",
+      "productnumber": "VF-DURA-25-HOSE",
+      "description": "Natural rubber hose element for Dura 25."
+    }
+  ],
+  "activitypointers": [
+    {
+      "activityid": "ac000000-0000-4000-8000-000000000001",
+      "activitytypecode": "phonecall",
+      "subject": "Follow-up on Dura 25 commissioning",
+      "createdon": "2026-06-02T10:15:00Z",
+      "statecode": 1,
+      "_regardingobjectid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    },
+    {
+      "activityid": "ac000000-0000-4000-8000-000000000002",
+      "activitytypecode": "email",
+      "subject": "Quotation for replacement hose sets",
+      "createdon": "2026-07-21T14:02:00Z",
+      "statecode": 1,
+      "_regardingobjectid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    },
+    {
+      "activityid": "ac000000-0000-4000-8000-000000000003",
+      "activitytypecode": "task",
+      "subject": "Send updated service contract",
+      "createdon": "2026-08-04T08:30:00Z",
+      "statecode": 0,
+      "_regardingobjectid_value": "a1b2c3d4-0000-4000-8000-000000000001"
+    }
+  ],
+  "leads": [],
+  "tasks": [],
+  "systemusers": [
+    {
+      "systemuserid": "00000000-0000-4000-8000-000000000001",
+      "fullname": "Demo Integration User"
+    }
+  ]
+}

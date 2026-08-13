@@ -123,6 +123,23 @@ export type WorkflowNodeData = {
   downstreamCount?: number;
   hasIssue?: boolean;
   faded?: boolean;
+  // Presentation only, injected by the Builder from the node-type manifest.
+  // Not part of the YAML: the registry is the source of truth for what kind of
+  // work a node type does.
+  executionKind?:
+    | 'ai'
+    | 'deterministic'
+    | 'external'
+    | 'human'
+    | 'input'
+    | 'output';
+  // Set while a simulation's result is on screen, so the canvas shows the path
+  // a request actually took and where it is waiting for a person.
+  simulationState?: 'ran' | 'waiting';
+  // For MCP steps: the discovered operation class of the selected tool, so the
+  // canvas shows READ or WRITE without opening the inspector. Discovered from
+  // the server, so it is not part of the saved YAML.
+  mcpOperation?: string;
 };
 
 export type WorkflowEdgeData = {

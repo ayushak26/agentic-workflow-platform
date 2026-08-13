@@ -89,12 +89,18 @@ class InMemoryCollection:
         self.docs.append(copy.deepcopy(doc))
 
     async def find_one(
-        self, filter_: dict[str, Any], projection: dict[str, Any] | None = None,
+        self,
+        filter_: dict[str, Any],
+        projection: dict[str, Any] | None = None,
+        sort: list[tuple[str, int]] | None = None,
     ) -> dict[str, Any] | None:
-        for doc in self.docs:
-            if self._matches(doc, filter_):
-                return copy.deepcopy(doc)
-        return None
+        matched = [doc for doc in self.docs if self._matches(doc, filter_)]
+        if not matched:
+            return None
+        if sort:
+            field, direction = sort[0]
+            matched = sorted(matched, key=lambda d: d.get(field), reverse=direction < 0)
+        return copy.deepcopy(matched[0])
 
     def find(self, filter_: dict[str, Any], projection: dict[str, Any] | None = None):
         matched = [copy.deepcopy(d) for d in self.docs if self._matches(d, filter_)]
@@ -137,6 +143,16 @@ class InMemoryCollection:
                     new_doc[key] = value
             self.docs.append(new_doc)
 
+    async def replace_one(
+        self, filter_: dict[str, Any], replacement: dict[str, Any], upsert: bool = False,
+    ) -> None:
+        for i, doc in enumerate(self.docs):
+            if self._matches(doc, filter_):
+                self.docs[i] = copy.deepcopy(replacement)
+                return
+        if upsert:
+            self.docs.append(copy.deepcopy(replacement))
+
     async def delete_one(self, filter_: dict[str, Any]) -> _DeleteResult:
         for i, doc in enumerate(self.docs):
             if self._matches(doc, filter_):
@@ -149,7 +165,8 @@ class _Cursor:
     def __init__(self, docs: list[dict[str, Any]]) -> None:
         self._docs = docs
 
-    def sort(self, *args, **kwargs) -> "_Cursor":
+    def sort(self, field: str, direction: int = 1) -> "_Cursor":
+        self._docs = sorted(self._docs, key=lambda d: d.get(field), reverse=direction < 0)
         return self
 
     def limit(self, *args, **kwargs) -> "_Cursor":

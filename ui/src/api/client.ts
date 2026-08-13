@@ -1,7 +1,18 @@
 import type {
   AuditEvent,
   AutofixWorkflowResult,
+  BusinessRule,
   ConceptAlternative,
+  EmailConnectionInfo,
+  FieldSpec,
+  MCPServerInfo,
+  MCPToolInfo,
+  MCPToolTestResult,
+  NodeTestResult,
+  OperatorCatalog,
+  OutputContract,
+  SchemaPreview,
+  SimulationResult,
   ExtractedWorkflowFile,
   GenerateWorkflowResult,
   HorizonEvaluation,
@@ -214,6 +225,115 @@ export const api = {
   // ---- node registry
   nodeTypes: () =>
     afetch(`${API}/node-types`, { headers: authHeaders() }).then(j<NodeTypeManifest[]>),
+
+  // ---- Builder authoring surface
+  // Everything here reads the YAML the Builder currently holds in memory and
+  // returns a result; none of it mutates a saved workflow.
+  operatorCatalog: () =>
+    afetch(`${API}/builder/operators`, { headers: authHeaders() })
+      .then(j<OperatorCatalog>),
+  /** Typed field tree for the mapping picker and rule editor. Only values that
+   *  can actually reach `node_id` are returned. */
+  outputContract: (workflow_yaml: string, node_id?: string) =>
+    afetch(`${API}/builder/output-contract`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ workflow_yaml, node_id }),
+    }).then(j<OutputContract>),
+  /** Compile visual schema rows so an invalid row is reported while editing. */
+  schemaPreview: (output_fields: FieldSpec[]) =>
+    afetch(`${API}/builder/schema-preview`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ output_fields }),
+    }).then(j<SchemaPreview>),
+  nodeTest: (body: {
+    type_name: string;
+    config: Record<string, unknown>;
+    node_id?: string;
+    inputs?: Record<string, unknown>;
+    upstream_outputs?: Record<string, unknown>;
+    variables?: Record<string, unknown>;
+  }) =>
+    afetch(`${API}/builder/node-test`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<NodeTestResult>),
+  simulateWorkflow: (body: {
+    workflow_yaml: string;
+    inputs?: Record<string, unknown>;
+    stub_outputs?: Record<string, Record<string, unknown>>;
+    until_node?: string | null;
+  }) =>
+    afetch(`${API}/builder/simulate`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<SimulationResult>),
+  /** AI proposes schema rows. The result is editable configuration, never an
+   *  applied change — the author reviews it in the normal editor. */
+  suggestSchema: (body: {
+    description: string;
+    sample_content?: string;
+    existing_fields?: FieldSpec[];
+  }) =>
+    afetch(`${API}/builder/assist/schema`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{
+      status: string;
+      fields: FieldSpec[];
+      contract?: string;
+      notes?: string;
+      message?: string;
+    }>),
+  suggestRules: (body: {
+    description: string;
+    available_fields?: Array<Record<string, unknown>>;
+  }) =>
+    afetch(`${API}/builder/assist/rules`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{
+      status: string;
+      rules: BusinessRule[];
+      rejected: Array<{ rule: unknown; error: string }>;
+      notes?: string;
+    }>),
+  emailConnections: () =>
+    afetch(`${API}/builder/email/connections`, { headers: authHeaders() })
+      .then(j<{ connections: EmailConnectionInfo[]; configured: boolean }>),
+
+  // ---- MCP: business systems reached through configured servers
+  mcpServers: () =>
+    afetch(`${API}/builder/mcp/servers`, { headers: authHeaders() })
+      .then(j<{ servers: MCPServerInfo[]; configured: boolean }>),
+  /** Discovered from the server, never hardcoded — a tool added to the MCP
+   *  server appears here with no frontend change. */
+  mcpTools: (serverId: string, refresh = false) =>
+    afetch(
+      `${API}/builder/mcp/servers/${encodeURIComponent(serverId)}/tools`
+        + (refresh ? '?refresh=true' : ''),
+      { headers: authHeaders() },
+    ).then(j<{ server_id: string; tools: MCPToolInfo[]; count: number }>),
+  mcpHealth: (serverId: string) =>
+    afetch(
+      `${API}/builder/mcp/servers/${encodeURIComponent(serverId)}/health`,
+      { headers: authHeaders() },
+    ).then(j<{ server_id: string; healthy: boolean; tool_count: number; error: string | null }>),
+  mcpTestTool: (body: {
+    server_id: string;
+    tool: string;
+    arguments?: Record<string, unknown>;
+  }) =>
+    afetch(`${API}/builder/mcp/test-tool`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<MCPToolTestResult>),
   llmModels: () =>
     afetch(`${API}/llm/models`, { headers: authHeaders() })
       .then(j<{ models: LLMModelInfo[] }>),

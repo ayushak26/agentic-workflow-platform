@@ -126,7 +126,11 @@ def test_paper_search_server_path_is_configuration_driven():
     disabled = build_server_specs(
         Settings(_env_file=None, paper_search_mcp_enabled=False)
     )
-    assert tuple(disabled) == ("eurskem",)
+    # Asserts the paper-search server specifically, not the whole set: other
+    # built-in MCP servers (Dynamics 365) are launched from the same table and
+    # their presence says nothing about this setting.
+    assert "paper-search-mcp" not in disabled
+    assert "eurskem" in disabled
 
     enabled = build_server_specs(
         Settings(

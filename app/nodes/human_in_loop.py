@@ -21,9 +21,30 @@ from app.runtime.schema import WorkflowFileRef
 from app.workflow.file_inputs import validate_workflow_file_reference
 
 
+class ReviewPanel(BaseModel):
+    """One labelled block the reviewer sees (§29).
+
+    `context_fields` alone gives the reviewer raw dotted paths. A panel adds the
+    business label and the reason the value matters, which is what turns a debug
+    dump into a review screen — configured visually, no new node type.
+    """
+
+    label: str
+    field: str
+    hint: str = ""
+    editable: bool = False
+
+
 class HITLConfig(BaseModel):
     question: str                                  # shown to the human, templated
     context_fields: list[str] = Field(default_factory=list)
+    #: Optional presentation for the review screen. When set, the Cockpit renders
+    #: these labelled panels; `context_fields` remains the raw fallback so
+    #: existing workflows are unaffected.
+    review_panels: list[ReviewPanel] = Field(default_factory=list)
+    #: Business-language explanation of why this gate exists, shown above the
+    #: decision buttons.
+    review_purpose: str = ""
     # paths into state, e.g. ["rfp_intel.parsed.requirements"]
     editable_content_field: str | None = Field(
         default=None,
@@ -77,6 +98,17 @@ class HITLOutput(BaseModel):
     content_overridden: bool = False
 
 
+class ReviewPanelValue(BaseModel):
+    """A resolved review panel, ready to render."""
+
+    label: str
+    field: str
+    hint: str = ""
+    editable: bool = False
+    value: Any = None
+    available: bool = True
+
+
 class HITLInterruptPayload(BaseModel):
     """What the Cockpit sees when this node pauses."""
     node_id: str
@@ -86,6 +118,8 @@ class HITLInterruptPayload(BaseModel):
     content: HITLReviewContent | None = None
     allow_document_override: bool = True
     max_edit_chars: int = 1_000_000
+    panels: list[ReviewPanelValue] = Field(default_factory=list)
+    review_purpose: str = ""
 
 
 @NodeRegistry.register
@@ -95,6 +129,38 @@ class HumanInLoopAgent(NodeType):
     input_schema = HITLInput
     output_schema = HITLOutput
     config_schema = HITLConfig
+
+    family = "core"
+    execution_kind = "human"
+    about = {
+        "what": (
+            "Pauses the run and waits for a person to approve, edit or reject. "
+            "The reviewer sees exactly the labelled panels you configure."
+        ),
+        "why": (
+            "The author decides which actions may happen automatically. A gate "
+            "in front of an external action is how that boundary becomes "
+            "visible on the canvas instead of living inside a prompt."
+        ),
+        "receives": "Any upstream values you choose to show the reviewer.",
+        "produces": "decision (approve/edit/reject), the reviewed content, and the reason on reject.",
+        "uses_ai": False,
+        "external_action": False,
+        "presets": [
+            {
+                "id": "approve_before_send",
+                "label": "Approve before an external action",
+                "summary": "Review a drafted message before anything leaves the building.",
+                "config": {"allowed_actions": ["approve", "edit", "reject"]},
+            },
+            {
+                "id": "uncertain_cases",
+                "label": "Handle uncertain cases",
+                "summary": "Where a confidence gate or fallback route sends unclear requests.",
+                "config": {"allowed_actions": ["approve", "edit", "reject"]},
+            },
+        ],
+    }
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
@@ -122,6 +188,8 @@ class HumanInLoopAgent(NodeType):
             content=review_content,
             allow_document_override=cfg.allow_document_override,
             max_edit_chars=cfg.max_edit_chars,
+            panels=_review_panels(cfg, state),
+            review_purpose=cfg.review_purpose,
         ).model_dump()
 
         # A restart-safe resume recompiles the graph and replays completed
@@ -219,6 +287,35 @@ def _resolve_path(path: str, state: dict) -> Any:
         else:
             cursor = getattr(cursor, p)
     return cursor
+
+
+def _review_panels(
+    cfg: HITLConfig, state: dict[str, Any]
+) -> list[ReviewPanelValue]:
+    """Resolve each configured panel against state.
+
+    A panel whose path is absent is reported as unavailable rather than dropped:
+    "confidence: not available" tells the reviewer something real about the run,
+    whereas a silently missing panel looks like the gate was misconfigured.
+    """
+    resolved: list[ReviewPanelValue] = []
+    for panel in cfg.review_panels:
+        try:
+            value = _resolve_path(panel.field, state)
+            available = True
+        except (KeyError, AttributeError, TypeError):
+            value, available = None, False
+        resolved.append(
+            ReviewPanelValue(
+                label=panel.label,
+                field=panel.field,
+                hint=panel.hint,
+                editable=panel.editable,
+                value=value,
+                available=available,
+            )
+        )
+    return resolved
 
 
 def _review_content(

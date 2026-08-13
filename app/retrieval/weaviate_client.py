@@ -44,7 +44,85 @@ SCHEMA_PROPERTIES = [
     Property(name="collection_id", data_type=DataType.TEXT, index_filterable=True),
     Property(name="display_number", data_type=DataType.INT, index_filterable=True),
     Property(name="ingested_at", data_type=DataType.DATE),
+    # Knowledge Studio provenance/search-surface fields. Additive so legacy
+    # objects (which predate these) simply read back null for them.
+    Property(name="retrieval_content", data_type=DataType.TEXT, index_searchable=True),
+    Property(name="context_content", data_type=DataType.TEXT),
+    Property(name="title", data_type=DataType.TEXT, index_searchable=True),
+    Property(name="section", data_type=DataType.TEXT, index_searchable=True),
+    Property(name="page", data_type=DataType.INT, index_filterable=True),
+    Property(name="index_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="document_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="source_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="source_version_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="parent_chunk_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="chunk_role", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="workspace_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="parser_profile_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="chunking_profile_id", data_type=DataType.TEXT, index_filterable=True),
+    Property(name="embedding_profile_id", data_type=DataType.TEXT, index_filterable=True),
 ]
+
+
+def ensure_collection_schema_on(client: weaviate.WeaviateClient, name: str) -> None:
+    """Create ``name`` with the standard chunk schema if it doesn't exist yet.
+
+    Takes an already-connected raw ``weaviate.WeaviateClient`` directly, so
+    callers holding one (e.g. ``services["weaviate_client"]``, wired once at
+    app startup) don't need a second connection through :class:`WeaviateClient`.
+    Knowledge Studio indexes with a different embedding fingerprint get their
+    own physical collection (``DocumentChunk_<fingerprint>``) so different
+    vector dimensions never share one HNSW index.
+    """
+    if client.collections.exists(name):
+        log.debug("weaviate.collection_exists", name=name)
+        return
+    client.collections.create(
+        name=name,
+        properties=SCHEMA_PROPERTIES,
+        vector_config=Configure.Vectors.self_provided(
+            vector_index_config=Configure.VectorIndex.hnsw(
+                distance_metric=weaviate.classes.config.VectorDistances.COSINE,
+            ),
+        ),
+    )
+    log.info("weaviate.collection_created", name=name)
+
+
+def upsert_objects_on(
+    client: weaviate.WeaviateClient,
+    collection_name: str,
+    objects: list[dict[str, Any]],
+    vectors: list[list[float]],
+) -> int:
+    """Batch-insert ``objects``/``vectors`` into ``collection_name``.
+
+    Idempotent on ``chunk_id`` (the object UUID is derived from it). Returns
+    the number of objects actually inserted, so the caller can detect a
+    partial write.
+    """
+    if len(objects) != len(vectors):
+        raise ValueError(f"objects/vectors length mismatch: {len(objects)} vs {len(vectors)}")
+    collection = client.collections.get(collection_name)
+    with collection.batch.dynamic() as batch:
+        for obj, vector in zip(objects, vectors):
+            batch.add_object(
+                properties=obj, vector=vector, uuid=weaviate.util.generate_uuid5(obj["chunk_id"])
+            )
+    failed = collection.batch.failed_objects
+    failed_count = len(failed) if failed else 0
+    inserted = len(objects) - failed_count
+    if failed_count > 0:
+        for f in failed[:3]:
+            log.error(
+                "weaviate.upsert_error", message=getattr(f, "message", str(f)),
+                obj=getattr(f, "object_", None),
+            )
+    log.info(
+        "weaviate.upsert_done", collection=collection_name,
+        inserted=inserted, errors=failed_count, total=len(objects),
+    )
+    return inserted
 
 
 # ---------- Client lifecycle --------------------------------------------------
@@ -129,6 +207,18 @@ class WeaviateClient:
             ),
         )
         log.info("weaviate.collection_created", name=COLLECTION_NAME)
+
+    def ensure_collection_schema(self, name: str) -> None:
+        """Like :meth:`ensure_schema`, but for an arbitrary physical collection."""
+
+        ensure_collection_schema_on(self.connect(), name)
+
+    def upsert_objects(
+        self, collection_name: str, objects: list[dict[str, Any]], vectors: list[list[float]]
+    ) -> int:
+        """Like :meth:`upsert_chunks`, but targeting an arbitrary physical collection."""
+
+        return upsert_objects_on(self.connect(), collection_name, objects, vectors)
 
     def reset_schema(self) -> None:
         """DESTRUCTIVE: delete the collection and recreate it.
