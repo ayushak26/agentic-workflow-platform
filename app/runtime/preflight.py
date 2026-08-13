@@ -22,6 +22,7 @@ import app.nodes as nodes_package
 from app.config import settings
 from app.llm.catalog import local_service_name
 from app.llm.model_catalog import AUTO_MODEL
+from app.llm.openrouter_catalog import is_openrouter_model_id
 from app.llm.registry import resolve_model
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
@@ -376,7 +377,9 @@ def _validate_nodes(
         validated_config = node_spec.effective_config()
 
         for allowed_index, model_name in enumerate(node_spec.allowed_models):
-            if model_name not in DEFAULT_LLM_MODELS:
+            if model_name not in DEFAULT_LLM_MODELS and not is_openrouter_model_id(
+                model_name
+            ):
                 _issue(
                     report,
                     "MODEL_NOT_IN_CATALOG",
@@ -385,7 +388,8 @@ def _validate_nodes(
                     path=f"{path}.allowed_models.{allowed_index}",
                     node_id=node_spec.id,
                     suggestion=(
-                        f"Choose from: {', '.join(DEFAULT_LLM_MODELS)}."
+                        f"Choose from: {', '.join(DEFAULT_LLM_MODELS)}, or an "
+                        "OpenRouter model id (openrouter/<vendor>/<model>)."
                     ),
                 )
 
@@ -490,6 +494,15 @@ def _validate_nodes(
                 # by the deterministic ModelRouter, so it is not a catalog
                 # entry and must not be routed here either.
                 continue
+            if is_openrouter_model_id(model_name):
+                # Live OpenRouter catalog (app/llm/openrouter_catalog.py) — structural
+                # pattern check only, no live lookup (preflight stays network-free).
+                # OpenRouter itself is the authoritative source and rejects a nonexistent
+                # model at dispatch time; skip resolve_model() below entirely for these —
+                # it's app/llm/registry.py's fallback-chain resolver for the static catalog,
+                # and openrouter/-prefixed ids are already routed via their own
+                # _PREFIX_ROUTES entry (OpenRouterGateway) regardless of its result.
+                continue
             if model_name not in DEFAULT_LLM_MODELS:
                 _issue(
                     report,
@@ -497,7 +510,10 @@ def _validate_nodes(
                     f"Model {model_name!r} is not in the approved model catalog.",
                     path=f"{path}.{model_path}",
                     node_id=node_spec.id,
-                    suggestion=f"Choose one of: {', '.join(DEFAULT_LLM_MODELS)}.",
+                    suggestion=(
+                        f"Choose one of: {', '.join(DEFAULT_LLM_MODELS)}, or an "
+                        "OpenRouter model id (openrouter/<vendor>/<model>)."
+                    ),
                 )
                 continue
             try:

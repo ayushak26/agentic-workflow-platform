@@ -40,6 +40,7 @@ from app.llm.local_openai_gw import (
 from app.llm.model_catalog import AUTO_MODEL, MODEL_PROFILE_BY_NAME
 from app.llm.model_router import ModelRouter
 from app.llm.openai_gw import OpenAIGateway
+from app.llm.openrouter_gw import OpenRouterGateway
 from app.llm.openai_registry import (
     OPENAI_LLM_FALLBACK_CHAINS,
     OPENAI_MODEL_BY_NAME,
@@ -51,8 +52,11 @@ from app.security.entity_tokenizer import ProcessingMode
 
 log = structlog.get_logger(__name__)
 
-# Architectural routing — model prefix to gateway class.
+# Architectural routing — model prefix to gateway class. "openrouter/" must be
+# checked before any other prefix could coincidentally match a suffix of it
+# (none currently do, but list order is the tiebreak rule either way).
 _PREFIX_ROUTES: list[tuple[str, type[LLMGateway]]] = [
+    ("openrouter/", OpenRouterGateway),
     ("local-kimi-", KimiK3LocalGateway),
     ("local-glm-",  GLM5LocalGateway),
     ("claude-", AnthropicGateway),
@@ -380,6 +384,8 @@ def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
         return OpenAIGateway(api_key=settings.openai_api_key)
     if gw_cls is AnthropicGateway:
         return AnthropicGateway(api_key=settings.anthropic_api_key)
+    if gw_cls is OpenRouterGateway:
+        return OpenRouterGateway(api_key=settings.openrouter_api_key)
     if gw_cls is KimiK3LocalGateway:
         return KimiK3LocalGateway(_kimi_profile())
     if gw_cls is GLM5LocalGateway:
@@ -506,6 +512,8 @@ def _is_model_available(model: str) -> bool:
         return bool(settings.openai_api_key)
     if gateway_class is AnthropicGateway:
         return bool(settings.anthropic_api_key)
+    if gateway_class is OpenRouterGateway:
+        return bool(settings.openrouter_api_key)
     if gateway_class is KimiK3LocalGateway:
         return settings.local_kimi_enabled
     if gateway_class is GLM5LocalGateway:
@@ -875,6 +883,24 @@ class RegistryLLMGateway(LLMGateway):
             output_tokens = getattr(resp, "output_tokens", 0) or 0
             cache_creation = getattr(resp, "cache_creation_input_tokens", 0) or 0
             cache_read = getattr(resp, "cache_read_input_tokens", 0) or 0
+            # OpenRouter reports a real, authoritative per-call cost (usage.cost) that
+            # covers all ~500 of its models — Eurskem's own MODEL_PRICING table has no
+            # entry for any of them and would silently fall back to a generic default.
+            # Direct providers (OpenAI/Anthropic) don't report cost, so resp.cost_usd is
+            # None there and the estimate is the only option. Never treat 0.0 as "no
+            # value reported" -- a genuinely free completion is a real, meaningful cost.
+            authoritative_cost = getattr(resp, "cost_usd", None)
+            cost_usd = (
+                authoritative_cost
+                if authoritative_cost is not None
+                else CostLedger.calculate(
+                    resolved,
+                    input_tokens,
+                    output_tokens,
+                    cache_creation_input_tokens=cache_creation,
+                    cache_read_input_tokens=cache_read,
+                )
+            )
             entry = LedgerEntry(
                 run_id=self._run_id or "unknown",
                 session_id=self._session_id or "unknown",
@@ -885,13 +911,8 @@ class RegistryLLMGateway(LLMGateway):
                 output_tokens=output_tokens,
                 cache_creation_input_tokens=cache_creation,
                 cache_read_input_tokens=cache_read,
-                cost_usd=CostLedger.calculate(
-                    resolved,
-                    input_tokens,
-                    output_tokens,
-                    cache_creation_input_tokens=cache_creation,
-                    cache_read_input_tokens=cache_read,
-                ),
+                cost_usd=cost_usd,
+                cost_source="provider_reported" if authoritative_cost is not None else "estimated",
             )
             self._ledger.record(entry)
         except Exception:

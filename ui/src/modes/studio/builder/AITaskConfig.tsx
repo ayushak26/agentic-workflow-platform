@@ -9,6 +9,7 @@ import type {
 } from '../../../api/types';
 import { FieldPicker } from './FieldPicker';
 import { SchemaBuilder } from './SchemaBuilder';
+import { ModelSelect } from '../ModelSelect';
 
 /**
  * Configuring the one AI capability.
@@ -238,18 +239,12 @@ export function AITaskConfig({
 
       <section className="mt-4 rounded-lg border border-slate-200 p-3">
         <div className="builder-panel-heading">Model</div>
-        <select
-          className="builder-field mt-2"
-          onChange={event => set({ model: event.target.value })}
+        <ModelSelect
+          className="mt-2"
+          llmModels={llmModels}
+          onChange={next => set({ model: next })}
           value={asString(config.model, 'auto')}
-        >
-          {llmModels.map(model => (
-            <option key={model.name} value={model.name}>
-              {model.display_name}
-              {!model.configured && !model.automatic ? ' — not configured' : ''}
-            </option>
-          ))}
-        </select>
+        />
         <p className="mt-1 text-[11px] text-ink-500">
           This step is provider-independent. Changing the model does not change
           what it returns — the output schema is the contract.

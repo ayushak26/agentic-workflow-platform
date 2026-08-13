@@ -28,6 +28,13 @@ class LLMResponse(BaseModel):
     # cache_read_input_tokens (no write-side concept).
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    # Authoritative cost in USD, when the provider reports one directly (e.g.
+    # OpenRouter's usage.cost — real, per-call, correct for all ~500 of its
+    # models). None means "not provided" — the registry falls back to its own
+    # CostLedger.calculate() estimate, which is the only option for providers
+    # that don't return cost (OpenAI, Anthropic). Never guess a value here;
+    # an estimate mislabeled as authoritative is worse than an honest gap.
+    cost_usd: float | None = None
 
 
 class ToolCall(BaseModel):
@@ -54,6 +61,8 @@ class LLMToolUseResponse(BaseModel):
     stop_reason: str | None = None
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    # See LLMResponse.cost_usd — same authoritative-cost-when-available contract.
+    cost_usd: float | None = None
 
 class LLMGateway(ABC):
     """Abstract base for all LLM providers.

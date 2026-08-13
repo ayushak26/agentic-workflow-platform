@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.llm.catalog import MODEL_NAMES
 from app.llm.model_catalog import AUTO_MODEL
+from app.llm.openrouter_catalog import is_openrouter_model_id
 
 
 DEFAULT_LLM_MODELS = list(MODEL_NAMES)
@@ -82,6 +83,13 @@ class ModelRoutingPolicy(BaseModel):
     max_estimated_cost_usd: float | None = Field(default=None, ge=0)
     prefer_low_latency: bool = False
     quality_scores: dict[str, float] | None = None
+    # Per-model faithfulness observations (0-1 scale), consulted only when AUTO_MODEL
+    # resolves through OpenRouter's own auto-router (app/llm/openrouter_ranking.py) — e.g.
+    # derived from a past Scorecard.criterion_means["faithfulness"]
+    # (app/evaluation/models.py) for a workflow that has actually been evaluated with that
+    # model. A model absent from this dict is
+    # treated as unknown/neutral, never as good or bad.
+    faithfulness_scores: dict[str, float] | None = None
 
 
 class GuidedStageSpec(BaseModel):
@@ -225,10 +233,14 @@ class NodeSpec(BaseModel):
     def selected_model_must_be_allowed(self) -> "NodeSpec":
         # AUTO_MODEL is a routing sentinel, not a concrete model — it is
         # resolved at call time by the ModelRouter, so it need not appear in
-        # allowed_models. Any other explicit selection must be permitted.
+        # allowed_models. An explicit OpenRouter model id (app/llm/openrouter_catalog.py)
+        # is likewise exempt: OpenRouter's ~400-500 model catalog is not enumerated into
+        # allowed_models, and OpenRouter itself is the authoritative source for whether
+        # it's real. Any other explicit selection must be permitted.
         if (
             self.selected_model
             and self.selected_model != AUTO_MODEL
+            and not is_openrouter_model_id(self.selected_model)
             and self.selected_model not in self.allowed_models
         ):
             raise ValueError(

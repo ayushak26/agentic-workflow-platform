@@ -465,7 +465,6 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
             collection_id=req.collection_id,
             services=services,
             run_id=run_id,
-            inputs_guarded=True,
         ),
         db=db,
         run_id=run_id,

@@ -18,6 +18,7 @@ import type {
   HorizonEvaluation,
   LLMModelInfo,
   NodeTypeManifest,
+  OpenRouterModelInfo,
   PipelinePreflightReport,
   PipelineRunDetail,
   PipelineRunSummary,
@@ -337,6 +338,16 @@ export const api = {
   llmModels: () =>
     afetch(`${API}/llm/models`, { headers: authHeaders() })
       .then(j<{ models: LLMModelInfo[] }>),
+  // Live, TTL-cached OpenRouter catalog (~500 models) — searched server-side rather than
+  // shipped whole, since the static llmModels() list stays small on purpose.
+  llmOpenRouterModels: (query: string, limit = 25) =>
+    afetch(
+      `${API}/llm/models/openrouter?${new URLSearchParams({
+        ...(query ? { q: query } : {}),
+        limit: String(limit),
+      })}`,
+      { headers: authHeaders() },
+    ).then(j<{ models: OpenRouterModelInfo[] }>),
 
   // ---- workflow CRUD
   listWorkflows: () =>

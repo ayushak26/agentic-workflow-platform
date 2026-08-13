@@ -113,6 +113,9 @@ async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
         ("redis", _redis_probe(services)),
         ("checkpointer", _checkpointer_probe(services)),
     ]
+    # Per-endpoint local-model probes (llm:local-*), populated by
+    # app.llm.registry.configured_local_model_probes() at startup for each enabled
+    # local/private provider (Kimi K3, GLM-5).
     probes.extend(
         (name, probe)
         for name, probe in sorted(services.items())

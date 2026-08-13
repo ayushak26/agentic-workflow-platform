@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from app.observability.logging import get_logger
 from app.llm.openai_registry import OPENAI_MODEL_REGISTRY
@@ -47,6 +47,16 @@ _ANTHROPIC_CACHE_READ_MULTIPLIER = 0.1
 _OPENAI_CACHE_READ_MULTIPLIER = 0.5
 
 
+#: `LedgerEntry.cost_source` values. `provider_reported` is a real, authoritative per-call
+#: figure the provider returned directly (OpenRouter's `usage.cost` — covers all ~500 of its
+#: models, none of which are in Eurskem's own MODEL_PRICING table). `estimated` is computed
+#: from MODEL_PRICING, the only option for providers that don't report cost (OpenAI,
+#: Anthropic). Both are written synchronously at call time — no reconciliation pass needed,
+#: since (unlike the retired OmniRoute-audit design) the authoritative figure is already in
+#: the same response the gateway just received.
+CostSource = Literal["estimated", "provider_reported"]
+
+
 @dataclass
 class LedgerEntry:
     run_id:         str
@@ -59,6 +69,7 @@ class LedgerEntry:
     cost_usd:       float
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens:     int = 0
+    cost_source: CostSource = "estimated"
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -99,6 +110,7 @@ class CostLedger:
                 "cache_creation_input_tokens": entry.cache_creation_input_tokens,
                 "cache_read_input_tokens":     entry.cache_read_input_tokens,
                 "cost_usd":       entry.cost_usd,
+                "cost_source":    entry.cost_source,
                 "ts":             entry.ts,
             })
         logger.info(
@@ -110,6 +122,7 @@ class CostLedger:
             cost_usd=entry.cost_usd,
             cache_creation_input_tokens=entry.cache_creation_input_tokens,
             cache_read_input_tokens=entry.cache_read_input_tokens,
+            cost_source=entry.cost_source,
         )
 
     def run_summary(self, run_id: str, session_id: str | None = None) -> dict:

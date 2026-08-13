@@ -1,4 +1,5 @@
 import type { LLMModelInfo, NodeTypeManifest } from '../../api/types';
+import { ModelSelect } from './ModelSelect';
 import { SchemaForm } from './SchemaForm';
 import { findManifest } from './builder-helpers';
 import type {
@@ -82,11 +83,11 @@ export function ConfigPanel({
           <label className="block text-xs font-semibold uppercase tracking-wide text-accent-700">
             LLM / model
           </label>
-          <select
+          <ModelSelect
             value={selectedModel ?? ''}
-            onChange={event => {
-              const next = event.target.value || null;
-              onModelSelectionChange(next);
+            llmModels={llmModels}
+            onChange={next => {
+              onModelSelectionChange(next || null);
               if (next === 'auto' && !selected.data.modelRouting) {
                 onModelRoutingChange({
                   accuracy_priority: 'maximum',
@@ -94,17 +95,8 @@ export function ConfigPanel({
                 });
               }
             }}
-            className="mt-2 block w-full rounded-md border border-accent-200 bg-white px-2 py-2 text-sm"
-          >
-            {llmModels.map(model => (
-              <option key={model.name} value={model.name}>
-                {model.display_name}
-                {!model.configured && !model.automatic
-                  ? ' — not configured'
-                  : ''}
-              </option>
-            ))}
-          </select>
+            className="mt-2"
+          />
 
           {selectedModel === 'auto' && (
             <div className="mt-3 space-y-3 border-t border-accent-200 pt-3">

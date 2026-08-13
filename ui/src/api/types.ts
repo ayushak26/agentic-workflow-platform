@@ -335,6 +335,22 @@ export type LLMModelInfo = {
   description?: string | null;
 };
 
+// Mirrors app/llm/openrouter_catalog.py::OpenRouterModelInfo.as_dict() — the live,
+// TTL-cached OpenRouter catalog (~500 models), fetched on demand via GET
+// /api/llm/models/openrouter, never baked into the static LLMModelInfo list above.
+export type OpenRouterModelInfo = {
+  id: string;
+  display_name: string;
+  provider: 'openrouter';
+  context_length: number | null;
+  max_output_tokens: number | null;
+  input_usd_per_million: number | null;
+  output_usd_per_million: number | null;
+  supports_tool_calling: boolean;
+  supports_vision: boolean;
+  supports_reasoning: boolean;
+};
+
 // Mirrors app/runtime/schema.py's LibraryMetadataSpec + friends, as returned
 // (declared or honestly-derived) by app.workflow.library_metadata.
 export type LibraryVisibilityStatus = 'approved' | 'draft' | 'in_review' | 'deprecated' | 'archived';

@@ -12,7 +12,7 @@ Services dict keys (consumed by routes and the runtime executor):
   weaviate_client — Weaviate client
   object_store   — MinIO client
   redis          — aioredis client
-  llm            — RegistryLLMGateway singleton
+  llm            — RegistryLLMGateway singleton (dispatches to OpenRouter/OpenAI/Anthropic)
   event_bus      — RunEventBus for authenticated SSE live streaming
 """
 import asyncio
@@ -28,7 +28,8 @@ from prometheus_client import make_asgi_app
 from app.config import settings
 from app.observability.logging import configure_logging, get_logger
 from app.observability.cost_ledger import CostLedger
-from app.llm.registry import configured_local_model_probes, get_llm_gateway
+from app.llm import get_llm_gateway
+from app.llm.registry import configured_local_model_probes
 from app.runtime.events import RunEventBus
 from app.runtime.coordination import RedisLease
 from app.ingestion.collections import CollectionRegistry

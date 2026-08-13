@@ -18,6 +18,7 @@ services:
       PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY: ${PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY:-}
       SCIENTIFIC_SKILLS_ENABLED: ${SCIENTIFIC_SKILLS_ENABLED:-true}
       SCIENTIFIC_SKILLS_PATH: ${SCIENTIFIC_SKILLS_PATH:-/opt/scientific-agent-skills/skills}
+      OPA_URL: http://opa:8181
     depends_on:
       mongo:
         condition: service_healthy
@@ -27,6 +28,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      opa:
+        condition: service_started
     volumes:
       - ./app:/app/app
       - ./workflows:/app/workflows
@@ -134,6 +137,59 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks:
+      - eurskem-net
+
+  # OPA (Open Policy Agent) — policy-as-code decision point for the data-classification/
+  # ZDR routing policy (app/security/llm_policy.py). Not exposed publicly.
+  opa:
+    image: openpolicyagent/opa:1.19.0-static
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    ports:
+      - "127.0.0.1:8181:8181"
+    volumes:
+      - ./config/opa/policies:/policies:ro
+    # No healthcheck: the "-static" image ships literally nothing but the opa binary itself
+    # (no shell, no wget/curl, not even `ls` — verified by exec probing) so no CMD-based
+    # healthcheck can run inside it. `app`'s depends_on uses `service_started` (not
+    # `service_healthy`) for this reason.
+    networks:
+      - eurskem-net
+
+  # Presidio Analyzer — PII/entity DETECTION primitive, available alongside Eurskem's own
+  # Python-native entity tokenizer (app/security/entity_tokenizer.py, which currently uses
+  # registry/regex/spaCy NER detection, not Presidio) for future use.
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:2.2.360
+    ports:
+      - "127.0.0.1:5001:3000"
+    healthcheck:
+      # No wget/curl in this image (verified by exec probing) — python3 is present.
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:3000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - eurskem-net
+
+  # OTel Collector. Ships with a "debug" exporter (logs traces to its own stdout) so the
+  # wiring is provably real without requiring a full tracing backend (Jaeger/Tempo/etc.) at
+  # this scale — swap config/otel-collector-config.yaml's exporter for a real backend when
+  # one exists.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "127.0.0.1:4318:4318"
     networks:
       - eurskem-net
 

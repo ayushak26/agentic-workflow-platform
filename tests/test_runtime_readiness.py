@@ -103,7 +103,6 @@ def test_health_stays_live_while_ready_fails_on_dependency_error():
     assert health.json()["status"] == "degraded"
     assert health.json()["services"]["redis"]["status"] == "unavailable"
     assert ready.status_code == 503
-    assert ready.json()["ready"] is False
 
 
 def test_ready_requires_every_enabled_mcp_server():

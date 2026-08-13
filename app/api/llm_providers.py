@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
 from app.llm.catalog import MODEL_CATALOG, is_local_model
 from app.llm.model_catalog import AUTO_MODEL, AUTO_MODEL_LABEL
+from app.llm.openrouter_catalog import get_default_cache
 from app.llm.registry import local_model_enabled, probe_local_model
 from app.security.dependencies import (
     CurrentUser,
@@ -74,6 +75,28 @@ async def list_models(
         ),
     }
     return {"models": [auto, *models]}
+
+
+@router.get("/models/openrouter")
+async def list_openrouter_models(
+    q: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Live OpenRouter model catalog (via OpenRouter's own `GET /v1/models`), cached with a
+    short TTL — see app/llm/openrouter_catalog.py. Distinct from `/models`'s curated, static
+    catalog: OpenRouter has ~400-500 entries that change continuously, so this is fetched
+    fresh rather than baked into the approved list. `q` filters by substring match against
+    id/display name."""
+    del user
+    try:
+        results = await get_default_cache().search(q, limit=limit)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"OpenRouter catalog unavailable: {type(exc).__name__}",
+        ) from exc
+    return {"models": [model.as_dict() for model in results]}
 
 
 @router.post("/models/{model}/probe")

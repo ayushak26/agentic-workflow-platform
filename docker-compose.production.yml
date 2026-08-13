@@ -59,6 +59,11 @@ services:
     init: true
     env_file:
       - .env.production
+    environment:
+      # Internal compose-network DNS name — not a secret, always this value in this
+      # topology, so it's set here rather than duplicated into every operator's
+      # .env.production.
+      OPA_URL: http://opa:8181
     command:
       - uvicorn
       - app.main:app
@@ -79,6 +84,8 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      opa:
+        condition: service_started
     volumes:
       - ${WORKFLOWS_HOST_PATH:?Set WORKFLOWS_HOST_PATH in .env.production}:/app/workflows
     read_only: true
@@ -230,6 +237,55 @@ services:
       timeout: 5s
       retries: 20
       start_period: 10s
+    logging: *default-logging
+
+  # OPA — policy-as-code decision point for the data-classification/ZDR routing policy
+  # (app/security/llm_policy.py). backend-only: never exposed, not even to `edge`.
+  opa:
+    image: openpolicyagent/opa:1.19.0-static
+    restart: unless-stopped
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    volumes:
+      - ./config/opa/policies:/policies:ro
+    networks:
+      - backend
+    logging: *default-logging
+
+  # Presidio Analyzer — PII/entity DETECTION primitive, available alongside Eurskem's own
+  # Python-native entity tokenizer (app/security/entity_tokenizer.py) for future use.
+  # backend-only: never exposed, not even to `edge`.
+  presidio-analyzer:
+    image: mcr.microsoft.com/presidio-analyzer:2.2.360
+    restart: unless-stopped
+    networks:
+      - backend
+    healthcheck:
+      # No wget/curl in this image (verified by exec probing against the dev container) —
+      # python3 is present.
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:3000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  # OTel Collector. Ships with a "debug" exporter (logs traces to its own stdout) — no
+  # tracing backend deployed at this scale; swap config/otel-collector-config.yaml's
+  # exporter for a real backend when one exists. backend-only, from inside the same network.
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    restart: unless-stopped
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./config/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      - backend
     logging: *default-logging
 
   prometheus:

@@ -125,6 +125,18 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Timeouts specific to OpenRouter's own catalog/generation endpoints
+    # (app/llm/openrouter_gw.py, app/llm/openrouter_catalog.py) — separate
+    # from llm_request_timeout_seconds since these are metadata calls, not
+    # generations.
+    openrouter_request_timeout_seconds: float = 15.0
+
+    # Presidio Analyzer — the PII/entity detection safety-net tier for
+    # app/security/entity_tokenizer.py (replaces the former in-process spaCy NER pass).
+    presidio_analyzer_url: str = "http://localhost:5001"
+    presidio_request_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
 
     # Ephemeral cache_control TTL applied to every AnthropicGateway request
     # (system prompt + tools + the growing multi-turn message history in

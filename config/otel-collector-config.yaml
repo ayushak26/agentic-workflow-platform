@@ -1,0 +1,26 @@
+# OTel Collector config. Starter config for a small deployment: receives OTLP over HTTP and
+# logs every span via the "debug" exporter — no tracing backend (Jaeger/Tempo/etc.) is
+# deployed at this scale, so this proves the pipeline emits real spans without requiring one.
+#
+# To add a real backend later: add an OTLP exporter pointing at it (e.g. Tempo/Jaeger) to
+# the `exporters:` and `service.pipelines.traces.exporters:` sections below.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

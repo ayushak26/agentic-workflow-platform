@@ -25,3 +25,10 @@ class BatchTimeoutError(RuntimeError):
     Not retryable in the usual sense -- the batch may still finish later.
     Callers should re-poll with the same batch_id rather than resubmitting.
     """
+
+
+class LLMPolicyDeniedError(RuntimeError):
+    """The data-classification/OPA policy check (app/security/llm_policy.py) denied this
+    call — e.g. CONFIDENTIAL+ data routed to a provider without a confirmed ZDR contract.
+    Not retryable: the same call will be denied again until the workflow's data
+    classification or target provider changes."""
