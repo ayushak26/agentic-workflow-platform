@@ -6,6 +6,7 @@ import pytest
 from app.retrieval.weaviate_client import (
     COLLECTION_NAME,
     SCHEMA_PROPERTIES,
+    VECTOR_NAME,
     WeaviateClient,
 )
 
@@ -95,3 +96,39 @@ def test_upsert_is_idempotent(client):
     client.upsert_chunks([chunk], [vector])
     client.upsert_chunks([chunk], [vector])
     assert client.count_chunks() == 1
+
+def test_vectors_are_written_to_the_named_target(client):
+    """Vectors must be searchable, not merely stored.
+
+    Regression: objects were written through the legacy single-vector argument
+    while the schema declared a named vector, so Weaviate accepted the write
+    but left the named vector's HNSW index empty. near_vector then failed with
+    "vector not found for target: default" and dense search silently returned
+    nothing, leaving hybrid search quietly BM25-only.
+    """
+    client.ensure_schema()
+    chunks = [
+        {
+            "chunk_id": "vec::chunk0",
+            "text": "PTFE seals resist sulphuric acid",
+            "token_count": 8,
+            "source_path": "/test/seals.txt",
+            "source_format": "txt",
+            "unit_index": 0,
+            "unit_label": "document",
+            "chunk_index": 0,
+        }
+    ]
+    vector = [0.1] * 1536
+    client.upsert_chunks(chunks, [vector])
+
+    collection = client.connect().collections.get(COLLECTION_NAME)
+    stored = collection.query.fetch_objects(limit=1, include_vector=True).objects[0]
+    assert VECTOR_NAME in stored.vector, f"vector not stored under {VECTOR_NAME!r}"
+
+    # The real assertion: the vector index can be searched.
+    found = collection.query.near_vector(
+        near_vector=vector, target_vector=VECTOR_NAME, limit=1
+    )
+    assert found.objects, "near_vector returned nothing — named vector index is empty"
+    assert found.objects[0].properties["chunk_id"] == "vec::chunk0"

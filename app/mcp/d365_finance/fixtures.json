@@ -1,0 +1,300 @@
+{
+  "customers": [
+    {
+      "customerid": "f1a2c3d4-0000-4000-8000-000000000001",
+      "customer_account": "C0001",
+      "name": "Meridian Process Systems",
+      "data_area_id": "usmf",
+      "sales_region": "EMEA",
+      "key_account": true,
+      "account_owner_name": "Elena Cross",
+      "territory_sales_owner_name": "",
+      "sales_engineer_name": "Raj Patel",
+      "application_specialist_name": "",
+      "service_owner_name": "Tom Byrne",
+      "credit_hold": false
+    },
+    {
+      "customerid": "f1a2c3d4-0000-4000-8000-000000000002",
+      "customer_account": "C0002",
+      "name": "Vantage Fluid Handling",
+      "data_area_id": "usmf",
+      "sales_region": "APAC",
+      "key_account": false,
+      "account_owner_name": "",
+      "territory_sales_owner_name": "Nina Alvarez",
+      "sales_engineer_name": "",
+      "application_specialist_name": "Wei Zhang",
+      "service_owner_name": "",
+      "credit_hold": true
+    },
+    {
+      "customerid": "f1a2c3d4-0000-4000-8000-000000000004",
+      "customer_account": "C0004",
+      "name": "BASF SE",
+      "data_area_id": "usmf",
+      "sales_region": "EMEA",
+      "key_account": true,
+      "account_owner_name": "Sofia Lindqvist",
+      "territory_sales_owner_name": "",
+      "sales_engineer_name": "Marcus Feld",
+      "application_specialist_name": "Priya Nair",
+      "service_owner_name": "Hans Vogel",
+      "credit_hold": false
+    },
+    {
+      "customerid": "f1a2c3d4-0000-4000-8000-000000000005",
+      "customer_account": "C0005",
+      "name": "BASF Coatings GmbH",
+      "data_area_id": "usmf",
+      "sales_region": "EMEA",
+      "key_account": true,
+      "account_owner_name": "",
+      "territory_sales_owner_name": "",
+      "sales_engineer_name": "",
+      "application_specialist_name": "",
+      "service_owner_name": "",
+      "credit_hold": false
+    },
+    {
+      "customerid": "f1a2c3d4-0000-4000-8000-000000000003",
+      "customer_account": "C0003",
+      "name": "Bristow Industrial",
+      "data_area_id": "usmf",
+      "sales_region": "NA",
+      "key_account": false,
+      "account_owner_name": "",
+      "territory_sales_owner_name": "Jane Doe",
+      "sales_engineer_name": "",
+      "application_specialist_name": "",
+      "service_owner_name": "",
+      "credit_hold": false
+    }
+  ],
+  "quotes": [
+    {
+      "quoteid": "f1a2c3d4-0000-4000-8000-000000000101",
+      "quotation_reference": "QUO-2026-0042",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000001",
+      "status": "Confirmed",
+      "linked_po_reference": "PO-88213",
+      "pump_model": "Verderflex Dura 35"
+    },
+    {
+      "quoteid": "f1a2c3d4-0000-4000-8000-000000000102",
+      "quotation_reference": "QUO-2026-0090",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000002",
+      "status": "Confirmed",
+      "linked_po_reference": "PO-90114",
+      "pump_model": "Verderflex Dura 65"
+    }
+  ],
+  "salesorders": [
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000204",
+      "sales_order_reference": "SO-2025-0977",
+      "customer_po_reference": "PO 231706",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000004",
+      "pump_model": "Verderflex Dura 45",
+      "order_status": "Delivered",
+      "production_started": true,
+      "fulfilment_status": "DISPATCHED",
+      "delivery_status": "Delivered 2025-11-14"
+    },
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000206",
+      "sales_order_reference": "SO-2026-1402",
+      "customer_po_reference": "PO 251880",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000001",
+      "pump_model": "Verderflex Dura 65",
+      "order_status": "In Production",
+      "production_started": true,
+      "fulfilment_status": "MATERIAL_SHORTAGE",
+      "delivery_status": "Awaiting elastomer stock, no revised ETA"
+    },
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000207",
+      "sales_order_reference": "SO-2026-1455",
+      "customer_po_reference": "PO 252140",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000004",
+      "pump_model": "Verderflex Dura 45",
+      "order_status": "In Production",
+      "production_started": true,
+      "fulfilment_status": "QUALITY_HOLD",
+      "delivery_status": "Held pending pressure-test re-run"
+    },
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000205",
+      "sales_order_reference": "SO-2026-1310",
+      "customer_po_reference": "PO 244019",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000004",
+      "pump_model": "Verderflex Dura 85",
+      "order_status": "Confirmed",
+      "production_started": false,
+      "fulfilment_status": "NORMAL",
+      "delivery_status": "Not yet dispatched"
+    },
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000201",
+      "sales_order_reference": "SO-2026-1187",
+      "customer_po_reference": "",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000001",
+      "order_status": "In Production",
+      "production_started": true,
+      "fulfilment_status": "PRODUCTION_DELAY",
+      "delivery_status": "Delayed 5 days, revised ETA 2026-09-01"
+    },
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000202",
+      "sales_order_reference": "SO-2026-1200",
+      "customer_po_reference": "",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000002",
+      "order_status": "Confirmed",
+      "production_started": false,
+      "fulfilment_status": "NORMAL",
+      "delivery_status": "Not yet dispatched"
+    },
+    {
+      "salesorderid": "f1a2c3d4-0000-4000-8000-000000000203",
+      "sales_order_reference": "SO-2026-1150",
+      "customer_po_reference": "",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000001",
+      "order_status": "Dispatched",
+      "production_started": true,
+      "fulfilment_status": "DISPATCHED",
+      "delivery_status": "Shipped, tracking ABC123"
+    }
+  ],
+  "inventory": [
+    {
+      "inventoryid": "f1a2c3d4-0000-4000-8000-000000000301",
+      "pump_model": "Verderflex Dura 35",
+      "availability_status": "FEASIBLE",
+      "lead_time_days": 14
+    },
+    {
+      "inventoryid": "f1a2c3d4-0000-4000-8000-000000000302",
+      "pump_model": "Verderflex Dura 65",
+      "availability_status": "DELAYED",
+      "lead_time_days": 45
+    },
+    {
+      "inventoryid": "f1a2c3d4-0000-4000-8000-000000000304",
+      "pump_model": "Verderflex Dura 45",
+      "availability_status": "FEASIBLE",
+      "lead_time_days": 21
+    },
+    {
+      "inventoryid": "f1a2c3d4-0000-4000-8000-000000000305",
+      "pump_model": "Verderflex Dura 85",
+      "availability_status": "FEASIBLE",
+      "lead_time_days": 28
+    },
+    {
+      "inventoryid": "f1a2c3d4-0000-4000-8000-000000000303",
+      "pump_model": "Special ATEX Custom",
+      "availability_status": "NOT_AVAILABLE",
+      "lead_time_days": 90
+    }
+  ],
+  "installedunits": [
+    {
+      "installedunitid": "f1a2c3d4-0000-4000-8000-000000000401",
+      "serial_number": "SN-44120",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000004",
+      "pump_model": "Verderflex Dura 45",
+      "install_site": "Ludwigshafen",
+      "warranty_active": true,
+      "warranty_end_date": "2027-03-31"
+    },
+    {
+      "installedunitid": "f1a2c3d4-0000-4000-8000-000000000402",
+      "serial_number": "SN-99123",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000004",
+      "pump_model": "Verderflex Dura 85",
+      "install_site": "Antwerp",
+      "warranty_active": true,
+      "warranty_end_date": "2028-01-15"
+    },
+    {
+      "installedunitid": "f1a2c3d4-0000-4000-8000-000000000403",
+      "serial_number": "SN-182920",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000001",
+      "pump_model": "Verderflex Dura 35",
+      "install_site": "Rotterdam",
+      "warranty_active": true,
+      "warranty_end_date": "2027-11-30"
+    },
+    {
+      "installedunitid": "f1a2c3d4-0000-4000-8000-000000000404",
+      "serial_number": "SN-70001",
+      "_customerid_value": "f1a2c3d4-0000-4000-8000-000000000004",
+      "pump_model": "Verderflex Dura 45",
+      "install_site": "Ludwigshafen",
+      "warranty_active": false,
+      "warranty_end_date": "2024-06-30"
+    }
+  ],
+  "employees": [
+    {
+      "employeeid": "e001",
+      "display_name": "Elena Cross",
+      "active": true,
+      "team_name": "Benelux Key Accounts"
+    },
+    {
+      "employeeid": "e002",
+      "display_name": "Raj Patel",
+      "active": true,
+      "team_name": "Sales Engineering EMEA"
+    },
+    {
+      "employeeid": "e003",
+      "display_name": "Tom Byrne",
+      "active": true,
+      "team_name": "Service Benelux"
+    },
+    {
+      "employeeid": "e004",
+      "display_name": "Nina Alvarez",
+      "active": true,
+      "team_name": "APAC Territory Sales"
+    },
+    {
+      "employeeid": "e005",
+      "display_name": "Wei Zhang",
+      "active": true,
+      "team_name": "Application Engineering APAC"
+    },
+    {
+      "employeeid": "e006",
+      "display_name": "Sofia Lindqvist",
+      "active": true,
+      "team_name": "DACH Key Accounts"
+    },
+    {
+      "employeeid": "e007",
+      "display_name": "Marcus Feld",
+      "active": true,
+      "team_name": "Sales Engineering DACH"
+    },
+    {
+      "employeeid": "e008",
+      "display_name": "Priya Nair",
+      "active": true,
+      "team_name": "Application Engineering EMEA"
+    },
+    {
+      "employeeid": "e009",
+      "display_name": "Hans Vogel",
+      "active": true,
+      "team_name": "Service DACH"
+    },
+    {
+      "employeeid": "e010",
+      "display_name": "Jane Doe",
+      "active": false,
+      "team_name": "NA Territory Sales"
+    }
+  ]
+}

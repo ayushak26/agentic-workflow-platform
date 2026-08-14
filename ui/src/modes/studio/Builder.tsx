@@ -11,6 +11,7 @@ import ReactFlow, {
   Controls,
   MarkerType,
   MiniMap,
+  Position,
   addEdge,
   useEdgesState,
   useNodesState,
@@ -37,7 +38,29 @@ import { BuilderInspector, type BuilderInspectorTab } from './BuilderInspector';
 import { BuilderStart } from './BuilderStart';
 import { renameNodeReferencesInConfig } from './builder-graph';
 import { generateDefaults, findManifest, newNodeId } from './builder-helpers';
-import { layoutFlow } from './flow-layout';
+import { NodeSearchPalette } from './builder/NodeSearchPalette';
+import { BuilderStageBandNode, BuilderStagePlaceholderNode } from './builder/StageNodes';
+import {
+  applyStageCollapse,
+  buildStageBandNodes,
+  BUILDER_STAGE_BAND_TYPE,
+  BUILDER_STAGE_PLACEHOLDER_TYPE,
+  collapsibleStageIndexes,
+  isSyntheticNodeId,
+} from './builder/stage-view';
+import { groupIntoStages, layoutFlow } from './flow-layout';
+import {
+  buildWorkflowSvg,
+  downloadBlob,
+  exportFileName,
+  svgToPngBlob,
+} from './graph-export';
+import {
+  ARROW_DIRECTIONS,
+  DEFAULT_NODE_HEIGHT,
+  DEFAULT_NODE_WIDTH,
+  resolveArrowTarget,
+} from './graph-navigation';
 import { NodePalette } from './NodePalette';
 import { RunDialog } from './RunDialog';
 import { SaveAsDialog } from './SaveAsDialog';
@@ -56,8 +79,19 @@ import {
   type YamlWorkflow,
 } from './yaml-bridge';
 
-const nodeTypes = { workflow: WorkflowNode };
+const nodeTypes = {
+  workflow: WorkflowNode,
+  [BUILDER_STAGE_BAND_TYPE]: BuilderStageBandNode,
+  [BUILDER_STAGE_PLACEHOLDER_TYPE]: BuilderStagePlaceholderNode,
+};
 const NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+// Semantic-zoom tiers, with a gap between them so a node's appearance doesn't
+// flicker while the user is scrubbing the zoom around the threshold.
+const COMPACT_ENTER_ZOOM = 0.5;
+const COMPACT_EXIT_ZOOM = 0.62;
+// Reading a step means reading its detail, so jumping to one from search or the
+// minimap zooms in far enough for the detail tier to be showing.
+const FOCUS_MIN_ZOOM = 0.7;
 
 type WorkflowMeta = Omit<YamlWorkflow, 'nodes' | 'edges'>;
 type BuilderSnapshot = {
@@ -172,7 +206,24 @@ export function Builder() {
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [past, setPast] = useState<BuilderSnapshot[]>([]);
   const [future, setFuture] = useState<BuilderSnapshot[]>([]);
+  // Reading a long workflow: the canvas can take over the whole window, group
+  // itself into stage columns (collapsing the parallel ones), flow top-down
+  // instead of left-to-right, and drop to a lower level of detail when zoomed
+  // out. None of this touches the workflow — it is all view state.
+  const [expanded, setExpanded] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [detailTier, setDetailTier] = useState<'detail' | 'compact'>('detail');
+  const [layoutDirection, setLayoutDirection] = useState<'LR' | 'TB'>('LR');
+  const [showStages, setShowStages] = useState(false);
+  const [collapsedStages, setCollapsedStages] = useState<Set<number>>(new Set());
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<'png' | 'svg' | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  // Which side panels to put back when leaving the expanded view — expanding
+  // closes them for the canvas width, and silently reopening both afterwards
+  // would be wrong for anyone who had them closed to begin with.
+  const panelsBeforeExpand = useRef<{ palette: boolean; inspector: boolean } | null>(null);
   const dragStart = useRef<BuilderSnapshot | null>(null);
   const pendingViewport = useRef<Viewport | null>(navState.builderResume?.viewport ?? null);
   // Set right before navigate() in startBlank/startTemplate: the route-load
@@ -235,7 +286,7 @@ export function Builder() {
   ) => {
     const flow = yamlToReactFlow(workflow);
     const restored = applyCanvasPositions(flow.nodes, canvas);
-    const laidOut = restored ?? layoutFlow(flow.nodes, flow.edges, 'LR').nodes;
+    const laidOut = restored ?? layoutFlow(flow.nodes, flow.edges, layoutDirection).nodes;
     const { nodes: ignoredNodes, edges: ignoredEdges, ...workflowMeta } = workflow;
     void ignoredNodes;
     void ignoredEdges;
@@ -246,13 +297,16 @@ export function Builder() {
     setSelectedId(options.selectedId ?? canvas?.selected_node_id ?? null);
     setPast([]);
     setFuture([]);
+    // Stage indexes are positional, so they mean nothing once a different graph
+    // is on the canvas.
+    setCollapsedStages(new Set());
     setDirty(Boolean(options.dirty));
     setPreflight(null);
     setSaveState('idle');
     setAutosaveState('idle');
     setError(null);
     if (canvas?.viewport) pendingViewport.current = canvas.viewport;
-  }, [setEdges, setNodes]);
+  }, [layoutDirection, setEdges, setNodes]);
 
   useEffect(() => {
     if (!routeName) return;
@@ -390,7 +444,12 @@ export function Builder() {
     markChanged();
   }, [markChanged, pushHistory, setEdges]);
 
-  const onNodesChange = useCallback((changes: NodeChange[]) => {
+  const onNodesChange = useCallback((allChanges: NodeChange[]) => {
+    // Stage bands and collapsed-stage placeholders are drawn on top of the
+    // workflow, not part of it: their measurements and selection must never
+    // reach the node state that becomes YAML.
+    const changes = allChanges.filter(change => !('id' in change) || !isSyntheticNodeId(change.id));
+    if (changes.length === 0) return;
     const positionChange = changes.find(change => change.type === 'position');
     if (positionChange?.type === 'position' && positionChange.dragging && !dragStart.current) {
       dragStart.current = captureSnapshot();
@@ -656,12 +715,38 @@ export function Builder() {
     setRunDraft({ workflow, title });
   }, [currentYaml, nodes, rfInstance, selectedId, validate, workflowName]);
 
-  const autoLayout = useCallback(() => {
+  const autoLayout = useCallback((direction = layoutDirection) => {
     pushHistory();
-    setNodes(current => layoutFlow(current, edges, 'LR').nodes);
+    setNodes(current => layoutFlow(current, edges, direction).nodes);
     markChanged();
     requestAnimationFrame(() => rfInstance?.fitView({ padding: 0.2, duration: 350 }));
-  }, [edges, markChanged, pushHistory, rfInstance, setNodes]);
+  }, [edges, layoutDirection, markChanged, pushHistory, rfInstance, setNodes]);
+
+  // Switching direction without re-running the layout would leave every node
+  // where it was with its handles moved to the wrong edges, so the two are one
+  // action.
+  const toggleLayoutDirection = useCallback(() => {
+    const next = layoutDirection === 'LR' ? 'TB' : 'LR';
+    setLayoutDirection(next);
+    autoLayout(next);
+  }, [autoLayout, layoutDirection]);
+
+  const toggleExpanded = useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next) {
+      panelsBeforeExpand.current = { palette: paletteOpen, inspector: inspectorOpen };
+      setPaletteOpen(false);
+      setInspectorOpen(false);
+    } else if (panelsBeforeExpand.current) {
+      setPaletteOpen(panelsBeforeExpand.current.palette);
+      setInspectorOpen(panelsBeforeExpand.current.inspector);
+      panelsBeforeExpand.current = null;
+    }
+    // The canvas has just changed size by a few hundred pixels; refitting is
+    // what makes the extra room actually show more of the workflow.
+    window.setTimeout(() => rfInstance?.fitView({ padding: 0.15, duration: 300 }), 60);
+  }, [expanded, inspectorOpen, paletteOpen, rfInstance]);
 
   const restoreAutosave = useCallback(() => {
     if (!recovery) return;
@@ -754,13 +839,17 @@ export function Builder() {
     return () => { cancelled = true; };
   }, [mcpServerIds]);
 
-  const displayNodes = useMemo(() => nodes.map(node => ({
+  // Everything the canvas knows about a step that the YAML does not: issue
+  // state, execution kind, discovered MCP operation, simulation result. Kept
+  // separate from the purely visual pass below so the image export can render
+  // the whole workflow with these annotations but without the current
+  // selection's fading or the current zoom's level of detail.
+  const annotatedNodes = useMemo(() => nodes.map(node => ({
     ...node,
     data: {
       ...node.data,
       downstreamCount: edges.filter(edge => edge.source === node.id).length,
       hasIssue: issueNodes.has(node.id),
-      faded: selectedId != null && !path.has(node.id),
       executionKind: executionKinds.get(node.data.typeName),
       mcpOperation: node.data.typeName === 'MCPToolAgent'
         ? mcpOperations.get(
@@ -779,11 +868,86 @@ export function Builder() {
     issueNodes,
     mcpOperations,
     nodes,
-    path,
-    selectedId,
     simulationPath,
     simulationWaiting,
   ]);
+
+  // Stages are read off the positions currently on the canvas, not off the last
+  // dagre run, so hand-dragging a step moves it between columns as you'd expect.
+  const stages = useMemo(
+    () => (showStages ? groupIntoStages(nodes, layoutDirection) : []),
+    [layoutDirection, nodes, showStages],
+  );
+  const stageForNode = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const stage of stages) {
+      for (const id of stage.nodeIds) map.set(id, stage.index);
+    }
+    return map;
+  }, [stages]);
+
+  const collapseStage = useCallback((stageIndex: number) => {
+    setCollapsedStages(current => new Set(current).add(stageIndex));
+  }, []);
+
+  // Collapsing or expanding everything at once changes the graph's footprint
+  // wholesale, so the view refits — collapsing one stage deliberately does not,
+  // since that would move everything else out from under the reader.
+  const setAllStagesCollapsed = useCallback((collapsed: boolean) => {
+    setCollapsedStages(collapsed ? new Set(collapsibleStageIndexes(stages)) : new Set());
+    window.setTimeout(() => rfInstance?.fitView({ padding: 0.18, duration: 320 }), 40);
+  }, [rfInstance, stages]);
+  const expandStage = useCallback((stageIndex: number) => {
+    setCollapsedStages(current => {
+      const next = new Set(current);
+      next.delete(stageIndex);
+      return next;
+    });
+  }, []);
+
+  /** Bring a step into view, optionally zooming in far enough to read it. */
+  const focusNode = useCallback((nodeId: string, options: { zoomIn?: boolean } = {}) => {
+    const node = nodes.find(item => item.id === nodeId);
+    if (!node || !rfInstance) return;
+    rfInstance.setCenter(
+      node.position.x + (node.width ?? DEFAULT_NODE_WIDTH) / 2,
+      node.position.y + (node.height ?? DEFAULT_NODE_HEIGHT) / 2,
+      {
+        zoom: options.zoomIn
+          ? Math.max(rfInstance.getZoom(), FOCUS_MIN_ZOOM)
+          : rfInstance.getZoom(),
+        duration: 260,
+      },
+    );
+  }, [nodes, rfInstance]);
+
+  const selectNode = useCallback((nodeId: string, options: { zoomIn?: boolean } = {}) => {
+    // A step inside a collapsed stage cannot be looked at while it is hidden,
+    // so asking to go there opens the stage.
+    const stageIndex = stageForNode.get(nodeId);
+    if (stageIndex != null && collapsedStages.has(stageIndex)) expandStage(stageIndex);
+    setSelectedId(nodeId);
+    setShowInputs(false);
+    setInspectorTab('configure');
+    focusNode(nodeId, options);
+  }, [collapsedStages, expandStage, focusNode, stageForNode]);
+
+  const displayNodes = useMemo(() => annotatedNodes.map(node => ({
+    ...node,
+    // The Builder's own `selectedId` is the single source of truth for what is
+    // selected, so a step reached by keyboard or by search is highlighted the
+    // same as one that was clicked — React Flow would otherwise only mark the
+    // ones its own pointer handling selected.
+    selected: node.id === selectedId,
+    sourcePosition: layoutDirection === 'TB' ? Position.Bottom : Position.Right,
+    targetPosition: layoutDirection === 'TB' ? Position.Top : Position.Left,
+    data: {
+      ...node.data,
+      faded: selectedId != null && !path.has(node.id),
+      compact: detailTier === 'compact',
+      flowDirection: layoutDirection,
+    },
+  })), [annotatedNodes, detailTier, layoutDirection, path, selectedId]);
   const displayEdges = useMemo(() => edges.map(edge => {
     const highlighted = selectedId != null && path.has(edge.source) && path.has(edge.target);
     return {
@@ -799,6 +963,95 @@ export function Builder() {
       labelBgStyle: { fill: 'var(--surface-primary)', fillOpacity: 0.94 },
     };
   }), [edges, path, selectedId]);
+
+  // Collapsed stages fold away first, then the surviving columns get their
+  // background bands — a collapsed stage is already one box, so it needs none.
+  const collapsed = useMemo(
+    () => applyStageCollapse(displayNodes, displayEdges, stages, collapsedStages, expandStage),
+    [collapsedStages, displayEdges, displayNodes, expandStage, stages],
+  );
+  const canvasNodes = useMemo(
+    () => (showStages
+      ? [...buildStageBandNodes(stages, collapsedStages, collapseStage), ...collapsed.nodes]
+      : collapsed.nodes),
+    [collapseStage, collapsed.nodes, collapsedStages, showStages, stages],
+  );
+  const collapsibleStages = useMemo(() => collapsibleStageIndexes(stages), [stages]);
+
+  const runExport = useCallback(async (format: 'png' | 'svg') => {
+    if (!meta || annotatedNodes.length === 0) return;
+    setExportOpen(false);
+    setExporting(format);
+    setError(null);
+    try {
+      // The whole workflow, every step expanded, whatever the canvas is
+      // currently showing — an image of a partially collapsed graph would be a
+      // record of a viewing session rather than of the workflow.
+      const image = buildWorkflowSvg({
+        title: meta.name,
+        subtitle: [
+          `${annotatedNodes.length} steps`,
+          `${edges.length} connections`,
+          `workflow v${meta.version ?? '1.0'}`,
+          workflowName ? `${workflowName}.yaml` : 'unsaved draft',
+        ].join(' · '),
+        nodes: annotatedNodes,
+        edges,
+        stages: showStages ? groupIntoStages(nodes, layoutDirection) : [],
+        direction: layoutDirection,
+      });
+      const filename = exportFileName(workflowName, meta.name, format);
+      if (format === 'svg') {
+        downloadBlob(new Blob([image.svg], { type: 'image/svg+xml;charset=utf-8' }), filename);
+      } else {
+        downloadBlob(await svgToPngBlob(image), filename);
+      }
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setExporting(null);
+    }
+  }, [annotatedNodes, edges, layoutDirection, meta, nodes, showStages, workflowName]);
+
+  // Keyboard travel across the graph. Scoped to the canvas (and to nothing
+  // being focused) so arrow keys still scroll the palette and move a caret
+  // inside the Inspector's fields.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const typing = Boolean(target && (
+        target.isContentEditable
+        || /^(input|textarea|select)$/i.test(target.tagName)
+      ));
+      if (typing) return;
+
+      if ((event.key === 'k' || event.key === 'K') && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === 'Escape') {
+        if (searchOpen) return; // the palette closes itself
+        if (exportOpen) setExportOpen(false);
+        else if (expanded) toggleExpanded();
+        else if (selectedId) setSelectedId(null);
+        return;
+      }
+
+      const direction = ARROW_DIRECTIONS[event.key];
+      if (!direction) return;
+      const inCanvas = target === document.body || Boolean(canvasRef.current?.contains(target));
+      if (!inCanvas || searchOpen) return;
+      event.preventDefault();
+      // React Flow's own arrow-key handling (moving the selected node) is off —
+      // see disableKeyboardA11y on the canvas — so this is the only listener.
+      const nextId = resolveArrowTarget(nodes, edges, selectedId, direction);
+      if (nextId) selectNode(nextId);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [edges, expanded, exportOpen, nodes, searchOpen, selectNode, selectedId, toggleExpanded]);
 
   if (!routeName && !meta && !navState.generatedYaml) {
     return (
@@ -840,7 +1093,7 @@ export function Builder() {
   const returnPath = workflowName ? `/builder/${encodeURIComponent(workflowName)}` : undefined;
 
   return (
-    <div className="builder-shell flex h-full min-h-0 flex-col">
+    <div className={`builder-shell flex h-full min-h-0 flex-col${expanded ? ' builder-shell--expanded' : ''}`}>
       <header className="builder-actionbar">
         <div className="builder-actionbar-primary">
           <button
@@ -872,7 +1125,14 @@ export function Builder() {
           <button className="ui-button ui-button--secondary" onClick={() => { setShowInputs(true); setInspectorOpen(true); }} type="button">
             Inputs <span className="builder-action-count">{Object.keys(meta.inputs ?? {}).length}</span>
           </button>
-          <button className="ui-button ui-button--secondary" onClick={autoLayout} title="Arrange left to right. Manual positions remain stable until you use this action." type="button">Auto-layout</button>
+          <button
+            className="ui-button ui-button--secondary"
+            onClick={() => autoLayout()}
+            title={`Arrange ${layoutDirection === 'LR' ? 'left to right' : 'top to bottom'}. Manual positions remain stable until you use this action.`}
+            type="button"
+          >
+            Auto-layout
+          </button>
           {workflowName && (
             <button className="ui-button ui-button--secondary" onClick={() => setVersionHistoryOpen(true)} type="button"><Icon name="history" size={14} /> Versions</button>
           )}
@@ -930,23 +1190,39 @@ export function Builder() {
         >
           <ReactFlow
             deleteKeyCode={['Backspace', 'Delete']}
-            edges={displayEdges}
+            // Selection travel is owned by the Builder's own arrow-key handler
+            // (see the keydown effect): React Flow's built-in handling moves the
+            // selected node instead, which would fight it key for key.
+            disableKeyboardA11y
+            edges={collapsed.edges}
             fitView
             maxZoom={1.8}
-            minZoom={0.18}
+            minZoom={0.08}
             nodeTypes={nodeTypes}
-            nodes={displayNodes}
+            nodes={canvasNodes}
             onConnect={onConnect}
             onEdgesChange={onEdgesChange}
             onInit={instance => {
               setRfInstance(instance);
+              setZoom(instance.getZoom());
               if (pendingViewport.current) {
                 const viewport = pendingViewport.current;
                 pendingViewport.current = null;
                 requestAnimationFrame(() => instance.setViewport(viewport, { duration: 0 }));
               }
             }}
+            onMove={(_, viewport) => {
+              setZoom(viewport.zoom);
+              setDetailTier(current => {
+                if (current === 'detail' && viewport.zoom < COMPACT_ENTER_ZOOM) return 'compact';
+                if (current === 'compact' && viewport.zoom > COMPACT_EXIT_ZOOM) return 'detail';
+                return current;
+              });
+            }}
             onNodeClick={(_, node) => {
+              // Stage bands and collapsed-stage placeholders are drawn by the
+              // Builder, not part of the workflow — they carry their own controls.
+              if (isSyntheticNodeId(node.id)) return;
               setSelectedId(node.id);
               setShowInputs(false);
               setInspectorOpen(true);
@@ -954,16 +1230,108 @@ export function Builder() {
               if (window.innerWidth <= 900) setPaletteOpen(false);
             }}
             onNodesChange={onNodesChange}
-            onPaneClick={() => setSelectedId(null)}
+            onPaneClick={() => { setSelectedId(null); setExportOpen(false); }}
           >
             <Background color="var(--border-default)" gap={22} size={1} />
-            <Controls position="bottom-right" />
-            <MiniMap className="builder-minimap" maskColor="rgba(242, 251, 250, 0.76)" nodeColor="var(--brand-teal-600)" pannable zoomable />
+            {/* Bottom-left, because the minimap and the status bar both want the
+                bottom-right corner and the zoom controls were losing it. */}
+            <Controls position="bottom-left" />
+            <MiniMap
+              className="builder-minimap"
+              maskColor="rgba(242, 251, 250, 0.76)"
+              nodeColor={node => (isSyntheticNodeId(node.id) ? 'transparent' : 'var(--brand-teal-600)')}
+              onNodeClick={(_, node) => { if (!isSyntheticNodeId(node.id)) selectNode(node.id, { zoomIn: true }); }}
+              pannable
+              zoomable
+            />
           </ReactFlow>
 
+          {/* View controls live on the canvas rather than in the action bar:
+              they change how the workflow is read, not what it is. */}
+          <div className="builder-canvas-tools" role="toolbar" aria-label="Canvas view controls">
+            <button
+              className="builder-canvas-tool"
+              disabled={nodes.length === 0}
+              onClick={() => setSearchOpen(true)}
+              title="Find a step by name (⌘K)"
+              type="button"
+            >
+              <Icon name="search" size={14} /> Find
+            </button>
+            <button
+              aria-pressed={showStages}
+              className={`builder-canvas-tool${showStages ? ' builder-canvas-tool--on' : ''}`}
+              disabled={nodes.length === 0}
+              onClick={() => { setShowStages(value => !value); setCollapsedStages(new Set()); }}
+              title="Group the canvas into stage columns, so parallel branches read as one stage"
+              type="button"
+            >
+              <Icon name="columns" size={14} /> Stages
+            </button>
+            {showStages && collapsibleStages.length > 0 && (
+              collapsedStages.size > 0 ? (
+                <button className="builder-canvas-tool" onClick={() => setAllStagesCollapsed(false)} title="Expand every collapsed stage" type="button">
+                  Expand all
+                </button>
+              ) : (
+                <button className="builder-canvas-tool" onClick={() => setAllStagesCollapsed(true)} title="Collapse every stage that holds parallel steps" type="button">
+                  Collapse all
+                </button>
+              )
+            )}
+            <button
+              className="builder-canvas-tool"
+              onClick={toggleLayoutDirection}
+              title={layoutDirection === 'LR' ? 'Re-arrange the workflow top-down' : 'Re-arrange the workflow left-to-right'}
+              type="button"
+            >
+              <Icon name={layoutDirection === 'LR' ? 'flow-horizontal' : 'flow-vertical'} size={14} />
+              {layoutDirection === 'LR' ? 'Left → right' : 'Top → down'}
+            </button>
+            <div className="builder-canvas-tool-group">
+              <button
+                className="builder-canvas-tool"
+                disabled={nodes.length === 0 || exporting !== null}
+                onClick={() => setExportOpen(value => !value)}
+                title="Export the whole workflow as an image"
+                type="button"
+              >
+                <Icon name="image" size={14} />
+                {exporting ? `Exporting ${exporting.toUpperCase()}…` : 'Export'}
+              </button>
+              {exportOpen && (
+                <div className="builder-canvas-menu">
+                  <button onClick={() => void runExport('png')} type="button">
+                    PNG image
+                    <span>Every step, rendered at 3× for slides and documents</span>
+                  </button>
+                  <button onClick={() => void runExport('svg')} type="button">
+                    SVG vector
+                    <span>Stays sharp at any zoom; opens in design tools</span>
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              aria-pressed={expanded}
+              className={`builder-canvas-tool${expanded ? ' builder-canvas-tool--on' : ''}`}
+              onClick={toggleExpanded}
+              title={expanded ? 'Leave the expanded canvas (Esc)' : 'Fill the window with the canvas'}
+              type="button"
+            >
+              <Icon name={expanded ? 'collapse' : 'expand'} size={14} />
+              {expanded ? 'Exit' : 'Expand'}
+            </button>
+          </div>
+
           <div className="builder-canvas-status">
-            <span>{Math.round((rfInstance?.getZoom() ?? 1) * 100)}%</span>
+            <span>{Math.round(zoom * 100)}%</span>
+            {detailTier === 'compact' && <span title="Zoomed out: steps show their name only">Overview</span>}
+            <span className="builder-canvas-hint" title="← → follow the connections; ↑ ↓ move between parallel branches">
+              ←→ steps · ↑↓ branches
+            </span>
             <button onClick={() => rfInstance?.fitView({ padding: 0.2, duration: 300 })} type="button">Fit workflow</button>
+            {selectedId && <button onClick={() => focusNode(selectedId, { zoomIn: true })} type="button">Focus step</button>}
             {selectedId && <button onClick={() => setSelectedId(null)} type="button">Clear focus</button>}
           </div>
 
@@ -1036,6 +1404,17 @@ export function Builder() {
             setSaveState('saved');
           }}
           workflowName={workflowName}
+        />
+      )}
+
+      {searchOpen && (
+        <NodeSearchPalette
+          nodes={annotatedNodes}
+          onClose={() => setSearchOpen(false)}
+          onSelect={nodeId => {
+            setSearchOpen(false);
+            selectNode(nodeId, { zoomIn: true });
+          }}
         />
       )}
 

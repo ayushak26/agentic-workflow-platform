@@ -80,16 +80,56 @@ def _check_field(field: str, schema: dict[str, Any]) -> None:
         )
 
 
+_PYTHON_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "text": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "float": (int, float),
+    "boolean": (bool,),
+    "array": (list, tuple),
+    "object": (dict,),
+}
+
+
+def _check_value(field: str, value: Any, schema: dict[str, Any]) -> None:
+    """Reject a value whose type contradicts the collection's declared schema.
+
+    Without this a document declaring ``revision: integer`` accepts the string
+    "not-an-integer", which then fails silently at filter time — a typed
+    filter on that field simply never matches.
+    """
+    declared = _field_type(field, schema)
+    expected = _PYTHON_TYPES.get(str(declared).lower()) if declared else None
+    if expected is None or value is None:
+        return
+    # bool is a subclass of int; only "boolean" should accept it.
+    if isinstance(value, bool) and bool not in expected:
+        raise MetadataFilterValidationError(
+            f"metadata field {field!r} expects {declared}, got boolean"
+        )
+    if not isinstance(value, expected):
+        raise MetadataFilterValidationError(
+            f"metadata field {field!r} expects {declared}, got "
+            f"{type(value).__name__}"
+        )
+
+
 def validate_metadata_document(metadata: dict[str, Any], schema: dict[str, Any]) -> None:
     """Validate an ingestion-time metadata document against a Collection schema."""
 
-    for field in metadata:
+    for field, value in metadata.items():
         _check_field(str(field), schema)
+        _check_value(str(field), value, schema)
 
 
 def _validate_group(group: MetadataFilterGroup, schema: dict[str, Any]) -> None:
     for predicate in group.predicates:
         _check_field(predicate.field, schema)
+        # Membership and range operators carry collections/pairs, so only
+        # scalar comparisons are type-checked against the declared field.
+        if predicate.operator in {"equals", "not_equals", "greater_than", "less_than"}:
+            _check_value(predicate.field, predicate.value, schema)
     for nested in group.groups:
         _validate_group(nested, schema)
 

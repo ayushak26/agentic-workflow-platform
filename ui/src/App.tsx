@@ -6,13 +6,13 @@ import { LoginPage } from "./components/auth/LoginPage";
 import { BrandMark } from "./components/ui/BrandMark";
 import { StudioRoot } from "./modes/studio/StudioRoot";
 import { EvalRoot } from "./modes/eval/EvalRoot";
-import { OperatorRoot } from "./modes/operator/OperatorRoot";
+import { CostRoot } from "./modes/cost/CostRoot";
 import { KnowledgeRoot } from "./modes/knowledge/KnowledgeRoot";
 import { RunCostContext } from "./RunCostContext";
 import { currentUsername, isAuthed, rehydrate } from "./api/client";
 import type { RunCostSummary } from "./api/types";
 
-type Mode = "studio" | "eval" | "operator" | "knowledge";
+type Mode = "studio" | "eval" | "cost" | "knowledge";
 
 export default function App() {
   const [username, setUsername] = useState(currentUsername());
@@ -87,7 +87,7 @@ export default function App() {
             {mode === "studio" && <StudioRoot />}
             {mode === "knowledge" && <KnowledgeRoot />}
             {mode === "eval" && <EvalRoot />}
-            {mode === "operator" && <OperatorRoot />}
+            {mode === "cost" && <CostRoot />}
           </main>
         </RunCostContext.Provider>
       </div>

@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
-import { knowledgeApi, type CollectionResource, type DocumentResource, type IndexVersion } from '../../api/knowledge';
+import { knowledgeApi, type DocumentResource, type IndexVersion } from '../../api/knowledge';
 import { ErrorNotice, ResourceId, Status } from './shared';
+import { useCollection } from './collectionStore';
 
 export function DocumentsIndexesPage() {
-  const [collections, setCollections] = useState<CollectionResource[]>([]);
-  const [collectionId, setCollectionId] = useState('');
+  const { collectionId, collection, refresh: refreshCollections } = useCollection();
   const [documents, setDocuments] = useState<DocumentResource[]>([]);
   const [indexes, setIndexes] = useState<IndexVersion[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [activating, setActivating] = useState<string | null>(null);
-
-  useEffect(() => { knowledgeApi.listCollections().then(values => { setCollections(values); setCollectionId(value => value || values[0]?.collection_id || ''); }).catch(err => setError(String(err))); }, []);
 
   function refresh(id: string) {
     if (!id) return;
@@ -18,23 +16,22 @@ export function DocumentsIndexesPage() {
       .then(([docs, idx]) => { setDocuments(docs); setIndexes(idx); })
       .catch(err => setError(String(err)));
   }
-  useEffect(() => refresh(collectionId), [collectionId]);
+  // KnowledgeRoot keys this page by collection, so a switch remounts it with
+  // empty state rather than briefly showing the previous collection's rows.
+  useEffect(() => { refresh(collectionId); }, [collectionId]);
 
   async function activate(indexId: string) {
     setActivating(indexId); setError(null);
     try {
-      const updated = await knowledgeApi.activateIndex(collectionId, indexId);
-      setCollections(values => values.map(item => item.collection_id === updated.collection_id ? updated : item));
+      await knowledgeApi.activateIndex(collectionId, indexId);
+      await refreshCollections();
       refresh(collectionId);
     } catch (err) { setError(String(err)); } finally { setActivating(null); }
   }
 
-  const activeIndexId = collections.find(item => item.collection_id === collectionId)?.active_index_id;
+  const activeIndexId = collection?.active_index_id;
 
   return <div className="space-y-5">
-    <section className="ui-card p-5">
-      <label className="text-xs text-ink-600">Collection<select className="ui-input mt-1 w-full max-w-md" value={collectionId} onChange={event => setCollectionId(event.target.value)}>{collections.map(item => <option key={item.collection_id} value={item.collection_id}>{item.name}</option>)}</select></label>
-    </section>
     <ErrorNotice error={error} />
     <section className="ui-card p-5">
       <h3 className="mb-4 font-semibold">Indexes</h3>

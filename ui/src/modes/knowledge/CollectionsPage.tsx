@@ -1,30 +1,29 @@
-import { useEffect, useState } from 'react';
-import { knowledgeApi, type CollectionResource } from '../../api/knowledge';
+import { useState } from 'react';
+import { knowledgeApi } from '../../api/knowledge';
 import { ErrorNotice, ResourceId, Status } from './shared';
+import { useCollection } from './collectionStore';
 
 export function CollectionsPage() {
-  const [collections, setCollections] = useState<CollectionResource[]>([]);
+  const { collections, collectionId, setCollectionId, refresh } = useCollection();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [docTypes, setDocTypes] = useState('general');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function refresh() {
-    knowledgeApi.listCollections().then(setCollections).catch(err => setError(String(err)));
-  }
-  useEffect(refresh, []);
-
   async function create() {
     setCreating(true); setError(null);
     try {
-      await knowledgeApi.createCollection({
+      const created = await knowledgeApi.createCollection({
         name,
         description,
         doc_types: docTypes.split(',').map(value => value.trim()).filter(Boolean),
       });
       setName(''); setDescription('');
-      refresh();
+      // Make the new collection the one every other tab acts on, so the next
+      // step (Ingestion) is already pointed at what was just created.
+      setCollectionId(created.collection_id);
+      await refresh();
     } catch (err) { setError(String(err)); } finally { setCreating(false); }
   }
 
@@ -44,9 +43,11 @@ export function CollectionsPage() {
       <h3 className="mb-4 font-semibold">Collections</h3>
       <div className="space-y-2">
         {collections.length === 0 && <p className="text-sm text-ink-500">No collections yet — create one above.</p>}
-        {collections.map(item => <div key={item.collection_id} className="grid gap-2 rounded-lg border border-slate-200 p-4 sm:grid-cols-[1fr_auto] sm:items-center">
+        {collections.map(item => <div key={item.collection_id} className={`grid gap-2 rounded-lg border p-4 sm:grid-cols-[1fr_auto] sm:items-center ${item.collection_id === collectionId ? 'border-accent-400 bg-accent-50/40' : 'border-slate-200'}`}>
           <div>
-            <div className="flex items-center gap-2"><b>{item.name}</b><Status value={item.status} /></div>
+            <div className="flex items-center gap-2"><b>{item.name}</b><Status value={item.status} />{item.collection_id === collectionId
+              ? <span className="rounded-full bg-accent-100 px-2 py-1 text-[11px] font-medium text-accent-700">working here</span>
+              : <button type="button" className="text-[11px] text-accent-700 underline" onClick={() => setCollectionId(item.collection_id)}>Work in this</button>}</div>
             {item.description && <p className="mt-1 text-xs text-ink-500">{item.description}</p>}
             <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-ink-500">
               <span>{item.document_count} documents</span><span>{item.chunk_count} chunks</span>

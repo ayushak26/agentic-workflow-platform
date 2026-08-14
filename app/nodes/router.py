@@ -325,25 +325,32 @@ class RouterAgent(NodeType):
     def _eval_condition(self, condition: str | None, state: dict) -> bool:
         """Safe expression eval — supports only `path OP literal`.
         No arbitrary Python. Structured `conditions` mode is the supported way to
-        express AND/OR/NOT; this stays as-is for existing workflows."""
+        express AND/OR/NOT; this stays as-is for existing workflows.
+
+        Path resolution goes through the same `resolve_path` every other mode
+        uses — it returns None for a path that isn't there instead of raising,
+        which matters a lot here: an upstream lookup that legitimately found
+        nothing (an unmatched customer, an empty ownership record) must lose
+        the comparison, not crash the run three nodes downstream."""
         if not condition:
             return False
         for op_str, op_fn in _SAFE_OPS.items():
             if f" {op_str} " in condition:
                 lhs, rhs = condition.split(f" {op_str} ", 1)
-                lhs_val = self._resolve_path(lhs.strip(), state)
+                lhs_val = resolve_path(state, lhs.strip())
                 rhs_val = self._parse_literal(rhs.strip())
+                if lhs_val is None:
+                    # A missing path is not the same fact as "equal to the
+                    # empty/zero value", but comparing against one is the only
+                    # way this grammar has to ask "is this field populated" —
+                    # `owner_name != ''` means exactly that. Normalizing None
+                    # to the literal's own empty value makes every operator
+                    # answer that consistently instead of raising (mismatched
+                    # types) or silently miscounting "missing" as "present"
+                    # (bare `!=`, which None fails against everything).
+                    lhs_val = type(rhs_val)() if rhs_val is not None else None
                 return op_fn(lhs_val, rhs_val)
         raise ValueError(f"Unparseable condition: {condition!r}")
-
-    def _resolve_path(self, path: str, state: dict) -> Any:
-        # path like "rfp_intel.parsed.industry"
-        parts = path.split(".")
-        node_outputs = state.get("node_outputs", {})
-        cursor: Any = node_outputs if parts[0] in node_outputs else state
-        for p in parts:
-            cursor = cursor[p] if isinstance(cursor, dict) else getattr(cursor, p)
-        return cursor
 
     @staticmethod
     def _parse_literal(s: str) -> Any:

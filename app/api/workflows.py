@@ -193,6 +193,7 @@ async def validate_workflow(
             services=services,
             probe_services=True,
             require_run_history=True,
+            owner_scope_id=_scope(user, None),
         )
         if report.valid:
             try:
@@ -396,6 +397,7 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
         services=services,
         probe_services=True,
         require_run_history=True,
+        owner_scope_id=_scope(user, None),
     )
     if not preflight.valid:
         raise HTTPException(

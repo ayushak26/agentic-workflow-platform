@@ -14,12 +14,13 @@ OpenRouter's real API never sees it — it's stripped before the request is sent
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Type, TypeVar
 
 import httpx
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import settings
 from app.llm.base import LLMGateway, LLMResponse, LLMToolUseResponse, ToolCall
@@ -29,6 +30,17 @@ T = TypeVar("T", bound=BaseModel)
 log = structlog.get_logger(__name__)
 
 _PREFIX = "openrouter/"
+
+# Some upstreams honour `response_format: {"type": "json_object"}` by returning the JSON
+# inside a Markdown code fence, which is not itself valid JSON. Confirmed live against
+# OpenRouter (2026-08-14): anthropic/claude-haiku-4.5, claude-sonnet-4.5 and
+# claude-sonnet-4.6 all fence their output, while claude-opus-5 and claude-sonnet-5 do
+# not — so this is per-model upstream behaviour, not something a request parameter can
+# turn off. Without unfencing, every structured-output node fails on those models.
+_JSON_FENCE_PATTERN = re.compile(
+    r"\A\s*```[^\S\n]*(?:json)?[^\S\n]*\n(?P<body>.*?)\n?\s*```\s*\Z",
+    re.DOTALL | re.IGNORECASE,
+)
 
 
 @dataclass
@@ -46,6 +58,37 @@ class StructuredResult:
 
 def strip_openrouter_prefix(model: str) -> str:
     return model[len(_PREFIX):] if model.startswith(_PREFIX) else model
+
+
+def unfence_json(content: str) -> str:
+    """Return the JSON body of a Markdown-fenced payload, or `content` unchanged.
+
+    Only whole-string fences are unwrapped. Anything else — prose around the JSON, a
+    fence mid-string — is left alone for the caller's parse to reject: guessing at where
+    the JSON starts inside arbitrary text risks silently parsing the wrong span, which is
+    worse than a loud validation error.
+    """
+    match = _JSON_FENCE_PATTERN.match(content)
+    return match.group("body").strip() if match else content
+
+
+def _parse_structured(content: str, response_model: Type[T]) -> T:
+    """Parse a structured response, retrying once on the unfenced body.
+
+    The direct parse is tried first so the overwhelmingly common well-behaved case keeps
+    its existing behaviour exactly; unfencing is a recovery path, never the default.
+    """
+    try:
+        return response_model.model_validate_json(content)
+    except ValidationError:
+        unfenced = unfence_json(content)
+        if unfenced == content:
+            raise
+        log.debug(
+            "openrouter.structured_output_unfenced",
+            response_model=response_model.__name__,
+        )
+        return response_model.model_validate_json(unfenced)
 
 
 def _usage_fields(usage: dict[str, Any] | None) -> dict[str, Any]:
@@ -160,7 +203,7 @@ class OpenRouterGateway(LLMGateway):
             raise RuntimeError(
                 f"OpenRouterGateway: empty structured response for {response_model.__name__}"
             )
-        instance = response_model.model_validate_json(content)
+        instance = _parse_structured(content, response_model)
         fields = _usage_fields(resp.get("usage"))
         return StructuredResult(
             parsed=instance,

@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 const items = [
   { to: '/studio',   label: 'Studio',           hint: 'Build & run' },
   { to: '/eval',     label: 'Eval Lab',         hint: 'Grade & compare' },
-  { to: '/operator', label: 'Operator Console', hint: 'Health & infra' },
+  { to: '/cost',     label: 'Cost Management',  hint: 'Spend & budgets' },
 ];
 
 export function ModeShell({ children }: { children: ReactNode }) {

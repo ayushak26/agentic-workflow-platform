@@ -54,6 +54,14 @@ class MCPToolConfig(BaseModel):
     #: is not in the CRM" is a business outcome, not a crash.
     fail_on_error: bool = True
 
+    #: Upper bound on this one call, overriding the tool policy's and the
+    #: connection's. A step whose value is "enrich if you can, now" needs a
+    #: tighter bound than the connection default: `fail_on_error: false` only
+    #: promises the run survives a failure, not that it survives a *hang*, and
+    #: an emergency route that waits a minute for an unresponsive ERP is
+    #: indistinguishable to the person waiting from one that depends on it.
+    timeout_seconds: float | None = Field(default=None, gt=0, le=600)
+
     #: The author's explicit statement that this write may happen without a
     #: human review in front of it. It cannot *grant* permission — the
     #: connection's write policy still governs — but a write that needs
@@ -205,6 +213,7 @@ class MCPToolAgent(NodeType):
                 session_id=session_id,
                 approval_satisfied=approval_satisfied,
                 audit_db=self.services.get("audit_db"),
+                timeout_override=cfg.timeout_seconds,
             )
         except (MCPPolicyError, MCPToolError, OperationInFlight,
                 AmbiguousOperationFailure) as error:

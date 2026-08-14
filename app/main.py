@@ -17,6 +17,7 @@ Services dict keys (consumed by routes and the runtime executor):
 """
 import asyncio
 import contextlib
+import warnings
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
@@ -27,7 +28,7 @@ from prometheus_client import make_asgi_app
 
 from app.config import settings
 from app.observability.logging import configure_logging, get_logger
-from app.observability.cost_ledger import CostLedger
+from app.observability.cost_ledger import CostLedger, configure_pricing_db
 from app.llm import get_llm_gateway
 from app.llm.registry import configured_local_model_probes
 from app.runtime.events import RunEventBus
@@ -53,6 +54,7 @@ from app.api import health
 from app.api.auth import router as auth_router
 from app.api.workflows import router as workflows_router
 from app.api.cost import router as cost_router
+from app.api.cost_admin import router as cost_admin_router
 from app.api.eval import router as eval_router
 from app.api.inspect import router as inspect_router
 from app.api import audit as audit_api
@@ -78,6 +80,16 @@ from functools import partial
 
 configure_logging(settings.environment)
 logger = get_logger(__name__)
+
+# redisvl warns that get_async_redis_connection() will become async in its next
+# major release. langgraph-checkpoint-redis (pinned <0.6) calls it synchronously
+# via AsyncRedisSaver; pyproject.toml's version ceiling is the real guard against
+# that breaking change, this just silences the noise until then.
+warnings.filterwarnings(
+    "ignore",
+    message="get_async_redis_connection will become async",
+    category=DeprecationWarning,
+)
 
 
 @asynccontextmanager
@@ -154,6 +166,7 @@ async def lifespan(app: FastAPI):
 
         services["db"] = db                 # raw pymongo Database for CostLedger
         services["cost_ledger"] = CostLedger(db)
+        configure_pricing_db(db)
         logger.info("mongo.connected")
     except MigrationError:
         logger.exception("mongo.migrations_failed")
@@ -598,6 +611,7 @@ if settings.metrics_enabled:
 app.include_router(health.router)
 app.include_router(auth_router)
 app.include_router(cost_router)
+app.include_router(cost_admin_router)
 app.include_router(workflows_router)
 app.include_router(eval_router)
 app.include_router(inspect_router)

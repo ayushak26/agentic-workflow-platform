@@ -143,7 +143,7 @@ export function RunWorkspace({
             </div>
           </div>
 
-          <div className="flex-none flex flex-wrap items-start gap-2">
+          <div className="flex-none flex flex-wrap items-start gap-2 max-w-full">
             {/* Primary action — exactly one, status-dependent. */}
             {isHitlGatePause ? (
               <button

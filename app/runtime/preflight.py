@@ -1727,6 +1727,7 @@ async def _probe_services(
     report: WorkflowPreflightReport,
     *,
     require_run_history: bool,
+    owner_scope_id: str | None = None,
 ) -> None:
     before = len(report.issues)
     required = set(report.required_services)
@@ -1884,6 +1885,12 @@ async def _probe_services(
     if "kimi_vision" in required and kimi_vision is not None:
         _probe_kimi_vision_nodes(spec, kimi_vision, report)
 
+    knowledge_repository = services.get("knowledge_repository")
+    if knowledge_repository is not None and owner_scope_id:
+        await _probe_rag_resource_nodes(
+            spec, knowledge_repository, report, owner_scope_id=owner_scope_id
+        )
+
     llm = services.get("llm")
     if "llm" in required and llm is not None:
         await _probe_workflow_model_access(spec, llm, report)
@@ -1994,6 +2001,128 @@ def _probe_kimi_vision_nodes(
         before,
         "Kimi vision credentials checked without a live request.",
     )
+
+
+async def _probe_rag_resource_nodes(
+    spec: WorkflowSpec,
+    repository: Any,
+    report: WorkflowPreflightReport,
+    *,
+    owner_scope_id: str,
+) -> None:
+    """Confirm every referenced Knowledge resource exists and is usable.
+
+    Zero-token: Mongo reads only — no embedding call, no retrieval, no LLM.
+    Catches the failures that would otherwise surface mid-run as a node error:
+    a deleted RAG Agent, a collection with nothing activated, a retrieval
+    profile that was never saved.
+    """
+    from app.knowledge.models import ProfileType, ResourceStatus
+    from app.knowledge.repository import ResourceNotFoundError
+
+    before = len(report.issues)
+    probed = 0
+
+    async def _collection_ok(collection_id: str, node_id: str, path: str) -> None:
+        try:
+            collection = await repository.get_collection(owner_scope_id, collection_id)
+        except ResourceNotFoundError:
+            _issue(
+                report,
+                "COLLECTION_NOT_FOUND",
+                f"collection {collection_id!r} does not exist in this workspace.",
+                path=path,
+                node_id=node_id,
+                suggestion="Pick a Collection from Knowledge Studio.",
+            )
+            return
+        if not collection.active_index_id:
+            _issue(
+                report,
+                "COLLECTION_NOT_READY",
+                f"collection {collection.name!r} has no active index, so it "
+                "cannot be searched.",
+                path=path,
+                node_id=node_id,
+                suggestion=(
+                    "Run an ingestion and activate an index in "
+                    "Knowledge Studio → Documents & Indexes."
+                ),
+            )
+
+    for node in spec.nodes:
+        if node.type not in {"RAGAgent", "KnowledgeRetrieval"}:
+            continue
+        config = node.config or {}
+        path = f"nodes.{node.id}.config"
+
+        agent_id = config.get("rag_agent_id")
+        if agent_id:
+            probed += 1
+            try:
+                agent = await repository.get_rag_agent(owner_scope_id, str(agent_id))
+            except ResourceNotFoundError:
+                _issue(
+                    report,
+                    "RAG_AGENT_NOT_FOUND",
+                    f"RAG Agent {agent_id!r} does not exist in this workspace.",
+                    path=f"{path}.rag_agent_id",
+                    node_id=node.id,
+                    suggestion=(
+                        "Pick a saved RAG Agent in Knowledge Studio → "
+                        "Profiles & RAG Agents, and copy its rag_agent_id."
+                    ),
+                )
+            else:
+                if getattr(agent, "status", None) not in {
+                    ResourceStatus.ACTIVE,
+                    ResourceStatus.READY,
+                }:
+                    _issue(
+                        report,
+                        "RAG_AGENT_INACTIVE",
+                        f"RAG Agent {agent.name!r} is {agent.status}, not active.",
+                        path=f"{path}.rag_agent_id",
+                        node_id=node.id,
+                        suggestion="Reactivate the agent or select another.",
+                    )
+                if getattr(agent, "collection_id", None):
+                    await _collection_ok(
+                        agent.collection_id, node.id, f"{path}.rag_agent_id"
+                    )
+
+        collection_id = config.get("collection_id")
+        if collection_id:
+            probed += 1
+            await _collection_ok(str(collection_id), node.id, f"{path}.collection_id")
+
+        profile_id = config.get("retrieval_profile_id")
+        if profile_id:
+            probed += 1
+            try:
+                await repository.get_profile(
+                    owner_scope_id,
+                    str(profile_id),
+                    config.get("retrieval_profile_version"),
+                    ProfileType.RETRIEVAL,
+                )
+            except ResourceNotFoundError:
+                _issue(
+                    report,
+                    "RETRIEVAL_PROFILE_NOT_FOUND",
+                    f"retrieval profile {profile_id!r} does not exist in this workspace.",
+                    path=f"{path}.retrieval_profile_id",
+                    node_id=node.id,
+                    suggestion="Save one from the Retrieval Playground first.",
+                )
+
+    if probed:
+        _add_check(
+            report,
+            "knowledge_resources",
+            before,
+            f"{probed} Knowledge resource reference(s) checked without a retrieval call.",
+        )
 
 
 async def _probe_workflow_model_access(
@@ -2152,6 +2281,7 @@ async def preflight_workflow_for_run(
     services: dict[str, Any],
     probe_services: bool = True,
     require_run_history: bool = True,
+    owner_scope_id: str | None = None,
 ) -> WorkflowPreflightReport:
     """Strict API gate used immediately before a new or retried run."""
 
@@ -2171,6 +2301,7 @@ async def preflight_workflow_for_run(
         services,
         report,
         require_run_history=require_run_history,
+        owner_scope_id=owner_scope_id,
     )
     return report.refresh()
 

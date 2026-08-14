@@ -29,7 +29,13 @@ export type IconName =
   | 'refresh'
   | 'upload'
   | 'trash'
-  | 'more-vertical';
+  | 'more-vertical'
+  | 'image'
+  | 'expand'
+  | 'collapse'
+  | 'columns'
+  | 'flow-vertical'
+  | 'flow-horizontal';
 
 function IconPath({ name }: { name: IconName }) {
   switch (name) {
@@ -211,6 +217,58 @@ function IconPath({ name }: { name: IconName }) {
           <circle cx="12" cy="5.5" r="1.3" fill="currentColor" stroke="none" />
           <circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" />
           <circle cx="12" cy="18.5" r="1.3" fill="currentColor" stroke="none" />
+        </>
+      );
+    case 'image':
+      return (
+        <>
+          <rect x="3.5" y="4.5" width="17" height="15" rx="2" />
+          <circle cx="8.75" cy="9.75" r="1.4" />
+          <path d="M4 17.5l4.6-4.6 3.4 3.4 2.6-2.6 5.4 5.2" />
+        </>
+      );
+    case 'expand':
+      return (
+        <>
+          <polyline points="4,9.5 4,4 9.5,4" />
+          <polyline points="14.5,4 20,4 20,9.5" />
+          <polyline points="20,14.5 20,20 14.5,20" />
+          <polyline points="9.5,20 4,20 4,14.5" />
+        </>
+      );
+    case 'collapse':
+      return (
+        <>
+          <polyline points="9.5,4 9.5,9.5 4,9.5" />
+          <polyline points="14.5,4 14.5,9.5 20,9.5" />
+          <polyline points="20,14.5 14.5,14.5 14.5,20" />
+          <polyline points="4,14.5 9.5,14.5 9.5,20" />
+        </>
+      );
+    case 'columns':
+      return (
+        <>
+          <rect x="3.5" y="4.5" width="5" height="15" rx="1.2" />
+          <rect x="10.5" y="4.5" width="5" height="15" rx="1.2" />
+          <rect x="17.5" y="4.5" width="3" height="15" rx="1.2" />
+        </>
+      );
+    case 'flow-vertical':
+      return (
+        <>
+          <rect x="8" y="3.5" width="8" height="5" rx="1.2" />
+          <rect x="8" y="15.5" width="8" height="5" rx="1.2" />
+          <path d="M12 8.5v7" />
+          <polyline points="9.8,13.2 12,15.5 14.2,13.2" />
+        </>
+      );
+    case 'flow-horizontal':
+      return (
+        <>
+          <rect x="3.5" y="8" width="5" height="8" rx="1.2" />
+          <rect x="15.5" y="8" width="5" height="8" rx="1.2" />
+          <path d="M8.5 12h7" />
+          <polyline points="13.2,9.8 15.5,12 13.2,14.2" />
         </>
       );
     default:

@@ -109,10 +109,17 @@ class SourceVersionResource(ScopedResource):
 
 
 class ParserProfileConfig(BaseModel):
-    strategy: Literal["standard", "layout_aware", "structure_aware", "ocr_fallback"] = "standard"
+    strategy: Literal[
+        "standard", "layout_aware", "structure_aware", "ocr_fallback", "vision_augmented"
+    ] = "standard"
     ocr_min_text_characters: int = Field(default=80, ge=0)
     preserve_tables: bool = True
     preserve_headings: bool = True
+    # vision_augmented only: cap pages sent to the vision model, and choose
+    # whether to describe every page or only those carrying visual content.
+    vision_max_pages: int = Field(default=20, ge=0, le=500)
+    vision_all_pages: bool = False
+    vision_prompt: str = ""
 
 
 class ChunkingProfileConfig(BaseModel):

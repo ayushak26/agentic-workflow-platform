@@ -25,6 +25,14 @@ log = get_logger(__name__)
 
 COLLECTION_NAME = "DocumentChunk"
 
+# Configure.Vectors.self_provided() declares a *named* vector. Objects must be
+# written to that target ({VECTOR_NAME: vector}), not through the legacy
+# single-vector argument: Weaviate accepts the legacy form but never populates
+# the named vector's HNSW index, so near_vector then fails with "vector not
+# found for target: default" and dense search silently returns nothing while
+# BM25 keeps working.
+VECTOR_NAME = "default"
+
 
 # ---------- Schema definition -------------------------------------------------
 
@@ -107,7 +115,9 @@ def upsert_objects_on(
     with collection.batch.dynamic() as batch:
         for obj, vector in zip(objects, vectors):
             batch.add_object(
-                properties=obj, vector=vector, uuid=weaviate.util.generate_uuid5(obj["chunk_id"])
+                properties=obj,
+                vector={VECTOR_NAME: vector},
+                uuid=weaviate.util.generate_uuid5(obj["chunk_id"]),
             )
     failed = collection.batch.failed_objects
     failed_count = len(failed) if failed else 0
@@ -256,7 +266,7 @@ class WeaviateClient:
             for chunk, vector in zip(chunks, vectors):
                 batch.add_object(
                     properties=chunk,
-                    vector=vector,
+                    vector={VECTOR_NAME: vector},
                     uuid=weaviate.util.generate_uuid5(chunk["chunk_id"]),
                 )
 

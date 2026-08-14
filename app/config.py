@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     minio_access_key: str = "eurskemadmin"
     minio_secret_key: str = "eurskempassword"
     minio_bucket: str = "eurskem-ai-docs"
-    workflow_file_max_mb: int = 50
+    workflow_file_max_mb: int = 70
     workflow_file_max_files: int = 20
     workflow_file_max_total_mb: int = 200
     max_request_body_mb: int = 220
@@ -89,13 +89,21 @@ class Settings(BaseSettings):
 
     # ── Dynamics 365 Finance & Supply Chain (F&O OData), exposed through MCP ──
     # A distinct product from the Dataverse CRM above: F&O customers, sales
-    # orders and inventory rather than CRM accounts/opportunities. The server
-    # lives at mcp-servers/d365-finance-scm-mcp (Node/TypeScript) and has no
-    # mock/fixture mode, so it is off by default — enabling it requires a real
-    # F&O environment and Entra app registration. Writes/deletes are fail-closed
-    # inside the server itself (see its README) in addition to this platform's
-    # own write_policy gate.
-    fno_mcp_enabled: bool = False
+    # orders and inventory rather than CRM accounts/opportunities. `live` mode
+    # runs the real server at mcp-servers/d365-finance-scm-mcp (Node/TypeScript,
+    # requires `npm run build` + a real F&O environment). `mock` mode (the
+    # default) runs app/mcp/d365_finance/server.py, a fixture-backed Python
+    # server exposing the narrow business tools (find_customer,
+    # get_account_ownership, get_quote, get_sales_order,
+    # get_order_fulfilment_status, get_credit_status,
+    # get_inventory_availability) that the live server's own README recommends
+    # building on top of its generic OData adapter — that business-tool layer
+    # does not exist yet on the live server, so the two modes are not
+    # tool-for-tool identical the way the Dataverse CRM mock/live pair is.
+    # Writes/deletes are fail-closed inside the live server itself (see its
+    # README) in addition to this platform's own write_policy gate.
+    fno_mcp_enabled: bool = True
+    fno_mcp_mode: str = "mock"              # "mock" | "live"
     fno_base_url: str = ""                 # https://your-environment.operations.dynamics.com
     fno_tenant_id: str = ""
     fno_client_id: str = ""
@@ -267,6 +275,17 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
+
+    # Vision-augmented PDF parsing: renders pages carrying figures, charts and
+    # image-only tables and transcribes them with a vision model, so visual
+    # content becomes searchable. Opt-in per Parser Profile
+    # (strategy: vision_augmented); these settings bound provider and cost.
+    ingestion_vision_provider: Literal["openrouter", "kimi"] = "openrouter"
+    ingestion_vision_model: str = ""  # blank -> provider default
+    ingestion_vision_max_pages: int = Field(default=20, ge=0, le=500)
+    ingestion_vision_scale: float = Field(default=2.0, ge=0.5, le=6.0)
+    ingestion_vision_concurrency: int = Field(default=3, ge=1, le=16)
+    ingestion_vision_max_output_tokens: int = Field(default=4096, ge=256, le=32_768)
 
     # LLM resilience is owned by the provider-neutral registry. Provider SDK
     # retries are disabled so one policy controls attempt count, backoff,

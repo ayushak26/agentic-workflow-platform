@@ -52,8 +52,41 @@ class IngestionJobRunner:
         self.repository = repository
         self.object_store = object_store
         self.embedder = embedder
+        self._embedders: dict[str, Any] = {}
         self.search_index = search_index
         self.stages = stages or DEFAULT_STAGE_REGISTRY
+
+    def _embedder_for(self, embedding_profile: Any) -> EmbeddingProvider:
+        """Embedder matching an Embedding Profile, cached per model+dimensions.
+
+        Falls back to the injected default when the profile carries no model —
+        and tests inject a stub embedder, which must keep being used.
+        """
+        from app.ingestion.embedder import Embedder, EmbedderConfig
+
+        # A stub/fake embedder (tests, offline runs) is authoritative — never
+        # swap it for one that would call a provider.
+        if not isinstance(self.embedder, Embedder):
+            return self.embedder
+
+        config = embedding_profile.config or {}
+        model = str(config.get("model") or "")
+        if not model or model == self.embedder.config.model:
+            return self.embedder
+
+        dimensions = int(config.get("dimensions") or 0)
+        key = f"{model}:{dimensions}"
+        cached = self._embedders.get(key)
+        if cached is None:
+            cached = Embedder(
+                EmbedderConfig(
+                    model=model,
+                    dimensions=dimensions or self.embedder.config.dimensions,
+                    batch_size=int(config.get("batch_size", 64)),
+                )
+            )
+            self._embedders[key] = cached
+        return cached
 
     async def _raise_if_cancelled(self, job: IngestionJob) -> None:
         latest = await self.repository.get_ingestion_job(
@@ -110,6 +143,11 @@ class IngestionJobRunner:
         parser = self.stages.get_parser(parser_profile.strategy)
         chunker = self.stages.get_chunker(chunking_profile.strategy)
         enricher = self.stages.enrichers.get("metadata_context")
+        # Embed with the model the *index* pins, not whatever the process-wide
+        # default happens to be. Retrieval builds its embedder from the same
+        # profile, so a mismatch here writes vectors of the wrong width and
+        # every later search fails on dimensionality.
+        embedder = self._embedder_for(embedding_profile)
 
         for path in paths:
             document_id: str | None = None
@@ -205,7 +243,17 @@ class IngestionJobRunner:
                     chunk_id_prefix=f"{index.index_id}:{source_version_id}",
                 )
                 if not chunks:
-                    raise ValueError("parser/chunker produced no searchable chunks")
+                    if not parsed.full_text.strip():
+                        raise ValueError(
+                            f"no text could be extracted from {path.name} "
+                            f"({path.suffix.lstrip('.').lower() or 'unknown'} via the "
+                            f"'{parser_profile.strategy}' parser). If this is a scanned "
+                            "or image-only document, use a parser profile with OCR."
+                        )
+                    raise ValueError(
+                        f"the '{chunking_profile.strategy}' chunking profile produced no "
+                        f"searchable chunks from {path.name}; check its token settings"
+                    )
 
                 job.status = IngestionJobStatus.ENRICHING
                 await self.repository.save_ingestion_job(job)
@@ -219,9 +267,19 @@ class IngestionJobRunner:
                 job.status = IngestionJobStatus.EMBEDDING
                 await self.repository.save_ingestion_job(job)
                 await self._raise_if_cancelled(job)
-                vectors = await self.embedder.embed([chunk.embedding_content for chunk in chunks])
+                vectors = await embedder.embed([chunk.embedding_content for chunk in chunks])
                 if len(vectors) != len(chunks):
                     raise RuntimeError("embedding provider returned the wrong vector count")
+                expected_dimensions = int(embedding_profile.config.get("dimensions") or 0)
+                if expected_dimensions and vectors and len(vectors[0]) != expected_dimensions:
+                    # Fail here rather than at the datastore: a width mismatch
+                    # would otherwise surface as an opaque batch-insert error
+                    # and could poison a physical collection that other index
+                    # versions with the same fingerprint share.
+                    raise RuntimeError(
+                        f"embedding profile declares {expected_dimensions} dimensions but "
+                        f"{embedding_profile.config.get('model')} returned {len(vectors[0])}"
+                    )
 
                 job.status = IngestionJobStatus.INDEXING
                 await self.repository.save_ingestion_job(job)

@@ -14,6 +14,8 @@ to prevent it is to have one implementation.
 """
 from __future__ import annotations
 
+import asyncio
+
 import time
 from typing import Any
 
@@ -229,6 +231,7 @@ class MCPIntegrationService:
         user_role: str | None = None,
         approval_satisfied: bool = False,
         audit_db: Any = None,
+        timeout_override: float | None = None,
     ) -> dict[str, Any]:
         """Run one tool through the full gate."""
         connection = self._require_connection(server_id, tool_name)
@@ -311,16 +314,23 @@ class MCPIntegrationService:
                     existing, key, connection, tool_name, decision
                 )
 
+        timeout_seconds = (
+            timeout_override
+            or connection.policy_for(tool_name).timeout_seconds
+            or connection.timeout_seconds
+        )
         try:
-            response = await self.client.call_tool_raw(
-                tool_name,
-                arguments,
-                server=server_id,
-                timeout_seconds=(
-                    connection.policy_for(tool_name).timeout_seconds
-                    or connection.timeout_seconds
-                ),
-            )
+            # Enforced here rather than left to the client: the bound is part of
+            # this gate's contract, and a client that ignores it (or a transport
+            # that stalls below its own timeout) would otherwise make the
+            # promise unenforceable.
+            async with asyncio.timeout(timeout_seconds):
+                response = await self.client.call_tool_raw(
+                    tool_name,
+                    arguments,
+                    server=server_id,
+                    timeout_seconds=timeout_seconds,
+                )
         except TimeoutError as error:
             if writing:
                 await self.ledger.mark_ambiguous(key, str(error))

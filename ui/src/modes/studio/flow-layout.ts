@@ -103,7 +103,12 @@ function stageLabel(nodeIds: string[], index: number): string {
   return `Stage ${index + 1}`;
 }
 
-function groupIntoStages<T>(nodes: Node<T>[], direction: 'TB' | 'LR'): Stage[] {
+/**
+ * Exported because the Builder groups the *current* canvas into stages on every
+ * change — nodes there are dragged by hand, so the banding has to follow the
+ * positions on screen rather than the ones dagre last produced.
+ */
+export function groupIntoStages<T>(nodes: Node<T>[], direction: 'TB' | 'LR'): Stage[] {
   // In LR mode, "stage" = column (x-position); in TB mode it'd be row
   // (y-position) — stage bands are drawn along whichever axis execution
   // flows across.

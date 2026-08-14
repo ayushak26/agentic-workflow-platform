@@ -26,6 +26,10 @@ function jsonHeaders(): Record<string, string> {
 
 // ---- Resource types (mirror app/knowledge/models.py) ----
 
+export type EmbeddingModelChoice = {
+  id: string; label: string; dimensions: number; provider: string; verified: boolean; note: string;
+};
+
 export type ResourceStatus = 'draft' | 'building' | 'ready' | 'active' | 'inactive' | 'failed' | 'archived';
 export type ProfileType = 'parser' | 'chunking' | 'embedding' | 'retrieval' | 'routing' | 'reranker' | 'generation';
 
@@ -258,7 +262,7 @@ export const knowledgeApi = {
   startIngestion: (
     collectionId: string,
     files: File[],
-    profiles: { parser: ProfileVersion; chunking: ProfileVersion; embedding: ProfileVersion },
+    profiles: { parser: ProfileVersion; chunking: ProfileVersion; embedding?: ProfileVersion; embeddingModel?: string },
     metadata: Record<string, unknown> = {},
   ): Promise<IngestionJob> => {
     const form = new FormData();
@@ -267,8 +271,14 @@ export const knowledgeApi = {
     form.append('parser_profile_version', String(profiles.parser.version));
     form.append('chunking_profile_id', profiles.chunking.profile_id);
     form.append('chunking_profile_version', String(profiles.chunking.version));
-    form.append('embedding_profile_id', profiles.embedding.profile_id);
-    form.append('embedding_profile_version', String(profiles.embedding.version));
+    // Either pin an existing Embedding Profile, or name a model (including
+    // 'auto') and let the backend resolve and pin it.
+    if (profiles.embeddingModel) {
+      form.append('embedding_model', profiles.embeddingModel);
+    } else if (profiles.embedding) {
+      form.append('embedding_profile_id', profiles.embedding.profile_id);
+      form.append('embedding_profile_version', String(profiles.embedding.version));
+    }
     form.append('metadata_json', JSON.stringify(metadata));
     return afetch(`${API}/knowledge/collections/${collectionId}/ingestions`, {
       method: 'POST', headers: getAuthHeaders(), body: form,
@@ -295,6 +305,18 @@ export const knowledgeApi = {
   documentSourceUrl: (documentId: string): Promise<{ url: string; expires_seconds: number }> =>
     afetch(`${API}/knowledge/documents/${documentId}/source-url`, { headers: getAuthHeaders() })
       .then(r => j<{ url: string; expires_seconds: number }>(r)),
+
+  embeddingModels: (): Promise<{ models: EmbeddingModelChoice[]; configured_default: string; endpoint: string }> =>
+    afetch(`${API}/knowledge/embedding-models`, { headers: getAuthHeaders() })
+      .then(r => j<{ models: EmbeddingModelChoice[]; configured_default: string; endpoint: string }>(r)),
+
+  // ---- Models ----
+  // Generation models come from the platform registry (same list the Builder
+  // uses). Embedding models are not in that registry — they are chosen per
+  // Index at ingestion time, so EMBEDDING_MODEL_CHOICES below seeds the picker.
+  llmModels: (): Promise<{ models: Array<{ name: string; display_name: string; provider: string; enabled?: boolean; configured?: boolean }> }> =>
+    afetch(`${API}/llm/models`, { headers: getAuthHeaders() })
+      .then(r => j<{ models: Array<{ name: string; display_name: string; provider: string; enabled?: boolean; configured?: boolean }> }>(r)),
 
   // ---- Retrieval Playground ----
   retrievalPresets: (): Promise<Record<string, RetrievalPreset>> =>

@@ -13,6 +13,12 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Reques
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.ingestion.embedding_catalog import (
+    AUTO_EMBEDDING_MODEL,
+    EMBEDDING_MODELS_BY_ID,
+    embedding_model_catalog,
+    select_embedding_model,
+)
 from app.knowledge.ids import new_resource_id
 from app.knowledge.models import (
     IngestionJob,
@@ -175,6 +181,22 @@ async def ingestion_presets(
     return INGESTION_PRESETS
 
 
+@router.get("/embedding-models")
+async def embedding_models(
+    user: CurrentUser = Depends(require_permission("knowledge:read")),
+):
+    """Embedding models selectable when building an Index.
+
+    Served from the backend so the UI never hardcodes model ids or dimension
+    counts — both are pinned into the Embedding Profile and an Index Version.
+    """
+    return {
+        "models": embedding_model_catalog(),
+        "configured_default": settings.embedding_model,
+        "endpoint": settings.embedding_base_url or "https://api.openai.com/v1",
+    }
+
+
 class IndexCreate(BaseModel):
     parser_profile_id: str
     parser_profile_version: int = Field(ge=1)
@@ -235,6 +257,7 @@ async def start_ingestion(
     chunking_profile_version: int | None = Form(None),
     embedding_profile_id: str | None = Form(None),
     embedding_profile_version: int | None = Form(None),
+    embedding_model: str | None = Form(None),
     metadata_json: str = Form("{}"),
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
@@ -262,12 +285,51 @@ async def start_ingestion(
         chunking_profile_version or (None if chunking_profile_id else defaults["chunking"].version),
         ProfileType.CHUNKING,
     )
-    embedding = await repository.get_profile(
-        scope,
-        embedding_profile_id or defaults["embedding"].profile_id,
-        embedding_profile_version or (None if embedding_profile_id else defaults["embedding"].version),
-        ProfileType.EMBEDDING,
-    )
+    if embedding_profile_id:
+        embedding = await repository.get_profile(
+            scope, embedding_profile_id, embedding_profile_version, ProfileType.EMBEDDING
+        )
+    elif embedding_model:
+        # Resolve here, never at storage time: an Index Version must pin a
+        # concrete model and dimension count, so "auto" is decided once, on
+        # the corpus in hand, and the reason is recorded on the profile.
+        if embedding_model == AUTO_EMBEDDING_MODEL:
+            sample = " ".join((upload.filename or "") for upload in files)
+            choice, reason = select_embedding_model(
+                doc_types=collection.doc_types,
+                document_count=len(files),
+                total_bytes=sum(getattr(upload, "size", 0) or 0 for upload in files),
+                sample_text=sample,
+            )
+        else:
+            choice = EMBEDDING_MODELS_BY_ID.get(embedding_model)
+            if choice is None:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    f"unknown embedding model {embedding_model!r}",
+                )
+            reason = "explicitly selected"
+        embedding = await service.create_profile_version(
+            owner_scope_id=scope,
+            profile_type=ProfileType.EMBEDDING,
+            name=f"Embeddings {choice.id}",
+            strategy="openai",
+            config={
+                "provider": choice.provider,
+                "model": choice.id,
+                "dimensions": choice.dimensions,
+                "batch_size": 64,
+                "data_processing": "external",
+            },
+            description=f"{choice.label} — {reason}",
+        )
+    else:
+        embedding = await repository.get_profile(
+            scope,
+            defaults["embedding"].profile_id,
+            defaults["embedding"].version,
+            ProfileType.EMBEDDING,
+        )
     try:
         metadata = json.loads(metadata_json)
         if not isinstance(metadata, dict):

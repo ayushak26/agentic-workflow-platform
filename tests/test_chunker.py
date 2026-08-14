@@ -156,6 +156,56 @@ def test_empty_units_are_skipped():
     assert 1 not in unit_indexes_seen
 
 
+def test_short_document_survives_min_tokens_filter():
+    """A document shorter than min_tokens must still be searchable.
+
+    Regression: the small-fragment filter erased such documents entirely,
+    which failed the whole ingestion job with "no searchable chunks".
+    """
+    doc = ExtractedDocument(
+        source_path="/test/short.txt",
+        source_format="txt",
+        page_count=1,
+        units=[
+            ExtractedUnit(
+                index=0,
+                label="text",
+                text="Dura 25 pump. Max flow 25 m3/h. PTFE seals resist sulphuric acid.",
+            )
+        ],
+    )
+    chunks = chunk_document(doc, ChunkConfig(min_tokens=50))
+    assert len(chunks) == 1
+    assert "Dura 25 pump" in chunks[0].text
+
+
+def test_textless_document_still_produces_no_chunks():
+    """The relaxation must not invent chunks for a genuinely empty document."""
+    doc = ExtractedDocument(
+        source_path="/test/scanned.pdf",
+        source_format="pdf",
+        page_count=1,
+        units=[ExtractedUnit(index=0, label="page 1", text="  \n  ")],
+    )
+    assert chunk_document(doc, ChunkConfig(min_tokens=50)) == []
+
+
+def test_small_fragments_still_dropped_beside_substantive_text():
+    """Relaxation is a last resort — normal documents keep the noise filter."""
+    doc = ExtractedDocument(
+        source_path="/test/mixed.pdf",
+        source_format="pdf",
+        page_count=2,
+        units=[
+            ExtractedUnit(index=0, label="page 1", text="Title"),
+            ExtractedUnit(index=1, label="page 2", text="Alpha beta gamma. " * 100),
+        ],
+    )
+    chunks = chunk_document(doc, ChunkConfig(min_tokens=50))
+    assert chunks, "substantive unit should still chunk"
+    assert 0 not in {c.metadata["unit_index"] for c in chunks}
+
+
 def test_chunk_ids_are_unique():
     doc = ExtractedDocument(
         source_path="/test/multi.pdf",

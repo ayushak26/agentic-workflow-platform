@@ -99,6 +99,46 @@ def _dynamics_env(app_settings: Settings) -> dict[str, str]:
     return env
 
 
+def _finance_scm_spec(app_settings: Settings) -> StdioServerParameters:
+    """Launch spec for the Dynamics 365 Finance & Operations MCP server.
+
+    Mirrors _dynamics_env's mock/live split: `mock` (default) runs
+    app/mcp/d365_finance/server.py, a fixture-backed Python server exposing
+    the narrow business tools (find_customer, get_account_ownership, ...)
+    this workflow family needs; `live` runs the real Node/TypeScript adapter
+    at mcp-servers/d365-finance-scm-mcp against a real F&O tenant. See
+    app/mcp/connections.py:finance_scm_connection for the fuller explanation
+    of why the two modes aren't tool-for-tool identical yet.
+    """
+    if app_settings.fno_mcp_mode.strip().lower() != "live":
+        return StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "app.mcp.d365_finance.server"],
+        )
+
+    from pathlib import Path
+
+    entrypoint = (
+        Path(__file__).resolve().parents[2]
+        / "mcp-servers" / "d365-finance-scm-mcp" / "dist" / "src" / "index.js"
+    )
+    env = dict(os.environ)
+    env["FNO_BASE_URL"] = app_settings.fno_base_url
+    if app_settings.fno_tenant_id:
+        env["FNO_TENANT_ID"] = app_settings.fno_tenant_id
+    if app_settings.fno_client_id:
+        env["FNO_CLIENT_ID"] = app_settings.fno_client_id
+    if app_settings.fno_client_secret:
+        env["FNO_CLIENT_SECRET"] = app_settings.fno_client_secret
+    env["FNO_ALLOW_WRITES"] = "true" if app_settings.fno_allow_writes else "false"
+    env["FNO_ALLOW_DELETES"] = "true" if app_settings.fno_allow_deletes else "false"
+    env["FNO_READ_ENTITY_ALLOWLIST"] = app_settings.fno_read_entity_allowlist
+    env["FNO_WRITE_ENTITY_ALLOWLIST"] = app_settings.fno_write_entity_allowlist
+    env["FNO_DELETE_ENTITY_ALLOWLIST"] = app_settings.fno_delete_entity_allowlist
+    env["FNO_ENTITY_ALIASES_JSON"] = app_settings.fno_entity_aliases_json
+    return StdioServerParameters(command="node", args=[str(entrypoint)], env=env)
+
+
 def build_server_specs(
     app_settings: Settings = settings,
 ) -> dict[str, StdioServerParameters]:
@@ -117,6 +157,9 @@ def build_server_specs(
             args=["-m", "app.mcp.dynamics.server"],
             env=_dynamics_env(app_settings),
         )
+
+    if app_settings.fno_mcp_enabled:
+        specs["dynamics365_finance_scm"] = _finance_scm_spec(app_settings)
 
     # Servers declared through MCP_SERVERS join the same launch table, so a
     # third-party MCP server is configured exactly like a first-party one and

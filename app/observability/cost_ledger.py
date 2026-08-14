@@ -1,4 +1,5 @@
 from __future__ import annotations
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -40,11 +41,11 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
 # shared/prompt-caching.md. Write premium is TTL-dependent; we always use
 # the 1h rate here since settings.anthropic_prompt_cache_ttl defaults to
 # "1h" (update this if that default changes).
-_ANTHROPIC_CACHE_WRITE_MULTIPLIER = 2.0
-_ANTHROPIC_CACHE_READ_MULTIPLIER = 0.1
+ANTHROPIC_CACHE_WRITE_MULTIPLIER = 2.0
+ANTHROPIC_CACHE_READ_MULTIPLIER = 0.1
 # OpenAI's automatic prompt caching only ever produces read hits (no
 # separate write cost) and bills them at half the standard input price.
-_OPENAI_CACHE_READ_MULTIPLIER = 0.5
+OPENAI_CACHE_READ_MULTIPLIER = 0.5
 
 
 #: `LedgerEntry.cost_source` values. `provider_reported` is a real, authoritative per-call
@@ -83,7 +84,52 @@ class LedgerEntry:
     # genuinely has no model charge, e.g. plain hybrid search) rather than a
     # priced call that happened to cost $0.
     no_model_charge: bool = False
+    # Which knowledge collection this call's retrieval/generation was scoped to (the same
+    # RegistryLLMGateway._collection_id already threaded through for entity tokenization) —
+    # "default" for calls that never set one explicitly, matching that field's own default.
+    # Enables cost breakdowns filtered by collection_id; per-FILE attribution isn't tracked
+    # at this layer (a single LLM call can draw on chunks from many files in a collection).
+    collection_id: str = "default"
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ---------------------------------------------------------------------------
+# Admin-configurable pricing overrides (app/api/cost_admin.py) — a Mongo-backed table an
+# operator can edit live, layered on top of the hardcoded MODEL_PRICING defaults above.
+# Read with a short TTL cache rather than on every call: calculate() runs on the hot LLM-call
+# path (registry.py::_record_cost, itself already wrapped in a never-raise try/except), so a
+# stale-by-up-to-60s price is a far better failure mode than adding synchronous Mongo latency
+# — or a hard dependency — to every completion. Any read failure silently keeps the
+# last-known-good cache (or empty, on first use) and falls through to MODEL_PRICING.
+# ---------------------------------------------------------------------------
+_PRICING_OVERRIDE_TTL_SECONDS = 60.0
+_pricing_db: Any = None
+_pricing_override_cache: dict[str, tuple[float, float]] = {}
+_pricing_override_fetched_at: float = 0.0
+
+
+def configure_pricing_db(db: Any) -> None:
+    """Called once from app/main.py's lifespan, right after Mongo is available."""
+    global _pricing_db
+    _pricing_db = db
+
+
+def _refresh_pricing_overrides_if_stale() -> None:
+    global _pricing_override_cache, _pricing_override_fetched_at
+    if _pricing_db is None:
+        return
+    if time.monotonic() - _pricing_override_fetched_at < _PRICING_OVERRIDE_TTL_SECONDS:
+        return
+    try:
+        docs = list(_pricing_db["pricing_overrides"].find({}, {"_id": 0}))
+        _pricing_override_cache = {
+            doc["model"]: (doc["input_usd_per_1k"], doc["output_usd_per_1k"])
+            for doc in docs
+        }
+    except Exception:
+        pass  # keep the last-known-good cache; a pricing lookup must never raise
+    finally:
+        _pricing_override_fetched_at = time.monotonic()
 
 
 class CostLedger:
@@ -99,15 +145,18 @@ class CostLedger:
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int = 0,
     ) -> float:
-        p_in, p_out = MODEL_PRICING.get(model, (0.005, 0.015))
+        _refresh_pricing_overrides_if_stale()
+        p_in, p_out = _pricing_override_cache.get(model) or MODEL_PRICING.get(
+            model, (0.005, 0.015)
+        )
         cost = input_tokens * p_in + output_tokens * p_out
         if model.startswith("claude"):
-            cost += cache_creation_input_tokens * p_in * _ANTHROPIC_CACHE_WRITE_MULTIPLIER
-            cost += cache_read_input_tokens * p_in * _ANTHROPIC_CACHE_READ_MULTIPLIER
+            cost += cache_creation_input_tokens * p_in * ANTHROPIC_CACHE_WRITE_MULTIPLIER
+            cost += cache_read_input_tokens * p_in * ANTHROPIC_CACHE_READ_MULTIPLIER
         else:
             # Non-Anthropic models never report cache_creation (no write
             # concept); cache_read here is OpenAI's automatic-cache hit count.
-            cost += cache_read_input_tokens * p_in * _OPENAI_CACHE_READ_MULTIPLIER
+            cost += cache_read_input_tokens * p_in * OPENAI_CACHE_READ_MULTIPLIER
         return round(cost / 1000, 6)
 
     def record(self, entry: LedgerEntry) -> None:
@@ -131,6 +180,7 @@ class CostLedger:
                 "fallback_reason": entry.fallback_reason,
                 "stage":          entry.stage,
                 "no_model_charge": entry.no_model_charge,
+                "collection_id":  entry.collection_id,
                 "ts":             entry.ts,
             })
         logger.info(
@@ -150,6 +200,7 @@ class CostLedger:
             fallback_reason=entry.fallback_reason,
             stage=entry.stage,
             no_model_charge=entry.no_model_charge,
+            collection_id=entry.collection_id,
         )
 
     def record_no_charge(
@@ -257,3 +308,27 @@ class CostLedger:
         entries = list(self._col.find({"session_id": session_id}, {"_id": 0}))
         total = round(sum(e["cost_usd"] for e in entries), 6)
         return {"session_id": session_id, "total_usd": total, "by_run": entries}
+
+    def query(
+        self,
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        collection_id: str | None = None,
+    ) -> list[dict]:
+        """Raw entries across the whole ledger (not scoped to one run/session), for
+        account-wide reporting (app/api/cost_admin.py). Callers group/aggregate themselves —
+        this stays a plain, filtered fetch so it composes with any breakdown."""
+        if self._col is None:
+            return []
+        query: dict[str, Any] = {}
+        ts_filter: dict[str, datetime] = {}
+        if since is not None:
+            ts_filter["$gte"] = since
+        if until is not None:
+            ts_filter["$lte"] = until
+        if ts_filter:
+            query["ts"] = ts_filter
+        if collection_id is not None:
+            query["collection_id"] = collection_id
+        return list(self._col.find(query, {"_id": 0}))

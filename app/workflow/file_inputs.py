@@ -23,7 +23,7 @@ FILE_CATEGORY_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "document": (".docx", ".txt"),
     "markdown": (".md", ".markdown"),
     "presentation": (".pptx",),
-    "spreadsheet": (".xlsx",),
+    "spreadsheet": (".xlsx", ".csv", ".tsv"),
     "code": (
         ".c", ".cfg", ".cpp", ".cs", ".css", ".go", ".h", ".hpp",
         ".html", ".ini", ".ipynb", ".java", ".js", ".json", ".jsx",

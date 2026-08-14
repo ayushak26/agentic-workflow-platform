@@ -16,7 +16,7 @@ The chunker is pure: ExtractedDocument in, list[Chunk] out. No I/O.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Iterable
 
 import tiktoken
@@ -286,35 +286,51 @@ def chunk_document(
     encoding = _get_tokenizer(cfg.tokenizer_name)
     prefix = chunk_id_prefix or doc.source_path
 
-    all_chunks: list[Chunk] = []
-    chunk_index = 0
-
-    for unit in doc.units:
-        if not unit.text.strip():
-            continue
-        unit_chunks = chunk_text(unit.text, cfg)
-        for c_text in unit_chunks:
-            token_count = len(encoding.encode(c_text))
-            chunk_id = f"{prefix}::unit{unit.index}::chunk{chunk_index}"
-            metadata: dict[str, str | int] = {
-                "source_path": doc.source_path,
-                "source_format": doc.source_format,
-                "unit_index": unit.index,
-                "unit_label": unit.label,
-                "chunk_index": chunk_index,
-            }
-            # Inherit document-level metadata (industry, language, etc.)
-            for k, v in doc.metadata.items():
-                metadata[f"doc_{k}"] = v
-            all_chunks.append(
-                Chunk(
-                    chunk_id=chunk_id,
-                    text=c_text,
-                    token_count=token_count,
-                    metadata=metadata,
+    def _build(active: ChunkConfig) -> list[Chunk]:
+        chunks: list[Chunk] = []
+        chunk_index = 0
+        for unit in doc.units:
+            if not unit.text.strip():
+                continue
+            for c_text in chunk_text(unit.text, active):
+                token_count = len(encoding.encode(c_text))
+                chunk_id = f"{prefix}::unit{unit.index}::chunk{chunk_index}"
+                metadata: dict[str, str | int] = {
+                    "source_path": doc.source_path,
+                    "source_format": doc.source_format,
+                    "unit_index": unit.index,
+                    "unit_label": unit.label,
+                    "chunk_index": chunk_index,
+                }
+                # Inherit document-level metadata (industry, language, etc.)
+                for k, v in doc.metadata.items():
+                    metadata[f"doc_{k}"] = v
+                chunks.append(
+                    Chunk(
+                        chunk_id=chunk_id,
+                        text=c_text,
+                        token_count=token_count,
+                        metadata=metadata,
+                    )
                 )
-            )
-            chunk_index += 1
+                chunk_index += 1
+        return chunks
+
+    all_chunks = _build(cfg)
+
+    # A document whose every piece falls under min_tokens is still real,
+    # searchable content — a short FAQ, a one-paragraph policy note, a small
+    # CSV. Dropping small *fragments* is only meant to suppress noise beside
+    # substantive chunks, so when the filter would erase the document outright
+    # we re-chunk without it rather than failing ingestion.
+    if not all_chunks and any(unit.text.strip() for unit in doc.units):
+        all_chunks = _build(replace(cfg, min_tokens=1))
+        log.info(
+            "chunker.min_tokens_relaxed",
+            source_path=doc.source_path,
+            min_tokens=cfg.min_tokens,
+            chunks=len(all_chunks),
+        )
 
     log.info(
         "chunker.done",

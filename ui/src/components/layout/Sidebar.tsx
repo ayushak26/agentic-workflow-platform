@@ -2,13 +2,13 @@ import type { FC } from "react";
 import { Icon, type IconName } from "../ui/Icon";
 import { BrandMark } from "../ui/BrandMark";
 
-type Mode = "studio" | "eval" | "operator" | "knowledge";
+type Mode = "studio" | "eval" | "cost" | "knowledge";
 
 const NAV: { id: Mode; label: string; icon: IconName }[] = [
   { id: "studio", label: "Workflow Studio", icon: "topology" },
   { id: "knowledge", label: "Knowledge Studio", icon: "grid" },
   { id: "eval", label: "Evaluation Lab", icon: "flask" },
-  { id: "operator", label: "Operator Console", icon: "terminal" },
+  { id: "cost", label: "Cost Management", icon: "coin" },
 ];
 
 const SECONDARY: { label: string; icon: IconName }[] = [

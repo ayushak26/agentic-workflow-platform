@@ -11,6 +11,8 @@ protocol and registers it in EXTRACTORS_BY_EXT. No changes to the pipeline.
 """
 from __future__ import annotations
 
+import csv
+import io
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -340,6 +342,96 @@ class MarkdownExtractor:
         )
 
 
+class DelimitedTextExtractor:
+    """Extract rows from a CSV/TSV file, one ExtractedUnit per row block.
+
+    Each row is rendered as ``header: value`` pairs rather than a bare comma
+    line, so a retrieved chunk still says which column a value came from.
+    Rows are grouped into blocks to keep units meaningfully sized — a
+    thousand-row file must not become a thousand single-line units.
+    """
+
+    ROWS_PER_UNIT = 50
+
+    def __init__(self, delimiter: str | None = None, source_format: str = "csv"):
+        self._delimiter = delimiter
+        self._source_format = source_format
+
+    def extract(self, path: Path) -> ExtractedDocument:
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        sample = raw[:8192]
+        delimiter = self._delimiter
+        if delimiter is None:
+            try:
+                delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+            except csv.Error:
+                delimiter = ","
+
+        rows = list(csv.reader(io.StringIO(raw), delimiter=delimiter))
+        rows = [row for row in rows if any(cell.strip() for cell in row)]
+        if not rows:
+            return ExtractedDocument(
+                source_path=str(path),
+                source_format=self._source_format,
+                page_count=0,
+                units=[],
+            )
+
+        header = [cell.strip() for cell in rows[0]]
+        # A header row is only useful when it looks like labels rather than data.
+        has_header = bool(header) and all(cell and not _is_number(cell) for cell in header)
+        body = rows[1:] if has_header else rows
+
+        lines: list[str] = []
+        for row in body:
+            if has_header:
+                pairs = [
+                    f"{header[i] if i < len(header) else f'column {i + 1}'}: {cell.strip()}"
+                    for i, cell in enumerate(row)
+                    if cell.strip()
+                ]
+                lines.append("; ".join(pairs))
+            else:
+                lines.append(" | ".join(cell.strip() for cell in row if cell.strip()))
+
+        units: list[ExtractedUnit] = []
+        for start in range(0, len(lines), self.ROWS_PER_UNIT):
+            block = lines[start : start + self.ROWS_PER_UNIT]
+            first, last = start + 1, start + len(block)
+            units.append(
+                ExtractedUnit(
+                    index=len(units),
+                    label=f"rows {first}-{last}",
+                    text="\n".join(block),
+                )
+            )
+
+        log.info(
+            "extractor.delimited_done",
+            path=str(path),
+            rows=len(body),
+            units=len(units),
+            delimiter=delimiter,
+            has_header=has_header,
+        )
+
+        return ExtractedDocument(
+            source_path=str(path),
+            source_format=self._source_format,
+            page_count=len(units),
+            units=units,
+            metadata={"columns": ", ".join(header)} if has_header else {},
+        )
+
+
+def _is_number(value: str) -> bool:
+    try:
+        float(value.replace(",", ""))
+    except ValueError:
+        return False
+    return True
+
+
 # ---------- Extension dispatch ------------------------------------------------
 
 # Code file extensions and their language tag for retrieval metadata.
@@ -394,6 +486,9 @@ EXTRACTORS_BY_EXT: dict[str, Extractor] = {
     ".txt": PlainTextExtractor(),
     ".md": MarkdownExtractor(),
     ".markdown": MarkdownExtractor(),
+    # Delimited tabular text
+    ".csv": DelimitedTextExtractor(),
+    ".tsv": DelimitedTextExtractor(delimiter="\t", source_format="tsv"),
 }
 
 # Code extensions all use PlainTextExtractor.

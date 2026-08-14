@@ -1,7 +1,7 @@
 import type { FC } from "react";
 import { Icon } from "../ui/Icon";
 
-type Mode = "studio" | "eval" | "operator" | "knowledge";
+type Mode = "studio" | "eval" | "cost" | "knowledge";
 
 interface Props {
   mode: Mode;
@@ -13,7 +13,7 @@ const TITLES: Record<Mode, string> = {
   studio: "Workflow Studio",
   knowledge: "Knowledge Studio",
   eval: "Evaluation Lab",
-  operator: "Operator Console",
+  cost: "Cost Management",
 };
 
 export const Topbar: FC<Props> = ({ mode, runCostUsd, onOpenNavigation }) => (

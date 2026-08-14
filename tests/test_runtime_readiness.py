@@ -161,5 +161,7 @@ def test_upload_contract_only_advertises_real_text_extractors():
     assert set(REFERENCE_ONLY_EXTENSIONS) == set(
         FILE_CATEGORY_EXTENSIONS["image"]
     )
-    for unsupported in {".doc", ".odt", ".ppt", ".odp", ".csv", ".ods", ".xls"}:
+    # Legacy binary Office formats still have no extractor. (.csv/.tsv used to
+    # be listed here; they now have a real DelimitedTextExtractor.)
+    for unsupported in {".doc", ".odt", ".ppt", ".odp", ".ods", ".xls"}:
         assert unsupported not in advertised_text

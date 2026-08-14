@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from app.knowledge.repository import ResourceNotFoundError
-from app.retrieval.models import MetadataFilterGroup, RetrievalFilters, RetrievalQuery
+from app.retrieval.filters import coerce_metadata_filter_group
+from app.retrieval.models import RetrievalFilters, RetrievalQuery
 from app.retrieval.presets import RETRIEVAL_PRESETS
 from app.security.dependencies import CurrentUser, require_permission
 from app.security.guardrails import GuardrailViolation, check_workflow_inputs
@@ -54,7 +55,12 @@ class RetrievalSearchRequest(BaseModel):
     retrieval_profile_version: int | None = None
     index_id: str | None = None
     query: str = Field(min_length=1)
-    filters: MetadataFilterGroup | None = None
+    # Accepts either a filter tree ({"logic","predicates","groups"}) or the
+    # flat {field: value} shape workflows use. Typed as a plain mapping and
+    # coerced explicitly: annotating it as MetadataFilterGroup made a flat
+    # dict validate as an *empty* group, so metadata filters were silently
+    # dropped and callers got unfiltered results believing they were filtered.
+    filters: dict[str, Any] | None = None
     strategy: str = "hybrid"
     candidate_count: int = Field(default=20, ge=1, le=200)
     final_count: int = Field(default=6, ge=1, le=50)
@@ -72,7 +78,7 @@ class RetrievalSearchRequest(BaseModel):
             filters=RetrievalFilters(
                 session_id=owner_scope_id,
                 collection_id=self.collection_id,
-                metadata=self.filters,
+                metadata=coerce_metadata_filter_group(self.filters),
             ),
             retrieval_profile_id=self.retrieval_profile_id,
             retrieval_profile_version=self.retrieval_profile_version,
@@ -126,9 +132,12 @@ async def compare(
 ):
     scope = _scope(user)
     queries = []
-    for experiment in payload.experiments:
-        experiment.query = _safe_query(experiment.query)
-        queries.append(experiment.to_query(scope))
+    try:
+        for experiment in payload.experiments:
+            experiment.query = _safe_query(experiment.query)
+            queries.append(experiment.to_query(scope))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     results = await _service(request).compare(
         queries,
         owner_scope_id=scope,

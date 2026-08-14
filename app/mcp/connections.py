@@ -13,6 +13,7 @@ from typing import Any
 
 from app.config import Settings, settings
 from app.integrations.operations import ExternalOperationLedger
+from app.mcp.d365_finance.tools import TOOL_DEFINITIONS as FNO_MOCK_TOOL_DEFINITIONS
 from app.mcp.dynamics.tools import READ_ONLY_TOOLS, TOOL_DEFINITIONS
 from app.mcp.registry import (
     MCPServerConnection,
@@ -122,14 +123,43 @@ def read_only_dynamics_connection(
 
 
 def finance_scm_connection(app_settings: Settings = settings) -> MCPServerConnection:
-    """The Dynamics 365 Finance & Operations OData connector.
+    """The Dynamics 365 Finance & Operations connector.
 
     Distinct system from `dynamics_connection` above: F&O customers, sales
     orders and inventory rather than Dataverse CRM accounts/opportunities.
-    There is no fixture/mock backend here — the server always calls a real
-    F&O tenant, so this connection is only meaningful once FNO_BASE_URL and
-    an Entra app registration are configured.
+
+    `live` mode spawns the real Node/TypeScript server (generic erp_query/
+    erp_get_record adapter over a real F&O tenant). `mock` mode (the default)
+    spawns app/mcp/d365_finance/server.py, a fixture-backed Python server
+    exposing the narrow business tools that server's own README recommends
+    building on top of it — that layer isn't built on the live server yet, so
+    unlike the Dataverse CRM connection's mock/live pair, the two modes here
+    expose a different tool vocabulary. Building that layer on the real server
+    with matching tool names would close the gap.
     """
+    is_mock = app_settings.fno_mcp_mode.strip().lower() != "live"
+    if is_mock:
+        return MCPServerConnection(
+            id="dynamics365_finance_scm",
+            display_name="Microsoft Dynamics 365 Finance & Supply Chain",
+            description=(
+                "Customers, sales orders, inventory and account ownership from "
+                "Dynamics 365 Finance & Operations."
+            ),
+            transport="stdio",
+            command="python",
+            args=["-m", "app.mcp.d365_finance.server"],
+            tool_allowlist=[],
+            write_policy="read_only",
+            tool_policies={
+                definition["name"]: MCPToolPolicy(operation=definition["operation"])
+                for definition in FNO_MOCK_TOOL_DEFINITIONS
+            },
+            environment_label="Demo fixtures",
+            is_mock=True,
+            timeout_seconds=45.0,
+        )
+
     return MCPServerConnection(
         id="dynamics365_finance_scm",
         display_name="Microsoft Dynamics 365 Finance & Supply Chain",

@@ -959,6 +959,7 @@ class RegistryLLMGateway(LLMGateway):
                 fallback_used=resolved != intended,
                 fallback_reason=fallback_reason,
                 stage=stage,
+                collection_id=self._collection_id,
             )
             self._ledger.record(entry)
         except Exception:
@@ -1001,11 +1002,28 @@ class RegistryLLMGateway(LLMGateway):
             if resolved not in candidates:
                 candidates.append(resolved)
 
+        if not candidates and AUTO_MODEL in requested:
+            # "auto" reaching here means a caller outside the node runtime — the
+            # RAG service querying a saved Generation Profile, a script — where
+            # no event bus or allowed_models list triggered _select_model.
+            # Resolve it the same deterministic, zero-token way rather than
+            # reporting an empty fallback chain.
+            for model in self._auto_candidates():
+                resolved = resolve_model(model)
+                if resolved not in candidates:
+                    candidates.append(resolved)
+
         if not candidates:
             raise LLMProviderUnavailableError(
                 "No permitted model remains in the runtime fallback chain."
             )
         return candidates
+
+    def _auto_candidates(self) -> list[str]:
+        """Concrete models "auto" may resolve to, best first."""
+        pool = self._allowed_models or list(MODEL_PROFILE_BY_NAME.keys())
+        available = [model for model in pool if self._available_for_auto(model)]
+        return available or list(pool)
 
     def _delay_for(self, attempt: int, exc: BaseException) -> float:
         policy = self._retry_policy

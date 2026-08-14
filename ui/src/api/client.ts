@@ -1,16 +1,21 @@
 import type {
   AuditEvent,
   AutofixWorkflowResult,
+  BudgetsResponse,
   BusinessRule,
+  CacheSummary,
   ConceptAlternative,
+  CostOverview,
   EmailConnectionInfo,
   FieldSpec,
+  InfraAllocationEntry,
   MCPServerInfo,
   MCPToolInfo,
   MCPToolTestResult,
   NodeTestResult,
   OperatorCatalog,
   OutputContract,
+  PricingResponse,
   SchemaPreview,
   SimulationResult,
   ExtractedWorkflowFile,
@@ -522,6 +527,60 @@ export const api = {
   costForRun: (run_id: string) =>
     afetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<RunCostSummary>),
+
+  // ---- Cost Management (admin) — app/api/cost_admin.py
+  costAdminOverview: (days = 30) =>
+    afetch(`${API}/cost-admin/overview?days=${days}`, { headers: authHeaders() })
+      .then(j<CostOverview>),
+  costAdminPricing: (openrouterQuery = '', openrouterLimit = 25) =>
+    afetch(
+      `${API}/cost-admin/pricing?${new URLSearchParams({
+        ...(openrouterQuery ? { openrouter_q: openrouterQuery } : {}),
+        openrouter_limit: String(openrouterLimit),
+      })}`,
+      { headers: authHeaders() },
+    ).then(j<PricingResponse>),
+  setPricingOverride: (model: string, body: { input_usd_per_1k: number; output_usd_per_1k: number }) =>
+    afetch(`${API}/cost-admin/pricing/${encodeURIComponent(model)}`, {
+      method: 'PUT',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{ model: string; status: string }>),
+  clearPricingOverride: (model: string) =>
+    afetch(`${API}/cost-admin/pricing/${encodeURIComponent(model)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then(j<{ model: string; status: string }>),
+  costAdminInfraAllocations: () =>
+    afetch(`${API}/cost-admin/infra-allocations`, { headers: authHeaders() })
+      .then(j<{ models: InfraAllocationEntry[] }>),
+  setInfraAllocation: (
+    model: string,
+    body: { allocation_type: 'per_call' | 'monthly_amortized'; value_usd: number; expected_monthly_calls?: number | null },
+  ) =>
+    afetch(`${API}/cost-admin/infra-allocations/${encodeURIComponent(model)}`, {
+      method: 'PUT',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{ model: string; status: string }>),
+  costAdminCacheSummary: (sinceDays = 30) =>
+    afetch(`${API}/cost-admin/cache-summary?since_days=${sinceDays}`, { headers: authHeaders() })
+      .then(j<CacheSummary>),
+  costAdminBudgets: () =>
+    afetch(`${API}/cost-admin/budgets`, { headers: authHeaders() })
+      .then(j<BudgetsResponse>),
+  setGlobalBudget: (daily_limit_usd: number) =>
+    afetch(`${API}/cost-admin/budgets/global`, {
+      method: 'PUT',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ daily_limit_usd }),
+    }).then(j<{ scope: string; daily_limit_usd: number }>),
+  setSessionBudget: (sessionId: string, daily_limit_usd: number) =>
+    afetch(`${API}/cost-admin/budgets/session/${encodeURIComponent(sessionId)}`, {
+      method: 'PUT',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ daily_limit_usd }),
+    }).then(j<{ session_id: string; daily_limit_usd: number }>),
   websocketTicket: (run_id: string) =>
     afetch(`${API}/runs/${run_id}/ws-ticket`, {
       method: 'POST',

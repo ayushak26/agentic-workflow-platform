@@ -76,6 +76,12 @@ function ProgressChecklist({ progress }: { progress: BusinessProjection['progres
   );
 }
 
+function formatFactDisplay(value: unknown): string {
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 function FactEditor({
   field, value, busy, onCancel, onSubmit,
 }: {
@@ -496,10 +502,10 @@ export function BusinessView() {
                             onSubmit={(raw, type) => submitFactCorrection(key, raw, type)}
                           />
                         ) : (
-                          <dd className="text-ink-900">
+                          <dd className="break-words text-ink-900">
                             {value == null || value === ''
                               ? <span className="italic text-ink-400">not stated</span>
-                              : typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                              : formatFactDisplay(value)}
                           </dd>
                         )}
                       </div>
@@ -558,7 +564,7 @@ export function BusinessView() {
                         </span>
                       )}
                     </dt>
-                    <dd className="text-ink-900">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd>
+                    <dd className="break-words text-ink-900">{formatFactDisplay(value)}</dd>
                   </div>
                 ))}
               </dl>

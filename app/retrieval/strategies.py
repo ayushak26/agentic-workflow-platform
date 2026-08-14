@@ -9,6 +9,7 @@ from weaviate.classes.query import MetadataQuery
 
 from app.ingestion.embedder import Embedder
 from app.retrieval.filters import build_secure_where_filter
+from app.retrieval.weaviate_client import VECTOR_NAME
 from app.retrieval.models import RetrievalFilters, RetrievedChunk
 
 
@@ -66,6 +67,7 @@ async def dense_search(
     response = await asyncio.to_thread(
         collection.query.near_vector,
         near_vector=vector,
+        target_vector=VECTOR_NAME,
         limit=top_k,
         filters=build_secure_where_filter(
             filters, index_id=index_id, exclude_parent_chunks=exclude_parent_chunks
@@ -124,6 +126,7 @@ async def native_hybrid_search(
         query=query,
         query_properties=["retrieval_content^2", "text", "title", "section"],
         vector=vector,
+        target_vector=VECTOR_NAME,
         alpha=alpha,
         limit=top_k,
         filters=build_secure_where_filter(

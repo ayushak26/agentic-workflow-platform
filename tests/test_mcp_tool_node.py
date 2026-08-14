@@ -617,19 +617,44 @@ class TestGenericAcrossServers:
         assert set(from_crm) == set(from_erp)
         assert from_erp["data"]["units"] == 5
 
-    def test_the_node_declares_no_system_specific_config(self):
+    def test_mcp_node_config_remains_provider_neutral(self):
         """A `dynamics_url` or `crm_entity` field here would mean the next
-        system needs a code change."""
+        system needs a code change.
+
+        Stated as the invariant rather than as a frozen field list: the promise
+        is that no vendor, product or transport detail reaches this config, not
+        that the config never gains a field. A generic execution control — a
+        latency budget, a retry count — names no vendor and is allowed to
+        appear without a test edit. An earlier exact-set assertion failed on
+        `timeout_seconds`, which was an accidental implementation freeze rather
+        than the design constraint doing its job.
+        """
         from app.nodes.mcp_tool import MCPToolConfig
 
-        assert set(MCPToolConfig.model_fields) == {
-            "server_id",
-            "tool",
-            "arguments",
-            "fail_on_error",
-            "allow_unattended_write",
-            "max_read_retries",
-        }
+        fields = set(MCPToolConfig.model_fields)
+
+        vendors = (
+            "dynamics", "salesforce", "sap", "netsuite", "hubspot", "oracle",
+            "workday", "servicenow", "zendesk", "odata", "dataverse",
+        )
+        transports = ("url", "endpoint", "host", "port", "credential", "api_key",
+                      "token", "secret", "password", "connection_string")
+        entities = ("entity", "table", "object", "collection", "sobject", "client")
+
+        for field in fields:
+            lowered = field.lower()
+            for banned in vendors + transports:
+                assert banned not in lowered, (
+                    f"{field!r} ties this node to one system or its transport; "
+                    "that belongs to the connection, not the workflow"
+                )
+            # `crm_entity`/`sap_client` style: an entity word is only a problem
+            # when it names the *provider's* data model rather than the call.
+            for word in entities:
+                assert not lowered.endswith(f"_{word}"), f"{field!r} names a provider data model"
+
+        # The generic call contract every server shares must still be present.
+        assert {"server_id", "tool", "arguments"} <= fields
 
     def test_there_is_no_crm_specific_node_type(self):
         """§1: the whole point. No DynamicsGetAccountNode, ever."""
@@ -757,3 +782,130 @@ class TestNodeMetadata:
         fields = MCPToolAgent.preflight_output_fields({})
         assert "data.*" in fields
         assert "first.*" in fields
+
+
+class TestTimeoutBehaviour:
+    """A timeout is only a guarantee if the thing it interrupted actually stops.
+
+    `asyncio.timeout` gives the *caller* a bounded wait. The production
+    question is what happened to the operation underneath it: a request left
+    running against Dynamics, a task nobody awaited, or a client left in a
+    state the next call inherits would all satisfy "we added a timeout" while
+    failing the property anyone actually wants.
+    """
+
+    def _service(self, client) -> MCPIntegrationService:
+        registry = MCPServerRegistry()
+        registry.add(connection(timeout_seconds=30))
+        return MCPIntegrationService(
+            registry=registry, client=client, ledger=ExternalOperationLedger()
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_node_timeout_overrides_a_longer_connection_timeout(self):
+        import asyncio
+
+        class Hanging(FakeClient):
+            async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
+                self.calls.append({"tool": name, "timeout_seconds": timeout_seconds})
+                await asyncio.sleep(30)
+
+        client = Hanging([FakeTool("read_thing")])
+        instance = node(
+            {"server_id": "system", "tool": "read_thing",
+             "fail_on_error": False, "timeout_seconds": 0.2},
+            self._service(client),
+        )
+        started = asyncio.get_running_loop().time()
+        result = await run(instance)
+        elapsed = asyncio.get_running_loop().time() - started
+
+        assert elapsed < 5, f"the connection's 30s won over the node's 0.2s ({elapsed:.1f}s)"
+        assert result["status"] == "error"
+        assert result["error_code"] == "MCP_TOOL_TIMEOUT"
+        # The bound is passed down as well as enforced above, so a client that
+        # honours it can stop early on its own.
+        assert client.calls[0]["timeout_seconds"] == 0.2
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_call_is_cancelled_and_leaves_nothing_running(self):
+        import asyncio
+
+        class Observed(FakeClient):
+            def __init__(self, tools):
+                super().__init__(tools)
+                self.cancelled = False
+                self.completed = False
+
+            async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
+                del name, arguments, server, timeout_seconds
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    self.cancelled = True
+                    raise
+                self.completed = True
+
+        client = Observed([FakeTool("read_thing")])
+        service = self._service(client)
+        before = len(asyncio.all_tasks())
+
+        with pytest.raises(MCPToolError) as raised:
+            await service.call(
+                server_id="system", tool_name="read_thing", arguments={},
+                timeout_override=0.2,
+            )
+
+        assert raised.value.code == "MCP_TOOL_TIMEOUT"
+        # The underlying operation was cancelled, not abandoned mid-flight.
+        assert client.cancelled is True
+        assert client.completed is False
+        # Give the loop a turn, then confirm nothing was left behind.
+        await asyncio.sleep(0)
+        assert len(asyncio.all_tasks()) <= before
+
+    @pytest.mark.asyncio
+    async def test_the_next_call_after_a_timeout_still_succeeds(self):
+        """A timeout must not poison the client or the connection for whatever
+        runs next — including the retry the error tells you to make."""
+        import asyncio
+
+        class SlowThenFast(FakeClient):
+            def __init__(self, tools):
+                super().__init__(tools)
+                self.attempts = 0
+
+            async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
+                del arguments, server, timeout_seconds
+                self.attempts += 1
+                if self.attempts == 1:
+                    await asyncio.sleep(30)
+                return FakeResult(structured={"units": 5})
+
+        client = SlowThenFast([FakeTool("read_thing")])
+        service = self._service(client)
+
+        with pytest.raises(MCPToolError):
+            await service.call(server_id="system", tool_name="read_thing",
+                               arguments={}, timeout_override=0.2)
+
+        recovered = await service.call(
+            server_id="system", tool_name="read_thing", arguments={},
+            timeout_override=5,
+        )
+        assert recovered["data"] == {"units": 5}
+        assert client.attempts == 2
+
+    @pytest.mark.asyncio
+    async def test_a_timed_out_read_is_retryable_and_says_so(self):
+        import asyncio
+
+        class Hanging(FakeClient):
+            async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
+                await asyncio.sleep(30)
+
+        service = self._service(Hanging([FakeTool("read_thing")]))
+        with pytest.raises(MCPToolError) as raised:
+            await service.call(server_id="system", tool_name="read_thing",
+                               arguments={}, timeout_override=0.2)
+        assert raised.value.retryable is True

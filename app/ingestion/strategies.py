@@ -36,20 +36,129 @@ class StructureAwareDocumentParser(LayoutAwareDocumentParser):
 
 
 class OcrFallbackDocumentParser(StandardDocumentParser):
-    def __init__(self, ocr: Callable[[Path], ExtractedDocument] | None = None):
+    """Fall back to reading the page as an image when there is no text layer.
+
+    With no explicit OCR callable configured, a vision model transcribes the
+    rendered pages — the same provider used by ``vision_augmented``.
+    """
+
+    def __init__(
+        self,
+        ocr: Callable[[Path], ExtractedDocument] | None = None,
+        describer: Any | None = None,
+    ):
         self._ocr = ocr
+        self._describer = describer
 
     async def parse(self, path: Path, *, config: dict[str, Any]) -> ExtractedDocument:
         document = await super().parse(path, config=config)
         minimum = int(config.get("ocr_min_text_characters", 80))
         if len(document.full_text.strip()) >= minimum:
             return document
-        if self._ocr is None:
+        if self._ocr is not None:
+            return await asyncio.to_thread(self._ocr, path)
+
+        describer = self._describer
+        if describer is None:
+            from app.ingestion.vision import PdfPageVisionDescriber
+
+            describer = PdfPageVisionDescriber()
+        if path.suffix.lower() != ".pdf" or not describer.available():
+            reason = (
+                "the source is not a PDF"
+                if path.suffix.lower() != ".pdf"
+                else describer.unavailable_reason()
+            )
             raise ValueError(
                 "OCR fallback was requested because native extraction returned "
-                "insufficient text, but no OCR provider is configured"
+                f"insufficient text, but no OCR provider is available: {reason}"
             )
-        return await asyncio.to_thread(self._ocr, path)
+        targets = [unit.index for unit in document.units] or [0]
+        described = await describer.describe_pages(
+            path, targets, prompt=OCR_PROMPT
+        )
+        if not described:
+            raise ValueError(
+                "OCR fallback ran but the vision model returned no text for "
+                f"{path.name}"
+            )
+        by_index = {unit.index: unit for unit in document.units}
+        for index, description in described.items():
+            if index in by_index:
+                by_index[index].text = description.text
+            else:
+                document.units.append(
+                    ExtractedUnit(index=index, label=f"page {index + 1}", text=description.text)
+                )
+        document.units.sort(key=lambda unit: unit.index)
+        document.metadata["ocr_model"] = describer.model
+        return document
+
+
+OCR_PROMPT = (
+    "Transcribe every word visible on this page, in reading order. Reproduce "
+    "tables as markdown tables. Do not summarise or add commentary. If the "
+    "page is genuinely blank, reply with exactly NO_VISUAL_CONTENT."
+)
+
+
+class VisionAugmentedDocumentParser(StandardDocumentParser):
+    """Add vision-model transcriptions of figures, charts and image tables.
+
+    Native extraction keeps the page's real text; the vision pass adds what
+    only exists visually. Both land in the same unit, so a retrieved chunk can
+    quote a pump curve or a compatibility matrix that no text layer contained.
+
+    Non-PDF sources fall through to the standard parser untouched, and a vision
+    failure degrades to text-only rather than failing the document.
+    """
+
+    def __init__(self, describer: Any | None = None):
+        self._describer = describer
+
+    async def parse(self, path: Path, *, config: dict[str, Any]) -> ExtractedDocument:
+        document = await super().parse(path, config=config)
+        if path.suffix.lower() != ".pdf":
+            return document
+
+        describer = self._describer
+        if describer is None:
+            from app.ingestion.vision import PdfPageVisionDescriber
+
+            describer = PdfPageVisionDescriber()
+        if not describer.available():
+            raise ValueError(
+                "vision-augmented parsing was requested but is unavailable: "
+                f"{describer.unavailable_reason()}"
+            )
+
+        from app.ingestion.vision import pages_with_visual_content
+
+        if bool(config.get("vision_all_pages", False)):
+            targets = [unit.index for unit in document.units]
+        else:
+            targets = await asyncio.to_thread(pages_with_visual_content, path)
+        budget = int(config.get("vision_max_pages", 20))
+        targets = targets[:budget] if budget >= 0 else targets
+        if not targets:
+            return document
+
+        described = await describer.describe_pages(
+            path, targets, prompt=(config.get("vision_prompt") or None)
+        )
+        by_index = {unit.index: unit for unit in document.units}
+        for index, description in described.items():
+            unit = by_index.get(index)
+            if unit is None:
+                continue
+            unit.text = (
+                f"{unit.text}\n\n[Visual content]\n{description.text}".strip()
+                if unit.text.strip()
+                else description.text
+            )
+        document.metadata["vision_pages_described"] = str(len(described))
+        document.metadata["vision_model"] = describer.model
+        return document
 
 
 def _chunk_config(config: dict[str, Any]) -> ChunkConfig:
@@ -254,6 +363,7 @@ def build_stage_registry() -> StageRegistry:
     registry.parser("layout_aware", LayoutAwareDocumentParser())
     registry.parser("structure_aware", StructureAwareDocumentParser())
     registry.parser("ocr_fallback", OcrFallbackDocumentParser())
+    registry.parser("vision_augmented", VisionAugmentedDocumentParser())
     registry.chunker("fixed_token", FixedTokenChunkingStrategy())
     registry.chunker("recursive", RecursiveChunkingStrategy())
     registry.chunker("structure_aware", StructureAwareChunkingStrategy())

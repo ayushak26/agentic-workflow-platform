@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from 'reactflow';
 import { ExecutionKindBadge } from './builder/ExecutionKindBadge';
+import { nodeTypeLabel } from './node-presentation';
 import type { WorkflowNodeData } from './yaml-bridge';
 
 /**
@@ -13,19 +14,12 @@ import type { WorkflowNodeData } from './yaml-bridge';
  *
  * The execution-kind badge is what makes the automation boundary visible
  * without opening anything: model, rule, external action, person.
+ *
+ * At low zoom the card switches to a compact form (`data.compact`): one large
+ * label and nothing else. Zooming out on a long workflow is only useful if the
+ * result is still readable, and at 40% zoom the badge row and 11px subtitle are
+ * noise rather than information — see the semantic-zoom tiers in Builder.
  */
-
-// Business-language names for the core primitives, matching the palette.
-const TYPE_LABELS: Record<string, string> = {
-  WorkflowInputAgent: 'Input',
-  AITaskAgent: 'AI Task',
-  DecisionAgent: 'Decision',
-  RouterAgent: 'Router',
-  DataTransformAgent: 'Transform',
-  HumanInLoopAgent: 'Human Review',
-  EmailAgent: 'Email',
-  MCPToolAgent: 'MCP Tool',
-};
 
 export const WorkflowNode = memo(function WorkflowNode({
   data,
@@ -33,12 +27,9 @@ export const WorkflowNode = memo(function WorkflowNode({
 }: NodeProps<WorkflowNodeData>) {
   const requestedModel = data.selectedModel ?? data.config.model;
   const businessLabel = data.experience?.display_name?.trim();
-  const baseLabel = TYPE_LABELS[data.typeName] ?? data.typeName;
-  // An MCP step says which system it reaches, because "MCP Tool" alone tells a
-  // reader nothing: "MCP Tool · Dynamics CRM" is the useful subtitle.
-  const serverId = typeof data.config.server_id === 'string' ? data.config.server_id : '';
-  const typeLabel = serverId ? `${baseLabel} · ${serverId}` : baseLabel;
+  const typeLabel = nodeTypeLabel(data.typeName, data.config);
   const mcpOperation = typeof data.mcpOperation === 'string' ? data.mcpOperation : '';
+  const vertical = data.flowDirection === 'TB';
 
   const border = data.hasIssue
     ? 'border-red-400'
@@ -50,14 +41,51 @@ export const WorkflowNode = memo(function WorkflowNode({
           ? 'border-accent-600'
           : 'border-slate-200';
 
+  // Incoming on the left (or top), outgoing on the right (or bottom): handles
+  // follow the layout direction so a top-down graph doesn't route every edge
+  // sideways out of the card and back again.
+  const targetHandle = (
+    <Handle
+      type="target"
+      position={vertical ? Position.Top : Position.Left}
+      className="!bg-slate-400"
+    />
+  );
+  const sourceHandle = (
+    <Handle
+      type="source"
+      position={vertical ? Position.Bottom : Position.Right}
+      className="!bg-slate-400"
+    />
+  );
+
+  if (data.compact) {
+    return (
+      <div
+        className={`flex min-h-[76px] min-w-[230px] flex-col justify-center rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${border} ${
+          data.faded ? 'opacity-40' : 'opacity-100'
+        }`}
+      >
+        {targetHandle}
+        <div className="truncate text-[19px] font-semibold leading-tight text-ink-900">
+          {businessLabel || data.nodeId}
+        </div>
+        <div className="mt-1 flex items-center gap-2 text-[13px] text-ink-500">
+          <span className="truncate">{typeLabel}</span>
+          {data.hasIssue && <span className="flex-none font-bold text-red-600">!</span>}
+        </div>
+        {sourceHandle}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`min-w-[230px] rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${border} ${
         data.faded ? 'opacity-40' : 'opacity-100'
       }`}
     >
-      {/* Left handle: incoming edges (canvas flows left to right) */}
-      <Handle type="target" position={Position.Left} className="!bg-slate-400" />
+      {targetHandle}
 
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -130,8 +158,7 @@ export const WorkflowNode = memo(function WorkflowNode({
         </div>
       )}
 
-      {/* Right handle: outgoing edges */}
-      <Handle type="source" position={Position.Right} className="!bg-slate-400" />
+      {sourceHandle}
     </div>
   );
 });

@@ -714,6 +714,88 @@ export interface RunCostSummary {
   by_stage: CostGroupSummary[];
 }
 
+// ---- Cost Management (admin) — app/api/cost_admin.py ----
+
+export interface CostBreakdownRow {
+  label: string;
+  cost_usd: number;
+}
+
+export interface CostOverview {
+  days: number;
+  total_usd: number;
+  allocated_infra_usd: number;
+  call_count: number;
+  daily_trend: { date: string; cost_usd: number }[];
+  by_model: CostBreakdownRow[];
+  by_provider: CostBreakdownRow[];
+  by_collection: CostBreakdownRow[];
+  by_workflow: CostBreakdownRow[];
+}
+
+export interface DirectPricingEntry {
+  model: string;
+  input_usd_per_1k: number;
+  output_usd_per_1k: number;
+  default_input_usd_per_1k: number;
+  default_output_usd_per_1k: number;
+  source: 'default' | 'override';
+}
+
+export interface OpenRouterPricingEntry {
+  model: string;
+  display_name: string;
+  input_usd_per_million: number | null;
+  output_usd_per_million: number | null;
+}
+
+export interface PricingResponse {
+  direct: DirectPricingEntry[];
+  openrouter: OpenRouterPricingEntry[];
+}
+
+export interface InfraAllocation {
+  allocation_type: 'per_call' | 'monthly_amortized';
+  value_usd: number;
+  expected_monthly_calls: number | null;
+}
+
+export interface InfraAllocationEntry {
+  model: string;
+  allocation: InfraAllocation | null;
+  effective_usd_per_call: number | null;
+}
+
+export interface CacheModelSummary {
+  model: string;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  estimated_savings_usd: number;
+}
+
+export interface CacheSummary {
+  since_days: number;
+  total_cache_creation_tokens: number;
+  total_cache_read_tokens: number;
+  estimated_total_savings_usd: number;
+  by_model: CacheModelSummary[];
+}
+
+export interface BudgetStatus {
+  daily_limit_usd: number | null;
+  spend_today_usd: number;
+  exceeded: boolean;
+}
+
+export interface SessionBudgetStatus extends BudgetStatus {
+  session_id: string;
+}
+
+export interface BudgetsResponse {
+  global: BudgetStatus;
+  by_session: SessionBudgetStatus[];
+}
+
 export interface GenerateWorkflowAttempt {
   stage: 'static' | 'real_execution';
   success: boolean;

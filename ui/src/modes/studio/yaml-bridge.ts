@@ -140,6 +140,11 @@ export type WorkflowNodeData = {
   // canvas shows READ or WRITE without opening the inspector. Discovered from
   // the server, so it is not part of the saved YAML.
   mcpOperation?: string;
+  // Semantic zoom: below a zoom threshold the node draws one large label
+  // instead of its full detail, so a zoomed-out long workflow stays readable.
+  compact?: boolean;
+  // Which way the graph flows, so the node puts its handles on the right edges.
+  flowDirection?: 'LR' | 'TB';
 };
 
 export type WorkflowEdgeData = {

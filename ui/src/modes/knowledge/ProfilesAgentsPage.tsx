@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
-import { knowledgeApi, type CollectionResource, type ProfileVersion, type RAGAgentDefinition, type RAGQueryResponse } from '../../api/knowledge';
+import { knowledgeApi, type ProfileVersion, type RAGAgentDefinition, type RAGQueryResponse } from '../../api/knowledge';
 import { ErrorNotice, ResourceId, Status } from './shared';
+import { useCollection } from './collectionStore';
 
 export function ProfilesAgentsPage() {
-  const [collections, setCollections] = useState<CollectionResource[]>([]);
+  const { collectionId, collection } = useCollection();
   const [retrievalProfiles, setRetrievalProfiles] = useState<ProfileVersion[]>([]);
   const [generationProfiles, setGenerationProfiles] = useState<ProfileVersion[]>([]);
   const [routingProfiles, setRoutingProfiles] = useState<ProfileVersion[]>([]);
   const [agents, setAgents] = useState<RAGAgentDefinition[]>([]);
   const [name, setName] = useState('');
-  const [collectionId, setCollectionId] = useState('');
   const [retrievalProfileId, setRetrievalProfileId] = useState('');
   const [generationProfileId, setGenerationProfileId] = useState('');
   const [routingProfileId, setRoutingProfileId] = useState('');
+  const [models, setModels] = useState<Array<{ name: string; display_name: string }>>([]);
+  const [generationModel, setGenerationModel] = useState('auto');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testAgentId, setTestAgentId] = useState('');
@@ -22,34 +24,48 @@ export function ProfilesAgentsPage() {
 
   function refresh() {
     Promise.all([
-      knowledgeApi.listCollections(),
       knowledgeApi.listProfiles('retrieval'),
       knowledgeApi.listProfiles('generation'),
       knowledgeApi.listProfiles('routing'),
       knowledgeApi.listRagAgents(),
-    ]).then(([cols, retrieval, generation, routing, ragAgents]) => {
-      setCollections(cols); setRetrievalProfiles(retrieval); setGenerationProfiles(generation); setRoutingProfiles(routing); setAgents(ragAgents);
-      setCollectionId(value => value || cols[0]?.collection_id || '');
+    ]).then(([retrieval, generation, routing, ragAgents]) => {
+      setRetrievalProfiles(retrieval); setGenerationProfiles(generation); setRoutingProfiles(routing); setAgents(ragAgents);
       setRetrievalProfileId(value => value || retrieval[0]?.profile_id || '');
       setGenerationProfileId(value => value || generation[0]?.profile_id || '');
     }).catch(err => setError(String(err)));
   }
   useEffect(refresh, []);
+  useEffect(() => { knowledgeApi.llmModels().then(r => setModels(r.models.filter(m => m.enabled !== false))).catch(() => setModels([])); }, []);
 
-  async function ensureGenerationDefault() {
-    if (generationProfiles.length > 0) return;
-    const defaults = await knowledgeApi.defaults();
-    setGenerationProfiles([defaults.generation]);
-    setGenerationProfileId(defaults.generation.profile_id);
+  async function resolveGenerationProfile(): Promise<string> {
+    // The chosen answering model IS the Generation Profile, so pick or mint
+    // one that pins it rather than silently answering with something else.
+    const existing = generationProfiles.find(item => item.profile_id === generationProfileId);
+    if (existing && String(existing.config?.model ?? 'auto') === generationModel) return existing.profile_id;
+    const created = await knowledgeApi.createProfile({
+      profile_type: 'generation',
+      name: `Grounded Answer (${generationModel})`,
+      strategy: 'grounded',
+      config: {
+        model: generationModel,
+        temperature: 0.2,
+        citation_policy: 'required',
+        no_answer_policy: 'say_not_found',
+        instruction: 'Answer using only the provided sources. Cite every factual claim. If the sources do not contain the answer, say that it was not found.',
+      },
+    });
+    setGenerationProfiles(await knowledgeApi.listProfiles('generation'));
+    setGenerationProfileId(created.profile_id);
+    return created.profile_id;
   }
 
   async function create() {
     setCreating(true); setError(null);
     try {
-      await ensureGenerationDefault();
+      const generation = await resolveGenerationProfile();
       await knowledgeApi.createRagAgent({
         name, collection_id: collectionId, retrieval_profile_id: retrievalProfileId,
-        generation_profile_id: generationProfileId, routing_profile_id: routingProfileId || null,
+        generation_profile_id: generation, routing_profile_id: routingProfileId || null,
       });
       setName('');
       refresh();
@@ -68,8 +84,9 @@ export function ProfilesAgentsPage() {
       <p className="text-sm text-ink-500">Binds a Collection, Retrieval Profile and Generation Profile into one saved resource a workflow can select by ID.</p>
       <div className="grid gap-3 md:grid-cols-2">
         <label className="text-xs text-ink-600">Name<input className="ui-input mt-1 w-full" value={name} onChange={event => setName(event.target.value)} placeholder="Verder Product Support" /></label>
-        <label className="text-xs text-ink-600">Collection<select className="ui-input mt-1 w-full" value={collectionId} onChange={event => setCollectionId(event.target.value)}>{collections.map(item => <option key={item.collection_id} value={item.collection_id}>{item.name}</option>)}</select></label>
+        <div className="text-xs text-ink-600">Collection<div className="ui-input mt-1 w-full truncate bg-slate-50 font-medium" title={collection?.name ?? ''}>{collection?.name ?? 'no collection'}</div></div>
         <label className="text-xs text-ink-600">Retrieval Profile<select className="ui-input mt-1 w-full" value={retrievalProfileId} onChange={event => setRetrievalProfileId(event.target.value)}>{retrievalProfiles.length === 0 && <option value="">Save one from the Playground first</option>}{retrievalProfiles.map(item => <option key={item.profile_id} value={item.profile_id}>{item.name} v{item.version}</option>)}</select></label>
+        <label className="text-xs text-ink-600">Answering model<select className="ui-input mt-1 w-full" value={generationModel} onChange={event => setGenerationModel(event.target.value)}>{models.length === 0 && <option value="auto">Best possible LLM (Auto)</option>}{models.map(item => <option key={item.name} value={item.name}>{item.display_name}</option>)}</select></label>
         <label className="text-xs text-ink-600">Generation Profile<select className="ui-input mt-1 w-full" value={generationProfileId} onChange={event => setGenerationProfileId(event.target.value)}>{generationProfiles.length === 0 && <option value="">Default grounded profile</option>}{generationProfiles.map(item => <option key={item.profile_id} value={item.profile_id}>{item.name} v{item.version}</option>)}</select></label>
         <label className="text-xs text-ink-600">Routing Profile (optional)<select className="ui-input mt-1 w-full" value={routingProfileId} onChange={event => setRoutingProfileId(event.target.value)}><option value="">None — single collection</option>{routingProfiles.map(item => <option key={item.profile_id} value={item.profile_id}>{item.name} v{item.version}</option>)}</select></label>
       </div>
