@@ -8,6 +8,7 @@ tools require a human review, whoever wrote the server.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from app.config import Settings, settings
@@ -23,6 +24,29 @@ from app.mcp.service import MCPIntegrationService
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
+
+#: The Finance & Operations MCP server (mcp-servers/d365-finance-scm-mcp) is a
+#: separate Node/TypeScript subproject, built with `npm run build` into `dist/`.
+_FNO_MCP_ENTRYPOINT = (
+    Path(__file__).resolve().parents[2]
+    / "mcp-servers"
+    / "d365-finance-scm-mcp"
+    / "dist"
+    / "src"
+    / "index.js"
+)
+
+#: Operation class per tool exposed by that server — see its src/tools.ts.
+_FNO_TOOL_OPERATIONS: dict[str, str] = {
+    "erp_health": "read",
+    "erp_list_entity_sets": "read",
+    "erp_describe_entity": "read",
+    "erp_query": "read",
+    "erp_get_record": "read",
+    "erp_create_record": "write",
+    "erp_update_record": "write",
+    "erp_delete_record": "destructive",
+}
 
 
 def _dynamics_tool_policies() -> dict[str, MCPToolPolicy]:
@@ -97,6 +121,54 @@ def read_only_dynamics_connection(
     )
 
 
+def finance_scm_connection(app_settings: Settings = settings) -> MCPServerConnection:
+    """The Dynamics 365 Finance & Operations OData connector.
+
+    Distinct system from `dynamics_connection` above: F&O customers, sales
+    orders and inventory rather than Dataverse CRM accounts/opportunities.
+    There is no fixture/mock backend here — the server always calls a real
+    F&O tenant, so this connection is only meaningful once FNO_BASE_URL and
+    an Entra app registration are configured.
+    """
+    return MCPServerConnection(
+        id="dynamics365_finance_scm",
+        display_name="Microsoft Dynamics 365 Finance & Supply Chain",
+        description=(
+            "Customers, sales orders, inventory and other public entities from "
+            "Dynamics 365 Finance & Operations OData."
+        ),
+        transport="stdio",
+        command="node",
+        args=[str(_FNO_MCP_ENTRYPOINT)],
+        environment_secret_refs={
+            "FNO_TENANT_ID": "FNO_TENANT_ID",
+            "FNO_CLIENT_ID": "FNO_CLIENT_ID",
+            "FNO_CLIENT_SECRET": "FNO_CLIENT_SECRET",
+        },
+        environment={
+            "FNO_BASE_URL": app_settings.fno_base_url,
+            "FNO_ALLOW_WRITES": "true" if app_settings.fno_allow_writes else "false",
+            "FNO_ALLOW_DELETES": "true" if app_settings.fno_allow_deletes else "false",
+            "FNO_READ_ENTITY_ALLOWLIST": app_settings.fno_read_entity_allowlist,
+            "FNO_WRITE_ENTITY_ALLOWLIST": app_settings.fno_write_entity_allowlist,
+            "FNO_DELETE_ENTITY_ALLOWLIST": app_settings.fno_delete_entity_allowlist,
+            "FNO_ENTITY_ALIASES_JSON": app_settings.fno_entity_aliases_json,
+        },
+        # Every tool the server exposes is permitted, but writes/deletes still
+        # need a human review here regardless of the server's own FNO_ALLOW_*
+        # gates — two independent locks, as with the Dataverse CRM connection.
+        tool_allowlist=[],
+        write_policy="require_approval",
+        tool_policies={
+            name: MCPToolPolicy(operation=operation)
+            for name, operation in _FNO_TOOL_OPERATIONS.items()
+        },
+        environment_label="Live tenant",
+        is_mock=False,
+        timeout_seconds=45.0,
+    )
+
+
 def build_registry(app_settings: Settings = settings) -> MCPServerRegistry:
     """Assemble every configured connection.
 
@@ -119,6 +191,9 @@ def build_registry(app_settings: Settings = settings) -> MCPServerRegistry:
 
     if app_settings.dynamics_mcp_enabled:
         registry.add(dynamics_connection(app_settings))
+
+    if app_settings.fno_mcp_enabled:
+        registry.add(finance_scm_connection(app_settings))
 
     if app_settings.paper_search_mcp_enabled:
         registry.add(

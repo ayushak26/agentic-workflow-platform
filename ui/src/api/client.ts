@@ -29,7 +29,9 @@ import type {
   ProposalRenderRequest,
   ProposalRenderResult,
   ProposalReview,
+  BusinessProjection,
   RunChatTurn,
+  RunCostSummary,
   RunDetail,
   RunEvent,
   RunSummary,
@@ -118,6 +120,37 @@ export type Scorecard = {
   overall_mean: number;
   results: ExampleResult[];
   created_at: string;
+};
+
+export type WorkflowFieldCheck = {
+  field: string;
+  expected: unknown;
+  actual: unknown;
+  passed: boolean;
+};
+export type WorkflowCaseResult = {
+  case_id: string;
+  label: string;
+  model: string;
+  passed: boolean;
+  checks: WorkflowFieldCheck[];
+  cost_usd: number | null;
+  latency_ms: number | null;
+  error: string | null;
+};
+export type ModelComparisonResult = {
+  model: string;
+  total_cases: number;
+  passed_cases: number;
+  pass_rate: number;
+  avg_cost_usd: number | null;
+  avg_latency_ms: number | null;
+  cases: WorkflowCaseResult[];
+};
+export type WorkflowCompareResponse = {
+  golden_set: string;
+  comparisons: ModelComparisonResult[];
+  recommendation: { model: string; reason: string } | null;
 };
 
 // Central fetch wrapper: always send cookies so the HttpOnly auth cookie
@@ -488,7 +521,7 @@ export const api = {
     }).then(j<{ ok: true }>),
   costForRun: (run_id: string) =>
     afetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
-      .then(j<{ run_id: string; total_usd: number; by_node: unknown[] }>),
+      .then(j<RunCostSummary>),
   websocketTicket: (run_id: string) =>
     afetch(`${API}/runs/${run_id}/ws-ticket`, {
       method: 'POST',
@@ -570,6 +603,21 @@ export const api = {
       state?: unknown;
       error?: string;
     }>),
+  businessProjection: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/business-projection`, { headers: authHeaders() })
+      .then(j<BusinessProjection>),
+  assignRun: (run_id: string, assignee: string) =>
+    afetch(`${API}/runs/mine/${run_id}/assign`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ assignee }),
+    }).then(j<{ ok: boolean; assigned_to: string }>),
+  correctFact: (run_id: string, field: string, value: unknown) =>
+    afetch(`${API}/runs/mine/${run_id}/fact-correction`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ field, value }),
+    }).then(j<{ ok: boolean; edit: { field: string; value: unknown; stale_decisions: string[]; edited_at: string } }>),
   pendingGate: (run_id: string) =>
     afetch(`${API}/runs/mine/${run_id}/pending-gate`, { headers: authHeaders() })
       .then(j<PendingGate>),
@@ -812,6 +860,17 @@ export const api = {
   evalHistory: (limit = 20) =>
     afetch(`${API}/eval/history?limit=${limit}`, { headers: authHeaders() })
       .then(j<{ scorecards: Scorecard[] }>),
+
+  workflowGoldenSet: (name = 'verder_customer_triage') =>
+    afetch(`${API}/eval/workflow-golden-set?name=${encodeURIComponent(name)}`, { headers: authHeaders() })
+      .then(j<{ name: string; n: number; cases: { id: string; label: string; expected: Record<string, unknown> }[] }>),
+
+  workflowCompare: (golden_set: string, models: string[]) =>
+    afetch(`${API}/eval/workflow-compare`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ golden_set, models }),
+    }).then(j<WorkflowCompareResponse>),
 
   scoreOutput: (body: { answer: string; sources: string; question?: string; reference?: string; judge_model?: string }) =>
     afetch(`${API}/eval/score-output`, {

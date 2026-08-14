@@ -117,11 +117,32 @@ nodes:
         value: if the customer did not state something, return null for it and name it in
         missing_information.
 
+        A message can ask for more than one thing at once — for example urgent technical help AND a
+        quotation. List every distinct request in request_types; never collapse several asks into
+        one. Order request_types with what the customer cares about most first.
+
         Set production_stopped to true only when the customer states that production, a plant, a
         line or a process is currently stopped or down — not merely that something is faulty or
         slow.
 
-        Judge urgency from stated business impact, not from tone or politeness.
+        Judge urgency from stated business impact, not from tone or politeness. A polite "when you
+        get a chance" is not evidence of low urgency any more than "urgent!!" is evidence of high
+        urgency — judge only from what is actually at stake.
+
+        Separate two different kinds of gap. blocking_missing_information is what a colleague could
+        not proceed without at all (e.g. no product identified for a spare-part request).
+        missing_information is the fuller list, including details that would help but are not
+        strictly blocking (e.g. a serial number). Every blocking item must also appear in
+        missing_information.
+
+        ambiguities is for phrases that require interpretation rather than information that is
+        simply absent — for example a vague timeframe, an unclear "another one of what we had before"
+        reference, or wording that could support two different readings. Do not use it to restate
+        missing information.
+
+        suggested_actions are your recommendations for what should happen next, in business
+        language. They are advisory only — the workflow's own rules decide what actually happens, so
+        never assume a suggested action will be carried out.
       input: '{{outputs.incoming_request.data.message}}'
       context:
         Subject: '{{outputs.incoming_request.data.subject}}'
@@ -138,11 +159,10 @@ nodes:
           description: >-
             ISO 639-1 code of the language the customer wrote in (de, fr, nl, en, es …). Use the
             dominant language if several are mixed.
-        - name: intent
-          type: enum
-          required: true
-          description: What the customer wants from us.
-          enum_values:
+        - name: request_types
+          type: list
+          item_type: enum
+          item_enum_values:
             - quotation_request
             - technical_support
             - spare_part_request
@@ -150,24 +170,24 @@ nodes:
             - order_status
             - general_inquiry
             - other
-        - name: summary
+          required: true
+          description: >-
+            Every distinct thing the customer wants from us, most important first. At least one
+            value is required. Include every request the message actually contains — do not pick
+            only one when several are present.
+        - name: request_summary
           type: text
           required: true
           description: 'Two sentences in English: what the customer wants and why it matters to them.'
-        - name: customer
+        - name: requestor
           type: object
           required: false
-          description: Who is writing, as far as the message states.
+          description: The person writing, as far as the message states.
           fields:
             - name: name
               type: string
               required: false
               nullable: true
-            - name: company
-              type: string
-              required: false
-              nullable: true
-              description: Company name as written in the message.
             - name: email
               type: string
               required: false
@@ -176,48 +196,41 @@ nodes:
               type: string
               required: false
               nullable: true
-        - name: equipment
-          type: object
+        - name: organization
+          type: string
           required: false
-          description: The product or installation the request concerns.
-          fields:
-            - name: product_family
-              type: string
-              required: false
-              nullable: true
-            - name: model
-              type: string
-              required: false
-              nullable: true
-              description: >-
-                Model designation exactly as written (e.g. "Dura 15"). Never normalise or translate
-                it.
-            - name: serial_number
-              type: string
-              required: false
-              nullable: true
-        - name: process
-          type: object
+          nullable: true
+          description: Company name as written in the message.
+        - name: product
+          type: string
           required: false
-          description: Process conditions, when the customer states them.
-          fields:
-            - name: medium
-              type: string
-              required: false
-              nullable: true
-            - name: flow_rate
-              type: object
-              required: false
-              fields:
-                - name: value
-                  type: number
-                  required: false
-                  nullable: true
-                - name: unit
-                  type: string
-                  required: false
-                  nullable: true
-                  description: Unit exactly as written (m³/h, l/min, gpm).
+          nullable: true
+          description: Product family or type as stated (e.g. "peristaltic pump"), not the exact model.
+        - name: product_model
+          type: string
+          required: false
+          nullable: true
+          description: >-
+            Model designation exactly as written (e.g. "Dura 15"). Never normalise or translate it.
+        - name: serial_number
+          type: string
+          required: false
+          nullable: true
+        - name: quantity
+          type: integer
+          required: false
+          nullable: true
+          description: Number of units the request concerns, when stated.
+        - name: medium
+          type: string
+          required: false
+          nullable: true
+          description: The substance being handled, when the customer states it (e.g. "sulfuric acid").
+        - name: flow_rate
+          type: string
+          required: false
+          nullable: true
+          description: Flow rate exactly as written, including its unit (e.g. "18 m³/h").
         - name: production_stopped
           type: boolean
           required: true
@@ -241,8 +254,33 @@ nodes:
           required: true
           description: >-
             Machine-readable names of information a colleague would still need before acting — for
-            example product_model, serial_number, flow_rate, quantity, delivery_address. Empty list
+            example product_model, serial_number, flow_rate, quantity, delivery_address. Includes
+            every blocking_missing_information item plus anything else that would help. Empty list
             if nothing is missing.
+        - name: blocking_missing_information
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            The subset of missing_information without which this request cannot be handled with any
+            confidence at all — not merely details that would help. Empty list if nothing blocks.
+        - name: ambiguities
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            Phrases or references that require interpretation rather than missing information — for
+            example a vague timeframe or an unclear reference to a past order. Empty list if the
+            message is unambiguous.
+        - name: suggested_actions
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            Your advisory recommendations for what should happen next, in business language (e.g.
+            "Create an urgent technical support case", "Start a quotation for two replacement
+            pumps"). The workflow's own rules decide the actual routing — these are suggestions, not
+            commitments.
     selected_model: auto
     model_routing:
       accuracy_priority: balanced
@@ -250,11 +288,11 @@ nodes:
       display_name: Understand Customer Request
       purpose: >-
         Read the message in its original language and produce a structured business representation
-        of what the customer wants.
+        of what the customer wants — including every request it contains, not just one.
       contribution: The business rules and the router act on these fields, never on the raw text.
       expected_output: >-
-        Language, intent, customer and equipment details, urgency signals, missing information and a
-        confidence score.
+        Language, request types, requestor and product details, urgency signals, missing
+        information split into blocking versus non-blocking, ambiguities, and a confidence score.
       success_condition: A schema-valid result with a confidence score.
       failure_message: The request could not be understood well enough to act on. It will be sent to a person.
   - id: automation_safety
@@ -266,6 +304,7 @@ nodes:
         urgency: normal
         escalation_reason: ''
         automation_allowed: true
+        primary_intent: general_inquiry
       rules:
         - name: The AI step could not produce a usable result
           description: >-
@@ -277,7 +316,7 @@ nodes:
               - field: outputs.understand_request.status
                 operator: not_equals
                 value: ok
-              - field: outputs.understand_request.result.intent
+              - field: outputs.understand_request.result.request_types
                 operator: does_not_exist
           then:
             - field: human_review
@@ -301,11 +340,80 @@ nodes:
               value: false
             - field: escalation_reason
               value: The extraction confidence was below the 0.80 threshold for automatic handling.
+        # ---- primary_intent: deterministic pick from request_types, lowest to
+        # highest business priority so a later, higher-priority match overwrites
+        # an earlier one. Every request_types value the customer sent stays
+        # visible on the extraction itself — this only picks which one drives
+        # routing when several apply at once (§9: represent all of them, but a
+        # single-branch router still needs one to act on first).
+        - name: Order status drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: order_status
+          then:
+            - field: primary_intent
+              value: order_status
+        - name: A quotation request drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: quotation_request
+          then:
+            - field: primary_intent
+              value: quotation_request
+        - name: General inquiry drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: general_inquiry
+          then:
+            - field: primary_intent
+              value: general_inquiry
+        - name: A spare part request drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: spare_part_request
+          then:
+            - field: primary_intent
+              value: spare_part_request
+        - name: A technical support need drives routing when present
+          description: >-
+            Technical problems outrank a quotation asked in the same message — the customer's
+            production issue is the more urgent of the two asks.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: technical_support
+          then:
+            - field: primary_intent
+              value: technical_support
+        - name: A complaint always drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: complaint
+          then:
+            - field: primary_intent
+              value: complaint
         - name: Complaints are always handled by a person
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: decisions.primary_intent
                 operator: equals
                 value: complaint
           then:
@@ -336,7 +444,7 @@ nodes:
                   - field: outputs.understand_request.result.urgency
                     operator: equals
                     value: high
-                  - field: outputs.understand_request.result.equipment.serial_number
+                  - field: outputs.understand_request.result.serial_number
                     operator: is_not_empty
           then:
             - field: urgency
@@ -345,22 +453,42 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: decisions.primary_intent
                 operator: equals
                 value: spare_part_request
-              - field: outputs.understand_request.result.missing_information
+              - field: outputs.understand_request.result.blocking_missing_information
                 operator: contains
                 value: product_model
           then:
             - field: clarification_required
               value: true
+            - field: human_review
+              value: true
             - field: escalation_reason
               value: A spare part cannot be identified without the product model.
+        - name: High-impact ambiguity needs a person
+          description: >-
+            An ambiguous reference that would change what we do (e.g. which product, which order) is
+            exactly the case that must never be resolved by a guess. Runs last so its reason is the
+            one shown when it co-occurs with a more specific rule above — the ambiguity is the more
+            important thing for a reviewer to know about first.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.ambiguities
+                operator: is_not_empty
+              - field: outputs.understand_request.result.blocking_missing_information
+                operator: is_not_empty
+          then:
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: The request is both ambiguous and missing information needed to act.
     experience:
       display_name: Check Automation Safety
       purpose: Decide whether this request can safely be handled automatically.
       contribution: The router uses these conclusions to send uncertain work to a person.
-      expected_output: Whether a human must look at it, the effective urgency, and why.
+      expected_output: Whether a human must look at it, the effective urgency, the primary intent to route on, and why.
       failure_message: The safety rules could not be evaluated.
   - id: route_request
     type: RouterAgent
@@ -381,7 +509,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.automation_safety.decisions.primary_intent
                 operator: in
                 value:
                   - quotation_request
@@ -391,7 +519,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.automation_safety.decisions.primary_intent
                 operator: equals
                 value: technical_support
         - route: spare_parts
@@ -399,7 +527,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.automation_safety.decisions.primary_intent
                 operator: equals
                 value: spare_part_request
         - route: customer_service
@@ -407,7 +535,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.automation_safety.decisions.primary_intent
                 operator: equals
                 value: complaint
       fallback: human_review
@@ -434,18 +562,25 @@ nodes:
         - target: company
           operation: coalesce
           sources:
-            - outputs.understand_request.result.customer.company
+            - outputs.understand_request.result.organization
             - outputs.incoming_request.data.customer_email
           default: unknown
         - target: contact_email
           operation: coalesce
           sources:
-            - outputs.understand_request.result.customer.email
+            - outputs.understand_request.result.requestor.email
             - outputs.incoming_request.data.customer_email
           default: unknown
+        - target: quantity
+          operation: copy
+          source: outputs.understand_request.result.quantity
+          default: not stated
+        - target: detected_intents
+          operation: copy
+          source: outputs.understand_request.result.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
         - target: needs_clarification
           operation: boolean
           source: outputs.automation_safety.decisions.clarification_required
@@ -469,15 +604,15 @@ nodes:
           operation: format
           value: >-
             [{{outputs.automation_safety.decisions.urgency}}]
-            {{outputs.understand_request.result.equipment.model}} —
+            {{outputs.understand_request.result.product_model}} —
             {{outputs.understand_request.result.requested_action}}
         - target: model
           operation: copy
-          source: outputs.understand_request.result.equipment.model
+          source: outputs.understand_request.result.product_model
           default: not stated
         - target: serial_number
           operation: copy
-          source: outputs.understand_request.result.equipment.serial_number
+          source: outputs.understand_request.result.serial_number
           default: not stated
         - target: production_stopped
           operation: boolean
@@ -485,12 +620,18 @@ nodes:
         - target: urgency
           operation: copy
           source: outputs.automation_safety.decisions.urgency
+        - target: detected_intents
+          operation: copy
+          source: outputs.understand_request.result.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
         - target: missing_information
           operation: copy
           source: outputs.understand_request.result.missing_information
+        - target: blocking_missing_information
+          operation: copy
+          source: outputs.understand_request.result.blocking_missing_information
     experience:
       display_name: Technical Support
       purpose: Hand a structured technical case to Support.
@@ -506,11 +647,15 @@ nodes:
           value: Service / Spare Parts
         - target: model
           operation: copy
-          source: outputs.understand_request.result.equipment.model
+          source: outputs.understand_request.result.product_model
           default: not stated
         - target: serial_number
           operation: copy
-          source: outputs.understand_request.result.equipment.serial_number
+          source: outputs.understand_request.result.serial_number
+          default: not stated
+        - target: quantity
+          operation: copy
+          source: outputs.understand_request.result.quantity
           default: not stated
         - target: clarification_required
           operation: boolean
@@ -518,9 +663,12 @@ nodes:
         - target: missing_information
           operation: copy
           source: outputs.understand_request.result.missing_information
+        - target: blocking_missing_information
+          operation: copy
+          source: outputs.understand_request.result.blocking_missing_information
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
     experience:
       display_name: Service and Spare Parts
       purpose: Hand a structured parts request to Service.
@@ -536,7 +684,7 @@ nodes:
           value: Customer Service
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
         - target: original_message
           operation: copy
           source: outputs.incoming_request.data.message
@@ -581,9 +729,21 @@ nodes:
           hint: Below 0.80 the workflow does not act automatically.
         - label: Missing information
           field: outputs.understand_request.result.missing_information
-          hint: What a colleague would still need to act on this.
+          hint: What a colleague would still need to act on this. Blocking items are listed separately below.
+        - label: Blocking information
+          field: outputs.understand_request.result.blocking_missing_information
+          hint: Without these, this request cannot be handled with any confidence.
+        - label: Ambiguities
+          field: outputs.understand_request.result.ambiguities
+          hint: Phrases that need interpretation rather than information that is simply missing.
+        - label: Suggested actions
+          field: outputs.understand_request.result.suggested_actions
+          hint: The AI's advisory recommendation. It does not decide the route — you do.
+        - label: Detected requests
+          field: outputs.understand_request.result.request_types
+          hint: Every distinct thing the customer asked for, most important first.
         - label: Suggested route
-          field: outputs.understand_request.result.intent
+          field: outputs.automation_safety.decisions.primary_intent
           hint: Where this would have gone if it had been handled automatically.
         - label: Reason for escalation
           field: outputs.automation_safety.decisions.escalation_reason

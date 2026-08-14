@@ -10,13 +10,14 @@ import { OperatorRoot } from "./modes/operator/OperatorRoot";
 import { KnowledgeRoot } from "./modes/knowledge/KnowledgeRoot";
 import { RunCostContext } from "./RunCostContext";
 import { currentUsername, isAuthed, rehydrate } from "./api/client";
+import type { RunCostSummary } from "./api/types";
 
 type Mode = "studio" | "eval" | "operator" | "knowledge";
 
 export default function App() {
   const [username, setUsername] = useState(currentUsername());
   const [mode, setMode] = useState<Mode>("studio");
-  const [runCost, setRunCost] = useState(0);
+  const [runCostSummary, setRunCostSummary] = useState<RunCostSummary | null>(null);
   const [loggedIn, setLoggedIn] = useState(isAuthed());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => (
     window.localStorage.getItem('eurskem.sidebar.collapsed') === 'true'
@@ -80,8 +81,8 @@ export default function App() {
         username={username ?? ""}
       />
       <div className={`app-main ${sidebarCollapsed ? 'app-main--collapsed' : ''}`}>
-        <Topbar mode={mode} onOpenNavigation={() => setMobileNavOpen(true)} runCostUsd={runCost} />
-        <RunCostContext.Provider value={setRunCost}>
+        <Topbar mode={mode} onOpenNavigation={() => setMobileNavOpen(true)} runCostUsd={runCostSummary?.total_usd ?? 0} />
+        <RunCostContext.Provider value={setRunCostSummary}>
           <main className="app-content">
             {mode === "studio" && <StudioRoot />}
             {mode === "knowledge" && <KnowledgeRoot />}

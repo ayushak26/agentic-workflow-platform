@@ -10,6 +10,11 @@ from pydantic import BaseModel
 from app.evaluation import LLMJudge, load_golden_set, run_eval
 from app.evaluation.golden_set import GoldenExample
 from app.evaluation.judge import JUDGE_PROMPT_VERSION
+from app.evaluation.workflow_golden import (
+    load_workflow_golden_set,
+    recommend_model,
+    run_golden_set_with_model,
+)
 from app.security.dependencies import CurrentUser, require_permission
 from app.security.guardrails import GuardrailViolation, check_workflow_inputs
 
@@ -21,7 +26,11 @@ REFERENCE_PDF = Path("samples/FARMLOOPS_proposal.pdf")
 class RunEvalRequest(BaseModel):
     golden_set: str = "document_qa"   # filename stem under eval/golden_set/
     judge_model: str = "claude-sonnet-4-5"
-    
+
+class WorkflowCompareRequest(BaseModel):
+    golden_set: str = "verder_customer_triage"   # filename stem under eval/golden_set/
+    models: list[str] = ["claude-sonnet-4-5", "claude-haiku-4-5"]
+
 class ScoreOutputRequest(BaseModel):
     answer: str
     sources: str = ""
@@ -149,3 +158,47 @@ async def history(
         return {"scorecards": []}
     cards = await mongo.list_scorecards(limit=limit)
     return {"scorecards": cards}
+
+
+@router.get("/workflow-golden-set")
+async def list_workflow_golden_set(
+    name: str = "verder_customer_triage",
+    _user: CurrentUser = Depends(require_permission("eval:run")),
+) -> dict[str, Any]:
+    path = GOLDEN_DIR / f"{name}.json"
+    if not path.exists():
+        raise HTTPException(404, f"Golden set not found: {name}")
+    cases = load_workflow_golden_set(path)
+    return {"name": name, "n": len(cases), "cases": [c.model_dump() for c in cases]}
+
+
+@router.post("/workflow-compare")
+async def workflow_compare(
+    req: WorkflowCompareRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_permission("eval:run")),
+) -> dict[str, Any]:
+    """Run the same golden set of real customer messages through the flagship
+    triage workflow once per candidate model, and compare which one actually
+    reaches the right business outcome — not a judged quality score, since
+    there's a deterministic right answer (intent/complexity/route/review) to
+    check against here."""
+    path = GOLDEN_DIR / f"{req.golden_set}.json"
+    if not path.exists():
+        raise HTTPException(404, f"Golden set not found: {req.golden_set}")
+    cases = load_workflow_golden_set(path)
+
+    services = request.app.state.services
+    run_id_prefix = f"eval:workflow-compare:{user.session_id or user.username}"
+    comparisons = [
+        await run_golden_set_with_model(
+            cases, model=model, services=services, run_id_prefix=run_id_prefix,
+        )
+        for model in req.models
+    ]
+
+    return {
+        "golden_set": req.golden_set,
+        "comparisons": [c.model_dump() for c in comparisons],
+        "recommendation": recommend_model(comparisons),
+    }

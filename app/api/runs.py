@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import time
 import uuid
 from typing import Any
@@ -13,6 +13,8 @@ from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import preflight_workflow_for_run
 from app.security.dependencies import CurrentUser, require_consultant
 from app.security.audit import read_audit_events
+from app.workflow.business_projection import build_business_projection
+from app.workflow.fact_corrections import apply_fact_correction
 from app.workflow.pipeline_history import find_active_pipeline_stage
 from app.workflow.run_history import (
     delete_run,
@@ -138,6 +140,117 @@ async def pending_gate(
         "allow_document_override": interrupt.get("allow_document_override", True),
         "max_edit_chars": interrupt.get("max_edit_chars", 1_000_000),
     }
+
+
+@router.get("/mine/{run_id}/business-projection")
+async def run_business_projection(
+    run_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Business View's data source (§118) — a pure reshaping of this run and
+    its workflow's optional experience metadata, computed on read. Nothing
+    here is stored separately from run_history; see
+    app/workflow/business_projection.py."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    try:
+        run = await get_run(db, scope, run_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    if run is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+
+    workflow_spec = None
+    workflow_yaml = run.get("workflow_yaml")
+    if workflow_yaml:
+        try:
+            workflow_spec = load_workflow_from_string(workflow_yaml)
+        except Exception:
+            # A run's own saved YAML failing to parse must not 500 the
+            # projection — it just loses stage/experience labeling.
+            workflow_spec = None
+
+    gate = None
+    if run.get("status") == "paused":
+        checkpoint = await get_resume_checkpoint(db, scope, run_id)
+        if checkpoint is not None:
+            pause_kind = checkpoint.get("pause_kind") or "hitl_gate"
+            node_id = checkpoint.get("paused_node_id")
+            if pause_kind == "user_requested":
+                gate = {"paused": True, "pause_kind": pause_kind, "node_id": node_id}
+            else:
+                interrupt = (checkpoint.get("pause_context") or {}).get("interrupt")
+                if not isinstance(interrupt, dict):
+                    interrupt = _hitl_config_fallback(checkpoint, node_id)
+                gate = {
+                    "paused": True,
+                    "pause_kind": pause_kind,
+                    "node_id": interrupt.get("node_id", node_id),
+                    "question": interrupt.get("question", ""),
+                    "allowed_actions": interrupt.get("allowed_actions") or ["approve", "reject"],
+                }
+
+    return build_business_projection(run, workflow_spec=workflow_spec, gate=gate)
+
+
+class FactCorrectionRequest(BaseModel):
+    field: str
+    value: Any
+
+
+@router.post("/mine/{run_id}/fact-correction")
+async def correct_fact(
+    run_id: str,
+    body: FactCorrectionRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Overwrite one extracted fact on this run and mark the decisions it
+    fed as stale (§ editable fact correction). Does not recompute anything —
+    see app/workflow/fact_corrections.py for why."""
+    db = request.app.state.services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+    try:
+        edit = await apply_fact_correction(
+            db, run_id=run_id, session_id=_scope(user), field=body.field, value=body.value,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    return {"ok": True, "edit": edit}
+
+
+class AssignRunRequest(BaseModel):
+    assignee: str
+
+
+@router.post("/mine/{run_id}/assign")
+async def assign_run(
+    run_id: str,
+    body: AssignRunRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Record who a work item is assigned to — a plain annotation on the
+    run, not a workflow control. Backs the Business View ask bar's
+    `/assign <name>` command."""
+    db = request.app.state.services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+    result = await db["run_history"].update_one(
+        {"run_id": run_id, "session_id": _scope(user)},
+        {"$set": {"assigned_to": body.assignee, "updated_at": datetime.now(timezone.utc)}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Run not found")
+    return {"ok": True, "assigned_to": body.assignee}
 
 
 def _hitl_config_fallback(

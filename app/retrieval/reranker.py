@@ -114,6 +114,7 @@ async def rerank(
             response_model=_RerankResponse,
             temperature=0.0,
             max_tokens=8000,
+            stage="rerank",
         )
     except Exception as exc:
         log.warning("reranker.llm_failed", error=str(exc),

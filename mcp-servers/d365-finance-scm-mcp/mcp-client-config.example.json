@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "d365-finance-scm": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/d365-finance-scm-mcp/dist/src/index.js"],
+      "env": {
+        "FNO_BASE_URL": "https://YOUR-ENVIRONMENT.operations.dynamics.com",
+        "FNO_TENANT_ID": "YOUR-TENANT-ID",
+        "FNO_CLIENT_ID": "YOUR-CLIENT-ID",
+        "FNO_CLIENT_SECRET": "YOUR-CLIENT-SECRET",
+        "FNO_ALLOW_WRITES": "false",
+        "FNO_ALLOW_DELETES": "false"
+      }
+    }
+  }
+}

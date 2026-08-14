@@ -143,7 +143,7 @@ export function RunHistory() {
             onAbandonAndDelete={data.abandonBlockingPipelineAndDelete}
             onRetry={data.retryFailedRun}
             onOpenInCockpit={() => data.openInCockpit(selectedNodeId)}
-            onOpenInGuided={data.openInGuided}
+            onOpenInBusinessView={data.openInBusinessView}
             onAutofix={() => void data.autofixAndOpenInBuilder()}
             autofixBusy={data.autofixBusy}
             onOpenProposalReview={() => navigate(`/proposal-review/${data.detail!.run.run_id}`)}

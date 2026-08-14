@@ -81,7 +81,7 @@ def test_complex_structured_request_uses_structured_strength():
     )
 
     assert decision.task_kind == "structured"
-    assert decision.selected_model == "o3"
+    assert decision.selected_model == "gpt-5.6-sol"
 
 
 def test_offline_quality_scores_override_generic_policy():
@@ -382,8 +382,8 @@ async def test_registry_auto_selection_applies_to_structured_calls(monkeypatch):
     assert event.type == "model_selected"
     assert event.context is not None
     assert event.context["task_kind"] == "structured"
-    assert event.context["actual_model"] == "o3"
-    assert openai.calls == ["o3"]
+    assert event.context["actual_model"] == "gpt-5.6-sol"
+    assert openai.calls == ["gpt-5.6-sol"]
     assert anthropic.calls == []
 
 
@@ -698,8 +698,8 @@ async def test_registry_auto_selection_applies_to_tool_calls(monkeypatch):
     assert event.type == "model_selected"
     assert event.context is not None
     assert event.context["task_kind"] == "tool_use"
-    assert event.context["actual_model"] == "o3"
-    assert openai.calls == ["o3"]
+    assert event.context["actual_model"] == "gpt-5.6-sol"
+    assert openai.calls == ["gpt-5.6-sol"]
     assert anthropic.calls == []
 
 

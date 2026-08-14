@@ -14,7 +14,7 @@ import { useSetRunCost } from '../../../RunCostContext';
 import { deriveCockpitState } from '../cockpit-state';
 import { parseYaml, type YamlWorkflow } from '../yaml-bridge';
 import { NODE_RUN_STATUS_MAP } from './node-render';
-import type { HITLReviewContent, PipelineRunDetail, RunDetail } from '../../../api/types';
+import type { HITLReviewContent, PipelineRunDetail, RunCostSummary, RunDetail } from '../../../api/types';
 import type { NodeStatus } from '../cockpit-state';
 
 export type Gate = {
@@ -111,6 +111,7 @@ export function useCockpitRun() {
   const [gate, setGate] = useState<Gate | null>(null);
   const [finished, setFinished] = useState<Finished | null>(null);
   const setRunCost = useSetRunCost();
+  const [costSummary, setCostSummary] = useState<RunCostSummary | null>(null);
 
   // The review panel closes the instant a decision is submitted (resume is
   // synchronous and can block for the rest of the run) or the user
@@ -171,7 +172,10 @@ export function useCockpitRun() {
   useEffect(() => {
     if (finished?.status === 'completed' && runId) {
       api.costForRun(runId)
-        .then(c => setRunCost(c.total_usd))
+        .then(c => {
+          setRunCost(c);
+          setCostSummary(c);
+        })
         .catch(e => console.error('cost fetch failed', e));
     }
   }, [finished, runId, setRunCost]);
@@ -358,10 +362,10 @@ export function useCockpitRun() {
     return () => { cancelled = true; };
   }, [pipelineRunId, finished]);
 
-  // Guided Run and Cockpit share this one hook mount, so "Continue to next
-  // stage" must land back on whichever surface the user is currently on
-  // rather than hardcoding one — detected from the route, not passed in.
-  const surface = location.pathname.startsWith('/guided') ? 'guided' : 'cockpit';
+  // Business View and Cockpit share this one hook mount, so "Continue to
+  // next stage" must land back on whichever surface the user is currently
+  // on rather than hardcoding one — detected from the route, not passed in.
+  const surface = location.pathname.startsWith('/business') ? 'business' : 'cockpit';
 
   const continueToNextStage = useCallback(async () => {
     if (!pipelineDoc) return;
@@ -434,5 +438,6 @@ export function useCockpitRun() {
     continuingStage,
     continueError,
     liveRunNodeStatus: getLiveRunNodeStatus,
+    costSummary,
   };
 }

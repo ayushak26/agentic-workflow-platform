@@ -1,0 +1,54 @@
+[
+  {
+    "id": "standard",
+    "label": "Standard — spare-parts quotation",
+    "subject": "Angebot fuer zwei Ersatzpumpen",
+    "message": "Bitte senden Sie uns ein Angebot fuer zwei Pumpen Verderflex Dura 35.",
+    "sender_email": "customer@abc-chemicals.example",
+    "expected": {
+      "status": "completed",
+      "primary_intent": "quotation_request",
+      "human_review": false,
+      "route": "sales"
+    }
+  },
+  {
+    "id": "technical",
+    "label": "Technical — production-down pressure swings",
+    "subject": "Produktionsausfall - Verderflex Dura 35",
+    "message": "Unsere Produktionslinie steht. Verderflex Dura 35, starke Druckschwankungen. Bitte auch ein Angebot fuer zwei Ersatzpumpen.",
+    "sender_email": "customer@abc-chemicals.example",
+    "expected": {
+      "status": "completed",
+      "primary_intent": "technical_support",
+      "complexity": "technical",
+      "human_review": false,
+      "route": "technical_support",
+      "customer_known": true
+    }
+  },
+  {
+    "id": "complex",
+    "label": "Complex — ATEX hazardous area, custom design",
+    "subject": "Sonderanlage fuer ATEX-Bereich",
+    "message": "Wir benoetigen eine Sonderanlage fuer mehrere aggressive Fluessigkeiten mit ATEX-Anforderung und variablem Betriebsdruck.",
+    "sender_email": "customer@abc-chemicals.example",
+    "expected": {
+      "status": "paused",
+      "complexity": "complex",
+      "human_review": true
+    }
+  },
+  {
+    "id": "ambiguous",
+    "label": "Ambiguous — vague reference to a previous order",
+    "subject": "Ersatzteil wie letztes Mal",
+    "message": "Bitte schicken Sie uns wieder die gleiche Pumpe wie letztes Mal.",
+    "sender_email": "customer@abc-chemicals.example",
+    "expected": {
+      "status": "paused",
+      "human_review": true,
+      "product_resolved": false
+    }
+  }
+]

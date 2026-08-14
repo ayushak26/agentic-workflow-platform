@@ -19,21 +19,27 @@ description: >-
 
   Every CRM step is the same generic MCP Tool node with different configuration.
   There is no Dynamics node type in this workflow, in this repository, or in the
-  Builder's palette.
+  Builder's palette. Technical knowledge retrieval is likewise conditional: it
+  sits after routing, one retrieval step per department that can actually use
+  it, so a pure commercial request never pays for a retrieval call it has no
+  use for and retrieval never gates the routing decision itself.
 
       Customer Email
             ↓
       Understand Request            AI Task
             ↓
-      Find CRM Account              MCP Tool · Dynamics · READ
+      Find CRM Account               MCP Tool · Dynamics · READ
             ↓
-      Retrieve CRM Context          MCP Tool · Dynamics · READ
+      Retrieve CRM Context           MCP Tool · Dynamics · READ (parallel)
             ↓
-      Assess Request                Decision (deterministic)
+      Assess Request                 Decision (deterministic)
             ↓
       Route Request
-      ┌─────┬──────────┬───────────────┐
-    Sales  Support  Spare Parts   Human Review
+      ┌─────┬──────────────┬─────────────────┐
+    Sales  Retrieve      Retrieve         Human Review
+           Knowledge     Parts Knowledge
+             ↓              ↓
+           Support       Spare Parts
 version: "1.0"
 use_case: crm_aware_customer_triage
 
@@ -43,18 +49,21 @@ library:
     Route customer emails using both what the message says and what the CRM
     knows, escalating anything the two together cannot settle.
   purpose:
-    - Understand customer requests written in any language
+    - Understand customer requests written in any language, including several intents in one message
     - Identify the customer in Dynamics 365 rather than guessing
     - Resolve vague product references from recorded order history
+    - Ground technical answers in product knowledge, only when the request actually needs it
     - Route deterministically, with an explainable reason
   suitable_for:
     - Shared inbox triage where customers are already in a CRM
     - Enquiries that reference past purchases or existing opportunities
+    - Technical requests that benefit from grounded product documentation
   not_suitable_for:
     - Writing to the CRM without review (add a Human Review before any write)
   outputs:
-    - Structured request representation
+    - Structured request representation, with every intent the message contained
     - CRM account, open opportunities and order history
+    - Grounded technical knowledge and its sources, when retrieved
     - Chosen department and the reason for it
   input_types:
     - Customer email or message text
@@ -140,14 +149,39 @@ nodes:
         the important part: if the customer refers to a previous purchase
         ("the same as last time", "another one of those", "our existing pump")
         without naming it, do NOT guess a product, model or serial number. Leave
-        those fields null, set refers_to_previous_purchase to true, and name
-        what is missing in missing_information. The CRM is consulted for those
-        facts; a plausible guess would be worse than no answer.
+        those fields null, set refers_to_previous_purchase to true, name it in
+        ambiguities, and name what is missing in missing_information (and, since
+        it blocks identifying the product at all, in
+        blocking_missing_information too). The CRM is consulted for those facts;
+        a plausible guess would be worse than no answer.
+
+        A message can ask for more than one thing at once. List every distinct
+        request in request_types, most important first — never collapse several
+        asks into one.
+
+        Most business emails never restate the sender's own company name in the
+        body — it is carried by the sender's email domain instead. If the
+        message itself does not name the company, infer organization from the
+        Sender address's domain (e.g. "einkauf@abc-chemicals.example" implies
+        "ABC Chemicals") rather than leaving it null. Only leave organization
+        null when the domain is a generic public mail provider (gmail.com,
+        outlook.com, yahoo.com, hotmail.com, icloud.com and similar) or the
+        domain itself gives no readable company name.
 
         Set production_stopped to true only when the customer states that
         production, a plant, a line or a process is currently stopped.
 
+        Set hazardous_area to true only when the customer states or clearly
+        implies an ATEX or hazardous-area requirement — never infer it just
+        because the medium sounds dangerous. Set requires_custom_design to
+        true only when the customer describes a bespoke installation rather
+        than asking about a standard catalog product.
+
         Judge urgency from stated business impact, not from tone.
+
+        suggested_actions are your advisory recommendations in business
+        language. The workflow's own rules decide what actually happens — these
+        are suggestions, not commitments.
       input: "{{outputs.incoming_request.data.message}}"
       context:
         Subject: "{{outputs.incoming_request.data.subject}}"
@@ -164,11 +198,10 @@ nodes:
           required: true
           description: ISO 639-1 code of the language the customer wrote in.
 
-        - name: intent
-          type: enum
-          required: true
-          description: What the customer wants from us.
-          enum_values:
+        - name: request_types
+          type: list
+          item_type: enum
+          item_enum_values:
             - quotation_request
             - technical_support
             - spare_part_request
@@ -176,13 +209,17 @@ nodes:
             - order_status
             - general_inquiry
             - other
+          required: true
+          description: >-
+            Every distinct thing the customer wants from us, most important
+            first. At least one value is required.
 
-        - name: summary
+        - name: request_summary
           type: text
           required: true
           description: Two sentences in English on what the customer wants and why it matters.
 
-        - name: company_name
+        - name: organization
           type: string
           required: false
           nullable: true
@@ -190,29 +227,110 @@ nodes:
             Company name exactly as written in the message or signature. Used to
             look the customer up in the CRM, so reproduce it verbatim.
 
-        - name: contact_name
+        - name: requestor
+          type: object
+          required: false
+          description: The person writing, as far as the message states.
+          fields:
+            - name: name
+              type: string
+              required: false
+              nullable: true
+              description: Name of the person writing, from the signature.
+            - name: email
+              type: string
+              required: false
+              nullable: true
+            - name: phone
+              type: string
+              required: false
+              nullable: true
+
+        - name: product_model
           type: string
           required: false
           nullable: true
-          description: Name of the person writing, from the signature.
+          description: >-
+            Model designation exactly as written. Null if the customer referred
+            to a previous purchase without naming it.
 
-        - name: equipment
-          type: object
+        - name: serial_number
+          type: string
           required: false
-          description: Equipment the request concerns, only as far as stated.
-          fields:
-            - name: model
-              type: string
-              required: false
-              nullable: true
-              description: >-
-                Model designation exactly as written. Null if the customer
-                referred to a previous purchase without naming it.
-            - name: serial_number
-              type: string
-              required: false
-              nullable: true
-              description: Serial number exactly as written, or null.
+          nullable: true
+          description: Serial number exactly as written, or null.
+
+        - name: quantity
+          type: integer
+          required: false
+          nullable: true
+          description: Number of units the request concerns, when stated.
+
+        - name: application
+          type: string
+          required: false
+          nullable: true
+          description: The process or use-case the pump is for, when stated (e.g. "chemical transfer").
+
+        - name: medium
+          type: string
+          required: false
+          nullable: true
+          description: The substance being handled, when stated (e.g. "sulfuric acid").
+
+        - name: flow_rate
+          type: string
+          required: false
+          nullable: true
+          description: Flow rate exactly as written, including its unit (e.g. "18 m³/h").
+
+        - name: pressure
+          type: string
+          required: false
+          nullable: true
+          description: Operating pressure exactly as written, including its unit.
+
+        - name: temperature
+          type: string
+          required: false
+          nullable: true
+          description: Operating temperature exactly as written, including its unit.
+
+        - name: viscosity
+          type: string
+          required: false
+          nullable: true
+          description: Fluid viscosity exactly as written, when stated.
+
+        - name: hazardous_area
+          type: boolean
+          required: true
+          description: >-
+            True when the customer states or implies an ATEX / hazardous-area
+            requirement. False when not mentioned — never inferred from the
+            medium alone.
+
+        - name: requires_custom_design
+          type: boolean
+          required: true
+          description: >-
+            True when the customer describes a bespoke or custom installation
+            rather than requesting a standard catalog product.
+
+        - name: asks_for_price
+          type: boolean
+          required: true
+          description: True when the customer asks for a price or quotation.
+
+        - name: asks_for_availability
+          type: boolean
+          required: true
+          description: True when the customer asks whether something is in stock or how soon it can ship.
+
+        - name: asks_for_technical_advice
+          type: boolean
+          required: true
+          description: True when the customer asks for help choosing or diagnosing a product.
 
         - name: refers_to_previous_purchase
           type: boolean
@@ -243,8 +361,35 @@ nodes:
           required: true
           description: >-
             Machine-readable names of information still needed before acting —
-            product_model, serial_number, quantity, delivery_address. Empty list
-            if nothing is missing.
+            product_model, serial_number, quantity, delivery_address. Includes
+            every blocking_missing_information item plus anything else that
+            would help. Empty list if nothing is missing.
+
+        - name: blocking_missing_information
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            The subset of missing_information without which this request
+            cannot be handled with any confidence at all. Empty list if nothing
+            blocks.
+
+        - name: ambiguities
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            Phrases or references that require interpretation rather than
+            information that is simply missing — for example an unnamed past
+            purchase. Empty list if the message is unambiguous.
+
+        - name: suggested_actions
+          type: list
+          item_type: string
+          required: true
+          description: >-
+            Advisory recommendations for what should happen next, in business
+            language. The workflow's own rules decide the actual routing.
 
   # ── 3. Identify the customer in the CRM ─────────────────────────────────────
   # Generic MCP Tool node. The workflow names a capability, not an HTTP request.
@@ -267,7 +412,7 @@ nodes:
       # company"), not a reason to end the run.
       fail_on_error: false
       arguments:
-        company_name: "{{outputs.understand_request.result.company_name}}"
+        company_name: "{{outputs.understand_request.result.organization}}"
         limit: 3
 
   # ── 4. Retrieve the facts the message left implicit ─────────────────────────
@@ -305,7 +450,7 @@ nodes:
         account_id: "{{outputs.find_crm_account.first.account_id?}}"
         limit: 10
 
-  # ── 5. Deterministic policy over AI output AND CRM facts ────────────────────
+  # ── 6. Deterministic policy over AI output AND CRM facts ────────────────────
   - id: assess_request
     type: DecisionAgent
     experience:
@@ -324,6 +469,8 @@ nodes:
         urgency: normal
         escalation_reason: ""
         has_open_opportunity: false
+        primary_intent: general_inquiry
+        complexity: standard
       rules:
         - name: The AI step could not produce a usable result
           when:
@@ -332,7 +479,7 @@ nodes:
               - field: outputs.understand_request.status
                 operator: not_equals
                 value: ok
-              - field: outputs.understand_request.result.intent
+              - field: outputs.understand_request.result.request_types
                 operator: does_not_exist
           then:
             - field: human_review
@@ -354,6 +501,128 @@ nodes:
               value: >-
                 The extraction confidence was below the 0.80 threshold for
                 automatic handling.
+
+        # ---- primary_intent: deterministic pick from request_types, lowest to
+        # highest business priority, so a later match overwrites an earlier one.
+        - name: Order status drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: order_status
+          then:
+            - field: primary_intent
+              value: order_status
+        - name: A quotation request drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: quotation_request
+          then:
+            - field: primary_intent
+              value: quotation_request
+        - name: A spare part request drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: spare_part_request
+          then:
+            - field: primary_intent
+              value: spare_part_request
+        - name: A technical support need drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: technical_support
+          then:
+            - field: primary_intent
+              value: technical_support
+        - name: A complaint always drives routing when present
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: complaint
+          then:
+            - field: primary_intent
+              value: complaint
+
+        # ---- complexity: STANDARD / TECHNICAL / COMPLEX (§11). COMPLEX always
+        # needs a specialist, so it always requires human review — the reviewer
+        # sees *why* (ATEX, custom design, or several engineering parameters at
+        # once) rather than a bare "escalated" flag.
+        - name: An ATEX or hazardous-area requirement needs a specialist
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.hazardous_area
+                operator: is_true
+          then:
+            - field: complexity
+              value: complex
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: This request states an ATEX / hazardous-area requirement and needs a Product/Application Specialist.
+
+        - name: A custom design needs a specialist
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.requires_custom_design
+                operator: is_true
+          then:
+            - field: complexity
+              value: complex
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: This request describes a custom installation and needs a Product/Application Specialist.
+
+        - name: Several simultaneous operating parameters indicate a complex case
+          description: >-
+            Temperature, pressure and viscosity all specified at once is the
+            "multiple engineering constraints" signal from §11 — no single
+            parameter is disqualifying, but three at once is a different kind
+            of request than a routine technical question.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.temperature
+                operator: is_not_empty
+              - field: outputs.understand_request.result.pressure
+                operator: is_not_empty
+              - field: outputs.understand_request.result.viscosity
+                operator: is_not_empty
+          then:
+            - field: complexity
+              value: complex
+            - field: human_review
+              value: true
+            - field: escalation_reason
+              value: Multiple operating parameters must be reconciled at once; a specialist should confirm the selection.
+
+        - name: A technical question without a complex signal is technical, not standard
+          when:
+            operator: and
+            conditions:
+              - field: outputs.understand_request.result.request_types
+                operator: contains
+                value: technical_support
+              - field: decisions.complexity
+                operator: equals
+                value: standard
+          then:
+            - field: complexity
+              value: technical
 
         - name: The customer is a known CRM account
           when:
@@ -454,10 +723,10 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: decisions.primary_intent
                 operator: equals
                 value: spare_part_request
-              - field: outputs.understand_request.result.equipment.model
+              - field: outputs.understand_request.result.product_model
                 operator: is_empty
               - field: outputs.crm_order_history.found
                 operator: is_false
@@ -473,7 +742,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: decisions.primary_intent
                 operator: equals
                 value: complaint
           then:
@@ -532,7 +801,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.assess_request.decisions.primary_intent
                 operator: in
                 value: [quotation_request, order_status]
 
@@ -541,7 +810,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.assess_request.decisions.primary_intent
                 operator: equals
                 value: technical_support
 
@@ -550,7 +819,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.intent
+              - field: outputs.assess_request.decisions.primary_intent
                 operator: equals
                 value: spare_part_request
 
@@ -569,7 +838,7 @@ nodes:
       operations:
         - target: department
           operation: constant
-          value: Sales
+          value: Inside Sales
         - target: crm_account
           operation: copy
           source: outputs.find_crm_account.first.account_name
@@ -585,12 +854,72 @@ nodes:
           operation: copy
           source: outputs.crm_opportunities.first.name
           default: none
+        - target: quantity
+          operation: copy
+          source: outputs.understand_request.result.quantity
+          default: not stated
+        - target: detected_intents
+          operation: copy
+          source: outputs.understand_request.result.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
         - target: urgency
           operation: copy
           source: outputs.assess_request.decisions.urgency
+        - target: complexity
+          operation: copy
+          source: outputs.assess_request.decisions.complexity
+
+  # ── 7a. Retrieve technical knowledge — only on the branches that need it ────
+  # §27: RAG is not run for every request. It sits after routing rather than
+  # before assess_request because retrieval must not gate the routing decision
+  # itself here — each department that can actually use grounded knowledge
+  # gets its own retrieval step, so a quotation or order-status request never
+  # spends a retrieval call it has no use for.
+  - id: product_knowledge_support
+    type: RAGAgent
+    experience:
+      display_name: Retrieve Product Knowledge
+      purpose: >-
+        Ground the technical response in the product manual and service
+        procedures rather than the model's own memory.
+      contribution: Supports Support's response with citable sources.
+      expected_output: A grounded technical answer with citations, or none if nothing relevant was found.
+      failure_message: Technical knowledge could not be retrieved.
+    config:
+      query: >-
+        {{outputs.understand_request.result.product_model}}
+        {{outputs.understand_request.result.requested_action}}
+      top_k_candidates: 15
+      top_n_final: 5
+      rerank: true
+      compress: true
+      generation_prompt: >-
+        Answer using ONLY the provided sources. Cite every factual claim with
+        the source's [N] label. If the sources don't contain the answer, say
+        so plainly rather than filling the gap from general knowledge.
+
+  - id: product_knowledge_parts
+    type: RAGAgent
+    experience:
+      display_name: Retrieve Parts Knowledge
+      purpose: Ground the spare-parts response in service procedures and compatibility notes.
+      contribution: Supports Service's response with citable sources.
+      expected_output: A grounded answer with citations, or none if nothing relevant was found.
+      failure_message: Parts knowledge could not be retrieved.
+    config:
+      query: >-
+        {{outputs.understand_request.result.product_model}}
+        {{outputs.understand_request.result.requested_action}}
+      top_k_candidates: 15
+      top_n_final: 5
+      rerank: true
+      compress: true
+      generation_prompt: >-
+        Answer using ONLY the provided sources. Cite every factual claim with
+        the source's [N] label. If the sources don't contain the answer, say
+        so plainly rather than filling the gap from general knowledge.
 
   - id: technical_support
     type: DataTransformAgent
@@ -606,7 +935,7 @@ nodes:
       operations:
         - target: department
           operation: constant
-          value: Technical Support
+          value: Sales Engineering
         - target: crm_account
           operation: copy
           source: outputs.find_crm_account.first.account_name
@@ -616,13 +945,13 @@ nodes:
         - target: model
           operation: coalesce
           sources:
-            - outputs.understand_request.result.equipment.model
+            - outputs.understand_request.result.product_model
             - outputs.crm_order_history.first.products.0.name
           default: not identified
         - target: serial_number
           operation: coalesce
           sources:
-            - outputs.understand_request.result.equipment.serial_number
+            - outputs.understand_request.result.serial_number
             - outputs.crm_order_history.first.products.0.serial_number
           default: not identified
         - target: production_stopped
@@ -631,9 +960,23 @@ nodes:
         - target: urgency
           operation: copy
           source: outputs.assess_request.decisions.urgency
+        - target: complexity
+          operation: copy
+          source: outputs.assess_request.decisions.complexity
+        - target: detected_intents
+          operation: copy
+          source: outputs.understand_request.result.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
+        - target: technical_answer
+          operation: copy
+          source: outputs.product_knowledge_support.answer
+          default: No supporting documentation was retrieved.
+        - target: technical_sources
+          operation: copy
+          source: outputs.product_knowledge_support.citations
+          default: []
 
   - id: spare_parts
     type: DataTransformAgent
@@ -655,21 +998,39 @@ nodes:
         - target: model
           operation: coalesce
           sources:
-            - outputs.understand_request.result.equipment.model
+            - outputs.understand_request.result.product_model
             - outputs.crm_order_history.first.products.0.name
           default: not identified
         - target: serial_number
           operation: coalesce
           sources:
-            - outputs.understand_request.result.equipment.serial_number
+            - outputs.understand_request.result.serial_number
             - outputs.crm_order_history.first.products.0.serial_number
           default: not identified
+        - target: quantity
+          operation: copy
+          source: outputs.understand_request.result.quantity
+          default: not stated
         - target: previous_orders
           operation: count
           source: outputs.crm_order_history.data.orders
+        - target: detected_intents
+          operation: copy
+          source: outputs.understand_request.result.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.summary
+          source: outputs.understand_request.result.request_summary
+        - target: complexity
+          operation: copy
+          source: outputs.assess_request.decisions.complexity
+        - target: technical_answer
+          operation: copy
+          source: outputs.product_knowledge_parts.answer
+          default: No supporting documentation was retrieved.
+        - target: technical_sources
+          operation: copy
+          source: outputs.product_knowledge_parts.citations
+          default: []
 
   # ── 8. A person, with both the message and the CRM in front of them ─────────
   - id: human_review
@@ -707,6 +1068,15 @@ nodes:
         - label: Confidence
           field: outputs.understand_request.confidence
           hint: Below 0.80 the workflow does not act automatically.
+        - label: Blocking information
+          field: outputs.understand_request.result.blocking_missing_information
+          hint: Without these, this request cannot be handled with any confidence.
+        - label: Ambiguities
+          field: outputs.understand_request.result.ambiguities
+          hint: Phrases that need interpretation rather than information that is simply missing.
+        - label: Suggested actions
+          field: outputs.understand_request.result.suggested_actions
+          hint: The AI's advisory recommendation. It does not decide the route — you do.
         - label: CRM account
           field: outputs.find_crm_account.data
           hint: What Dynamics knows about this company, if anything.
@@ -716,6 +1086,12 @@ nodes:
             What they have actually bought. When the customer said "the same as
             last time", the product they meant is one of these — pick it rather
             than letting the workflow guess.
+        - label: Complexity
+          field: outputs.assess_request.decisions.complexity
+          hint: standard, technical, or complex — complex always comes to a person.
+        - label: Suggested route
+          field: outputs.assess_request.decisions.primary_intent
+          hint: Where this would have gone if it had been handled automatically.
         - label: Reason for escalation
           field: outputs.assess_request.decisions.escalation_reason
           hint: Which rule sent this request to you.
@@ -734,13 +1110,22 @@ edges:
     to: assess_request
   - from: assess_request
     to: route_request
+  # RAG sits after routing, not before assess_request: each of these two
+  # branches is that department's own single-predecessor chain, so a
+  # quotation or order-status request (routed to Sales) never runs a
+  # retrieval it has no use for, and retrieval never gates the routing
+  # decision itself.
   - from: route_request
     condition: route
     branches:
       sales: sales
-      technical_support: technical_support
-      spare_parts: spare_parts
+      technical_support: product_knowledge_support
+      spare_parts: product_knowledge_parts
       human_review: human_review
+  - from: product_knowledge_support
+    to: technical_support
+  - from: product_knowledge_parts
+    to: spare_parts
 
 entry: incoming_request
 exit:

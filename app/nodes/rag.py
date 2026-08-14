@@ -189,6 +189,7 @@ class RAGAgent(NodeType):
             system=cfg.generation_prompt,
             user=f"QUESTION: {cfg.query}\n\nSOURCES:\n{sources_block}",
             temperature=0.2,
+            stage="generation",
         )
         answer = resp.text
 

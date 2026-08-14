@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { STATUS_LABEL, computeStatusCounts, type NodeStatus, type StatusCounts } from '../cockpit-state';
 import { typeStyle } from './node-render';
 import { VirtualList } from './VirtualList';
+import type { RunCostSummary } from '../../../api/types';
 
 export type OverviewNode = {
   id: string;
@@ -30,6 +31,77 @@ const STATUS_TO_FILTER: Record<NodeStatus, keyof StatusCounts | null> = {
   cancelled: 'cancelled',
 };
 
+function costLabel(usd: number): string {
+  return usd > 0 && usd < 0.0001 ? '<$0.0001' : `$${usd.toFixed(4)}`;
+}
+
+// §31/§33: workflow-level AI cost, broken down by node and (when present) by
+// RAG pipeline stage — collapsed by default so it never competes with the
+// node list for attention.
+function AICostSummary({
+  costSummary,
+  onSelectNode,
+}: {
+  costSummary: RunCostSummary;
+  onSelectNode: (id: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const nodeRows = useMemo(
+    () => [...costSummary.by_node_summary].sort((a, b) => b.cost_usd - a.cost_usd),
+    [costSummary.by_node_summary],
+  );
+  const stageRows = costSummary.by_stage;
+
+  return (
+    <div className="flex-none px-4 py-3 border-b border-slate-200 text-xs">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between"
+      >
+        <span className="font-medium text-ink-900">{expanded ? '▾' : '▸'} AI Cost</span>
+        <span className="font-semibold text-ink-900">{costLabel(costSummary.total_usd)}</span>
+      </button>
+      {expanded && (
+        <div className="mt-2 space-y-2">
+          {nodeRows.length > 0 && (
+            <div className="space-y-0.5">
+              {nodeRows.map((row) => (
+                <button
+                  key={row.node_id}
+                  type="button"
+                  onClick={() => row.node_id && onSelectNode(row.node_id)}
+                  className="w-full flex items-center justify-between rounded px-1.5 py-1 hover:bg-slate-50 text-left"
+                >
+                  <span className="font-mono text-ink-700 truncate">{row.node_id}</span>
+                  <span className="text-ink-900 flex-none ml-2">
+                    {row.no_model_charge ? 'No charge' : costLabel(row.cost_usd)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+          {stageRows.length > 0 && (
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-ink-500 mt-2 mb-1">
+                Knowledge / RAG cost
+              </div>
+              {stageRows.map((row) => (
+                <div key={row.stage} className="flex items-center justify-between px-1.5 py-0.5">
+                  <span className="text-ink-700 capitalize">{row.stage?.replace(/_/g, ' ')}</span>
+                  <span className="text-ink-900">
+                    {row.no_model_charge ? 'No model charge' : costLabel(row.cost_usd)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function elapsedLabel(startedAt: number | null, endedAt: number | null): string {
   if (startedAt == null) return '—';
   const end = endedAt ?? Date.now() / 1000;
@@ -50,6 +122,7 @@ export function OverviewPanel({
   onSelect,
   collapsed,
   onToggleCollapsed,
+  costSummary = null,
 }: {
   workflowName: string;
   runStatus: string;
@@ -60,6 +133,8 @@ export function OverviewPanel({
   onSelect: (id: string) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  // Present once the run completes and /api/cost/run/{id} resolves.
+  costSummary?: RunCostSummary | null;
 }) {
   const [query, setQuery] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<keyof StatusCounts>>(new Set());
@@ -138,6 +213,10 @@ export function OverviewPanel({
           <span>{elapsedLabel(startedAt, endedAt)} elapsed</span>
         </div>
       </div>
+
+      {costSummary != null && (costSummary.total_usd > 0 || costSummary.by_node.length > 0) && (
+        <AICostSummary costSummary={costSummary} onSelectNode={onSelect} />
+      )}
 
       <div className="flex-none px-4 py-3 border-b border-slate-200">
         <div className="grid grid-cols-2 gap-1.5 text-[11px]">

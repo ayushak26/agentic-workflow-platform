@@ -266,7 +266,7 @@ export function startRetryRun(
   // Which run surface to relaunch into. Defaults to 'cockpit' so every
   // pre-existing caller (Cockpit's own retry button, Run History's "Retry
   // from failure") keeps its current behavior unchanged.
-  surface: 'guided' | 'cockpit' = 'cockpit',
+  surface: 'business' | 'cockpit' = 'cockpit',
 ): string | null {
   if (run.status !== 'failed') {
     return 'This run has not failed — there is nothing to retry.';

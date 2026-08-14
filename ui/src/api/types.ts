@@ -662,6 +662,58 @@ export interface NodeRun {
   model_selections?: ModelSelection[];
 }
 
+// One AI call, as recorded by app.observability.cost_ledger.LedgerEntry.
+export interface CostLedgerEntry {
+  run_id: string;
+  session_id: string;
+  node_id: string;
+  model: string;
+  intended_model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+  cost_usd: number;
+  cost_source: 'estimated' | 'provider_reported';
+  task_type: string;
+  provider: string;
+  latency_ms: number | null;
+  fallback_used: boolean;
+  fallback_reason: string | null;
+  // RAG pipeline stage this call belongs to (rerank/compress/generation), or
+  // null for a call outside a RAG pipeline entirely.
+  stage: string | null;
+  // True for an explicit zero-cost entry (a stage that genuinely has no
+  // model charge, e.g. plain hybrid search) rather than a priced call that
+  // happened to cost $0.
+  no_model_charge: boolean;
+  ts: string;
+}
+
+// One group's totals from CostLedger._group_by — grouped by node_id,
+// task_type, or stage depending on which breakdown this came from.
+export interface CostGroupSummary {
+  node_id?: string;
+  task_type?: string;
+  stage?: string;
+  calls: number;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  avg_latency_ms: number | null;
+  // True only when every call in this group was an explicit no-charge entry.
+  no_model_charge: boolean;
+}
+
+export interface RunCostSummary {
+  run_id: string;
+  total_usd: number;
+  by_node: CostLedgerEntry[];
+  by_node_summary: CostGroupSummary[];
+  by_task_type: CostGroupSummary[];
+  by_stage: CostGroupSummary[];
+}
+
 export interface GenerateWorkflowAttempt {
   stage: 'static' | 'real_execution';
   success: boolean;
@@ -702,6 +754,91 @@ export interface RunDetail extends RunSummary {
   workflow_yaml?: string;
   retry_available?: boolean;
   retryable_node_count?: number;
+}
+
+// Business View's data source (app/workflow/business_projection.py). A pure
+// reshaping of a RunDetail + the workflow's optional experience metadata —
+// nothing here is stored separately from the run itself.
+export type BusinessProgressState = 'planned' | 'active' | 'completed' | 'attention' | 'skipped';
+
+export interface BusinessProgressStage {
+  id: string;
+  display_name: string;
+  state: BusinessProgressState;
+  completed_count: number;
+  total_count: number;
+}
+
+export interface BusinessCurrentActivity {
+  node_id: string;
+  display_name: string;
+  message: string;
+  waiting_for_you: boolean;
+}
+
+export interface BusinessCheck {
+  node_id: string;
+  display_name: string;
+  status: string;
+  status_label: string;
+  outcome: string | null;
+}
+
+export interface BusinessDecision {
+  node_id: string;
+  decisions: Record<string, unknown>;
+  rules_triggered: string[];
+  summary: string[];
+}
+
+export interface BusinessDecisionExplanationEntry {
+  name: string;
+  description: string;
+}
+
+export interface BusinessRequiredUserAction {
+  type: 'approval_review' | 'resume_decision';
+  node_id: string | null;
+  question?: string;
+  allowed_actions?: string[];
+  message?: string;
+}
+
+export type BusinessControl = 'pause' | 'resume' | 'stop' | 'retry' | 'approve' | 'edit' | 'reject' | 'ask_why';
+
+export interface BusinessTimelineEntry {
+  ts: string;
+  label: string;
+}
+
+export interface BusinessProjection {
+  work_item: {
+    id: string;
+    type: string;
+    status: string;
+    started_at: string | null;
+    updated_at: string | null;
+    assigned_to?: string | null;
+  };
+  process: { name: string; goal: string };
+  status: string;
+  current_activity: BusinessCurrentActivity | null;
+  progress: BusinessProgressStage[];
+  understanding: { node_id?: string; result?: unknown; confidence?: number | null } | Record<string, never>;
+  editable_facts: string[];
+  stale_decisions: string[];
+  missing_information: string[];
+  checks: BusinessCheck[];
+  facts: unknown[];
+  decision: BusinessDecision | null;
+  decision_explanation: BusinessDecisionExplanationEntry[];
+  uncertainties: string[];
+  recommendations: unknown[];
+  proposed_actions: unknown[];
+  completed_actions: unknown[];
+  required_user_actions: BusinessRequiredUserAction[];
+  allowed_controls: BusinessControl[];
+  timeline: BusinessTimelineEntry[];
 }
 
 export type PipelineSummary = {

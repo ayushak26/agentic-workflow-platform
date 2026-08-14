@@ -91,8 +91,6 @@ class FakeSemanticCache:
         ("claude-fable-5", "AnthropicGateway"),
         ("gpt-5", "OpenAIGateway"),
         ("gpt-5.6-sol", "OpenAIGateway"),
-        ("o3", "OpenAIGateway"),
-        ("o4-mini", "OpenAIGateway"),
         ("local-kimi-k3", "KimiK3LocalGateway"),
         ("local-glm-5", "GLM5LocalGateway"),
     ],
@@ -104,6 +102,17 @@ def test_gateway_class_for_routes_known_prefixes(model, expected_cls):
 def test_gateway_class_for_raises_for_an_unrecognized_prefix():
     with pytest.raises(ValueError, match="No gateway registered"):
         registry._gateway_class_for("mystery-model-9000")
+
+
+@pytest.mark.parametrize("model", ["o3", "o4-mini", "o4-mini-2025-04-16"])
+def test_gateway_class_for_no_longer_routes_deprecated_o_series_models(model):
+    """The business has deprecated OpenAI's o-series reasoning models; they
+    were also the source of a real bug (they reject any non-default
+    `temperature`, which broke auto-routed structured extraction). Removed
+    from the catalog entirely rather than merely flagged, since routing never
+    enforced the `deprecated` metadata flag anyway."""
+    with pytest.raises(ValueError, match="No gateway registered"):
+        registry._gateway_class_for(model)
 
 
 def test_gateway_class_for_rejects_a_non_llm_openai_endpoint():
@@ -238,6 +247,122 @@ async def test_complete_never_records_cost_without_a_bound_ledger(monkeypatch):
 
     # Must not raise despite no ledger bound -- absence of a ledger is a no-op.
     await gateway.complete(model="claude-opus-5", system="s", user="u")
+
+
+# ── cost-ledger telemetry: task_type/provider/latency/fallback/stage (§30) ──
+
+@pytest.mark.asyncio
+async def test_complete_fast_path_records_provider_task_type_and_latency(monkeypatch):
+    anthropic = RecordingGateway()
+    monkeypatch.setattr(registry, "_INSTANCES", {registry.AnthropicGateway: anthropic})
+    ledger = FakeLedger()
+    gateway = RegistryLLMGateway().with_context(
+        run_id="run1", session_id="sess1", node_id="node1", ledger=ledger
+    )
+
+    await gateway.complete(model="claude-opus-5", system="s", user="u")
+
+    entry = ledger.entries[0]
+    assert entry.provider == "anthropic"
+    assert entry.latency_ms is not None and entry.latency_ms >= 0
+    assert entry.fallback_used is False
+    assert entry.fallback_reason is None
+    assert entry.task_type != "unknown"  # infer_task_kind always returns a real TaskKind
+
+
+@pytest.mark.asyncio
+async def test_complete_structured_fast_path_tags_structured_task_type(monkeypatch):
+    anthropic = RecordingGateway()
+    monkeypatch.setattr(registry, "_INSTANCES", {registry.AnthropicGateway: anthropic})
+    ledger = FakeLedger()
+    gateway = RegistryLLMGateway().with_context(
+        run_id="run1", session_id="sess1", node_id="node1", ledger=ledger
+    )
+
+    await gateway.complete_structured(
+        model="claude-opus-5", system="s", user="u", response_model=_Answer
+    )
+
+    entry = ledger.entries[0]
+    assert entry.task_type == "structured"
+    assert entry.provider == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_stage_reaches_the_ledger_but_never_the_provider_call(monkeypatch):
+    """`stage` tags a RAG pipeline step (rerank/compress/generation) for cost
+    telemetry -- it must never leak into the kwargs a concrete provider
+    gateway receives."""
+    anthropic = RecordingGateway()
+    monkeypatch.setattr(registry, "_INSTANCES", {registry.AnthropicGateway: anthropic})
+    ledger = FakeLedger()
+    gateway = RegistryLLMGateway().with_context(
+        run_id="run1", session_id="sess1", node_id="rag_1", ledger=ledger
+    )
+
+    await gateway.complete(model="claude-opus-5", system="s", user="u", stage="rerank")
+
+    assert ledger.entries[0].stage == "rerank"
+    _, _, provider_kwargs = anthropic.calls[0]
+    assert "stage" not in provider_kwargs
+
+
+@pytest.mark.asyncio
+async def test_complete_structured_stage_reaches_the_ledger_but_never_the_provider_call(monkeypatch):
+    anthropic = RecordingGateway()
+    monkeypatch.setattr(registry, "_INSTANCES", {registry.AnthropicGateway: anthropic})
+    ledger = FakeLedger()
+    gateway = RegistryLLMGateway().with_context(
+        run_id="run1", session_id="sess1", node_id="rag_1", ledger=ledger
+    )
+
+    await gateway.complete_structured(
+        model="claude-opus-5", system="s", user="u", response_model=_Answer, stage="compress"
+    )
+
+    assert ledger.entries[0].stage == "compress"
+    _, _, provider_kwargs = anthropic.calls[0]
+    assert "stage" not in provider_kwargs
+
+
+class _RateLimited(RuntimeError):
+    def __init__(self, message: str, status_code: int):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+@pytest.mark.asyncio
+async def test_call_resilient_reports_a_fallback_reason_when_the_primary_candidate_fails(monkeypatch):
+    calls = {"n": 0}
+
+    async def failing_complete(*, model, **kwargs):
+        calls["n"] += 1
+        raise _RateLimited("rate limited", 429)
+
+    primary = RecordingGateway()
+    primary.complete = failing_complete
+    fallback = RecordingGateway()
+    monkeypatch.setattr(
+        registry,
+        "_INSTANCES",
+        {registry.AnthropicGateway: primary, registry.OpenAIGateway: fallback},
+    )
+    ledger = FakeLedger()
+    gateway = RegistryLLMGateway(
+        retry_policy=RetryPolicy(
+            max_attempts=1, base_delay_seconds=0, max_delay_seconds=0, jitter_ratio=0
+        ),
+    ).with_context(run_id="run1", session_id="sess1", node_id="node1", ledger=ledger)
+
+    resp = await gateway.complete(model="claude-opus-5", system="s", user="u")
+
+    assert resp.text == "ok"  # served by the fallback (OpenAIGateway)
+    assert calls["n"] == 1
+    entry = ledger.entries[0]
+    assert entry.model == "gpt-5.6-sol"
+    assert entry.fallback_used is True
+    assert entry.fallback_reason is not None
+    assert "exhausted" in entry.fallback_reason
 
 
 # ── semantic cache integration on the fast path ──────────────────────────────

@@ -62,7 +62,7 @@ export function RunWorkspace({
   onAbandonAndDelete,
   onRetry,
   onOpenInCockpit,
-  onOpenInGuided,
+  onOpenInBusinessView,
   onAutofix,
   autofixBusy,
   onOpenProposalReview,
@@ -84,7 +84,7 @@ export function RunWorkspace({
   onAbandonAndDelete?: () => void;
   onRetry: () => void;
   onOpenInCockpit: () => void;
-  onOpenInGuided: () => void;
+  onOpenInBusinessView: () => void;
   onAutofix: () => void;
   autofixBusy: boolean;
   onOpenProposalReview: () => void;
@@ -188,10 +188,10 @@ export function RunWorkspace({
             {run.workflow_yaml && (
               <>
                 <button
-                  onClick={onOpenInGuided}
+                  onClick={onOpenInBusinessView}
                   className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
                 >
-                  Open in Guided
+                  Open Business View
                 </button>
                 <button
                   onClick={onOpenInCockpit}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import yaml from 'js-yaml';
 
@@ -15,6 +15,7 @@ import { CopyButton } from '../../components/CopyButton';
 import { FileInputField } from './FileInputField';
 import { FALLBACK_FILE_CAPABILITIES, fileReferencesFrom } from './fileInputUtils';
 import { valueForJsonInput, type WorkflowInputSpec } from './yaml-bridge';
+import { humanizeIdentifier } from './guided/runtime-model';
 
 type YamlPipeline = {
   name: string;
@@ -28,20 +29,20 @@ function parsePipelineYaml(text: string): YamlPipeline {
 }
 
 const STAGE_STATUS_LABEL: Record<PipelineStageStatus, string> = {
-  pending: 'Not started',
-  running: 'Running',
-  paused: 'Paused (needs review)',
+  pending: 'Not started yet',
+  running: 'In progress',
+  paused: 'Waiting for your review',
   completed: 'Completed',
-  failed: 'Failed',
+  failed: 'Needs attention',
   rejected: 'Rejected',
 };
-const STAGE_STATUS_DOT: Record<PipelineStageStatus, string> = {
-  pending: 'bg-slate-300',
-  running: 'bg-blue-500 animate-pulse',
-  paused: 'bg-amber-500',
-  completed: 'bg-emerald-500',
-  failed: 'bg-red-500',
-  rejected: 'bg-amber-500',
+const STAGE_STATUS_MARK: Record<PipelineStageStatus, string> = {
+  pending: '○',
+  running: '●',
+  paused: '!',
+  completed: '✓',
+  failed: '×',
+  rejected: '×',
 };
 
 // ---- Launch dialog ----------------------------------------------------------
@@ -215,9 +216,9 @@ function PipelineLaunchDialog({
       // itself (opens the SSE stream first, same as a plain workflow run),
       // rather than us awaiting the whole stage here and landing on a
       // static status page after the fact. Pipelines are a business-user
-      // flow, so this defaults to the Guided Run surface (Cockpit stays
-      // reachable from there via "View process map").
-      navigate(`/guided/${stageRunId}`, {
+      // flow, so this defaults to the Business View surface (Cockpit stays
+      // reachable from there via "Technical details").
+      navigate(`/business/${stageRunId}`, {
         state: {
           workflowYaml: stageYaml,
           workflowName: firstStage.id,
@@ -554,11 +555,11 @@ export function PipelineRunView() {
     setAdvanceError(null);
     try {
       // Same pattern as launching a pipeline: open the next stage's live
-      // run view first (defaults to Guided Run, same as launch), and let it
-      // trigger the advance call itself.
+      // run view first (defaults to Business View, same as launch), and let
+      // it trigger the advance call itself.
       const { yaml: stageYaml } = await api.getWorkflow(nextStage.workflow);
       const stageRunId = crypto.randomUUID();
-      navigate(`/guided/${stageRunId}`, {
+      navigate(`/business/${stageRunId}`, {
         state: {
           workflowYaml: stageYaml,
           workflowName: nextStage.id,
@@ -592,115 +593,175 @@ export function PipelineRunView() {
     }
   }
 
+  const parsedPipeline = useMemo(() => {
+    if (!detail?.pipeline_yaml) return null;
+    try {
+      return parsePipelineYaml(detail.pipeline_yaml);
+    } catch {
+      return null;
+    }
+  }, [detail]);
+
+  const stageDescriptions = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const stage of parsedPipeline?.stages ?? []) {
+      if (stage.description) map[stage.id] = stage.description;
+    }
+    return map;
+  }, [parsedPipeline]);
+
   if (error) return <div className="p-8 text-bad">Couldn't load this pipeline run: {error}</div>;
   if (detail === null) return <div className="p-8"><Spinner label="Loading pipeline run…" /></div>;
 
   const nextStage = detail.status === 'gated' ? detail.stages[detail.current_stage_index + 1] : null;
   const canAbandon = detail.status === 'running' || detail.status === 'gated';
+  const completedCount = detail.stages.filter(s => s.status === 'completed').length;
+  const failedCount = detail.stages.filter(s => s.status === 'failed' || s.status === 'rejected').length;
 
   return (
-    <div className="p-8 max-w-3xl">
-      <div className="flex items-baseline justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">{detail.pipeline_name}</h2>
-          <div className="font-mono text-xs text-ink-500 mt-0.5">{detail.pipeline_run_id}</div>
-        </div>
-        <CopyButton
-          text={JSON.stringify(detail.pipeline_inputs, null, 2)}
-          label="Copy pipeline inputs as JSON"
-        />
-      </div>
-
-      <div className="mt-2 flex items-center justify-between">
-        <div className="text-sm uppercase tracking-wide text-ink-500">
-          Status: {detail.status}
-        </div>
-        {canAbandon && (
-          <button
-            onClick={abandon}
-            disabled={abandoning}
-            title="Manually mark this pipeline as abandoned so its stage run can be deleted."
-            className="px-3 py-1.5 rounded-md border border-red-300 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
-          >
-            {abandoning ? 'Abandoning…' : 'Abandon pipeline'}
-          </button>
-        )}
-      </div>
-      {abandonError && (
-        <div className="mt-2 text-xs text-red-700">{abandonError}</div>
-      )}
-
-      {detail.status === 'gated' && nextStage && (
-        <div className="mt-5 rounded-md border border-cyan-200 bg-cyan-50 px-4 py-3">
-          <div className="text-sm text-cyan-900">
-            Stage {detail.current_stage_index + 1} finished. Review its output
-            below, then continue to <b>{nextStage.id}</b>.
-          </div>
-          <button
-            onClick={advance}
-            disabled={advancing}
-            className="mt-2 px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
-          >
-            {advancing ? `Opening ${nextStage.id}…` : `Continue to ${nextStage.id}`}
-          </button>
-          {advanceError && <p className="mt-2 text-xs text-red-700">{advanceError}</p>}
-        </div>
-      )}
-
-      {detail.status === 'failed' && (
-        <div className="mt-5 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          Pipeline stopped — a stage failed or was rejected. Open that stage
-          below to see the error and retry it from Run History; the pipeline
-          isn't currently resumable from here after a retry (retry the stage,
-          then continue this pipeline manually stage by stage via
-          Run History).
-        </div>
-      )}
-
-      {detail.status === 'completed' && (
-        <div className="mt-5 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          All stages completed.
-        </div>
-      )}
-
-      {detail.status === 'abandoned' && (
-        <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-ink-700">
-          This pipeline was manually abandoned. Its stage runs can now be
-          deleted from Run History.
-        </div>
-      )}
-
-      <div className="mt-6 space-y-2">
-        {detail.stages.map((stage, index) => (
-          <div
-            key={stage.id}
-            className={`border rounded-lg px-4 py-3 ${
-              index === detail.current_stage_index ? 'border-accent-300' : 'border-slate-200'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${STAGE_STATUS_DOT[stage.status]}`} />
-                <span className="font-medium text-ink-900">{stage.id}</span>
-                <span className="text-xs text-ink-500">({stage.workflow})</span>
-              </div>
-              <span className="text-xs uppercase tracking-wide text-ink-500">
-                {STAGE_STATUS_LABEL[stage.status]}
-              </span>
+    <div className="h-full overflow-y-auto bg-slate-50 p-6">
+      <div className="mx-auto max-w-3xl">
+        {/* Process journey header — the "larger business journey" framing */}
+        <div className="rounded-lg border border-slate-200 bg-white p-5">
+          <div className="flex items-baseline justify-between gap-2">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-ink-400">Process Journey</div>
+              <h1 className="mt-1 text-xl font-semibold text-ink-900">{humanizeIdentifier(detail.pipeline_name)}</h1>
+              {parsedPipeline?.description && (
+                <p className="mt-1 max-w-xl text-sm text-ink-500">{parsedPipeline.description}</p>
+              )}
             </div>
-            {stage.error && (
-              <div className="mt-2 text-xs text-red-700 font-mono">{stage.error}</div>
-            )}
-            {stage.run_id && (
+            <CopyButton
+              text={JSON.stringify(detail.pipeline_inputs, null, 2)}
+              label="Copy pipeline inputs as JSON"
+            />
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-4 text-sm">
+            <span className="font-medium text-ink-900">
+              {completedCount} of {detail.stages.length} stages complete
+            </span>
+            {failedCount > 0 && <span className="text-bad">{failedCount} failed</span>}
+            <span className="text-ink-400">
+              Current stage: <strong className="text-ink-700">{humanizeIdentifier(detail.stages[detail.current_stage_index]?.id ?? '—')}</strong>
+            </span>
+            {canAbandon && (
               <button
-                onClick={() => navigate(`/history/${stage.run_id}`)}
-                className="mt-2 text-xs text-accent-600 hover:underline"
+                onClick={abandon}
+                disabled={abandoning}
+                title="Manually mark this process as stopped so its stage run can be deleted."
+                className="ml-auto rounded-md border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
               >
-                View stage details / outputs →
+                {abandoning ? 'Stopping…' : 'Stop process'}
               </button>
             )}
           </div>
-        ))}
+          {abandonError && <div className="mt-2 text-xs text-bad">{abandonError}</div>}
+        </div>
+
+        {detail.status === 'gated' && nextStage && (
+          <div className="mt-4 rounded-lg border border-accent-200 bg-accent-50 px-4 py-3">
+            <div className="text-sm font-medium text-ink-900">Stage complete</div>
+            <div className="mt-1 text-sm text-ink-700">
+              {humanizeIdentifier(detail.stages[detail.current_stage_index]?.id ?? '')} is ready. Review its
+              outputs, then continue to <b>{humanizeIdentifier(nextStage.id)}</b>.
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button
+                onClick={advance}
+                disabled={advancing}
+                className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-500 disabled:opacity-50"
+              >
+                {advancing ? `Opening ${humanizeIdentifier(nextStage.id)}…` : `Continue to ${humanizeIdentifier(nextStage.id)}`}
+              </button>
+              {detail.stages[detail.current_stage_index]?.run_id && (
+                <button
+                  onClick={() => navigate(`/business/${detail.stages[detail.current_stage_index].run_id}`, { state: { attach: true } })}
+                  className="rounded-md border border-slate-300 px-4 py-2 text-sm text-ink-700 hover:bg-slate-50"
+                >
+                  Review outputs
+                </button>
+              )}
+            </div>
+            {advanceError && <p className="mt-2 text-xs text-bad">{advanceError}</p>}
+          </div>
+        )}
+
+        {detail.status === 'failed' && (
+          <div className="mt-4 rounded-lg border border-bad/30 bg-bad/5 px-4 py-3 text-sm text-bad">
+            A stage could not complete. Completed stages remain saved. Open the failed stage below to see
+            what happened and retry it from Run History; continuing this process after a retry is manual,
+            stage by stage, from there.
+          </div>
+        )}
+
+        {detail.status === 'completed' && (
+          <div className="mt-4 rounded-lg border border-ok/30 bg-ok/10 px-4 py-3 text-sm text-ok">
+            This process is complete — every stage finished.
+          </div>
+        )}
+
+        {detail.status === 'abandoned' && (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-ink-700">
+            This process was manually stopped. Its stage runs can now be deleted from Run History.
+          </div>
+        )}
+
+        {/* Stage cards — the business journey, one card per step */}
+        <div className="mt-4 flex flex-col gap-2">
+          {detail.stages.map((stage, index) => {
+            const isCurrent = index === detail.current_stage_index;
+            return (
+              <div
+                key={stage.id}
+                className={`rounded-lg border bg-white px-4 py-3 ${isCurrent ? 'border-accent-300 shadow-sm' : 'border-slate-200'}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className={`inline-flex h-5 w-5 flex-none items-center justify-center rounded-full text-xs font-semibold ${
+                        stage.status === 'completed' ? 'bg-ok/15 text-ok'
+                        : stage.status === 'running' ? 'bg-accent-100 text-accent-700'
+                        : stage.status === 'paused' ? 'bg-warn/15 text-warn'
+                        : stage.status === 'failed' || stage.status === 'rejected' ? 'bg-bad/15 text-bad'
+                        : 'bg-slate-100 text-ink-400'
+                      }`}
+                    >
+                      {STAGE_STATUS_MARK[stage.status]}
+                    </span>
+                    <span className="font-medium text-ink-900">
+                      {index + 1}. {humanizeIdentifier(stage.id)}
+                    </span>
+                  </div>
+                  <span className="text-xs font-medium text-ink-500">{STAGE_STATUS_LABEL[stage.status]}</span>
+                </div>
+                {stageDescriptions[stage.id] && (
+                  <p className="mt-1.5 pl-7 text-sm text-ink-500">{stageDescriptions[stage.id]}</p>
+                )}
+                {stage.error && (
+                  <div className="mt-1.5 pl-7 font-mono text-xs text-bad">{stage.error}</div>
+                )}
+                {stage.run_id && (
+                  <div className="mt-2 flex gap-3 pl-7 text-xs">
+                    <button
+                      onClick={() => navigate(`/business/${stage.run_id}`, { state: { attach: true } })}
+                      className="font-medium text-accent-700 hover:underline"
+                    >
+                      Open in Business View
+                    </button>
+                    <button
+                      onClick={() => navigate(`/cockpit/${stage.run_id}`, { state: { attach: true } })}
+                      className="font-medium text-ink-500 hover:underline"
+                    >
+                      Technical details
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

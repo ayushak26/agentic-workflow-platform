@@ -87,6 +87,26 @@ class Settings(BaseSettings):
     dynamics_client_secret: str = ""
     dynamics_fixtures_path: str = ""       # overrides the bundled demo fixtures
 
+    # ── Dynamics 365 Finance & Supply Chain (F&O OData), exposed through MCP ──
+    # A distinct product from the Dataverse CRM above: F&O customers, sales
+    # orders and inventory rather than CRM accounts/opportunities. The server
+    # lives at mcp-servers/d365-finance-scm-mcp (Node/TypeScript) and has no
+    # mock/fixture mode, so it is off by default — enabling it requires a real
+    # F&O environment and Entra app registration. Writes/deletes are fail-closed
+    # inside the server itself (see its README) in addition to this platform's
+    # own write_policy gate.
+    fno_mcp_enabled: bool = False
+    fno_base_url: str = ""                 # https://your-environment.operations.dynamics.com
+    fno_tenant_id: str = ""
+    fno_client_id: str = ""
+    fno_client_secret: str = ""
+    fno_allow_writes: bool = False
+    fno_allow_deletes: bool = False
+    fno_read_entity_allowlist: str = ""
+    fno_write_entity_allowlist: str = ""
+    fno_delete_entity_allowlist: str = ""
+    fno_entity_aliases_json: str = ""
+
     # Research API credentials for paper-search-mcp. These never reach the
     # subprocess by ambient inheritance in local dev (pydantic-settings' own
     # env_file loading does not populate os.environ) — app/mcp/client.py

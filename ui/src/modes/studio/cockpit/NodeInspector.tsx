@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
-import type { NodeRun, NodeTypeManifest, RunDetail } from '../../../api/types';
+import type { CostLedgerEntry, NodeRun, NodeTypeManifest, RunDetail } from '../../../api/types';
 import { STATUS_LABEL, type NodeStatus } from '../cockpit-state';
 import { WorkflowVariablesPanel } from '../WorkflowVariablesPanel';
 import { clock, outputSummary, typeStyle } from './node-render';
@@ -147,7 +147,51 @@ function MetadataTabContent({ nodeRun }: { nodeRun: NodeRun | undefined }) {
   );
 }
 
-function PerformanceTabContent({ nodeRun }: { nodeRun: NodeRun | undefined }) {
+function costLabel(usd: number): string {
+  return usd > 0 && usd < 0.0001 ? '<$0.0001' : `$${usd.toFixed(4)}`;
+}
+
+function AICostCallCard({ entry }: { entry: CostLedgerEntry }) {
+  return (
+    <div className="rounded border border-slate-200 bg-white p-2">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-ink-900">{entry.model || '—'}</span>
+        <span className="font-semibold text-ink-900">
+          {entry.no_model_charge ? 'No model charge' : costLabel(entry.cost_usd)}
+        </span>
+      </div>
+      <div className="mt-1 text-ink-500">
+        {entry.task_type.replace(/_/g, ' ')}
+        {entry.stage ? ` · ${entry.stage.replace(/_/g, ' ')}` : ''}
+        {entry.provider !== 'unknown' ? ` · ${entry.provider}` : ''}
+      </div>
+      {!entry.no_model_charge && (
+        <div className="mt-1 text-ink-500">
+          {entry.input_tokens.toLocaleString()} in / {entry.output_tokens.toLocaleString()} out tokens
+          {entry.latency_ms != null ? ` · ${(entry.latency_ms / 1000).toFixed(2)}s` : ''}
+        </div>
+      )}
+      {entry.fallback_used && (
+        <div className="mt-1 text-warn">
+          Fallback — requested {entry.intended_model}
+          {entry.fallback_reason ? `: ${entry.fallback_reason}` : ''}
+        </div>
+      )}
+      {entry.cost_source === 'provider_reported' && !entry.no_model_charge && (
+        <div className="mt-1 text-ink-400">Provider-reported cost</div>
+      )}
+    </div>
+  );
+}
+
+function PerformanceTabContent({
+  nodeRun,
+  costEntries,
+}: {
+  nodeRun: NodeRun | undefined;
+  costEntries: CostLedgerEntry[];
+}) {
+  const totalCost = costEntries.reduce((sum, e) => sum + e.cost_usd, 0);
   return (
     <div className="p-3 space-y-3 text-xs">
       <div className="grid grid-cols-2 gap-3">
@@ -157,13 +201,26 @@ function PerformanceTabContent({ nodeRun }: { nodeRun: NodeRun | undefined }) {
         </div>
         <div>
           <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">Model calls</div>
-          <div className="text-ink-900">{nodeRun?.model_selections?.length ?? 0}</div>
+          <div className="text-ink-900">{nodeRun?.model_selections?.length ?? costEntries.length}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-ink-500 mb-1">AI cost</div>
+          <div className="text-ink-900">{costLabel(totalCost)}</div>
         </div>
       </div>
-      <div className="text-ink-400">
-        Token/cost breakdown isn&rsquo;t joined into this view yet — see the run&rsquo;s
-        overall cost summary for now.
-      </div>
+      {costEntries.length === 0 ? (
+        <div className="text-ink-400">
+          No AI cost recorded for this activity yet — it may still be running, or made no
+          model calls.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="text-[11px] uppercase tracking-wide text-ink-500">AI execution</div>
+          {costEntries.map((entry, index) => (
+            <AICostCallCard key={`${entry.node_id}:${index}`} entry={entry} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -179,6 +236,7 @@ export function NodeInspector({
   onToggleFullscreen,
   live = true,
   nodeTypesByName = {},
+  costEntries = [],
 }: {
   selectedNode: SelectedNodeInfo | null;
   nodeRun: NodeRun | undefined;
@@ -196,6 +254,10 @@ export function NodeInspector({
   // description shown on the Overview tab. Optional so callers that haven't
   // fetched it yet just render without that section.
   nodeTypesByName?: Record<string, NodeTypeManifest>;
+  // Every AI-cost ledger entry for the run (not just this node) — filtered
+  // to the selected node below. Undefined until the run completes and
+  // /api/cost/run/{id} resolves.
+  costEntries?: CostLedgerEntry[];
 }) {
   const [tab, setTab] = useState<TabKey>('overview');
   const hasError = Boolean(nodeRun?.error);
@@ -277,7 +339,12 @@ export function NodeInspector({
         {tab === 'logs' && <LogsTab nodeRun={nodeRun} />}
         {tab === 'errors' && <ErrorsTab nodeRun={nodeRun} run={run} navigate={navigate} />}
         {tab === 'metadata' && <MetadataTabContent nodeRun={nodeRun} />}
-        {tab === 'performance' && <PerformanceTabContent nodeRun={nodeRun} />}
+        {tab === 'performance' && (
+          <PerformanceTabContent
+            nodeRun={nodeRun}
+            costEntries={costEntries.filter((entry) => entry.node_id === selectedNode.id)}
+          />
+        )}
       </div>
     </div>
   );

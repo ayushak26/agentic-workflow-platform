@@ -57,6 +57,7 @@ async def _compress_one(
         user=_COMPRESS_USER.format(query=query, passage=chunk.text),
         temperature=0.0,
         max_tokens=min(len(chunk.text), 800),
+        stage="compress",
     )
     extracted = response.text.strip()
 

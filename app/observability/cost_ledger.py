@@ -70,6 +70,19 @@ class LedgerEntry:
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens:     int = 0
     cost_source: CostSource = "estimated"
+    # Task/provider/latency telemetry (§30 requires these per call).
+    task_type:       str = "unknown"   # e.g. structured_extraction, reasoning, rerank
+    provider:        str = "unknown"   # e.g. openrouter, anthropic, openai, moonshot-local
+    latency_ms:      float | None = None
+    fallback_used:   bool = False
+    fallback_reason: str | None = None
+    # RAG pipeline stage this call belongs to (query_rewrite/rerank/compress/
+    # generation), or None for a call outside a RAG pipeline entirely.
+    stage: str | None = None
+    # True for an explicit zero-cost telemetry entry (a pipeline stage that
+    # genuinely has no model charge, e.g. plain hybrid search) rather than a
+    # priced call that happened to cost $0.
+    no_model_charge: bool = False
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -111,6 +124,13 @@ class CostLedger:
                 "cache_read_input_tokens":     entry.cache_read_input_tokens,
                 "cost_usd":       entry.cost_usd,
                 "cost_source":    entry.cost_source,
+                "task_type":      entry.task_type,
+                "provider":       entry.provider,
+                "latency_ms":     entry.latency_ms,
+                "fallback_used":  entry.fallback_used,
+                "fallback_reason": entry.fallback_reason,
+                "stage":          entry.stage,
+                "no_model_charge": entry.no_model_charge,
                 "ts":             entry.ts,
             })
         logger.info(
@@ -123,17 +143,113 @@ class CostLedger:
             cache_creation_input_tokens=entry.cache_creation_input_tokens,
             cache_read_input_tokens=entry.cache_read_input_tokens,
             cost_source=entry.cost_source,
+            task_type=entry.task_type,
+            provider=entry.provider,
+            latency_ms=entry.latency_ms,
+            fallback_used=entry.fallback_used,
+            fallback_reason=entry.fallback_reason,
+            stage=entry.stage,
+            no_model_charge=entry.no_model_charge,
         )
+
+    def record_no_charge(
+        self,
+        *,
+        run_id: str,
+        session_id: str,
+        node_id: str,
+        stage: str,
+        task_type: str = "retrieval",
+        note: str = "",
+    ) -> None:
+        """Log a pipeline stage that genuinely has no model charge.
+
+        Used so a stage like plain hybrid search shows up in a cost
+        breakdown as "no model charge" rather than being silently absent —
+        absence reads as "not measured", not as "measured at zero" (§29/§33).
+        """
+        self.record(
+            LedgerEntry(
+                run_id=run_id,
+                session_id=session_id,
+                node_id=node_id,
+                model="",
+                intended_model="",
+                input_tokens=0,
+                output_tokens=0,
+                cost_usd=0.0,
+                task_type=task_type,
+                provider="",
+                stage=stage,
+                no_model_charge=True,
+                fallback_reason=note or None,
+            )
+        )
+
+    @staticmethod
+    def _group_by(entries: list[dict], key: str) -> list[dict]:
+        groups: dict[str, dict] = {}
+        order: list[str] = []
+        for entry in entries:
+            label = entry.get(key) or "unknown"
+            if label not in groups:
+                groups[label] = {
+                    key: label,
+                    "calls": 0,
+                    "cost_usd": 0.0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "latency_ms_total": 0.0,
+                    "latency_samples": 0,
+                    "no_model_charge": True,
+                }
+                order.append(label)
+            group = groups[label]
+            group["calls"] += 1
+            group["cost_usd"] += entry.get("cost_usd") or 0.0
+            group["input_tokens"] += entry.get("input_tokens") or 0
+            group["output_tokens"] += entry.get("output_tokens") or 0
+            if entry.get("latency_ms") is not None:
+                group["latency_ms_total"] += entry["latency_ms"]
+                group["latency_samples"] += 1
+            if not entry.get("no_model_charge"):
+                group["no_model_charge"] = False
+        result = []
+        for label in order:
+            group = groups[label]
+            samples = group.pop("latency_samples")
+            total_latency = group.pop("latency_ms_total")
+            group["cost_usd"] = round(group["cost_usd"], 6)
+            group["avg_latency_ms"] = (
+                round(total_latency / samples, 1) if samples else None
+            )
+            result.append(group)
+        return result
 
     def run_summary(self, run_id: str, session_id: str | None = None) -> dict:
         if self._col is None:
-            return {"run_id": run_id, "total_usd": 0.0, "by_node": []}
+            return {
+                "run_id": run_id,
+                "total_usd": 0.0,
+                "by_node": [],
+                "by_node_summary": [],
+                "by_task_type": [],
+                "by_stage": [],
+            }
         query: dict = {"run_id": run_id}
         if session_id is not None:
             query["session_id"] = session_id
         entries = list(self._col.find(query, {"_id": 0}))
         total = round(sum(e["cost_usd"] for e in entries), 6)
-        return {"run_id": run_id, "total_usd": total, "by_node": entries}
+        stage_entries = [e for e in entries if e.get("stage")]
+        return {
+            "run_id": run_id,
+            "total_usd": total,
+            "by_node": entries,
+            "by_node_summary": self._group_by(entries, "node_id"),
+            "by_task_type": self._group_by(entries, "task_type"),
+            "by_stage": self._group_by(stage_entries, "stage"),
+        }
 
     def session_summary(self, session_id: str) -> dict:
         if self._col is None:

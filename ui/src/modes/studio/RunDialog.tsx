@@ -236,8 +236,8 @@ export function RunDialog({
       // A Builder-originated launch (a "Run in Cockpit" or a node/branch
       // test) always carries launchContext and stays on the technical
       // Cockpit surface. A normal Library launch has none and defaults to
-      // the business-language Guided Run surface instead.
-      const surface = launchContext ? 'cockpit' : 'guided';
+      // the business-language Business View surface instead.
+      const surface = launchContext ? 'cockpit' : 'business';
       navigate(`/${surface}/${runId}`, {
         state: { workflowYaml, workflowName, inputs: runInputs, ...launchContext },
       });

@@ -159,6 +159,7 @@ class RAGService:
                 system=generation.instruction,
                 user=f"QUESTION:\n{query}\n\nSOURCES:\n{retrieval.final_context}",
                 temperature=generation.temperature,
+                stage="generation",
             )
             answer = response.text
         generation_ms = (time.perf_counter() - generation_started) * 1000

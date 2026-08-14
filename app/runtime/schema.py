@@ -136,6 +136,10 @@ class NodeExperienceSpec(BaseModel):
     expected_output: str | None = None
     success_condition: str | None = None
     quality_checks: list[str] = Field(default_factory=list)
+    # In-progress vs. done copy for Business View's "current activity" line
+    # (§28/§79) — distinct from failure_message, which covers the error path.
+    running_message: str | None = None
+    completed_message: str | None = None
     failure_message: str | None = None
     recovery_actions: list[str] = Field(default_factory=list)
     visibility: Literal["standard", "summary", "advanced"] = "standard"

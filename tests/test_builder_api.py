@@ -84,13 +84,13 @@ class TestOutputContract:
         )
         fields = {item["path"]: item for item in understand["fields"]}
 
-        assert fields["result.intent"]["type"] == "enum"
-        assert "technical_support" in fields["result.intent"]["enum_values"]
-        assert fields["result.equipment.model"]["type"] == "string"
+        assert fields["result.request_types"]["type"] == "list"
+        assert "technical_support" in fields["result.request_types"]["enum_values"]
+        assert fields["result.product_model"]["type"] == "string"
         assert fields["confidence"]["type"] == "number"
 
     def test_each_field_carries_the_reference_the_editor_should_write(self, client):
-        """So an author never types `{{outputs.understand_request.result.intent}}`
+        """So an author never types `{{outputs.understand_request.result.request_types}}`
         by hand — clicking the field is the mapping (§14)."""
         body = client.post(
             "/api/builder/output-contract",
@@ -99,10 +99,10 @@ class TestOutputContract:
         understand = next(
             item for item in body["nodes"] if item["node_id"] == "understand_request"
         )
-        intent = next(
-            item for item in understand["fields"] if item["path"] == "result.intent"
+        request_types = next(
+            item for item in understand["fields"] if item["path"] == "result.request_types"
         )
-        assert intent["reference"] == "{{outputs.understand_request.result.intent}}"
+        assert request_types["reference"] == "{{outputs.understand_request.result.request_types}}"
 
     def test_it_flags_values_that_may_be_unavailable(self, client):
         """§15: a required field inside an optional object can still be null, and
@@ -114,12 +114,12 @@ class TestOutputContract:
         understand = next(
             item for item in body["nodes"] if item["node_id"] == "understand_request"
         )
-        model = next(
+        email = next(
             item
             for item in understand["fields"]
-            if item["path"] == "result.equipment.model"
+            if item["path"] == "result.requestor.email"
         )
-        assert model["may_be_unavailable"] is True
+        assert email["may_be_unavailable"] is True
 
     def test_operators_are_attached_per_field(self, client):
         """§39: the editor offers `contains` for a list and `>=` for a number
@@ -394,19 +394,23 @@ class TestSimulation:
     EXTRACTED = {
         "result": {
             "language": "de",
-            "intent": "technical_support",
-            "summary": "The customer's pump has failed and production is down.",
-            "customer": {"name": None, "company": "Werke GmbH", "email": None, "phone": None},
-            "equipment": {
-                "product_family": None,
-                "model": "Dura 15",
-                "serial_number": "82912",
-            },
-            "process": None,
+            "request_types": ["technical_support"],
+            "request_summary": "The customer's pump has failed and production is down.",
+            "requestor": {"name": None, "email": None, "phone": None},
+            "organization": "Werke GmbH",
+            "product": None,
+            "product_model": "Dura 15",
+            "serial_number": "82912",
+            "quantity": None,
+            "medium": None,
+            "flow_rate": None,
             "production_stopped": True,
             "urgency": "critical",
             "requested_action": "Call us urgently.",
             "missing_information": [],
+            "blocking_missing_information": [],
+            "ambiguities": [],
+            "suggested_actions": ["Create an urgent technical support case"],
             "confidence": 0.93,
             "reasoning": "Stated failure and stopped production.",
         },

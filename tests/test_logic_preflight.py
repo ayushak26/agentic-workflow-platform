@@ -63,17 +63,19 @@ def as_field_router(spec: dict) -> dict:
     have something to prove, so these tests convert to it explicitly rather than
     depending on which mode the example happens to use.
     """
+    # decisions.primary_intent (a DecisionAgent rule output) has no declared
+    # enum, so the enum/branch-coverage checks below have nothing to validate
+    # against on that field. urgency is a real `type: enum` field on
+    # understand_request's own declared schema — same "field mode" shape,
+    # genuinely enum-checkable.
     node(spec, "route_request")["config"] = {
         "mode": "field",
-        "route_field": "outputs.understand_request.result.intent",
+        "route_field": "outputs.understand_request.result.urgency",
         "branches": {
-            "quotation_request": "sales",
-            "order_status": "sales",
-            "technical_support": "technical_support",
-            "spare_part_request": "spare_parts",
-            "complaint": "customer_service",
-            "general_inquiry": "human_review",
-            "other": "human_review",
+            "low": "sales",
+            "normal": "sales",
+            "high": "technical_support",
+            "critical": "technical_support",
         },
         "fallback": "human_review",
     }
@@ -131,7 +133,7 @@ class TestFieldReferences:
             for issue in report_for(spec).issues
             if issue.code == "UNKNOWN_FIELD_REFERENCE"
         )
-        assert "result.intent" in message
+        assert "result.language" in message
 
     def test_a_reference_to_a_nonexistent_step_is_caught(self, triage):
         spec = copy.deepcopy(triage)
@@ -162,7 +164,7 @@ class TestFieldReferences:
 class TestOperatorTyping:
     def test_a_numeric_operator_on_a_list_is_rejected(self, triage):
         spec = copy.deepcopy(triage)
-        target = rule(spec, "automation_safety", "spare part")["when"]["conditions"][1]
+        target = rule(spec, "automation_safety", "without a model")["when"]["conditions"][1]
         target.update({"operator": "greater_or_equal", "value": 1})
         assert "RULE_TYPE_MISMATCH" in codes(spec)
 
@@ -175,7 +177,7 @@ class TestOperatorTyping:
 
     def test_a_valid_operator_produces_no_issue(self, triage):
         spec = copy.deepcopy(triage)
-        target = rule(spec, "automation_safety", "spare part")["when"]["conditions"][1]
+        target = rule(spec, "automation_safety", "without a model")["when"]["conditions"][1]
         target.update({"operator": "is_not_empty"})
         target.pop("value", None)
         assert "RULE_TYPE_MISMATCH" not in codes(spec)
@@ -213,9 +215,9 @@ class TestThresholds:
 class TestEnumValues:
     def test_a_rule_comparing_against_a_value_outside_the_enum_is_caught(self, triage):
         spec = copy.deepcopy(triage)
-        rule(spec, "automation_safety", "complaint")["when"]["conditions"][0][
+        rule(spec, "automation_safety", "strategic account")["when"]["conditions"][0][
             "value"
-        ] = "beschwerde"
+        ] = "urgentissimo"
         assert "INVALID_ENUM_VALUE" in codes(spec)
 
     def test_a_router_branching_on_an_impossible_value_is_caught(self, triage):
@@ -257,13 +259,13 @@ class TestRouterBranches:
         spec = as_field_router(copy.deepcopy(triage))
         config = node(spec, "route_request")["config"]
         config.pop("fallback")
-        config["branches"].pop("other")
+        config["branches"].pop("critical")
         messages = [
             issue.message
             for issue in report_for(spec).issues
             if issue.code == "MISSING_DEFAULT_ROUTE"
         ]
-        assert any("'other'" in message or "other" in message for message in messages)
+        assert any("'critical'" in message or "critical" in message for message in messages)
 
 
 class TestConditionalJoins:
@@ -358,7 +360,7 @@ class TestSchemaContract:
         fires, the workflow is blocked rather than run."""
         spec = copy.deepcopy(triage)
         fields = node(spec, "understand_request")["config"]["output_fields"]
-        next(item for item in fields if item["name"] == "intent")["enum_values"] = []
+        next(item for item in fields if item["name"] == "urgency")["enum_values"] = []
         assert not report_for(spec).valid
 
 

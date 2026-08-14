@@ -179,56 +179,6 @@ OPENAI_MODEL_REGISTRY: tuple[OpenAIModelDefinition, ...] = (
         image_input=True,
     ),
     OpenAIModelDefinition(
-        name="o3",
-        display_name="o3",
-        kind="llm",
-        tier="premium",
-        strengths=frozenset(
-            {"reasoning", "structured", "tool_use", "verification"}
-        ),
-        speed_rank=1,
-        input_usd_per_1k=0.002,
-        output_usd_per_1k=0.008,
-        tool_calling=True,
-        structured_output=True,
-        image_input=True,
-        reasoning_efforts=("low", "medium", "high"),
-    ),
-    OpenAIModelDefinition(
-        name="o4-mini",
-        display_name="o4-mini",
-        kind="llm",
-        tier="standard",
-        strengths=frozenset(
-            {"reasoning", "structured", "tool_use", "coding", "verification"}
-        ),
-        speed_rank=3,
-        input_usd_per_1k=0.0011,
-        output_usd_per_1k=0.0044,
-        tool_calling=True,
-        structured_output=True,
-        image_input=True,
-        reasoning_efforts=("low", "medium", "high"),
-    ),
-    OpenAIModelDefinition(
-        name="o4-mini-2025-04-16",
-        display_name="o4-mini (2025-04-16 snapshot)",
-        kind="llm",
-        tier="standard",
-        strengths=frozenset(
-            {"reasoning", "structured", "tool_use", "coding", "verification"}
-        ),
-        speed_rank=3,
-        input_usd_per_1k=0.0011,
-        output_usd_per_1k=0.0044,
-        tool_calling=True,
-        structured_output=True,
-        image_input=True,
-        reasoning_efforts=("low", "medium", "high"),
-        deprecated=True,
-        snapshot_of="o4-mini",
-    ),
-    OpenAIModelDefinition(
         name="text-embedding-3-small",
         display_name="Text Embedding 3 Small",
         kind="embedding",
@@ -278,46 +228,6 @@ OPENAI_MODEL_REGISTRY: tuple[OpenAIModelDefinition, ...] = (
         speed_rank=3,
         deprecated=True,
     ),
-    OpenAIModelDefinition(
-        name="o3-deep-research",
-        display_name="o3 Deep Research",
-        kind="deep_research",
-        tier="specialized",
-        strengths=frozenset(
-            {"deep_research", "web_research", "synthesis", "reasoning"}
-        ),
-        speed_rank=1,
-        input_usd_per_1k=0.010,
-        output_usd_per_1k=0.040,
-        image_input=True,
-    ),
-    OpenAIModelDefinition(
-        name="o4-mini-deep-research",
-        display_name="o4-mini Deep Research",
-        kind="deep_research",
-        tier="specialized",
-        strengths=frozenset({"deep_research", "web_research", "synthesis"}),
-        speed_rank=2,
-        input_usd_per_1k=0.002,
-        output_usd_per_1k=0.008,
-        image_input=True,
-        deprecated=True,
-    ),
-    OpenAIModelDefinition(
-        name="o4-mini-deep-research-2025-06-26",
-        display_name="o4-mini Deep Research (2025-06-26 snapshot)",
-        kind="deep_research",
-        tier="specialized",
-        strengths=frozenset(
-            {"deep_research", "web_research", "synthesis", "reproducibility"}
-        ),
-        speed_rank=2,
-        input_usd_per_1k=0.002,
-        output_usd_per_1k=0.008,
-        image_input=True,
-        deprecated=True,
-        snapshot_of="o4-mini-deep-research",
-    ),
 )
 
 OPENAI_MODEL_BY_NAME = {
@@ -345,14 +255,12 @@ OPENAI_DEEP_RESEARCH_MODEL_NAMES = models_for_kind("deep_research")
 OPENAI_LLM_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
     "gpt-5.6-sol": (
         "gpt-5.6-terra",
-        "o3",
         "gpt-5",
         "gpt-5.6-luna",
         "gpt-5-mini",
         "gpt-4o-mini",
     ),
     "gpt-5.6-terra": (
-        "o4-mini",
         "gpt-5",
         "gpt-5.6-luna",
         "gpt-5-mini",
@@ -365,7 +273,6 @@ OPENAI_LLM_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
     ),
     "gpt-5": (
         "gpt-5.6-terra",
-        "o4-mini",
         "gpt-5-mini",
         "gpt-4o-mini",
     ),
@@ -378,22 +285,6 @@ OPENAI_LLM_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
         "gpt-5.6-luna",
         "gpt-5-mini",
         "gpt-5.6-terra",
-    ),
-    "o3": (
-        "o4-mini",
-        "o4-mini-2025-04-16",
-        "gpt-5.6-terra",
-        "gpt-5",
-    ),
-    "o4-mini": (
-        "o4-mini-2025-04-16",
-        "gpt-5.6-terra",
-        "gpt-5-mini",
-    ),
-    "o4-mini-2025-04-16": (
-        "o4-mini",
-        "gpt-5.6-terra",
-        "gpt-5-mini",
     ),
 }
 
@@ -416,20 +307,6 @@ OPENAI_EMBEDDING_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
     "text-embedding-3-small": ("text-embedding-ada-002",),
     "text-embedding-ada-002": ("text-embedding-3-small",),
 }
-
-OPENAI_DEEP_RESEARCH_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
-    "o3-deep-research": (
-        "o4-mini-deep-research",
-    ),
-    "o4-mini-deep-research": (
-        "o3-deep-research",
-    ),
-    "o4-mini-deep-research-2025-06-26": (
-        "o4-mini-deep-research",
-        "o3-deep-research",
-    ),
-}
-
 
 def openai_model(model: str) -> OpenAIModelDefinition:
     try:

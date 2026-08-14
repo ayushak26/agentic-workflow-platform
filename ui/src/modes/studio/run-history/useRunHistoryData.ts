@@ -150,9 +150,9 @@ export function useRunHistoryData(runId: string | undefined) {
     });
   }
 
-  function openInGuided() {
+  function openInBusinessView() {
     if (!detail?.run.workflow_yaml) return;
-    navigate(`/guided/${detail.run.run_id}`, {
+    navigate(`/business/${detail.run.run_id}`, {
       state: {
         attach: true,
         workflowYaml: detail.run.workflow_yaml,
@@ -263,7 +263,7 @@ export function useRunHistoryData(runId: string | undefined) {
     blockingPipelineId,
     retryFailedRun,
     openInCockpit,
-    openInGuided,
+    openInBusinessView,
     autofixBusy,
     autofixErr,
     autofixAndOpenInBuilder,

@@ -63,7 +63,7 @@ export function Cockpit() {
     gate, gateHidden, setGateHidden, gateFetchError, retryGateFetch,
     finished, streamError, cockpit, activeNodeId, reusedNodeCount,
     applyResumeResult, pipelineDoc, continueToNextStage, continuingStage,
-    continueError, liveRunNodeStatus,
+    continueError, liveRunNodeStatus, costSummary,
   } = run;
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -374,7 +374,7 @@ export function Cockpit() {
         {!navState.testLabel && (
           <div className="flex-none flex justify-end border-b border-slate-200 bg-white px-4 py-2">
             <button
-              onClick={() => navigate(`/guided/${runId}`, {
+              onClick={() => navigate(`/business/${runId}`, {
                 state: {
                   attach: true,
                   workflowYaml: navState.workflowYaml ?? liveRun?.workflow_yaml,
@@ -383,7 +383,7 @@ export function Cockpit() {
               })}
               className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
             >
-              View guided run
+              Open Business View
             </button>
           </div>
         )}
@@ -450,6 +450,7 @@ export function Cockpit() {
       fullscreen={fullscreenOutput}
       onToggleFullscreen={() => setFullscreenOutput((v) => !v)}
       nodeTypesByName={nodeTypesByName}
+      costEntries={costSummary?.by_node}
     />
   );
 
@@ -470,6 +471,7 @@ export function Cockpit() {
                 onSelect={focusNode}
                 collapsed={leftCollapsed}
                 onToggleCollapsed={() => setLeftCollapsed((v) => !v)}
+                costSummary={costSummary}
               />
             </div>
             {!leftCollapsed && <ResizeHandle {...leftPanel.handleProps} dragging={leftPanel.dragging} />}
@@ -563,10 +565,10 @@ export function Cockpit() {
               {fullscreenGraph ? 'Exit full screen' : 'Full-screen graph'}
             </ToolbarButton>
             {/* A node/branch test's YAML is a synthetic slice with no
-                business meaning of its own — Guided Run isn't offered for it. */}
+                business meaning of its own — Business View isn't offered for it. */}
             {!navState.testLabel && (
               <ToolbarButton
-                onClick={() => navigate(`/guided/${runId}`, {
+                onClick={() => navigate(`/business/${runId}`, {
                   state: {
                     attach: true,
                     workflowYaml: navState.workflowYaml ?? liveRun?.workflow_yaml,
@@ -574,7 +576,7 @@ export function Cockpit() {
                   },
                 })}
               >
-                View guided run
+                Open Business View
               </ToolbarButton>
             )}
             {navState.builderReturnPath && (

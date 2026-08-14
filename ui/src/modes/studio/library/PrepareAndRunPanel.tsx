@@ -61,7 +61,7 @@ export function PrepareAndRunPanel({
     setError(null);
     try {
       const runId = crypto.randomUUID();
-      navigate(`/guided/${runId}`, {
+      navigate(`/business/${runId}`, {
         state: { workflowYaml: yamlText, workflowName: workflow.name, inputs: {} },
       });
     } finally {

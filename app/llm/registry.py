@@ -12,9 +12,13 @@ stubbed, we resolve to the closest live equivalent via a documented map.
 Providers in scope:
   - Anthropic                                  — claude-*
   - OpenAI                                     — gpt-*
-  - OpenAI reasoning                           — o3 / o4-mini*
   - Private Moonshot-compatible endpoint       — local-kimi-*
   - Private Z.ai-compatible endpoint           — local-glm-*
+
+The OpenAI o-series reasoning models (o1/o3/o4-mini) are intentionally not in
+this catalog: they reject arbitrary `temperature` values (only the model
+default is accepted), which auto-routing has no reason to special-case for,
+and the business has marked them deprecated.
 """
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ from app.llm.local_openai_gw import (
     LocalOpenAICompatibleGateway,
 )
 from app.llm.model_catalog import AUTO_MODEL, MODEL_PROFILE_BY_NAME
-from app.llm.model_router import ModelRouter
+from app.llm.model_router import ModelRouter, infer_task_kind
 from app.llm.openai_gw import OpenAIGateway
 from app.llm.openrouter_gw import OpenRouterGateway
 from app.llm.openai_registry import (
@@ -61,8 +65,6 @@ _PREFIX_ROUTES: list[tuple[str, type[LLMGateway]]] = [
     ("local-glm-",  GLM5LocalGateway),
     ("claude-", AnthropicGateway),
     ("gpt-",    OpenAIGateway),
-    ("o3",      OpenAIGateway),
-    ("o4-",     OpenAIGateway),
 ]
 
 # Legacy provider fallbacks are retained for backward compatibility. The
@@ -420,6 +422,34 @@ def _glm_profile() -> LocalModelProfile:
         timeout_seconds=settings.local_llm_timeout_seconds,
         verify_served_model=settings.local_llm_verify_served_model,
     )
+
+
+#: Friendly provider label per gateway class, for cost telemetry (§30/§48).
+#: Distinct from the model name itself — several models share one provider.
+_PROVIDER_NAME_BY_GATEWAY: dict[type[LLMGateway], str] = {
+    OpenAIGateway: "openai",
+    AnthropicGateway: "anthropic",
+    OpenRouterGateway: "openrouter",
+    KimiK3LocalGateway: "moonshot-local",
+    GLM5LocalGateway: "zai-local",
+}
+
+
+def _provider_name_for(model: str) -> str:
+    try:
+        return _PROVIDER_NAME_BY_GATEWAY.get(_gateway_class_for(model), "unknown")
+    except ValueError:
+        return "unknown"
+
+
+def _safe_task_kind(
+    method_name: str, kwargs: dict[str, Any], node_type: str | None
+) -> str:
+    """infer_task_kind(), but cost telemetry must never break a call."""
+    try:
+        return infer_task_kind(method_name, kwargs, node_type=node_type)
+    except Exception:
+        return "unknown"
 
 
 def local_model_enabled(model: str) -> bool:
@@ -873,7 +903,17 @@ class RegistryLLMGateway(LLMGateway):
         if self._event_bus is not None:
             await self._event_bus.publish(evt)
 
-    def _record_cost(self, intended: str, resolved: str, resp) -> None:
+    def _record_cost(
+        self,
+        intended: str,
+        resolved: str,
+        resp,
+        *,
+        task_type: str = "unknown",
+        latency_ms: float | None = None,
+        fallback_reason: str | None = None,
+        stage: str | None = None,
+    ) -> None:
         """Write a LedgerEntry if we have context + a ledger."""
         if self._ledger is None:
             return
@@ -913,6 +953,12 @@ class RegistryLLMGateway(LLMGateway):
                 cache_read_input_tokens=cache_read,
                 cost_usd=cost_usd,
                 cost_source="provider_reported" if authoritative_cost is not None else "estimated",
+                task_type=task_type,
+                provider=_provider_name_for(resolved),
+                latency_ms=latency_ms,
+                fallback_used=resolved != intended,
+                fallback_reason=fallback_reason,
+                stage=stage,
             )
             self._ledger.record(entry)
         except Exception:
@@ -987,12 +1033,21 @@ class RegistryLLMGateway(LLMGateway):
         intended: str,
         kwargs: dict[str, Any],
         candidate_models: tuple[str, ...] | list[str] | None = None,
-    ) -> tuple[Any, str]:
+    ) -> tuple[Any, str, float, str | None]:
+        """Returns (response, resolved_model, latency_ms, fallback_reason).
+
+        ``fallback_reason`` is None on the first candidate; when a later
+        candidate is the one that actually succeeds, it summarizes why the
+        earlier candidate(s) were skipped — for cost-telemetry visibility
+        (§30/§32), not just a log line.
+        """
         candidates = self._models_for_call(
             intended,
             candidate_models=candidate_models,
         )
         last_error: BaseException | None = None
+        last_failure_reason: str | None = None
+        started = time.monotonic()
 
         for model_index, candidate in enumerate(candidates):
             gateway, resolved = get_gateway(candidate)
@@ -1014,7 +1069,9 @@ class RegistryLLMGateway(LLMGateway):
                 try:
                     method = getattr(gateway, method_name)
                     response = await method(model=resolved, **kwargs)
-                    return response, resolved
+                    latency_ms = round((time.monotonic() - started) * 1000, 1)
+                    fallback_reason = last_failure_reason if model_index else None
+                    return response, resolved, latency_ms, fallback_reason
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -1028,6 +1085,10 @@ class RegistryLLMGateway(LLMGateway):
                     exhausted = attempt >= self._retry_policy.max_attempts
 
                     if model_unavailable:
+                        last_failure_reason = (
+                            f"{candidate} unavailable ({type(exc).__name__}"
+                            f"{f', status {_status_code(exc)}' if _status_code(exc) else ''})"
+                        )
                         unavailable_result = ModelAccessResult(
                             available=False,
                             reason=(
@@ -1087,6 +1148,10 @@ class RegistryLLMGateway(LLMGateway):
                         await self._sleep(delay)
                         continue
 
+                    last_failure_reason = (
+                        f"{candidate} exhausted retries ({type(exc).__name__}"
+                        f"{f', status {_status_code(exc)}' if _status_code(exc) else ''})"
+                    )
                     log.warning(
                         "llm.provider_exhausted",
                         intended=intended,
@@ -1102,21 +1167,25 @@ class RegistryLLMGateway(LLMGateway):
         assert last_error is not None
         raise last_error
 
-    async def complete(self, *, model: str, **kwargs):
+    async def complete(self, *, model: str, stage: str | None = None, **kwargs):
         """Public entry point — tokenizes system/user, delegates to the
         unchanged implementation, then detokenizes the response. Skipped
         entirely (zero behavior change) when no entity_tokenizer/session_id
-        is bound — see with_context()."""
+        is bound — see with_context().
+
+        ``stage`` optionally tags this call within a larger pipeline (e.g.
+        "rerank"/"compress"/"generation" inside a RAG node) for cost
+        telemetry — it never reaches a provider API."""
         if self._entity_tokenizer is None or self._session_id is None:
-            return await self._complete_impl(model=model, **kwargs)
+            return await self._complete_impl(model=model, stage=stage, **kwargs)
         tokenized = dict(kwargs)
         tokenized["system"] = await self._tokenize_text(kwargs.get("system", ""))
         tokenized["user"] = await self._tokenize_text(kwargs.get("user", ""))
-        resp = await self._complete_impl(model=model, **tokenized)
+        resp = await self._complete_impl(model=model, stage=stage, **tokenized)
         detokenized_text = await self._detokenize_value(resp.text)
         return resp.model_copy(update={"text": detokenized_text})
 
-    async def _complete_impl(self, *, model: str, **kwargs):
+    async def _complete_impl(self, *, model: str, stage: str | None = None, **kwargs):
         # Fast path: no routing context bound (executor's plain calls, scripts,
         # and the existing test suite). Behaviour is exactly as before —
         # no selection, no events, no on_token injection.
@@ -1143,13 +1212,21 @@ class RegistryLLMGateway(LLMGateway):
                     from app.llm.base import LLMResponse
 
                     return LLMResponse(**lookup.response)
-            resp, resolved = await self._call_resilient(
+            resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
                 "complete",
                 intended=model,
                 kwargs=kwargs,
             )
             _record_usage(model, resolved, resp)
-            self._record_cost(model, resolved, resp)
+            self._record_cost(
+                model,
+                resolved,
+                resp,
+                task_type=_safe_task_kind("complete", kwargs, self._node_type),
+                latency_ms=latency_ms,
+                fallback_reason=fallback_reason,
+                stage=stage,
+            )
             if use_cache:
                 await cache.put(
                     session_id=self._session_id,
@@ -1209,7 +1286,7 @@ class RegistryLLMGateway(LLMGateway):
 
         call_kwargs = dict(kwargs)
         call_kwargs["on_token"] = _emit_token
-        resp, resolved = await self._call_resilient(
+        resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
             "complete",
             intended=intended,
             kwargs=call_kwargs,
@@ -1222,33 +1299,49 @@ class RegistryLLMGateway(LLMGateway):
         event_dict["actual_model"] = resolved
         event_dict["fallback"] = resolved != resolved_preview
         _record_usage(intended, resolved, resp)
-        self._record_cost(intended, resolved, resp)
+        self._record_cost(
+            intended,
+            resolved,
+            resp,
+            task_type=selection.task_kind,
+            latency_ms=latency_ms,
+            fallback_reason=fallback_reason,
+            stage=stage,
+        )
         return resp
 
-    async def complete_structured(self, *, model: str, **kwargs):
+    async def complete_structured(self, *, model: str, stage: str | None = None, **kwargs):
         """Public entry point — tokenizes system/user, delegates, then
         detokenizes every string field of the parsed structured result by
         walking its model_dump() and re-validating. Skipped entirely when no
         entity_tokenizer/session_id is bound."""
         if self._entity_tokenizer is None or self._session_id is None:
-            return await self._complete_structured_impl(model=model, **kwargs)
+            return await self._complete_structured_impl(model=model, stage=stage, **kwargs)
         tokenized = dict(kwargs)
         tokenized["system"] = await self._tokenize_text(kwargs.get("system", ""))
         tokenized["user"] = await self._tokenize_text(kwargs.get("user", ""))
-        parsed = await self._complete_structured_impl(model=model, **tokenized)
+        parsed = await self._complete_structured_impl(model=model, stage=stage, **tokenized)
         response_model = type(parsed)
         walked = await self._detokenize_value(parsed.model_dump())
         return response_model.model_validate(walked)
 
-    async def _complete_structured_impl(self, *, model: str, **kwargs):
+    async def _complete_structured_impl(self, *, model: str, stage: str | None = None, **kwargs):
         if self._event_bus is None and self._allowed_models is None:
-            resp, resolved = await self._call_resilient(
+            resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
                 "complete_structured",
                 intended=model,
                 kwargs=kwargs,
             )
             _record_usage(model, resolved, resp)
-            self._record_cost(model, resolved, resp)
+            self._record_cost(
+                model,
+                resolved,
+                resp,
+                task_type=_safe_task_kind("complete_structured", kwargs, self._node_type),
+                latency_ms=latency_ms,
+                fallback_reason=fallback_reason,
+                stage=stage,
+            )
             return resp.parsed
 
         selection = self._select_model(
@@ -1273,7 +1366,7 @@ class RegistryLLMGateway(LLMGateway):
                 context=event_dict,
             )
         )
-        resp, resolved = await self._call_resilient(
+        resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
             "complete_structured",
             intended=intended,
             kwargs=kwargs,
@@ -1288,7 +1381,15 @@ class RegistryLLMGateway(LLMGateway):
         # Concrete gateways return StructuredResult so cost survives native
         # structured output. The registry preserves the public bare-model API.
         _record_usage(intended, resolved, resp)
-        self._record_cost(intended, resolved, resp)
+        self._record_cost(
+            intended,
+            resolved,
+            resp,
+            task_type=selection.task_kind,
+            latency_ms=latency_ms,
+            fallback_reason=fallback_reason,
+            stage=stage,
+        )
         return resp.parsed
 
     async def chat_with_tools(self, *, model: str, **kwargs):
@@ -1322,13 +1423,20 @@ class RegistryLLMGateway(LLMGateway):
 
     async def _chat_with_tools_impl(self, *, model: str, **kwargs):
         if self._event_bus is None and self._allowed_models is None:
-            resp, resolved = await self._call_resilient(
+            resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
                 "chat_with_tools",
                 intended=model,
                 kwargs=kwargs,
             )
             _record_usage(model, resolved, resp)
-            self._record_cost(model, resolved, resp)
+            self._record_cost(
+                model,
+                resolved,
+                resp,
+                task_type=_safe_task_kind("chat_with_tools", kwargs, self._node_type),
+                latency_ms=latency_ms,
+                fallback_reason=fallback_reason,
+            )
             return resp
 
         selection = self._select_model(
@@ -1353,7 +1461,7 @@ class RegistryLLMGateway(LLMGateway):
                 context=event_dict,
             )
         )
-        resp, resolved = await self._call_resilient(
+        resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
             "chat_with_tools",
             intended=intended,
             kwargs=kwargs,
@@ -1366,7 +1474,14 @@ class RegistryLLMGateway(LLMGateway):
         event_dict["actual_model"] = resolved
         event_dict["fallback"] = resolved != resolved_preview
         _record_usage(intended, resolved, resp)
-        self._record_cost(intended, resolved, resp)
+        self._record_cost(
+            intended,
+            resolved,
+            resp,
+            task_type=selection.task_kind,
+            latency_ms=latency_ms,
+            fallback_reason=fallback_reason,
+        )
         return resp
 
 
