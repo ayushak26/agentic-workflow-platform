@@ -355,8 +355,17 @@ export function Builder() {
     // One-time hydration of a brand-new Builder mount from nav state, not a
     // sync-to-external-system loop — same justification as the analogous
     // effect in Cockpit.tsx.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    hydrateWorkflow(parseYaml(navState.generatedYaml), null, undefined, { dirty: true });
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      hydrateWorkflow(parseYaml(navState.generatedYaml), null, undefined, { dirty: true });
+    } catch (e) {
+      // A generation that failed its static check can still be "opened" —
+      // the YAML it hands back may be structurally invalid (e.g. no nodes).
+      setError(
+        `Couldn't load the generated workflow: ${e instanceof Error ? e.message : String(e)}. ` +
+        'The model likely returned an invalid workflow — try generating again.',
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

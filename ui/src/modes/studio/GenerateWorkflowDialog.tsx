@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import type { GenerateWorkflowResult } from '../../api/types';
 import { InfoPopover } from './builder/InfoPopover';
+import { parseYaml } from './yaml-bridge';
+import { slugify, uniqueSlug } from './workflow-naming';
 
 export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
@@ -10,6 +12,7 @@ export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<GenerateWorkflowResult | null>(null);
+  const [opening, setOpening] = useState(false);
 
   async function generate() {
     if (!prompt.trim() || generating) return;
@@ -26,9 +29,29 @@ export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function openInBuilder() {
-    if (!result) return;
-    navigate('/builder', { state: { generatedYaml: result.yaml } });
+  async function openInBuilder() {
+    if (!result || opening) return;
+    // A generation that failed its own static/execution check is preflight-
+    // invalid by definition — the save endpoint would reject it outright, so
+    // there's nothing to persist yet. Hand it to Builder unsaved instead,
+    // same as before, so the user can still inspect and fix it up.
+    if (!result.success) {
+      navigate('/builder', { state: { generatedYaml: result.yaml } });
+      return;
+    }
+    setOpening(true);
+    setError(null);
+    try {
+      const workflow = parseYaml(result.yaml);
+      const existing = await api.listWorkflows();
+      const slug = uniqueSlug(slugify(workflow.name), new Set(existing.map(w => w.name)));
+      await api.saveWorkflow(slug, result.yaml);
+      navigate(`/builder/${slug}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpening(false);
+    }
   }
 
   return (
@@ -93,7 +116,7 @@ export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
         <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-2">
           <button
             onClick={onClose}
-            disabled={generating}
+            disabled={generating || opening}
             className="px-4 py-2 rounded-md border border-slate-300 text-sm hover:bg-slate-50 disabled:opacity-50"
           >
             Cancel
@@ -101,9 +124,10 @@ export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
           {result ? (
             <button
               onClick={openInBuilder}
-              className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500"
+              disabled={opening}
+              className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
             >
-              Open in Builder
+              {opening ? 'Saving…' : 'Open in Builder'}
             </button>
           ) : (
             <button

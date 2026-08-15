@@ -1,20 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
-
-function slugify(displayName: string): string {
-  return displayName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_\- ]/g, '')
-    .replace(/\s+/g, '_');
-}
-
-// Mirrors the backend's defensive check in app/api/workflows.py:save_workflow —
-// alphanumeric plus underscore/hyphen only. Surfacing the same rule here means
-// the user finds out before submitting, not after a 400.
-function isValidSlug(slug: string): boolean {
-  return slug.length > 0 && /^[a-zA-Z0-9_-]+$/.test(slug);
-}
+import { isValidSlug, slugify } from './workflow-naming';
 
 export function SaveAsDialog({
   initialDisplayName,

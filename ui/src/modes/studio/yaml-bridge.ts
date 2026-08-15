@@ -169,7 +169,7 @@ export function dumpYaml(wf: YamlWorkflow): string {
 export function yamlToReactFlow(
   wf: YamlWorkflow
 ): { nodes: RFNode<WorkflowNodeData>[]; edges: RFEdge<WorkflowEdgeData>[] } {
-  const nodes: RFNode<WorkflowNodeData>[] = wf.nodes.map((n, i) => ({
+  const nodes: RFNode<WorkflowNodeData>[] = (wf.nodes ?? []).map((n, i) => ({
     id: n.id,
     type: 'workflow',                       // matches the key in `nodeTypes` prop
     position: { x: NODE_X, y: i * NODE_Y_GAP },
