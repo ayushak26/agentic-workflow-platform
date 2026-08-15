@@ -15,8 +15,12 @@ const TABS: Array<[Tab, string]> = [['collections', 'Collections'], ['ingestion'
  *  can show a previous collection's documents, indexes or results. */
 function KnowledgeTabs({ tab, setTab }: { tab: Tab; setTab: (value: Tab) => void }) {
   const { collectionId } = useCollection();
+  // Not on 'collections': that tab *is* the create form and its own list, so the
+  // bar would duplicate it — and its empty-state button would only switch to the
+  // tab already open, i.e. a button that does nothing.
+  const showBar = tab !== 'traces' && tab !== 'collections';
   return <>
-    {tab !== 'traces' && <CollectionBar onCreate={() => setTab('collections')} />}
+    {showBar && <CollectionBar onCreate={() => setTab('collections')} />}
     <div key={collectionId}>
       {tab === 'collections' && <CollectionsPage />}
       {tab === 'ingestion' && <IngestionPage onInspect={() => setTab('documents')} onPlayground={() => setTab('playground')} onAgents={() => setTab('agents')} />}

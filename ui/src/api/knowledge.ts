@@ -26,6 +26,10 @@ function jsonHeaders(): Record<string, string> {
 
 // ---- Resource types (mirror app/knowledge/models.py) ----
 
+export type DocTypeChoice = {
+  id: string; label: string; description: string; precision_sensitive: boolean;
+};
+
 export type EmbeddingModelChoice = {
   id: string; label: string; dimensions: number; provider: string; verified: boolean; note: string;
 };
@@ -305,6 +309,10 @@ export const knowledgeApi = {
   documentSourceUrl: (documentId: string): Promise<{ url: string; expires_seconds: number }> =>
     afetch(`${API}/knowledge/documents/${documentId}/source-url`, { headers: getAuthHeaders() })
       .then(r => j<{ url: string; expires_seconds: number }>(r)),
+
+  docTypes: (): Promise<{ doc_types: DocTypeChoice[] }> =>
+    afetch(`${API}/knowledge/doc-types`, { headers: getAuthHeaders() })
+      .then(r => j<{ doc_types: DocTypeChoice[] }>(r)),
 
   embeddingModels: (): Promise<{ models: EmbeddingModelChoice[]; configured_default: string; endpoint: string }> =>
     afetch(`${API}/knowledge/embedding-models`, { headers: getAuthHeaders() })

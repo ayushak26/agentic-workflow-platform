@@ -92,6 +92,15 @@ EMBEDDING_MODELS_BY_ID = {choice.id: choice for choice in EMBEDDING_MODELS}
 
 AUTO_EMBEDDING_MODEL = "auto"
 
+# Collection doc_types where retrieving the wrong passage is expensive enough to
+# justify the higher-quality (and costlier) embedding model. The doc-type
+# catalog derives its "affects embedding choice" flag from this same set, so the
+# picker in the UI can never disagree with what select_embedding_model() does.
+PRECISION_SENSITIVE_DOC_TYPES: frozenset[str] = frozenset({
+    "technical_documentation", "manual", "spec", "specification",
+    "policy", "contract", "legal", "regulation", "standard", "research",
+})
+
 
 def embedding_model_catalog() -> list[dict[str, object]]:
     return [asdict(choice) for choice in EMBEDDING_MODELS]
@@ -139,10 +148,7 @@ def select_embedding_model(
         )
 
     # Precision-sensitive material where a wrong passage is expensive.
-    precise = types & {
-        "technical_documentation", "manual", "spec", "specification",
-        "policy", "contract", "legal", "regulation", "standard", "research",
-    }
+    precise = types & PRECISION_SENSITIVE_DOC_TYPES
     if precise:
         return (
             EMBEDDING_MODELS_BY_ID["openai/text-embedding-3-large"],

@@ -2277,13 +2277,20 @@ async def _probe_workflow_model_access(
 async def preflight_workflow_for_run(
     yaml_text: str,
     *,
-    provided_inputs: dict[str, Any],
+    provided_inputs: dict[str, Any] | None,
     services: dict[str, Any],
     probe_services: bool = True,
     require_run_history: bool = True,
     owner_scope_id: str | None = None,
 ) -> WorkflowPreflightReport:
-    """Strict API gate used immediately before a new or retried run."""
+    """Strict API gate used immediately before a new or retried run.
+
+    `provided_inputs=None` (as opposed to `{}`) is a real, distinct case —
+    forwarded as-is to `preflight_workflow_yaml`, which treats it as "skip
+    input-presence validation, no real inputs exist to check yet" rather
+    than "these are the real inputs, and none were given" (see
+    app.api.workflow_generation's /generate, whose caller usually has no
+    real inputs at all — it's producing a workflow, not running one)."""
 
     report = preflight_workflow_yaml(
         yaml_text,

@@ -178,5 +178,10 @@ def synthesize_about(klass: "Type[NodeType]") -> dict[str, Any]:
             f"See {neighbours['example']} for a working example."
             if neighbours.get("example") else None
         ),
+        # The raw path behind `example`, kept separate from that human-readable
+        # sentence so callers that need the real file (not prose about it) —
+        # e.g. app.api.workflow_generation's "real usage example" step — don't
+        # have to parse it back out of a sentence.
+        "example_workflow_path": neighbours.get("example"),
     }
     return {key: value for key, value in about.items() if value not in (None, [], "")}

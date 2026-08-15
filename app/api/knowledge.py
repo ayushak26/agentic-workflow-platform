@@ -19,6 +19,7 @@ from app.ingestion.embedding_catalog import (
     embedding_model_catalog,
     select_embedding_model,
 )
+from app.knowledge.doc_types import doc_type_catalog
 from app.knowledge.ids import new_resource_id
 from app.knowledge.models import (
     IngestionJob,
@@ -179,6 +180,18 @@ async def ingestion_presets(
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
     return INGESTION_PRESETS
+
+
+@router.get("/doc-types")
+async def doc_types(
+    user: CurrentUser = Depends(require_permission("knowledge:read")),
+):
+    """Document types a Collection may declare.
+
+    An open vocabulary — a Collection may use a value not listed here — but
+    these are the ones the platform actually reads, so the picker offers them.
+    """
+    return {"doc_types": doc_type_catalog()}
 
 
 @router.get("/embedding-models")

@@ -1,20 +1,38 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import app.nodes  # noqa: F401 - populates the registry via discovery
 import pytest
+from fastapi import HTTPException
 
 from app.api.workflow_generation import (
     _EXAMPLE_WORKFLOW_YAML,
+    _MAX_SNIPPET_CHARS,
     _node_type_catalog,
+    _real_usage_examples,
+    _real_usage_snippet,
+    _ROUTING_EXAMPLE_YAML,
+    _SYSTEM_PROMPT_TEMPLATE,
+    GenerateWorkflowRequest,
+    GENERATION_MODEL,
     MAX_REAL_EXECUTION_ATTEMPTS,
     MAX_STATIC_ATTEMPTS,
+    generate_workflow_endpoint,
     run_generation_pipeline,
 )
+from app.llm.openrouter_catalog import OPENROUTER_MODEL_ID_PATTERN
+from app.nodes.registry import NodeRegistry
 from app.runtime.preflight import (
     PreflightIssue,
     PreflightSeverity,
     WorkflowPreflightReport,
     preflight_workflow_yaml,
 )
+from app.security.dependencies import CurrentUser
+from app.security.rbac import Role
+
+USER = CurrentUser(username="user@example.com", role=Role.CONSULTANT, session_id=None)
 
 VALID_REPORT = WorkflowPreflightReport(valid=True)
 
@@ -38,12 +56,106 @@ def test_node_catalog_lists_output_fields_and_flags_structured_output():
     assert "declares structured output" not in echo_line
 
 
+def test_generation_model_is_routed_through_openrouter_not_a_direct_provider():
+    """GENERATION_MODEL previously called Anthropic directly and went down
+    with that one account's credit balance. Routing through OpenRouter
+    (app/llm/registry.py's "openrouter/" prefix) isn't tied to a single
+    provider account; assert both the prefix and that it's a real,
+    well-formed "openrouter/<vendor>/<model>" id, not just a string that
+    happens to start right."""
+    assert GENERATION_MODEL.startswith("openrouter/")
+    assert OPENROUTER_MODEL_ID_PATTERN.match(GENERATION_MODEL)
+
+
+def test_system_prompt_states_the_three_step_process_in_order():
+    """The prompt should walk the model through identify-types, then
+    study-real-usage, then assemble — in that order, and reference the
+    sections that back each step, rather than presenting everything flat."""
+    prompt = _SYSTEM_PROMPT_TEMPLATE
+    step_1 = prompt.index("STEP 1")
+    step_2 = prompt.index("STEP 2")
+    step_3 = prompt.index("STEP 3")
+    # The section *headers* (as opposed to references to them in the step
+    # prose above) are what step_3 points readers at next — search past it.
+    catalog_section = prompt.index("NODE TYPE CATALOG (step 1's result)", step_3)
+    examples_section = prompt.index("REAL USAGE EXAMPLES (step 2", catalog_section)
+    assert step_1 < step_2 < step_3 < catalog_section < examples_section
+    assert "{catalog}" in prompt
+    assert "{examples}" in prompt
+
+
+def test_real_usage_snippet_finds_a_real_config_for_a_type_with_a_known_example():
+    manifest = {entry["type_name"]: entry for entry in NodeRegistry.manifest()}
+    entry = manifest["HumanInLoopAgent"]
+    snippet = _real_usage_snippet("HumanInLoopAgent", entry)
+    assert snippet is not None
+    assert "type: HumanInLoopAgent" in snippet
+
+
+def test_real_usage_snippet_truncates_a_large_real_config():
+    """AITaskAgent's real examples on disk (a 20+ field extraction schema)
+    run well past _MAX_SNIPPET_CHARS — confirm it's actually capped rather
+    than dumped in full, and that the cap lands cleanly with a visible
+    truncation marker instead of a silently cut-off YAML document."""
+    manifest = {entry["type_name"]: entry for entry in NodeRegistry.manifest()}
+    entry = manifest["AITaskAgent"]
+    snippet = _real_usage_snippet("AITaskAgent", entry)
+    assert snippet is not None
+    assert len(snippet) <= _MAX_SNIPPET_CHARS + len("\n... (truncated — real file has more; shape shown is representative)")
+    assert snippet.endswith("(truncated — real file has more; shape shown is representative)")
+
+
+def test_real_usage_snippet_handles_missing_or_broken_inputs_gracefully():
+    # No example on file at all for this type.
+    assert _real_usage_snippet("Literal", {"about": {}}) is None
+    assert _real_usage_snippet("Literal", {}) is None
+
+    # The recorded file doesn't exist on disk (moved/deleted since the
+    # adjacency scan ran).
+    assert _real_usage_snippet(
+        "Literal", {"about": {"example_workflow_path": "workflows/does_not_exist.yaml"}},
+    ) is None
+
+    # The recorded file exists but the requested type isn't actually in it.
+    assert _real_usage_snippet(
+        "SomeTypeNotInThisFile",
+        {"about": {"example_workflow_path": "workflows/test_fixtures/hello_workflow.yaml"}},
+    ) is None
+
+
+def test_real_usage_examples_falls_back_to_a_message_when_nothing_is_found():
+    text = _real_usage_examples(["TotallyUnknownType"], NodeRegistry.manifest())
+    assert "No real-workflow example is on file" in text
+
+    # An empty shortlist degrades the same way rather than raising.
+    assert "No real-workflow example is on file" in _real_usage_examples([], NodeRegistry.manifest())
+
+
+def test_real_usage_examples_only_covers_the_given_shortlist():
+    """Scoped to the request's own candidates, not every type that happens
+    to have an example — otherwise it stops being a compact, request-scoped
+    grounding step and becomes a second full catalog dump."""
+    text = _real_usage_examples(["Literal"], NodeRegistry.manifest())
+    assert "Literal (from" in text
+    assert "AITaskAgent (from" not in text
+
+
 def test_example_workflow_yaml_passes_structural_preflight():
     """The worked example in the generation system prompt is the model's
     only concrete template of a multi-node reference chain — if it doesn't
     pass preflight itself, it's actively teaching the bug it's meant to
     prevent."""
     report = preflight_workflow_yaml(_EXAMPLE_WORKFLOW_YAML)
+    assert report.valid, [issue.message for issue in report.errors]
+
+
+def test_routing_example_workflow_yaml_passes_structural_preflight():
+    """The conditional-routing worked example is the model's only concrete
+    template of `condition: route` + non-reconverging branches — if it
+    doesn't pass preflight itself, it's teaching the exact bug (a templated
+    `condition`, or branches funnelled back into one AND-join node) it
+    exists to prevent."""
+    report = preflight_workflow_yaml(_ROUTING_EXAMPLE_YAML)
     assert report.valid, [issue.message for issue in report.errors]
 
 
@@ -278,3 +390,124 @@ async def test_required_file_input_with_no_sample_skips_execution_gracefully():
     assert executed == []
     assert result.execution_skipped_reason is not None
     assert "upload" in result.execution_skipped_reason
+
+
+class _RaisingLLM:
+    """A stand-in for a provider SDK failure (auth, rate limit, insufficient
+    credit, timeout, ...) — none of these get translated into one of
+    app.llm.errors' provider-neutral types before reaching the endpoint, so
+    the endpoint itself must turn an arbitrary exception into a clean HTTP
+    error instead of crashing with a bare 500."""
+
+    def with_context(self, **_kwargs):
+        return self
+
+    async def complete(self, *_args, **_kwargs):
+        raise RuntimeError(
+            "Error code: 400 - insufficient credit balance to access the API."
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_llm_failure_surfaces_as_a_clean_502_not_a_bare_500():
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(services={"llm": _RaisingLLM()})),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await generate_workflow_endpoint(
+            GenerateWorkflowRequest(prompt="Research job postings and draft a memo."),
+            request,
+            USER,
+        )
+
+    assert exc_info.value.status_code == 502
+    assert "insufficient credit balance" in exc_info.value.detail
+
+
+class _FixedYamlLLM:
+    """Always returns the same minimal, valid workflow — enough to clear
+    static preflight immediately so the pipeline reaches the real-execution
+    stage, which is what this test actually exercises."""
+
+    def __init__(self, yaml_text: str):
+        self._yaml_text = yaml_text
+
+    def with_context(self, **_kwargs):
+        return self
+
+    async def complete(self, *_args, **_kwargs):
+        return SimpleNamespace(text=self._yaml_text)
+
+
+_MINIMAL_VALID_YAML = "name: t\nnodes:\n  - id: a\n    type: Literal\n    config:\n      value: 1\n"
+
+
+@pytest.mark.asyncio
+async def test_a_real_execution_crash_is_reported_as_a_failed_run_not_lost(monkeypatch):
+    """Reproduces a real incident: a structurally-valid resolved config that
+    was wrong at runtime (WebSearchAgent's `query` resolved to None) raised
+    straight out of run_workflow instead of coming back as a normal failed
+    result, so the whole generation attempt was lost — no yaml, no detail,
+    just a 502. `execute()` must catch this and report it like any other
+    failed run so the caller still gets the (otherwise valid) YAML back."""
+
+    async def _raising_run_workflow(*_args, **_kwargs):
+        raise ValueError("1 validation error for WebSearchAgentConfig")
+
+    monkeypatch.setattr("app.api.workflow_generation.run_workflow", _raising_run_workflow)
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(services={"llm": _FixedYamlLLM(_MINIMAL_VALID_YAML)}),
+        ),
+    )
+
+    result = await generate_workflow_endpoint(
+        GenerateWorkflowRequest(prompt="A trivial workflow."), request, USER,
+    )
+
+    assert result["yaml"].strip() == _MINIMAL_VALID_YAML.strip()
+    assert result["execution_result"]["status"] == "failed"
+    assert "WebSearchAgentConfig" in result["execution_result"]["error"]
+
+
+_YAML_WITH_A_REQUIRED_INPUT = (
+    "name: t\n"
+    "inputs:\n"
+    "  topic:\n"
+    "    type: text\n"
+    "    required: true\n"
+    "nodes:\n"
+    "  - id: a\n"
+    "    type: Echo\n"
+    "    config:\n"
+    "      template: 'Topic: {{inputs.topic}}'\n"
+)
+
+
+@pytest.mark.asyncio
+async def test_a_correctly_required_input_does_not_fail_static_check_with_no_sample_given():
+    """Reproduces a real incident: a workflow correctly declaring a required
+    input (exactly the fix for the earlier "input silently resolves to
+    None" bug) used to fail its OWN generation-time static check with
+    REQUIRED_INPUT_MISSING, because static_check coerced the near-always-
+    absent `sample_inputs` into `{}` — which preflight reads as "these are
+    the real inputs, and none were given" rather than "no real inputs exist
+    yet, this is a structural check." A /generate caller essentially never
+    passes sample_inputs, so this broke required inputs entirely."""
+    request = SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                services={"llm": _FixedYamlLLM(_YAML_WITH_A_REQUIRED_INPUT)},
+            ),
+        ),
+    )
+
+    result = await generate_workflow_endpoint(
+        GenerateWorkflowRequest(prompt="A workflow with a required input."), request, USER,
+    )
+
+    codes = [issue["code"] for issue in (result["preflight_report"] or {}).get("issues", [])]
+    assert "REQUIRED_INPUT_MISSING" not in codes
+    assert result["preflight_report"]["valid"] is True

@@ -20,6 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from difflib import get_close_matches
 import re
+import types
+import typing
 from typing import Any, Awaitable, Callable
 
 import yaml
@@ -332,6 +334,58 @@ def _fix_unknown_node_config_field(raw: dict, issue: PreflightIssue) -> str | No
     return f"Removed unrecognized config field {field_name!r} at {issue.path}."
 
 
+def _accepts_plain_string(annotation: Any) -> bool:
+    """Whether a pydantic field annotation permits an ordinary `str` — true
+    for `str` itself and for `str | None`/`Optional[str]`."""
+    if annotation is str:
+        return True
+    if typing.get_origin(annotation) in (typing.Union, types.UnionType):
+        return any(_accepts_plain_string(arg) for arg in typing.get_args(annotation))
+    return False
+
+
+def _fix_dict_where_string_expected(raw: dict, issue: PreflightIssue) -> str | None:
+    """A recurring, purely mechanical generation mistake: giving a field
+    that only accepts one string a dict of several labelled values instead —
+    e.g. AITaskAgent's single-string `input` field getting a dict of named
+    upstream sources, which is what its separate `context` field is for.
+    Flattens the dict into one readable multi-line string ("label: value"
+    per line), preserving every original value — including any {{...}}
+    template inside it, which still resolves normally once this is plain
+    text — so the fix never discards information, only reshapes it.
+    Declines for anything else NODE_CONFIG_INVALID might mean (a real enum
+    mismatch, a missing required field, etc.) by simply not matching."""
+    if not issue.path:
+        return None
+    parts = issue.path.split(".")
+    if len(parts) != 4 or parts[0] != "nodes" or parts[2] != "config":
+        return None
+    field_name = parts[3]
+    try:
+        index = int(parts[1])
+        node = raw["nodes"][index]
+        config = node.get("config")
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    if not isinstance(config, dict) or field_name not in config:
+        return None
+    value = config[field_name]
+    if not isinstance(value, dict):
+        return None
+    try:
+        node_class = NodeRegistry.get(node.get("type", ""))
+    except KeyError:
+        return None
+    field_info = node_class.config_schema.model_fields.get(field_name)
+    if field_info is None or not _accepts_plain_string(field_info.annotation):
+        return None
+    config[field_name] = "\n".join(f"{key}: {item}" for key, item in value.items())
+    return (
+        f"Flattened {field_name!r} at {issue.path} from an object into a single "
+        "string (that field only accepts one string value)."
+    )
+
+
 _SINGLE_ISSUE_FIXERS: dict[str, Callable[[dict, PreflightIssue], str | None]] = {
     "TEMPLATE_UNKNOWN_OUTPUT_FIELD": _fix_template_unknown_output_field,
     "TEMPLATE_UNKNOWN_STRUCTURED_FIELD": _fix_template_unknown_structured_field,
@@ -339,6 +393,7 @@ _SINGLE_ISSUE_FIXERS: dict[str, Callable[[dict, PreflightIssue], str | None]] = 
     "UNKNOWN_NODE_TYPE": _fix_unknown_node_type,
     "MODEL_NOT_IN_CATALOG": _fix_model_not_in_catalog,
     "UNKNOWN_NODE_CONFIG_FIELD": _fix_unknown_node_config_field,
+    "NODE_CONFIG_INVALID": _fix_dict_where_string_expected,
 }
 
 

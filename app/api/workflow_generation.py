@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
@@ -28,12 +30,30 @@ from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import WorkflowPreflightReport, preflight_workflow_for_run
 from app.runtime.schema import WorkflowInputSpec
 from app.security.dependencies import CurrentUser, require_consultant
-from app.workflow.capability_selection import select_candidate_node_types
+from app.workflow.capability_selection import (
+    GENERATION_MODEL_COMPLEX,
+    GENERATION_MODEL_COMPLEX_REASONING_EFFORT,
+    GENERATION_MODEL_SIMPLE,
+    select_candidate_node_types,
+    select_generation_model,
+)
 from app.workflow.preflight_stats import record_attempt
 
 router = APIRouter(prefix="/api/workflows", tags=["workflow-generation"])
 
-GENERATION_MODEL = "claude-opus-5"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# Routed through OpenRouter (app/llm/openrouter_gw.py, via the "openrouter/"
+# prefix in app/llm/registry.py's _PREFIX_ROUTES) rather than calling
+# Anthropic directly — generation is high-volume/retried and shouldn't be
+# hostage to one provider account's balance. Which of the two tiers a given
+# request actually uses is chosen automatically by
+# app.workflow.capability_selection.select_generation_model, based on the
+# same node-type shortlist step 1 already computed — see
+# build_llm_yaml_generator below. GENERATION_MODEL itself is kept as the
+# simple-tier alias: the default when nothing calls the auto-selector
+# directly (e.g. a future caller that just wants "a reasonable model").
+GENERATION_MODEL = GENERATION_MODEL_SIMPLE
 MAX_STATIC_ATTEMPTS = 4
 MAX_REAL_EXECUTION_ATTEMPTS = 1 + 2  # one real run, then up to 2 repair-and-retry rounds
 
@@ -78,11 +98,86 @@ entry: first
 exit: render
 """
 
-_SYSTEM_PROMPT_TEMPLATE = """You generate workflow YAML files for an agentic workflow builder.
+_ROUTING_EXAMPLE_YAML = """
+name: Routing Example
+description: >-
+  A RouterAgent branches on a classified field; each branch ends in its own
+  exit instead of reconverging into one shared downstream node.
+version: "1.0"
+inputs:
+  message:
+    type: text
+    required: true
+nodes:
+  - id: classify
+    type: AITaskAgent
+    config:
+      task: classify
+      model: auto
+      input: "{{inputs.message}}"
+      output_fields:
+        - name: category
+          type: enum
+          enum_values: [sales, support]
+          required: true
+  - id: route_by_category
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: classify.result.category
+      branches:
+        sales: to_sales
+        support: to_support
+      fallback: to_support
+  - id: to_sales
+    type: Echo
+    config:
+      template: "Routed to Sales: {{inputs.message}}"
+  - id: to_support
+    type: Echo
+    config:
+      template: "Routed to Support: {{inputs.message}}"
+edges:
+  - from: classify
+    to: route_by_category
+  - from: route_by_category
+    condition: route
+    branches:
+      to_sales: to_sales
+      to_support: to_support
+entry: classify
+exit:
+  - to_sales
+  - to_support
+"""
 
-Every node's "type" MUST be one of the node types in this NODE TYPE CATALOG \
-— it is generated live from the platform's current registry, so it is \
-always complete and current. Never invent a node type that isn't listed.
+_SYSTEM_PROMPT_TEMPLATE = """You generate workflow YAML files for an agentic workflow builder. \
+Work through these three steps in order — do not jump to writing YAML before \
+finishing steps 1 and 2.
+
+STEP 1 — REQUIRED NODE TYPES (already analysed for you): the request has \
+already been analysed, deterministically, for which capabilities it needs. \
+NODE TYPE CATALOG below is not this platform's full node library — it is the \
+result of that analysis, a shortlist of exactly the node types relevant to \
+this request. Every node's "type" you write MUST come from this list; never \
+invent one and never reach for a type outside it because it "seems close \
+enough" — if truly nothing here fits, prefer a Core Building Blocks type \
+(AITaskAgent, DataTransformAgent, DecisionAgent, RouterAgent) over inventing \
+a type name.
+
+STEP 2 — STUDY REAL USAGE: REAL USAGE EXAMPLES below shows, for each \
+candidate type that has one, a node of that exact type exactly as it is \
+configured in a real, already-working workflow on this platform — not a \
+paraphrase. Before writing a node of a given type, read its real example \
+closely: which fields it actually sets, how it templates upstream values, \
+how any nested structure is filled in. Match that shape. Where a type has no \
+real example listed, its NODE TYPE CATALOG entry (field names and types) \
+plus the FIELDSPEC SHAPE / field-type rules below are what you have instead.
+
+STEP 3 — ASSEMBLE THE WORKFLOW: once you know the types (step 1) and how \
+each is really configured (step 2), wire them into a complete workflow — \
+edges, entry, exit — following the same configuration conventions the \
+examples showed, and the WORKFLOW YAML SHAPE below.
 
 A template like {{{{node_id.field}}}} may ONLY reference a field name that is \
 listed under that node's "Output fields" below — never guess or invent one. \
@@ -93,8 +188,114 @@ its only valid keys are exactly the ones you declared there (e.g. declaring \
 `output_schema: {{summary: str}}` on a node makes `{{{{that_node.parsed.summary}}}}` \
 valid, and nothing else under `.parsed` is). See the worked example below.
 
-NODE TYPE CATALOG:
+Every config field below is annotated with its exact type — treat that as a \
+hard contract, not a suggestion. A field typed "string" accepts ONE string \
+value, never an object: if you need to combine several labelled upstream \
+values into one string field, write them into a single templated string \
+yourself (e.g. a multi-line string with one "label: {{{{node_id.field}}}}" per \
+line), do not turn the field into a dict of sub-keys. A field typed \
+"object (label → value)" is the one place a dict of named entries belongs — \
+e.g. on AITaskAgent, `input` is the single string the task reads and \
+`context` is where several extra labelled sources go, they are not \
+interchangeable.
+
+FIELDSPEC SHAPE — a field marked "array of FieldSpec rows" (e.g. AITaskAgent's \
+`output_fields`, WorkflowInputAgent's `fields`) is a list where each row has: \
+`name` (required), `type` (one of exactly: string, text, number, integer, \
+boolean, enum, object, list, date — never "array"), `description`, `required` \
+(bool), and only when relevant: `enum_values` (required when type is "enum"), \
+`fields` (a nested list of rows, required when type is "object", AND required \
+when type is "list" with `item_type: object`), `item_type` (REQUIRED when type \
+is "list" — one of string/text/number/integer/boolean/enum/date/object; a list \
+of objects is `type: list`, `item_type: object`, with the object's own columns \
+under `fields`, not under the list row itself). Example — a list of structured \
+objects:
+    output_fields:
+      - name: postings
+        type: list
+        item_type: object
+        fields:
+          - {{name: title, type: string, required: true}}
+          - {{name: company, type: string, required: true}}
+          - {{name: url, type: string, required: true}}
+
+TEMPLATES NEVER LOOP — a {{{{node_id.field}}}} reference always substitutes ONE \
+scalar value; there is no for-each/loop syntax anywhere in this templating \
+language. If a field is a list of structured items (e.g. `postings`, a list \
+of objects from an AITaskAgent's output_fields), you CANNOT write something \
+like `{{{{extract.result.postings.items.title}}}}` inside an Echo/TransformAgent \
+template to render one line per item — that does not exist and will fail. \
+To turn a list of structured items into formatted text (a numbered list, a \
+report section, etc.), give the WHOLE list as the `input` to another \
+AITaskAgent (task: generate or draft_response) and instruct it, in plain \
+language, how to format each item — the model writes the per-item formatting \
+in prose, deterministic templating never iterates.
+
+A BARE (whole-value) `{{{{node_id.field}}}}` — the ENTIRE config value is just \
+that one reference, nothing else around it — preserves the referenced \
+field's real type: a list stays a list, an object stays an object. If the \
+target config field requires "string" (e.g. AITaskAgent's `input`, Echo's \
+`template`) and the source field is a list or object (e.g. WebSearchAgent's \
+`results`, an AITaskAgent output_fields list), a bare reference FAILS at \
+runtime with a "should be a valid string" error, because the raw list/object \
+is passed straight through, not text. Fix this by embedding it in a little \
+surrounding text instead, e.g. `"Search results:\n{{{{search_jobs.results}}}}"` \
+rather than `"{{{{search_jobs.results}}}}"` alone — embedding always renders the \
+value as readable text, whatever its underlying type.
+
+Workflow-level `inputs:` (the top-level block, addressed as {{{{inputs.name}}}}) \
+only supports `type: text`, `type: json`, or `type: file` — never `number`, \
+`integer`, or `boolean`. A numeric or boolean input is still `type: text` (the \
+value arrives as a string; parse it where it's used, e.g. inside a \
+DataTransformAgent `number` operation, if you need it as a real number). This \
+is a different, smaller type set from a FieldSpec row's `type` above — do not \
+confuse the two.
+
+`required` on a workflow input DEFAULTS TO FALSE if you omit it — an easy way \
+to silently break the workflow. If a `{{{{inputs.name}}}}` reference is the \
+WHOLE value of a config field that itself requires a value (almost every \
+plain `string` field — e.g. WebSearchAgent's `query`, AITaskAgent's `input`), \
+that input MUST be declared `required: true`, or a run where it's left empty \
+resolves that field to a bare `None` and fails at execution, not at review \
+time. Set `required: true` on every input something in the workflow cannot \
+function without.
+
+CONDITIONAL ROUTING — a conditional edge (the one following a RouterAgent, or \
+any node with a `route` output field) has EXACTLY two keys besides `from`: \
+`condition: route` (that literal string, always — NEVER a template like \
+`{{{{node_id.route}}}}`; the compiler reads the node's real `route` output \
+itself, `condition` is just the marker that this edge is conditional) and \
+`branches` (a plain `{{route_value: target_node_id}}` map — never combined \
+with a plain `to:` on the same edge). See the CONDITIONAL ROUTING EXAMPLE \
+below for the full pattern. After branches diverge, do NOT reconverge them \
+into one shared downstream node via separate plain edges (one `to:` per \
+branch, all pointing at the same node) — the compiler treats more than one \
+plain incoming edge as an AND-join that waits for every predecessor to run, \
+but only ONE branch ever runs per request, so the shared node would wait \
+forever for the others (FANIN_UNREACHABLE_ANDJOIN). Instead, either give each \
+branch its own terminal node and list all of them in `exit:`, or have each \
+branch do its own distinct processing rather than funneling back together. \
+A router with N branches gets exactly ONE outgoing edge (the conditional one \
+with `branches` mapping all N routes) — never N separate plain `to:` edges \
+out of the router; that draws every branch as always running, which is not \
+routing at all.
+
+ROUTING/RULE FIELD PATHS ARE BARE, NOT TEMPLATES — RouterAgent's `route_field` \
+and every rule/condition's `field` key (DecisionAgent's `rules[].when`, \
+RouterAgent's `cases[].when`) are a plain dotted path string, e.g. \
+`classify.result.category` — NEVER wrapped in `{{{{...}}}}` braces. These are \
+evaluated by the rules engine directly, not substituted by the templating \
+engine; writing `route_field: "{{{{classify.result.category}}}}"` (with braces) \
+fails with UNKNOWN_FIELD_REFERENCE, because the literal string `{{{{...}}}}` \
+is not itself a valid field path. Braces belong on ordinary `{{{{...}}}}` config \
+fields (AITaskAgent's `input`, Echo's `template`, and similar) — never on a \
+`route_field` or a rule's `field`.
+
+NODE TYPE CATALOG (step 1's result):
 {catalog}
+
+REAL USAGE EXAMPLES (step 2 — study these before writing the equivalent node):
+{examples}
 
 WORKFLOW YAML SHAPE (required fields: name, nodes; nodes must be a non-empty \
 list with unique ids; edges/entry/exit/inputs are optional but should \
@@ -102,9 +303,49 @@ normally be set for a real workflow):
 
 {example}
 
+CONDITIONAL ROUTING EXAMPLE (branches never reconverge — each has its own exit):
+
+{routing_example}
+
 Return ONLY the workflow YAML, with no markdown code fence and no \
 commentary before or after it.
 """
+
+
+def _field_type_label(schema: dict) -> str:
+    """A short type descriptor for one JSON-schema property, e.g. "string",
+    "object (label → value)", "string enum". Shown next to every config
+    field in the catalog so the model can't confuse a field that takes one
+    string with one that takes a labelled group of values — see
+    `_fix_dict_where_string_expected` in app/runtime/autofix.py for the
+    real, observed failure mode this is meant to prevent (the model gave
+    AITaskAgent's single-string `input` field a dict of several named
+    upstream sources, which is what `context` is for)."""
+    if not isinstance(schema, dict):
+        return "any"
+    variants = schema.get("anyOf") or schema.get("oneOf")
+    if isinstance(variants, list):
+        non_null = [v for v in variants if isinstance(v, dict) and v.get("type") != "null"]
+        optional = len(non_null) != len(variants)
+        label = _field_type_label(non_null[0]) if len(non_null) == 1 else "any"
+        return f"{label} (optional)" if optional else label
+    kind = schema.get("type")
+    if kind == "string":
+        return "string enum" if "enum" in schema else "string"
+    if kind == "object":
+        return "object (label → value)"
+    if kind == "array":
+        items = schema.get("items")
+        if isinstance(items, dict) and str(items.get("$ref", "")).endswith("/FieldSpec"):
+            return "array of FieldSpec rows — see FIELDSPEC SHAPE below"
+        return "array"
+    if kind in ("integer", "number"):
+        return "number"
+    if kind == "boolean":
+        return "boolean"
+    if "$ref" in schema or "allOf" in schema:
+        return "object"
+    return kind or "any"
 
 
 def _node_type_catalog(type_names: list[str] | None = None) -> str:
@@ -122,18 +363,92 @@ def _node_type_catalog(type_names: list[str] | None = None) -> str:
         manifest = [entry for entry in manifest if entry["type_name"] in wanted]
     lines = []
     for entry in manifest:
-        config_fields = list((entry.get("config_schema") or {}).get("properties", {}).keys())
+        properties = (entry.get("config_schema") or {}).get("properties", {})
+        config_fields = list(properties.keys())
+        config_fields_typed = [
+            f"{name} ({_field_type_label(schema)})" for name, schema in properties.items()
+        ]
         output_fields = list((entry.get("output_schema") or {}).get("properties", {}).keys())
         structured = "output_schema" in config_fields
         line = (
             f"- {entry['type_name']} (category: {entry.get('category', 'Other')}): "
             f"{entry.get('description') or 'no description'}. "
-            f"Config fields: {', '.join(config_fields) or 'none'}. "
+            f"Config fields: {', '.join(config_fields_typed) or 'none'}. "
             f"Output fields: {', '.join(output_fields) or 'none'}"
             f"{' (declares structured output — see note above)' if structured else ''}."
         )
         lines.append(line)
     return "\n".join(lines)
+
+
+# A real production workflow's AITaskAgent/DecisionAgent/RouterAgent node can
+# run to hundreds of lines (a 30-field extraction schema, a dozen business
+# rules) — genuinely useful to look at, but showing it in full on every
+# generation call would spend far more tokens than step 2 is worth. Truncate
+# at a clean line boundary instead of dropping the example entirely: the
+# shape (which fields exist, how templating looks) is usually clear well
+# before the cap.
+_MAX_SNIPPET_CHARS = 700
+
+
+def _real_usage_snippet(type_name: str, manifest_entry: dict) -> str | None:
+    """Step 2's grounding for one node type: its own config, exactly as
+    filled in by a real, already-working workflow on this platform, if one
+    exists. Reuses `about_synthesis.py`'s adjacency-mined
+    `example_workflow_path` (the same file the About tab already links to)
+    rather than a second hand-maintained list of examples — the point is
+    that this is a real file on disk, not a fabricated one, so degrades to
+    `None` (no example) rather than inventing anything when there isn't one."""
+    path = (manifest_entry.get("about") or {}).get("example_workflow_path")
+    if not path:
+        return None
+    try:
+        doc = yaml.safe_load((_REPO_ROOT / path).read_text())
+    except Exception:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    for node in doc.get("nodes") or []:
+        if not (isinstance(node, dict) and node.get("type") == type_name):
+            continue
+        snippet = {key: node[key] for key in ("id", "type", "config") if key in node}
+        if not snippet:
+            return None
+        try:
+            dumped = yaml.safe_dump(
+                snippet, sort_keys=False, default_flow_style=False, allow_unicode=True,
+            ).strip()
+        except Exception:
+            return None
+        if len(dumped) <= _MAX_SNIPPET_CHARS:
+            return dumped
+        truncated = dumped[:_MAX_SNIPPET_CHARS].rsplit("\n", 1)[0]
+        return f"{truncated}\n... (truncated — real file has more; shape shown is representative)"
+    return None
+
+
+def _real_usage_examples(type_names: list[str], manifest: list[dict]) -> str:
+    """Step 2's text block: one real config snippet per candidate type that
+    has one (see `_real_usage_snippet`). Deliberately scoped to the
+    request's own shortlist, not the full registry — this is grounding for
+    THIS generation call, not a reference manual."""
+    by_name = {entry["type_name"]: entry for entry in manifest}
+    blocks = []
+    for type_name in type_names:
+        entry = by_name.get(type_name)
+        if entry is None:
+            continue
+        snippet = _real_usage_snippet(type_name, entry)
+        if snippet:
+            path = entry["about"]["example_workflow_path"]
+            blocks.append(f"{type_name} (from {path}):\n{snippet}")
+    if not blocks:
+        return (
+            "(No real-workflow example is on file yet for these node types — "
+            "rely on the NODE TYPE CATALOG and the FIELDSPEC SHAPE / field-type "
+            "rules above instead.)"
+        )
+    return "\n\n".join(blocks)
 
 
 def _strip_code_fence(text: str) -> str:
@@ -328,25 +643,56 @@ def build_llm_yaml_generator(
     must never be worse-informed than before this change, and the full
     catalog is the safety net for the (rarer) case where the shortlist
     missed a type the workflow actually needed.
+
+    The model itself is also chosen automatically, per request, from the
+    same shortlist (`select_generation_model`): a request that only needs
+    Core Building Blocks-shaped node types runs on the simple tier; one
+    touching several specialized capabilities (or the platform's heaviest
+    structured-reasoning categories — Proposal Engineering, Evidence &
+    Retrieval) runs on the complex tier, at that model's highest reasoning
+    effort. A retry after a failure always escalates straight to the complex
+    tier, on the same reasoning as the catalog escalation above: a repair
+    attempt deserves the stronger model regardless of how simple the
+    original request looked.
     """
     full_catalog = _node_type_catalog()
-    system_prompt_state = {"escalated": False}
+    system_prompt_state = {"escalated": False, "model": GENERATION_MODEL_SIMPLE}
 
     def _system_prompt(base_prompt: str) -> str:
         if system_prompt_state["escalated"]:
+            # The full registry is the safety net for a retry — but step 2's
+            # real-usage grounding stays scoped to the original shortlist
+            # (re-dumping an example for all ~50 types on every retry would
+            # cost more tokens than the step is worth at that point).
             catalog = full_catalog
+            examples = (
+                "(Escalated to the full node type catalog after a failed "
+                "attempt — rely on the catalog and shape rules above; step "
+                "2's real-usage grounding applied only to the first attempt.)"
+            )
         else:
-            candidates = select_candidate_node_types(base_prompt, NodeRegistry.manifest())
+            manifest = NodeRegistry.manifest()
+            candidates = select_candidate_node_types(base_prompt, manifest)
             catalog = _node_type_catalog(candidates)
-        return _SYSTEM_PROMPT_TEMPLATE.format(catalog=catalog, example=_EXAMPLE_WORKFLOW_YAML)
+            examples = _real_usage_examples(candidates, manifest)
+            system_prompt_state["model"] = select_generation_model(base_prompt, manifest)
+        return _SYSTEM_PROMPT_TEMPLATE.format(
+            catalog=catalog, examples=examples, example=_EXAMPLE_WORKFLOW_YAML,
+            routing_example=_ROUTING_EXAMPLE_YAML,
+        )
 
     async def generate_yaml(base_prompt: str, prior_yaml: str | None, feedback: str | None) -> str:
         if feedback:
             # A retry means the shortlist may have been wrong (or simply
             # incomplete) — widen to the full registry starting with this
-            # very call, not just subsequent ones.
+            # very call, not just subsequent ones. Same reasoning promotes
+            # the model straight to the complex tier: whatever the original
+            # complexity estimate said, an attempt that already failed once
+            # deserves the stronger model for the rest of this generation.
             system_prompt_state["escalated"] = True
+            system_prompt_state["model"] = GENERATION_MODEL_COMPLEX
         system_prompt = _system_prompt(base_prompt)
+        model = system_prompt_state["model"]
         context_llm = llm.with_context(
             run_id="workflow-generation", session_id=scope, node_id="generate",
             ledger=services.get("cost_ledger"),
@@ -354,9 +700,16 @@ def build_llm_yaml_generator(
         user_prompt = f"Describe workflow: {base_prompt}"
         if prior_yaml and feedback:
             user_prompt += f"\n\nPrevious attempt:\n{prior_yaml}\n\n{feedback}"
+        # The complex tier's own reasoning-effort dial — a complex or
+        # already-failed-once attempt gets this model's most deliberate
+        # reasoning, not just its response.
+        reasoning_kwargs = (
+            {"reasoning_effort": GENERATION_MODEL_COMPLEX_REASONING_EFFORT}
+            if model == GENERATION_MODEL_COMPLEX else {}
+        )
         response = await context_llm.complete(
-            model=GENERATION_MODEL, system=system_prompt, user=user_prompt, temperature=0.2,
-            max_tokens=4096,
+            model=model, system=system_prompt, user=user_prompt, temperature=0.2,
+            max_tokens=4096, **reasoning_kwargs,
         )
         return _strip_code_fence(response.text)
 
@@ -378,8 +731,19 @@ async def generate_workflow_endpoint(
     generate_yaml = build_llm_yaml_generator(llm, services, scope)
 
     async def static_check(yaml_text: str) -> tuple[WorkflowPreflightReport, dict[str, WorkflowInputSpec]]:
+        # `req.sample_inputs` is genuinely absent for the overwhelming
+        # majority of "generate from a prompt" calls — no real inputs exist
+        # yet, the user hasn't run this workflow, they're still generating
+        # it. Passing `None` through (rather than coercing to `{}`) is load-
+        # bearing: preflight's own `_validate_inputs` treats `None` as "skip
+        # input-presence validation, this is a structural-only check" and an
+        # explicit `{}` as "these ARE the real inputs, and none were given" —
+        # the latter used to fail REQUIRED_INPUT_MISSING for every required
+        # input on every generation call that didn't happen to also pass
+        # sample_inputs, which is nearly all of them. `sample_inputs`, when a
+        # caller does provide it, still gets checked for real below.
         report = await preflight_workflow_for_run(
-            yaml_text, provided_inputs=req.sample_inputs or {}, services=services,
+            yaml_text, provided_inputs=req.sample_inputs, services=services,
             probe_services=True, require_run_history=False,
         )
         declared_inputs: dict[str, WorkflowInputSpec] = {}
@@ -392,18 +756,42 @@ async def generate_workflow_endpoint(
 
     async def execute(yaml_text: str, inputs: dict[str, Any]) -> dict[str, Any]:
         spec = load_workflow_from_string(yaml_text)
-        return await run_workflow(
-            spec, inputs, session_id=f"workflow-gen:{scope}",
-            services=services, run_id=str(uuid.uuid4()),
-        )
+        try:
+            return await run_workflow(
+                spec, inputs, session_id=f"workflow-gen:{scope}",
+                services=services, run_id=str(uuid.uuid4()),
+            )
+        except Exception as exc:
+            # run_generation_pipeline's contract for `execute` is
+            # {"status": ..., "error": ...} — never a raised exception — so
+            # its repair loop can feed the error back and retry. A resolved
+            # config that's structurally valid but wrong at runtime (e.g. an
+            # optional `{{...}}?` template that legitimately resolved to
+            # None for a field a downstream node actually required) can slip
+            # past structural preflight and raise here instead. Report it
+            # like any other failed run rather than letting it escape and
+            # lose an otherwise-valid YAML.
+            return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
-    result = await run_generation_pipeline(
-        prompt=req.prompt,
-        sample_inputs=req.sample_inputs,
-        generate_yaml=generate_yaml,
-        static_check=static_check,
-        execute=execute,
-    )
+    try:
+        result = await run_generation_pipeline(
+            prompt=req.prompt,
+            sample_inputs=req.sample_inputs,
+            generate_yaml=generate_yaml,
+            static_check=static_check,
+            execute=execute,
+        )
+    except Exception as exc:
+        # An upstream LLM provider failure (rate limit, auth, insufficient
+        # credit, timeout, ...) previously crashed this endpoint with a bare,
+        # unhelpful 500 — none of the SDK/provider exceptions get translated
+        # into one of app.llm.errors' provider-neutral types before reaching
+        # here. Surface it as a clean, actionable 502 instead; a genuine bug
+        # in the pipeline itself will still show up in the server logs.
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"Workflow generation failed: {exc}",
+        ) from exc
 
     await record_attempt(
         services.get("audit_db"),

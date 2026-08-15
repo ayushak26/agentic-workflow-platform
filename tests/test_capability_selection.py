@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import app.nodes  # noqa: F401 - populates the registry via discovery
+from app.llm.openrouter_catalog import OPENROUTER_MODEL_ID_PATTERN
 from app.nodes.registry import NodeRegistry
-from app.workflow.capability_selection import select_candidate_node_types
+from app.workflow.capability_selection import (
+    GENERATION_MODEL_COMPLEX,
+    GENERATION_MODEL_SIMPLE,
+    select_candidate_node_types,
+    select_generation_model,
+)
 
 MANIFEST = NodeRegistry.manifest()
 CORE_TYPES = {e["type_name"] for e in MANIFEST if e["family"] == "core"}
@@ -63,3 +69,37 @@ def test_shortlist_never_contains_a_type_name_outside_the_registry():
 def test_deterministic_for_the_same_inputs():
     prompt = "Search the web for competitor pricing and draft a memo."
     assert select_candidate_node_types(prompt, MANIFEST) == select_candidate_node_types(prompt, MANIFEST)
+
+
+def test_both_generation_model_tiers_are_valid_openrouter_ids():
+    for model in (GENERATION_MODEL_SIMPLE, GENERATION_MODEL_COMPLEX):
+        assert model.startswith("openrouter/")
+        assert OPENROUTER_MODEL_ID_PATTERN.match(model)
+    # Two distinct tiers, not the same model aliased twice.
+    assert GENERATION_MODEL_SIMPLE != GENERATION_MODEL_COMPLEX
+
+
+def test_a_pure_routing_request_selects_the_simple_tier():
+    model = select_generation_model("Route the request to the right team based on category.", MANIFEST)
+    assert model == GENERATION_MODEL_SIMPLE
+
+
+def test_a_moderate_single_capability_request_also_selects_the_simple_tier():
+    model = select_generation_model(
+        "Analyse an uploaded image and summarize it in one paragraph.", MANIFEST,
+    )
+    assert model == GENERATION_MODEL_SIMPLE
+
+
+def test_a_multi_capability_evidence_pipeline_selects_the_complex_tier():
+    model = select_generation_model(
+        "Verify claims against evidence, build a citation registry, run the "
+        "Horizon evaluation, and check the consistency gate before final submission.",
+        MANIFEST,
+    )
+    assert model == GENERATION_MODEL_COMPLEX
+
+
+def test_model_selection_is_deterministic_for_the_same_prompt():
+    prompt = "Search the web for competitor pricing and draft a memo."
+    assert select_generation_model(prompt, MANIFEST) == select_generation_model(prompt, MANIFEST)
