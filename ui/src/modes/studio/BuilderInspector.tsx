@@ -73,6 +73,7 @@ export function BuilderInspector({
   onSelectNode,
   onTabChange,
   onTestWorkflow,
+  onToggleWide,
   onValidate,
   autofixing,
   preflight,
@@ -80,6 +81,7 @@ export function BuilderInspector({
   showInputs,
   tab,
   validating,
+  wide,
   workflow,
   workflowYaml,
 }: {
@@ -102,6 +104,7 @@ export function BuilderInspector({
   onSelectNode: (nodeId: string) => void;
   onTabChange: (tab: BuilderInspectorTab) => void;
   onTestWorkflow: () => void;
+  onToggleWide?: () => void;
   onValidate: () => void;
   autofixing?: boolean;
   preflight: WorkflowPreflightReport | null;
@@ -109,6 +112,7 @@ export function BuilderInspector({
   showInputs: boolean;
   tab: BuilderInspectorTab;
   validating: boolean;
+  wide?: boolean;
   workflow: YamlWorkflow;
   workflowYaml: string;
 }) {
@@ -154,14 +158,27 @@ export function BuilderInspector({
             </div>
           )}
         </div>
-        <button
-          aria-label="Close inspector"
-          className="text-ink-500 hover:text-ink-900"
-          onClick={showInputs ? onCloseInputs : onClose}
-          type="button"
-        >
-          ×
-        </button>
+        <div className="flex flex-none items-center gap-2">
+          {onToggleWide && (
+            <button
+              aria-label={wide ? 'Narrow inspector' : 'Widen inspector'}
+              className="text-ink-500 hover:text-ink-900"
+              onClick={onToggleWide}
+              title={wide ? 'Narrow inspector' : 'Widen inspector — more room for nested rules'}
+              type="button"
+            >
+              {wide ? '⤡' : '⤢'}
+            </button>
+          )}
+          <button
+            aria-label="Close inspector"
+            className="text-ink-500 hover:text-ink-900"
+            onClick={showInputs ? onCloseInputs : onClose}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
       </div>
 
       {showInputs ? (

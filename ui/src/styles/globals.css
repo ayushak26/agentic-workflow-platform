@@ -634,6 +634,15 @@ a {
   overflow: hidden;
   border-left: 1px solid var(--border-default);
   background: var(--surface-primary);
+  transition: width 0.15s ease;
+}
+
+/* Widened by the inspector header's expand toggle — Decision and Router
+   configs nest condition/action rows several levels deep, and 360px leaves
+   almost no room for the field once labels, operators and remove buttons
+   are laid out. */
+.builder-inspector--wide {
+  width: 640px;
 }
 
 .builder-canvas {

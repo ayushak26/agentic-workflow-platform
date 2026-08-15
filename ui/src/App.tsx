@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import "./styles/globals.css";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { LoginPage } from "./components/auth/LoginPage";

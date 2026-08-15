@@ -52,42 +52,44 @@ function ActionEditor({
   onRemove: () => void;
 }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="flex-none text-[11px] text-ink-500">Set</span>
-      <input
-        aria-label="Field to set"
-        className="builder-field flex-1 font-mono"
-        onChange={event => onChange({ ...action, field: event.target.value })}
-        placeholder="human_review"
-        value={action.field}
-      />
-      <select
-        aria-label="Operation"
-        className="builder-field w-32 flex-none"
-        onChange={event => onChange({
-          ...action,
-          operation: event.target.value as RuleAction['operation'],
-        })}
-        value={action.operation ?? 'set'}
-      >
-        <option value="set">to</option>
-        <option value="append">append</option>
-        <option value="increase">increase by</option>
-        <option value="decrease">decrease by</option>
-      </select>
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="flex-none text-[11px] text-ink-500">Set</span>
+        <input
+          aria-label="Field to set"
+          className="builder-field flex-1 font-mono"
+          onChange={event => onChange({ ...action, field: event.target.value })}
+          placeholder="human_review"
+          value={action.field}
+        />
+        <select
+          aria-label="Operation"
+          className="builder-field w-32 flex-none"
+          onChange={event => onChange({
+            ...action,
+            operation: event.target.value as RuleAction['operation'],
+          })}
+          value={action.operation ?? 'set'}
+        >
+          <option value="set">to</option>
+          <option value="append">append</option>
+          <option value="increase">increase by</option>
+          <option value="decrease">decrease by</option>
+        </select>
+        <button
+          aria-label="Remove action"
+          className="flex-none px-1 text-ink-400 hover:text-red-600"
+          onClick={onRemove}
+          type="button"
+        >×</button>
+      </div>
       <input
         aria-label="Value"
-        className="builder-field w-44 flex-none"
+        className="builder-field"
         onChange={event => onChange({ ...action, value: coerceValue(event.target.value) })}
-        placeholder="true"
+        placeholder="Value to set"
         value={valueToText(action.value)}
       />
-      <button
-        aria-label="Remove action"
-        className="flex-none px-1 text-ink-400 hover:text-red-600"
-        onClick={onRemove}
-        type="button"
-      >×</button>
     </div>
   );
 }

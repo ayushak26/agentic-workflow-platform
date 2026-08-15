@@ -235,8 +235,8 @@ function DefaultsEditor({
 
   return (
     <div className="mt-2 space-y-1.5">
-      {entries.map(([key, value]) => (
-        <div className="flex items-center gap-2" key={key}>
+      {entries.map(([key, value], index) => (
+        <div className="flex items-center gap-2" key={index}>
           <input
             aria-label="Field name"
             className="builder-field flex-1 font-mono"

@@ -182,6 +182,7 @@ export function Builder() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(() => window.innerWidth > 1020);
   const [inspectorOpen, setInspectorOpen] = useState(() => window.innerWidth > 1020);
+  const [inspectorWide, setInspectorWide] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<BuilderInspectorTab>('configure');
   // Steps the most recent simulation actually executed, and the gate it is
   // parked at. Lighting the real path on the canvas is what turns a simulation
@@ -1420,7 +1421,10 @@ export function Builder() {
         </main>
 
         {inspectorOpen && (
-          <aside className="builder-inspector" aria-label="Builder inspector">
+          <aside
+            className={inspectorWide ? 'builder-inspector builder-inspector--wide' : 'builder-inspector'}
+            aria-label="Builder inspector"
+          >
             <BuilderInspector
               edges={edges}
               llmModels={llmModels}
@@ -1430,6 +1434,8 @@ export function Builder() {
               autofixing={autofixing}
               onClose={() => setInspectorOpen(false)}
               onCloseInputs={() => setShowInputs(false)}
+              onToggleWide={() => setInspectorWide(value => !value)}
+              wide={inspectorWide}
               onConfigChange={onConfigChange}
               onExperienceChange={onExperienceChange}
               onIdChange={onIdChange}
