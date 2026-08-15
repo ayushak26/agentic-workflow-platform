@@ -172,7 +172,14 @@ export function RunHistory() {
             {activeTab === 'errors' && (
               <ErrorsTab run={data.detail.run} onInspectNode={(nodeId) => selectNode(nodeId, 'nodes')} />
             )}
-            {activeTab === 'ask-ai' && <AskAiPanel runId={data.detail.run.run_id} />}
+            {/* Keyed on run_id: selecting a different run in the sidebar
+                does not change `activeTab`, so without this key this panel
+                would stay mounted across runs and briefly carry the
+                previous run's conversation as `turns` — reachable if a
+                question is sent while the history refetch for the newly
+                selected run is still in flight. A `key` forces a full
+                remount on selection change instead. */}
+            {activeTab === 'ask-ai' && <AskAiPanel key={data.detail.run.run_id} runId={data.detail.run.run_id} />}
           </RunWorkspace>
         )}
       </div>

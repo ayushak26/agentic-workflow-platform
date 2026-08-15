@@ -384,7 +384,14 @@ export function BusinessView() {
           description="Answers only what's recorded on this run."
           onClose={() => { setAskOpen(false); setAskSeed(null); }}
         >
-          <AskAiPanel runId={runId} initialQuestion={askSeed ?? undefined} />
+          {/* Keyed on runId: without this, switching to a different run while
+              this panel stays mounted would keep its `turns` state (the
+              previous run's conversation) around until the history refetch
+              resolves. Any question sent in that window would carry the
+              wrong run's conversation as context alongside the new run's
+              data — a `key` forces a full remount instead, so no stale turn
+              can ever reach askAboutRun for the wrong run. */}
+          <AskAiPanel key={runId} runId={runId} initialQuestion={askSeed ?? undefined} />
         </Modal>
       )}
     </div>
