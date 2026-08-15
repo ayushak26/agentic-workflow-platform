@@ -34,6 +34,16 @@ export type NodeAbout = {
   safety?: string;
   presets?: NodePreset[];
   operators?: Record<string, string[]>;
+  /** Everything below is auto-synthesized (app/nodes/about_synthesis.py) for
+   *  the node types that don't hand-author their own `about` — derived from
+   *  schemas and real workflow adjacency, never invented. A class's own
+   *  declaration always wins when both exist. */
+  important_config?: string[];
+  typical_upstream?: string[];
+  typical_downstream?: string[];
+  when_to_use?: string;
+  when_not_to_use?: string;
+  example?: string;
 };
 
 export type NodeTypeManifest = {
@@ -818,6 +828,24 @@ export interface RunChatTurn {
   ts: number;
 }
 
+/** Compact, structured "what did the user click" context for a scoped Ask AI
+ *  question (mirrors app.api.node_types_chat.AskContext) — every field is
+ *  optional, and the backend only builds the (small) prompt it actually
+ *  needs from whichever are set, instead of dumping the whole node catalog
+ *  or the whole workflow on every question. */
+export interface AskContext {
+  feature?: string;
+  /** Static copy this same request already owns (see
+   *  ui/src/modes/studio/builder/feature-help.ts) — passed through so the
+   *  backend never needs a second copy of the same explanation. */
+  feature_description?: string;
+  node_type?: string;
+  node_id?: string;
+  field?: string;
+  relevant_upstream_nodes?: string[];
+  relevant_downstream_nodes?: string[];
+}
+
 export interface AuditEvent {
   run_id: string;
   session_id: string;
@@ -838,90 +866,287 @@ export interface RunDetail extends RunSummary {
   retryable_node_count?: number;
 }
 
-// Business View's data source (app/workflow/business_projection.py). A pure
-// reshaping of a RunDetail + the workflow's optional experience metadata —
-// nothing here is stored separately from the run itself.
-export type BusinessProgressState = 'planned' | 'active' | 'completed' | 'attention' | 'skipped';
+// Business View's contract (app/workflow/business_view/models.py). The server
+// decides what a business activity is, where each fact came from, what needs
+// attention and what a person may do about it; React renders that, and never
+// re-derives meaning from node names or event types.
+//
+// Note what is absent: raw model output, parsed payloads and prompts. They are
+// served only by `businessTechnicalDetail`, so the default screen cannot show
+// them even by mistake.
+export type BusinessSource = 'ai' | 'rule' | 'system' | 'human' | 'customer_message' | 'workflow';
 
-export interface BusinessProgressStage {
+export type BusinessActionType =
+  | 'pause_run' | 'resume_run' | 'stop_run' | 'rerun_dependency'
+  | 'approve' | 'reject' | 'assign_work_item'
+  | 'edit_fact' | 'explain_decision' | 'draft_clarification' | 'add_note' | 'route_override'
+  | 'related_record_lookup' | 'document_review' | 'open_related_record'
+  | 'open_technical_details' | 'ask_ai';
+
+export interface BusinessAction {
   id: string;
-  display_name: string;
-  state: BusinessProgressState;
-  completed_count: number;
-  total_count: number;
+  type: BusinessActionType;
+  label: string;
+  description?: string | null;
+  emphasis: 'primary' | 'secondary' | 'danger';
+  enabled: boolean;
+  disabled_reason?: string | null;
+  requires_approval: boolean;
+  params: Record<string, unknown>;
 }
 
-export interface BusinessCurrentActivity {
-  node_id: string;
-  display_name: string;
-  message: string;
-  waiting_for_you: boolean;
+export interface BusinessFact {
+  id: string;
+  label: string;
+  value: unknown;
+  display: string;
+  source: BusinessSource;
+  source_label: string;
+  node_id?: string | null;
+  editable: boolean;
+  stale: boolean;
+  confidence?: number | null;
+  missing: boolean;
+  actions: BusinessAction[];
 }
 
-export interface BusinessCheck {
-  node_id: string;
-  display_name: string;
-  status: string;
-  status_label: string;
-  outcome: string | null;
+export interface AIModelUsage {
+  requested?: string | null;
+  selected?: string | null;
+  executed?: string | null;
+  fallback: boolean;
+  fallback_reason?: string | null;
+  routing_reason?: string | null;
+  latency_ms?: number | null;
+  cost_usd?: number | null;
+  task_type?: string | null;
+  provider?: string | null;
+  call_count: number;
 }
 
-export interface BusinessDecision {
-  node_id: string;
-  decisions: Record<string, unknown>;
-  rules_triggered: string[];
-  summary: string[];
-}
-
-export interface BusinessDecisionExplanationEntry {
+export interface BusinessDecisionRule {
+  id: string;
   name: string;
-  description: string;
+  description?: string | null;
+  node_id?: string | null;
+  matched: boolean;
+}
+
+export interface TechnicalNodeRef {
+  node_id: string;
+  display_name: string;
+  type_name?: string | null;
+  status: string;
+  duration_ms?: number | null;
+  error?: string | null;
+}
+
+export interface TechnicalActivityDetail {
+  node_ids: string[];
+  nodes: TechnicalNodeRef[];
+  ai_calls: AIModelUsage[];
+  rule_count: number;
+  rules: BusinessDecisionRule[];
+  duration_ms?: number | null;
+  has_raw_output: boolean;
+}
+
+export type BusinessActivityStatus = 'planned' | 'active' | 'completed' | 'attention' | 'skipped';
+export type BusinessActivityKind = 'ai' | 'rule' | 'system' | 'human' | 'workflow' | 'mixed';
+
+export interface BusinessActivityView {
+  id: string;
+  title: string;
+  status: BusinessActivityStatus;
+  status_label: string;
+  summary?: string | null;
+  kind: BusinessActivityKind;
+  kind_label: string;
+  facts: BusinessFact[];
+  actions: BusinessAction[];
+  source_nodes: string[];
+  ai?: AIModelUsage | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  duration_ms?: number | null;
+  technical: TechnicalActivityDetail;
+}
+
+export type BusinessAttentionSeverity = 'blocking' | 'warning' | 'info';
+
+export interface BusinessAttentionItem {
+  id: string;
+  title: string;
+  detail?: string | null;
+  severity: BusinessAttentionSeverity;
+  status_label: string;
+  field?: string | null;
+  actions: BusinessAction[];
+}
+
+export type BusinessStatusTone = 'progress' | 'attention' | 'blocked' | 'waiting' | 'done' | 'stopped';
+
+export interface BusinessStatusView {
+  code: string;
+  headline: string;
+  summary: string;
+  tone: BusinessStatusTone;
+  attention_count: number;
+  narration_source: 'deterministic' | 'ai';
+  narration_model?: string | null;
+  state_version: string;
+}
+
+export interface BusinessUnderstanding {
+  node_id?: string | null;
+  summary?: string | null;
+  confidence?: number | null;
+  fields: BusinessFact[];
+  source: BusinessSource;
+  source_label: string;
+  ai?: AIModelUsage | null;
+  actions: BusinessAction[];
+}
+
+export interface BusinessDecisionView {
+  id: string;
+  headline: string;
+  summary?: string | null;
+  reason?: string | null;
+  source: BusinessSource;
+  source_label: string;
+  facts: BusinessFact[];
+  rules: BusinessDecisionRule[];
+  actions: BusinessAction[];
+  node_ids: string[];
+  overridden: boolean;
+  overridden_by?: string | null;
+  overridden_at?: string | null;
+  original_headline?: string | null;
+  stale: boolean;
+}
+
+export interface BusinessNextStep {
+  headline: string;
+  description?: string | null;
+  blocked: boolean;
+  blocked_reason?: string | null;
+  owner?: string | null;
+  actions: BusinessAction[];
+}
+
+export interface BusinessRelatedRecord {
+  id: string;
+  kind: string;
+  label: string;
+  reference: string;
+  source: BusinessSource;
+  source_label: string;
+  actions: BusinessAction[];
+}
+
+export interface BusinessAttachment {
+  id: string;
+  name: string;
+  kind: string;
+  size_bytes?: number | null;
+  file_key?: string | null;
+  actions: BusinessAction[];
+}
+
+export type BusinessTimelineKind = 'activity' | 'human' | 'failure' | 'edit' | 'status' | 'override';
+
+export interface BusinessTimelineEntry {
+  id: string;
+  ts: string;
+  title: string;
+  detail?: string | null;
+  marks: string[];
+  kind: BusinessTimelineKind;
+  source?: BusinessSource | null;
+  source_label?: string | null;
 }
 
 export interface BusinessRequiredUserAction {
   type: 'approval_review' | 'resume_decision';
-  node_id: string | null;
-  question?: string;
-  allowed_actions?: string[];
-  message?: string;
-}
-
-export type BusinessControl = 'pause' | 'resume' | 'stop' | 'retry' | 'approve' | 'edit' | 'reject' | 'ask_why';
-
-export interface BusinessTimelineEntry {
-  ts: string;
-  label: string;
+  node_id?: string | null;
+  question?: string | null;
+  allowed_actions: string[];
+  message?: string | null;
 }
 
 export interface BusinessProjection {
   work_item: {
     id: string;
+    title: string;
     type: string;
-    status: string;
-    started_at: string | null;
-    updated_at: string | null;
+    reference: string;
+    started_at?: string | null;
+    updated_at?: string | null;
     assigned_to?: string | null;
+    customer?: string | null;
   };
   process: { name: string; goal: string };
   status: string;
-  current_activity: BusinessCurrentActivity | null;
-  progress: BusinessProgressStage[];
-  understanding: { node_id?: string; result?: unknown; confidence?: number | null } | Record<string, never>;
-  editable_facts: string[];
-  stale_decisions: string[];
-  missing_information: string[];
-  checks: BusinessCheck[];
-  facts: unknown[];
-  decision: BusinessDecision | null;
-  decision_explanation: BusinessDecisionExplanationEntry[];
-  uncertainties: string[];
-  recommendations: unknown[];
-  proposed_actions: unknown[];
-  completed_actions: unknown[];
-  required_user_actions: BusinessRequiredUserAction[];
-  allowed_controls: BusinessControl[];
+  business_status: BusinessStatusView;
+  attention: BusinessAttentionItem[];
+  understanding: BusinessUnderstanding;
+  activities: BusinessActivityView[];
+  happened: string[];
+  facts: BusinessFact[];
+  decision: BusinessDecisionView | null;
+  recommended_actions: BusinessAction[];
+  other_actions: BusinessAction[];
+  next_step: BusinessNextStep | null;
+  related_records: BusinessRelatedRecord[];
+  attachments: BusinessAttachment[];
   timeline: BusinessTimelineEntry[];
+  allowed_actions: BusinessAction[];
+  required_user_actions: BusinessRequiredUserAction[];
+  suggested_questions: string[];
+  activity_summary: Record<string, number>;
 }
+
+export interface BusinessNarration {
+  state_version: string;
+  headline: string;
+  summary: string;
+  next_step: string;
+  source: 'deterministic' | 'ai';
+  model?: string | null;
+  cached: boolean;
+}
+
+export interface BusinessExplanation {
+  decision: string | null;
+  summary?: string | null;
+  facts: { id: string; label: string; value: string; source: string }[];
+  rules: { id: string; name: string; description: string }[];
+  source: 'deterministic' | 'ai';
+  model?: string | null;
+}
+
+export interface BusinessTechnicalDetail {
+  activity_id: string;
+  title: string;
+  technical: TechnicalActivityDetail | null;
+  nodes: {
+    node_id: string;
+    type_name?: string | null;
+    status?: string | null;
+    duration_s?: number | null;
+    error?: string | null;
+    model_selections: ModelSelection[];
+    output: unknown;
+  }[];
+  cost_entries: CostLedgerEntry[];
+}
+
+export type BusinessActionResult =
+  | { kind: 'note'; note: { text: string; by: string; at: string } }
+  | { kind: 'route_override'; override: { route: string; reason: string | null; by: string; at: string } }
+  | { kind: 'clarification_draft'; subject: string; body: string; asks: string[]; sent: boolean; note: string }
+  | { kind: 'record'; reference: string; record_kind: string; data: Record<string, unknown>; text?: string | null };
 
 export type PipelineSummary = {
   name: string;

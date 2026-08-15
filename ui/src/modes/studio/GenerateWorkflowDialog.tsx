@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import type { GenerateWorkflowResult } from '../../api/types';
+import { InfoPopover } from './builder/InfoPopover';
 
 export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
@@ -34,7 +35,10 @@ export function GenerateWorkflowDialog({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg shadow-xl w-full max-w-xl max-h-[85vh] overflow-y-auto">
         <div className="px-6 py-4 border-b border-slate-200">
-          <h2 className="text-lg font-semibold">Generate a workflow from a prompt</h2>
+          <h2 className="text-lg font-semibold flex items-center gap-1.5">
+            Generate a workflow from a prompt
+            <InfoPopover feature="workflow_generation" />
+          </h2>
           <p className="text-xs text-ink-500 mt-0.5">
             Describe what the workflow should do. It's checked with a static
             preflight and then actually run once end-to-end before being

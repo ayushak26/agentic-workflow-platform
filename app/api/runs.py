@@ -14,7 +14,15 @@ from app.runtime.preflight import preflight_workflow_for_run
 from app.security.dependencies import CurrentUser, require_consultant
 from app.security.audit import read_audit_events
 from app.workflow.business_projection import build_business_projection
-from app.workflow.fact_corrections import apply_fact_correction
+from app.workflow.business_view import explanation, narrator
+from app.workflow.business_view.dispatch import (
+    BusinessActionError,
+    dispatch_business_action,
+)
+from app.workflow.business_view.runstate import build_run_view
+from app.workflow.business_view.store import get_cached_narration, put_cached_narration
+from app.workflow.business_view.understanding import correction_target
+from app.workflow.fact_corrections import apply_fact_correction, derive_dependencies
 from app.workflow.pipeline_history import find_active_pipeline_stage
 from app.workflow.run_history import (
     delete_run,
@@ -142,22 +150,14 @@ async def pending_gate(
     }
 
 
-@router.get("/mine/{run_id}/business-projection")
-async def run_business_projection(
-    run_id: str,
-    request: Request,
-    user: CurrentUser = Depends(require_consultant),
-):
-    """Business View's data source (§118) — a pure reshaping of this run and
-    its workflow's optional experience metadata, computed on read. Nothing
-    here is stored separately from run_history; see
-    app/workflow/business_projection.py."""
-    services = getattr(request.app.state, "services", {})
-    db = services.get("audit_db")
-    if db is None:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+async def _load_run_and_spec(db, scope: str, run_id: str):
+    """The run document plus its parsed workflow spec, or a 404/400.
 
-    scope = _scope(user)
+    A run whose own saved YAML no longer parses still opens — the projection
+    just loses the labelling the spec would have given it. Failing the whole
+    screen because a workflow was edited after the run is a far worse outcome
+    than a few humanised node ids.
+    """
     try:
         run = await get_run(db, scope, run_id)
     except ValueError as exc:
@@ -171,31 +171,324 @@ async def run_business_projection(
         try:
             workflow_spec = load_workflow_from_string(workflow_yaml)
         except Exception:
-            # A run's own saved YAML failing to parse must not 500 the
-            # projection — it just loses stage/experience labeling.
             workflow_spec = None
+    return run, workflow_spec
 
-    gate = None
-    if run.get("status") == "paused":
-        checkpoint = await get_resume_checkpoint(db, scope, run_id)
-        if checkpoint is not None:
-            pause_kind = checkpoint.get("pause_kind") or "hitl_gate"
-            node_id = checkpoint.get("paused_node_id")
-            if pause_kind == "user_requested":
-                gate = {"paused": True, "pause_kind": pause_kind, "node_id": node_id}
-            else:
-                interrupt = (checkpoint.get("pause_context") or {}).get("interrupt")
-                if not isinstance(interrupt, dict):
-                    interrupt = _hitl_config_fallback(checkpoint, node_id)
-                gate = {
-                    "paused": True,
-                    "pause_kind": pause_kind,
-                    "node_id": interrupt.get("node_id", node_id),
-                    "question": interrupt.get("question", ""),
-                    "allowed_actions": interrupt.get("allowed_actions") or ["approve", "reject"],
-                }
 
-    return build_business_projection(run, workflow_spec=workflow_spec, gate=gate)
+async def _pending_gate(db, scope: str, run_id: str, run: dict[str, Any]):
+    if run.get("status") != "paused":
+        return None
+    checkpoint = await get_resume_checkpoint(db, scope, run_id)
+    if checkpoint is None:
+        return None
+    pause_kind = checkpoint.get("pause_kind") or "hitl_gate"
+    node_id = checkpoint.get("paused_node_id")
+    if pause_kind == "user_requested":
+        return {"paused": True, "pause_kind": pause_kind, "node_id": node_id}
+    interrupt = (checkpoint.get("pause_context") or {}).get("interrupt")
+    if not isinstance(interrupt, dict):
+        interrupt = _hitl_config_fallback(checkpoint, node_id)
+    return {
+        "paused": True,
+        "pause_kind": pause_kind,
+        "node_id": interrupt.get("node_id", node_id),
+        "question": interrupt.get("question", ""),
+        "allowed_actions": interrupt.get("allowed_actions") or ["approve", "reject"],
+    }
+
+
+def _run_cost_entries(services: dict[str, Any], run_id: str, scope: str) -> list[dict[str, Any]]:
+    """Per-call model/cost/latency for this run, or [] when unavailable.
+
+    Absent figures stay absent in the projection rather than defaulting to
+    zero — "$0.00, 0ms" reads as a claim, and it would be a false one (§24).
+    """
+    ledger = services.get("cost_ledger")
+    if ledger is None:
+        return []
+    try:
+        return ledger.run_summary(run_id, scope).get("by_node") or []
+    except Exception:
+        return []
+
+
+@router.get("/mine/{run_id}/business-projection")
+async def run_business_projection(
+    run_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Business View's data source — this run reshaped into business language.
+
+    Pure and read-only: everything is computed from the run document, the
+    workflow spec, the pending gate and the cost ledger. Deliberately contains
+    no raw model output, parsed payloads or prompts; those are served by
+    `/business-technical/{activity_id}` and by Cockpit (§5, §46, §60)."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    run, workflow_spec = await _load_run_and_spec(db, scope, run_id)
+    gate = await _pending_gate(db, scope, run_id, run)
+
+    projection = build_business_projection(
+        run,
+        workflow_spec=workflow_spec,
+        gate=gate,
+        cost_entries=_run_cost_entries(services, run_id, scope),
+        role=user.role,
+    )
+
+    # A narration already produced for this exact state costs nothing to
+    # reuse; producing one costs a model call, so it happens only when the
+    # client asks for it (§17, §50).
+    cached = await get_cached_narration(
+        db, run_id=run_id, session_id=scope, state_version=projection.business_status.state_version,
+    )
+    if cached:
+        narrator.apply(
+            projection,
+            narrator.Narration(
+                headline=cached["headline"],
+                summary=cached["summary"],
+                next_step=cached.get("next_step", ""),
+            ),
+            source=cached.get("source", "deterministic"),
+            model=cached.get("model"),
+        )
+    return projection
+
+
+@router.post("/mine/{run_id}/business-narration")
+async def run_business_narration(
+    run_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Rephrase this work item's already-decided status in business language.
+
+    One small model call per meaningful state change, cached by
+    `business_status.state_version`. The response is the same shape whether a
+    model ran or not, so the client never branches on availability (§14–§17)."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    run, workflow_spec = await _load_run_and_spec(db, scope, run_id)
+    gate = await _pending_gate(db, scope, run_id, run)
+    projection = build_business_projection(
+        run, workflow_spec=workflow_spec, gate=gate,
+        cost_entries=_run_cost_entries(services, run_id, scope), role=user.role,
+    )
+    version = projection.business_status.state_version
+
+    cached = await get_cached_narration(db, run_id=run_id, session_id=scope, state_version=version)
+    if cached:
+        return {
+            "state_version": version,
+            "headline": cached["headline"],
+            "summary": cached["summary"],
+            "next_step": cached.get("next_step", ""),
+            "source": cached.get("source", "deterministic"),
+            "model": cached.get("model"),
+            "cached": True,
+        }
+
+    llm = services.get("llm")
+    if llm is not None and hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id=run_id, session_id=scope,
+            node_id=narrator.NARRATION_CAPABILITY, ledger=services.get("cost_ledger"),
+        )
+    narration, source, model = await narrator.narrate(llm, projection)
+
+    await put_cached_narration(
+        db, run_id=run_id, session_id=scope, state_version=version,
+        headline=narration.headline, summary=narration.summary,
+        next_step=narration.next_step, source=source, model=model,
+    )
+    return {
+        "state_version": version,
+        "headline": narration.headline,
+        "summary": narration.summary,
+        "next_step": narration.next_step,
+        "source": source,
+        "model": model,
+        "cached": False,
+    }
+
+
+@router.get("/mine/{run_id}/business-explanation")
+async def run_business_explanation(
+    run_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """"Why?" — the facts and rules behind the handling decision (§20, §48).
+
+    Generated lazily, only when a person actually asks. The evidence is always
+    the run's own; a model may only rewrite it, and only if every reference it
+    cites resolves."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    run, workflow_spec = await _load_run_and_spec(db, scope, run_id)
+    projection = build_business_projection(
+        run, workflow_spec=workflow_spec,
+        gate=await _pending_gate(db, scope, run_id, run),
+        cost_entries=_run_cost_entries(services, run_id, scope), role=user.role,
+    )
+    if projection.decision is None:
+        return {"decision": None, "facts": [], "rules": [], "source": "deterministic"}
+
+    llm = services.get("llm")
+    if llm is not None and hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id=run_id, session_id=scope,
+            node_id=explanation.EXPLANATION_CAPABILITY, ledger=services.get("cost_ledger"),
+        )
+    return await explanation.explain(llm, projection.decision)
+
+
+@router.get("/mine/{run_id}/business-technical/{activity_id}")
+async def run_business_technical_detail(
+    run_id: str,
+    activity_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """The technical layer behind one business activity (§5, §47).
+
+    This is the only route that returns raw model output and per-node payloads
+    for the Business View, which is what keeps them out of the default screen:
+    a person has to ask for them by name."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    run, workflow_spec = await _load_run_and_spec(db, scope, run_id)
+    projection = build_business_projection(
+        run, workflow_spec=workflow_spec,
+        gate=await _pending_gate(db, scope, run_id, run),
+        cost_entries=_run_cost_entries(services, run_id, scope), role=user.role,
+    )
+
+    if activity_id == "run":
+        node_ids = [nid for activity in projection.activities for nid in activity.source_nodes]
+        title = projection.process.name
+        technical = None
+    else:
+        activity = next((item for item in projection.activities if item.id == activity_id), None)
+        if activity is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "No such activity on this work item")
+        node_ids = activity.source_nodes
+        title = activity.title
+        technical = activity.technical
+
+    outputs = run.get("outputs") or {}
+    node_runs = run.get("node_runs") or {}
+    return {
+        "activity_id": activity_id,
+        "title": title,
+        "technical": technical,
+        "nodes": [
+            {
+                "node_id": node_id,
+                "type_name": (node_runs.get(node_id) or {}).get("type_name"),
+                "status": (node_runs.get(node_id) or {}).get("status"),
+                "duration_s": (node_runs.get(node_id) or {}).get("duration_s"),
+                "error": (node_runs.get(node_id) or {}).get("error"),
+                "model_selections": (node_runs.get(node_id) or {}).get("model_selections") or [],
+                "output": outputs.get(node_id),
+            }
+            for node_id in node_ids
+        ],
+        "cost_entries": _run_cost_entries(services, run_id, scope),
+    }
+
+
+class BusinessActionRequest(BaseModel):
+    type: str
+    params: dict[str, Any] = {}
+
+
+@router.post("/mine/{run_id}/business-action")
+async def run_business_action(
+    run_id: str,
+    body: BusinessActionRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Perform one typed Business View action (§53, §54).
+
+    The action must be one of `BusinessActionType`, and one this module has a
+    handler for. Actions owned by another endpoint (pause, resume, approve,
+    assign, fact correction…) are refused here with the route that owns them,
+    so there is exactly one audited way to do each thing."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    run, workflow_spec = await _load_run_and_spec(db, scope, run_id)
+    projection = build_business_projection(
+        run, workflow_spec=workflow_spec,
+        gate=await _pending_gate(db, scope, run_id, run),
+        cost_entries=_run_cost_entries(services, run_id, scope), role=user.role,
+    )
+
+    # The projection already decided what this person may do in this state.
+    # Checking against it means permission and state gating cannot disagree
+    # between what was rendered and what is accepted.
+    permitted = {action.type.value for action in projection.allowed_actions}
+    permitted |= {
+        action.type.value for item in projection.attention for action in item.actions
+    }
+    if body.type not in permitted:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"'{body.type}' is not available on this work item right now.",
+        )
+
+    try:
+        return await dispatch_business_action(
+            action_type=body.type,
+            params=body.params,
+            run_id=run_id,
+            session_id=scope,
+            username=user.username,
+            role=str(getattr(user.role, "value", user.role)),
+            db=db,
+            services=services,
+            context={
+                "customer": projection.work_item.customer,
+                "request": projection.work_item.type,
+                "missing": [item.title for item in projection.attention],
+                "references": [record.reference for record in projection.related_records],
+                "contact": next(
+                    (
+                        field.display
+                        for field in projection.understanding.fields
+                        if field.id == "understanding:contact_name" and not field.missing
+                    ),
+                    None,
+                ),
+            },
+        )
+    except BusinessActionError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
 class FactCorrectionRequest(BaseModel):
@@ -210,15 +503,40 @@ async def correct_fact(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
-    """Overwrite one extracted fact on this run and mark the decisions it
-    fed as stale (§ editable fact correction). Does not recompute anything —
-    see app/workflow/fact_corrections.py for why."""
-    db = request.app.state.services.get("audit_db")
+    """Overwrite one extracted fact on this run and mark what it fed as stale.
+
+    The target node, payload key and permitted fields come from the run's own
+    workflow — so this works for any workflow with a structured extraction
+    step, not only the one the dependency map was hand-written for. Nothing is
+    recomputed; see app/workflow/fact_corrections.py for why."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
     if db is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
+
+    scope = _scope(user)
+    run, workflow_spec = await _load_run_and_spec(db, scope, run_id)
+    run_view = build_run_view(run, workflow_spec=workflow_spec)
+    target = correction_target(run_view)
+    if target is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "This work item has no extracted information to correct.",
+        )
+    node_id, payload_key, allowed = target
+    dependencies = derive_dependencies(workflow_spec, node_id)
+
     try:
         edit = await apply_fact_correction(
-            db, run_id=run_id, session_id=_scope(user), field=body.field, value=body.value,
+            db,
+            run_id=run_id,
+            session_id=scope,
+            field=body.field,
+            value=body.value,
+            node_id=node_id,
+            payload_key=payload_key,
+            stale_decisions=dependencies.get(body.field, ()),
+            allowed_fields=allowed,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc

@@ -5,14 +5,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusinessView } from './BusinessView';
 import { api } from '../../api/client';
 import { useCockpitRun } from './cockpit/useCockpitRun';
-import type { BusinessProjection } from '../../api/types';
+import { action, attentionItem, basfProjection, fact } from './business/fixtures';
 
 vi.mock('./cockpit/useCockpitRun');
 vi.mock('../../api/client', () => ({
   api: {
     businessProjection: vi.fn(),
+    businessNarration: vi.fn(),
+    businessExplanation: vi.fn(),
+    businessTechnicalDetail: vi.fn(),
+    businessAction: vi.fn(),
     pauseRun: vi.fn(),
     resumePausedRun: vi.fn(),
+    restartRun: vi.fn(),
     deleteRun: vi.fn(),
     downloadArtifact: vi.fn(),
     correctFact: vi.fn(),
@@ -20,17 +25,10 @@ vi.mock('../../api/client', () => ({
     assignRun: vi.fn(),
   },
 }));
-// HITLPanel/OutputViewer/AskAiPanel are reused, already-tested collaborators —
-// stubbed here so these tests exercise only BusinessView's own logic.
-vi.mock('./HITLPanel', () => ({
-  HITLPanel: () => <div data-testid="hitl-panel">HITL review</div>,
-}));
-vi.mock('./OutputViewer', () => ({
-  OutputViewer: () => <div data-testid="output-viewer" />,
-}));
-vi.mock('./run-history/AskAiPanel', () => ({
-  AskAiPanel: () => <div data-testid="ask-ai-panel" />,
-}));
+// Reused, already-tested collaborators — stubbed so these tests exercise only
+// the Business View's own behaviour.
+vi.mock('./HITLPanel', () => ({ HITLPanel: () => <div data-testid="hitl-panel">HITL review</div> }));
+vi.mock('./run-history/AskAiPanel', () => ({ AskAiPanel: () => <div data-testid="ask-ai-panel" /> }));
 
 const mockedUseCockpitRun = useCockpitRun as unknown as ReturnType<typeof vi.fn>;
 
@@ -40,7 +38,7 @@ function baseCockpitRun(overrides: Record<string, unknown> = {}) {
     navState: {},
     navigate: vi.fn(),
     triggerError: null,
-    liveRun: { run_id: 'run-123', status: 'running', retry_available: false },
+    liveRun: { run_id: 'run-123', status: 'completed', retry_available: false, workflow_name: 'Pump routing' },
     gate: null,
     setGateHidden: vi.fn(),
     gateFetchError: null,
@@ -58,343 +56,449 @@ function baseCockpitRun(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function baseProjection(overrides: Partial<BusinessProjection> = {}): BusinessProjection {
-  return {
-    work_item: { id: 'run-123', type: 'Multilingual customer request triage', status: 'In Progress', started_at: null, updated_at: null },
-    process: { name: 'Multilingual Customer Request Triage', goal: 'Route the request to the right team.' },
-    status: 'running',
-    current_activity: { node_id: 'understand_request', display_name: 'Understand Customer Request', message: 'Reading the message.', waiting_for_you: false },
-    progress: [
-      { id: 'prepare', display_name: 'Prepare', state: 'completed', completed_count: 1, total_count: 1 },
-      { id: 'understand', display_name: 'Understand', state: 'active', completed_count: 0, total_count: 1 },
-    ],
-    understanding: {},
-    editable_facts: [],
-    stale_decisions: [],
-    missing_information: [],
-    checks: [],
-    facts: [],
-    decision: null,
-    decision_explanation: [],
-    uncertainties: [],
-    recommendations: [],
-    proposed_actions: [],
-    completed_actions: [],
-    required_user_actions: [],
-    allowed_controls: ['pause', 'stop'],
-    timeline: [{ ts: '2026-08-14T10:00:00Z', label: 'Request received' }],
-    ...overrides,
-  };
+beforeEach(() => {
+  mockedUseCockpitRun.mockReset().mockReturnValue(baseCockpitRun());
+  vi.mocked(api.businessProjection).mockReset().mockResolvedValue(basfProjection());
+  vi.mocked(api.businessNarration).mockReset().mockResolvedValue({
+    state_version: 'v1', headline: 'Ready for Inside Sales', summary: 'Narrated summary.',
+    next_step: '', source: 'deterministic', model: null, cached: true,
+  });
+  vi.mocked(api.businessExplanation).mockReset();
+  vi.mocked(api.businessTechnicalDetail).mockReset();
+  vi.mocked(api.businessAction).mockReset();
+  vi.mocked(api.correctFact).mockReset();
+  vi.mocked(api.assignRun).mockReset();
+  vi.mocked(api.deleteRun).mockReset().mockResolvedValue({ run_id: 'run-123', deleted: true });
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+async function renderView() {
+  render(<BusinessView />);
+  await screen.findByText('BASF SE — Quotation request');
 }
 
-beforeEach(() => {
-  mockedUseCockpitRun.mockReset();
-  vi.mocked(api.businessProjection).mockReset();
-  vi.mocked(api.pauseRun).mockReset().mockResolvedValue({ run_id: 'run-123', pause_requested: true, message: '' });
-  vi.mocked(api.resumePausedRun).mockReset();
-  vi.mocked(api.deleteRun).mockReset().mockResolvedValue({ run_id: 'run-123', deleted: true });
-  vi.mocked(api.correctFact).mockReset();
-  vi.mocked(api.resumeWorkflow).mockReset();
-  vi.mocked(api.assignRun).mockReset();
+describe('the first screen communicates the situation', () => {
+  it('leads with who, what, status and a business summary', async () => {
+    await renderView();
+
+    const header = screen.getByRole('banner');
+    expect(within(header).getByRole('heading', { name: 'BASF SE — Quotation request' })).toBeInTheDocument();
+    expect(within(header).getByText('Ready for Inside Sales')).toBeInTheDocument();
+    expect(within(header).getByText(/Quotation request · #run-123/)).toBeInTheDocument();
+    expect(within(header).getByText(/requesting a quotation for five new pumps/)).toBeInTheDocument();
+    expect(within(header).getByText('4 items need attention')).toBeInTheDocument();
+  });
+
+  it('never renders raw or parsed model JSON', async () => {
+    // The projection carries no raw payload at all, so this asserts the
+    // property the contract guarantees: nothing on screen looks like JSON.
+    await renderView();
+
+    expect(screen.queryByText(/"intent":/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^raw$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^parsed$/)).not.toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\{"[a-z_]+":/);
+  });
+
+  it('shows understood information as labelled business fields', async () => {
+    await renderView();
+
+    const section = screen.getByText('What I understood').closest('section') as HTMLElement;
+    expect(within(section).getByText('Customer')).toBeInTheDocument();
+    expect(within(section).getByText('BASF SE')).toBeInTheDocument();
+    expect(within(section).getByText('Quantity')).toBeInTheDocument();
+    // A fact the workflow could not establish is shown in words, not dropped.
+    expect(within(section).getByText('Not stated')).toBeInTheDocument();
+  });
 });
 
-afterEach(() => {
-  // restoreAllMocks undoes vi.spyOn(window, 'confirm'); the api/useCockpitRun
-  // mocks are plain vi.fn()s re-armed explicitly in beforeEach regardless.
-  vi.restoreAllMocks();
+describe('the attention centre', () => {
+  it('gives each gap direct resolution actions', async () => {
+    await renderView();
+
+    const section = screen.getByText('Needs attention (2)').closest('section') as HTMLElement;
+    expect(within(section).getByText('Pump model')).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: 'Review datasheet' })).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: /Ask customer/ })).toBeInTheDocument();
+  });
+
+  it('labels an action that only prepares something as a draft', async () => {
+    await renderView();
+
+    expect(
+      screen.getByRole('button', { name: 'Ask customer (prepares a draft for your approval)' }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders nothing when there is nothing to attend to', async () => {
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({ attention: [] }));
+    await renderView();
+
+    expect(screen.queryByText(/Needs attention/)).not.toBeInTheDocument();
+  });
 });
 
-describe('BusinessView', () => {
-  it('shows a loading state before the projection resolves', () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockReturnValue(new Promise(() => {}));
+describe('the handling decision', () => {
+  it('shows the route, its reason and its supporting facts', async () => {
+    await renderView();
 
-    render(<BusinessView />);
-
-    expect(screen.getByRole('status', { name: '' })).toHaveTextContent('Opening this work item');
+    const section = screen.getByText('Handling decision').closest('section') as HTMLElement;
+    expect(within(section).getByText('Inside Sales')).toBeInTheDocument();
+    expect(within(section).getByText(/no named territory owner/)).toBeInTheDocument();
+    expect(within(section).getByText('Safety issue: No')).toBeInTheDocument();
+    expect(within(section).getByText('Business rule')).toBeInTheDocument();
   });
 
-  it('renders the work item header, current activity, and progress once loaded', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
-
-    render(<BusinessView />);
-
-    expect(await screen.findByText('Multilingual Customer Request Triage')).toBeInTheDocument();
-    expect(screen.getByText('In Progress')).toBeInTheDocument();
-    expect(screen.getByText('Reading the message.')).toBeInTheDocument();
-    expect(screen.getByText('Understand')).toBeInTheDocument();
-    expect(screen.getByText('Prepare')).toBeInTheDocument();
-  });
-
-  it('only shows controls the projection actually allows', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({ allowed_controls: ['pause', 'stop'] }));
-
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-
-    expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Retry safely' })).not.toBeInTheDocument();
-  });
-
-  it('calls pauseRun when Pause is clicked', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
+  it('fetches the explanation only when someone asks Why', async () => {
+    vi.mocked(api.businessExplanation).mockResolvedValue({
+      decision: 'Inside Sales',
+      summary: 'Sent to Inside Sales because it is a standard quotation request with no safety issue.',
+      facts: [{ id: 'check:safety_router', label: 'Safety issue', value: 'No', source: 'Business rule' }],
+      rules: [{ id: 'intent_router', name: 'Request → RFQ', description: 'rule matched' }],
+      source: 'ai',
+      model: 'gpt-5.6-luna',
+    });
     const user = userEvent.setup();
+    await renderView();
 
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-    await user.click(screen.getByRole('button', { name: 'Pause' }));
-
-    expect(api.pauseRun).toHaveBeenCalledWith('run-123');
-  });
-
-  it('surfaces missing information and the decision explanation behind "Why?"', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({
-      missing_information: ['product_model', 'serial_number'],
-      decision: { node_id: 'automation_safety', decisions: { human_review: true }, rules_triggered: ['Low confidence needs a person'], summary: [] },
-      decision_explanation: [{ name: 'Low confidence needs a person', description: 'Below 0.80 we do not act automatically.' }],
-    }));
-    const user = userEvent.setup();
-
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-
-    expect(screen.getByText('product model')).toBeInTheDocument();
-    expect(screen.getByText('serial number')).toBeInTheDocument();
-    expect(screen.queryByText('Low confidence needs a person')).not.toBeInTheDocument();
-
+    expect(api.businessExplanation).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Why?' }));
 
-    expect(screen.getByText('Low confidence needs a person')).toBeInTheDocument();
-    expect(screen.getByText('Below 0.80 we do not act automatically.')).toBeInTheDocument();
+    expect(api.businessExplanation).toHaveBeenCalledWith('run-123');
+    expect(await screen.findByText(/standard quotation request with no safety issue/)).toBeInTheDocument();
+    expect(screen.getByText('Wording by AI · gpt-5.6-luna')).toBeInTheDocument();
   });
 
-  it('shows an approval card with a working Review action when a HITL gate is pending', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun({
-      gate: { nodeId: 'human_review', context: {}, question: 'Check the extraction.', allowedActions: ['approve', 'edit', 'reject'], content: null, allowDocumentOverride: true, maxEditChars: 1000 },
+  it('marks a human route override rather than presenting it as the system\'s', async () => {
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({
+      decision: {
+        ...basfProjection().decision!,
+        headline: 'Technical Sales',
+        original_headline: 'Inside Sales',
+        overridden: true,
+        overridden_by: 'maria',
+        source: 'human',
+        source_label: 'Changed by a person',
+      },
     }));
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({
-      status: 'paused',
-      work_item: { id: 'run-123', type: 'Triage', status: 'Waiting for You', started_at: null, updated_at: null },
-      required_user_actions: [{ type: 'approval_review', node_id: 'human_review', question: 'Check the extraction.', allowed_actions: ['approve', 'edit', 'reject'] }],
-      allowed_controls: ['approve', 'edit', 'reject', 'ask_why', 'stop'],
-    }));
+    await renderView();
+
+    const section = screen.getByText('Handling decision').closest('section') as HTMLElement;
+    expect(within(section).getByText('Technical Sales')).toBeInTheDocument();
+    expect(within(section).getByText(/was Inside Sales · changed by maria/)).toBeInTheDocument();
+  });
+});
+
+describe('AI provenance and models', () => {
+  it('names the model that actually executed, not the one requested', async () => {
+    await renderView();
+
+    // `requested: 'auto'` never reaches the business surface; the executed
+    // model does.
+    expect(screen.getAllByText('AI · claude-sonnet-4-5').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/AI · auto/)).not.toBeInTheDocument();
+  });
+
+  it('does not attach a model badge to a rule-based decision', async () => {
+    await renderView();
+
+    const section = screen.getByText('Handling decision').closest('section') as HTMLElement;
+    expect(within(section).queryByText(/AI ·/)).not.toBeInTheDocument();
+  });
+
+  it('shows latency and cost only where a real figure exists', async () => {
+    await renderView();
+
+    expect(screen.getByText('1.4s · $0.0018')).toBeInTheDocument();
+  });
+});
+
+describe('activities replace per-node event spam', () => {
+  it('summarises how many business activities completed', async () => {
+    await renderView();
+
+    expect(screen.getByText('2 of 2 business activities completed')).toBeInTheDocument();
+    expect(screen.queryByText(/router started/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/router completed/i)).not.toBeInTheDocument();
+  });
+
+  it('expands one activity into its findings and technical counts', async () => {
     const user = userEvent.setup();
+    await renderView();
 
-    render(<BusinessView />);
-    await screen.findByText('Check the extraction.');
+    await user.click(screen.getByRole('button', { name: /Handling checks completed/ }));
 
-    expect(screen.getByText('Approval required')).toBeInTheDocument();
-    await user.click(screen.getAllByRole('button', { name: /Review/ })[0]);
-
-    expect(screen.getByTestId('hitl-panel')).toBeInTheDocument();
+    // Two routers collapsed into one business activity, and the count of what
+    // they were is available without leaving the business surface.
+    expect(screen.getByText('2 technical steps · 2 rules')).toBeInTheDocument();
+    expect(screen.getAllByText('Safety issue').length).toBeGreaterThan(0);
   });
 
-  it('confirms before stopping, and does not call deleteRun when the user cancels', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
+  it('groups start and completion into one timeline entry with its checks', async () => {
+    await renderView();
+
+    const history = screen.getByText('History').closest('section') as HTMLElement;
+    const items = within(history).getAllByRole('listitem');
+    // Reverse-chronological: the handling checks are the most recent entry.
+    expect(items[0]).toHaveTextContent('Handling checks completed');
+    expect(items[0]).toHaveTextContent('Complexity: Standard');
+    expect(within(history).queryByText(/started$/)).not.toBeInTheDocument();
+  });
+});
+
+describe('technical detail stays one level deeper', () => {
+  it('fetches raw output only when a person opens technical details', async () => {
+    vi.mocked(api.businessTechnicalDetail).mockResolvedValue({
+      activity_id: 'handling',
+      title: 'Handling checks completed',
+      technical: {
+        node_ids: ['intent_router'], nodes: [], ai_calls: [
+          {
+            requested: 'auto', selected: 'claude-sonnet-4-5', executed: 'claude-sonnet-4-5',
+            fallback: true, fallback_reason: 'Provider temporarily unavailable', routing_reason: null,
+            latency_ms: 1400, cost_usd: 0.0018, task_type: 'extraction', provider: 'anthropic', call_count: 1,
+          },
+        ],
+        rule_count: 4, rules: [], duration_ms: 430, has_raw_output: true,
+      },
+      nodes: [{ node_id: 'intent_router', type_name: 'RouterAgent', status: 'completed', duration_s: 0.1, error: null, model_selections: [], output: { route: 'RFQ' } }],
+      cost_entries: [],
+    });
+    const user = userEvent.setup();
+    await renderView();
+
+    expect(api.businessTechnicalDetail).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Technical details' }));
+
+    await waitFor(() => expect(api.businessTechnicalDetail).toHaveBeenCalledWith('run-123', 'run'));
+    // Requested vs executed are both visible here, and only here (§23).
+    expect(await screen.findByText('auto')).toBeInTheDocument();
+    expect(screen.getByText('Provider temporarily unavailable')).toBeInTheDocument();
+    expect(screen.queryByText(/"route"/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Raw output' }));
+    expect(screen.getByText(/"route": "RFQ"/)).toBeInTheDocument();
+  });
+});
+
+describe('typed actions and permissions', () => {
+  it('renders only the actions the projection allows', async () => {
+    await renderView();
+
+    expect(screen.getAllByRole('button', { name: 'Assign owner' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Resume' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Pause' })).not.toBeInTheDocument();
+  });
+
+  it('hides every action when the person may not act', async () => {
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({
+      allowed_actions: [action('open_technical_details', 'Technical details', { params: { activity_id: 'run' } })],
+      recommended_actions: [],
+      other_actions: [],
+      attention: [attentionItem({ id: 'a1', title: 'Pump model' })],
+      decision: { ...basfProjection().decision!, actions: [] },
+      next_step: { ...basfProjection().next_step!, actions: [] },
+    }));
+    await renderView();
+
+    expect(screen.queryByRole('button', { name: 'Assign owner' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add note' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Technical details' })).toBeInTheDocument();
+  });
+
+  it('sends a typed command to the backend for a route override', async () => {
+    vi.mocked(api.businessAction).mockResolvedValue({
+      kind: 'route_override',
+      override: { route: 'Technical Sales', reason: 'Needs engineering input', by: 'maria', at: '2026-08-14T18:00:00Z' },
+    });
+    const user = userEvent.setup();
+    await renderView();
+
+    await user.click(screen.getByRole('button', { name: 'Change route' }));
+    await user.type(screen.getByLabelText('Send to'), 'Technical Sales');
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Change route' }));
+
+    await waitFor(() => expect(api.businessAction).toHaveBeenCalledWith('run-123', 'route_override', {
+      route: 'Technical Sales', reason: '',
+    }));
+  });
+
+  it('drafts a customer question without sending anything', async () => {
+    vi.mocked(api.businessAction).mockResolvedValue({
+      kind: 'clarification_draft',
+      subject: 'Your quotation request',
+      body: 'Could you confirm the required delivery date?',
+      asks: ['requested_delivery_date'],
+      sent: false,
+      note: 'Draft only — review and send it yourself.',
+    });
+    const user = userEvent.setup();
+    await renderView();
+
+    await user.click(screen.getByRole('button', { name: /Ask customer/ }));
+
+    await waitFor(() => expect(api.businessAction).toHaveBeenCalledWith(
+      'run-123', 'draft_clarification', expect.anything(),
+    ));
+    expect(await screen.findByText('Could you confirm the required delivery date?')).toBeInTheDocument();
+    expect(screen.getByText(/Nothing was sent/)).toBeInTheDocument();
+  });
+
+  it('confirms before stopping, and does not delete when the person cancels', async () => {
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({
+      allowed_actions: [action('stop_run', 'Stop', { emphasis: 'danger' })],
+    }));
     vi.spyOn(window, 'confirm').mockReturnValue(false);
     const user = userEvent.setup();
+    await renderView();
 
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
     await user.click(screen.getByRole('button', { name: 'Stop' }));
 
     expect(window.confirm).toHaveBeenCalled();
     expect(api.deleteRun).not.toHaveBeenCalled();
   });
+});
 
-  it('calls deleteRun and navigates away once the user confirms Stop', async () => {
-    const navigate = vi.fn();
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun({ navigate }));
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+describe('correcting what the AI understood', () => {
+  it('edits a fact through a labelled form, never JSON, and re-reads the work item', async () => {
+    vi.mocked(api.correctFact).mockResolvedValue({
+      ok: true,
+      edit: { field: 'requested_quantity', value: '6', stale_decisions: [], edited_at: '2026-08-14T18:00:00Z' },
+    });
     const user = userEvent.setup();
+    await renderView();
 
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-    await user.click(screen.getByRole('button', { name: 'Stop' }));
+    await user.click(screen.getByRole('button', { name: 'Edit Quantity' }));
+    const input = screen.getByLabelText('Quantity');
+    await user.clear(input);
+    await user.type(input, '6');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    await waitFor(() => expect(api.deleteRun).toHaveBeenCalledWith('run-123'));
-    expect(navigate).toHaveBeenCalledWith('/history');
+    await waitFor(() => expect(api.correctFact).toHaveBeenCalledWith('run-123', 'requested_quantity', '6'));
+    await waitFor(() => expect(api.businessProjection).toHaveBeenCalledTimes(2));
   });
 
-  it('re-fetches the projection when a new SSE event arrives', async () => {
-    const cockpitRun = baseCockpitRun({ events: [] });
-    mockedUseCockpitRun.mockReturnValue(cockpitRun);
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
+  it('flags a determination made from a value that has since changed', async () => {
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({
+      understanding: {
+        ...basfProjection().understanding,
+        fields: [fact({ id: 'understanding:pump_model', label: 'Pump model', display: 'P-100', stale: true })],
+      },
+    }));
+    await renderView();
 
+    const section = screen.getByText('What I understood').closest('section') as HTMLElement;
+    expect(within(section).getByText('Recheck')).toBeInTheDocument();
+  });
+});
+
+describe('conversation and next step', () => {
+  it('offers state-dependent suggested prompts that open the chat', async () => {
+    const user = userEvent.setup();
+    await renderView();
+
+    await user.click(screen.getByRole('button', { name: 'Why Inside Sales?' }));
+
+    expect(await screen.findByTestId('ask-ai-panel')).toBeInTheDocument();
+  });
+
+  it('always answers what happens next', async () => {
+    await renderView();
+
+    const section = screen.getByText('What happens next').closest('section') as HTMLElement;
+    expect(within(section).getByText('Inside Sales takes this on')).toBeInTheDocument();
+    expect(within(section).getByText(/prepares the quotation/)).toBeInTheDocument();
+  });
+
+  it('says what is blocking when the process cannot continue', async () => {
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({
+      next_step: {
+        headline: 'Resolve: pump model',
+        description: null,
+        blocked: true,
+        blocked_reason: 'The process cannot continue until the pump model is identified.',
+        owner: null,
+        actions: [action('document_review', 'Review datasheet')],
+      },
+    }));
+    await renderView();
+
+    expect(screen.getByText('The process cannot continue until the pump model is identified.')).toBeInTheDocument();
+  });
+});
+
+describe('approval and live updates', () => {
+  it('opens the review panel when an approval is pending', async () => {
+    mockedUseCockpitRun.mockReturnValue(baseCockpitRun({
+      gate: { nodeId: 'human_review', context: {}, question: 'Confirm the account.', allowedActions: ['approve', 'reject'], content: null, allowDocumentOverride: true, maxEditChars: 1000 },
+    }));
+    vi.mocked(api.businessProjection).mockResolvedValue(basfProjection({
+      status: 'paused',
+      required_user_actions: [{ type: 'approval_review', node_id: 'human_review', question: 'Confirm the account.', allowed_actions: ['approve', 'reject'] }],
+    }));
+    const user = userEvent.setup();
+    await renderView();
+
+    expect(screen.getByText('Approval required')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Review and respond' }));
+
+    expect(screen.getByTestId('hitl-panel')).toBeInTheDocument();
+  });
+
+  it('coalesces a burst of run events into a single refetch', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const { rerender } = render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-    expect(api.businessProjection).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(api.businessProjection).toHaveBeenCalledTimes(1));
+
+    // Fourteen nodes completing in quick succession used to mean fourteen
+    // requests — and then a 429 storm.
+    for (let index = 0; index < 14; index += 1) {
+      mockedUseCockpitRun.mockReturnValue(baseCockpitRun({
+        events: Array.from({ length: index + 1 }, (_, i) => ({
+          type: 'node_completed' as const, run_id: 'run-123', node_id: `n${i}`, output_preview: '', ts: '2026-08-14T17:21:00Z',
+        })),
+      }));
+      rerender(<BusinessView />);
+    }
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(vi.mocked(api.businessProjection).mock.calls.length).toBeLessThanOrEqual(2);
+    vi.useRealTimers();
+  });
+
+  it('keeps the last known state and explains itself when rate limited', async () => {
+    vi.mocked(api.businessProjection)
+      .mockResolvedValueOnce(basfProjection())
+      .mockRejectedValue(new Error('429 Rate limit exceeded'));
+    const { rerender } = render(<BusinessView />);
+    await screen.findByText('BASF SE — Quotation request');
 
     mockedUseCockpitRun.mockReturnValue(baseCockpitRun({
-      events: [{ type: 'node_completed', run_id: 'run-123', node_id: 'understand_request', output_preview: '', ts: '2026-08-14T10:00:01Z' }],
+      events: [{ type: 'node_completed', run_id: 'run-123', node_id: 'n1', output_preview: '', ts: '2026-08-14T17:21:00Z' }],
     }));
     rerender(<BusinessView />);
 
-    await waitFor(() => expect(api.businessProjection).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/Showing the last known state/)).toBeInTheDocument();
+    // The work item is still fully readable.
+    expect(screen.getByText('Ready for Inside Sales')).toBeInTheDocument();
+  });
+});
+
+describe('accessibility', () => {
+  it('announces the status to assistive technology', async () => {
+    await renderView();
+
+    const live = screen.getByRole('status');
+    expect(live).toHaveTextContent('Ready for Inside Sales');
+    expect(live).toHaveTextContent('4 items need attention');
   });
 
-  it('renders the timeline in reverse-chronological order', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({
-      timeline: [
-        { ts: '2026-08-14T10:00:00Z', label: 'Request received' },
-        { ts: '2026-08-14T10:00:05Z', label: 'Understand Customer Request completed' },
-      ],
-    }));
+  it('gives every activity toggle an expanded state', async () => {
+    await renderView();
 
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-
-    const history = screen.getByText('History').closest('section');
-    const items = within(history as HTMLElement).getAllByRole('listitem');
-    expect(items[0]).toHaveTextContent('Understand Customer Request completed');
-    expect(items[1]).toHaveTextContent('Request received');
-  });
-
-  it('lets a person correct an editable fact and re-fetches the projection', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection)
-      .mockResolvedValueOnce(baseProjection({
-        understanding: { node_id: 'understand_request', result: { pressure: null }, confidence: 0.9 },
-        editable_facts: ['pressure'],
-      }))
-      .mockResolvedValueOnce(baseProjection({
-        understanding: { node_id: 'understand_request', result: { pressure: '6 bar' }, confidence: 0.9 },
-        editable_facts: ['pressure'],
-      }));
-    vi.mocked(api.correctFact).mockResolvedValue({
-      ok: true,
-      edit: { field: 'pressure', value: '6 bar', stale_decisions: ['complexity'], edited_at: '2026-08-14T10:00:00Z' },
-    });
-    const user = userEvent.setup();
-
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-    expect(screen.getByText('not stated')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Edit pressure' }));
-    const understandingSection = screen.getByText('What I understood').closest('section') as HTMLElement;
-    await user.type(within(understandingSection).getByRole('textbox'), '6 bar');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    expect(api.correctFact).toHaveBeenCalledWith('run-123', 'pressure', '6 bar');
-    await waitFor(() => expect(api.businessProjection).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('6 bar')).toBeInTheDocument();
-  });
-
-  it('marks a decision as stale when it depends on a corrected fact', async () => {
-    mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-    vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({
-      decision: { node_id: 'assess_request', decisions: { complexity: 'technical', human_review: false }, rules_triggered: [], summary: [] },
-      stale_decisions: ['complexity'],
-    }));
-
-    render(<BusinessView />);
-    await screen.findByText('Multilingual Customer Request Triage');
-
-    const decisionSection = screen.getByText('How this was decided').closest('section') as HTMLElement;
-    expect(within(decisionSection).getByText('Stale')).toBeInTheDocument();
-    expect(within(decisionSection).getByText(/Retry safely/)).toBeInTheDocument();
-  });
-
-  describe('the ask bar as a bounded command control', () => {
-    async function typeAndSend(user: ReturnType<typeof userEvent.setup>, text: string) {
-      const input = screen.getByRole('textbox');
-      await user.type(input, text);
-      await user.click(screen.getByRole('button', { name: /^(Send|Working…)$/ }));
-    }
-
-    it('runs /pause through the real pause control', async () => {
-      mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-      vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({ allowed_controls: ['pause', 'stop'] }));
-      const user = userEvent.setup();
-
-      render(<BusinessView />);
-      await screen.findByText('Multilingual Customer Request Triage');
-      await typeAndSend(user, '/pause');
-
-      expect(api.pauseRun).toHaveBeenCalledWith('run-123');
-      expect(await screen.findByText('Paused.')).toBeInTheDocument();
-    });
-
-    it('runs /approve when an approval is pending', async () => {
-      mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-      vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({
-        required_user_actions: [{ type: 'approval_review', node_id: 'human_review', question: 'Check this.', allowed_actions: ['approve', 'reject'] }],
-      }));
-      vi.mocked(api.resumeWorkflow).mockResolvedValue({ ok: true });
-      const user = userEvent.setup();
-
-      render(<BusinessView />);
-      await screen.findByText('Multilingual Customer Request Triage');
-      await typeAndSend(user, '/approve');
-
-      expect(api.resumeWorkflow).toHaveBeenCalledWith('run-123', { decision: 'approve' });
-      expect(await screen.findByText('Approved.')).toBeInTheDocument();
-    });
-
-    it('rejects /reject with no reason instead of calling the API', async () => {
-      mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-      vi.mocked(api.businessProjection).mockResolvedValue(baseProjection({
-        required_user_actions: [{ type: 'approval_review', node_id: 'human_review', question: 'Check this.', allowed_actions: ['approve', 'reject'] }],
-      }));
-      const user = userEvent.setup();
-
-      render(<BusinessView />);
-      await screen.findByText('Multilingual Customer Request Triage');
-      await typeAndSend(user, '/reject');
-
-      expect(api.resumeWorkflow).not.toHaveBeenCalled();
-      expect(await screen.findByText(/A reason helps/)).toBeInTheDocument();
-    });
-
-    it('runs /assign and refetches the projection', async () => {
-      mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-      vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
-      vi.mocked(api.assignRun).mockResolvedValue({ ok: true, assigned_to: 'Maria' });
-      const user = userEvent.setup();
-
-      render(<BusinessView />);
-      await screen.findByText('Multilingual Customer Request Triage');
-      expect(api.businessProjection).toHaveBeenCalledTimes(1);
-      await typeAndSend(user, '/assign Maria');
-
-      expect(api.assignRun).toHaveBeenCalledWith('run-123', 'Maria');
-      expect(await screen.findByText('Assigned to Maria.')).toBeInTheDocument();
-      await waitFor(() => expect(api.businessProjection).toHaveBeenCalledTimes(2));
-    });
-
-    it('rejects an unrecognized command without opening the chat', async () => {
-      mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-      vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
-      const user = userEvent.setup();
-
-      render(<BusinessView />);
-      await screen.findByText('Multilingual Customer Request Triage');
-      await typeAndSend(user, '/nonsense');
-
-      expect(await screen.findByText(/Unknown command/)).toBeInTheDocument();
-      expect(screen.queryByTestId('ask-ai-panel')).not.toBeInTheDocument();
-    });
-
-    it('opens the full chat for plain text with no leading slash', async () => {
-      mockedUseCockpitRun.mockReturnValue(baseCockpitRun());
-      vi.mocked(api.businessProjection).mockResolvedValue(baseProjection());
-      const user = userEvent.setup();
-
-      render(<BusinessView />);
-      await screen.findByText('Multilingual Customer Request Triage');
-      await typeAndSend(user, 'what happened here?');
-
-      expect(await screen.findByTestId('ask-ai-panel')).toBeInTheDocument();
-    });
+    const toggle = screen.getByRole('button', { name: /Handling checks completed/ });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
   });
 });

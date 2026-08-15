@@ -108,10 +108,16 @@ class TransformOperation(BaseModel):
 class DataTransformConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    operations: list[TransformOperation] = Field(default_factory=list)
+    operations: list[TransformOperation] = Field(
+        default_factory=list,
+        description="Deterministic operations (copy, rename, format, join, coalesce, unit conversion) that build the output object.",
+    )
     #: Drop keys whose computed value is None. Useful when building a payload
     #: for an API that rejects explicit nulls.
-    omit_empty: bool = False
+    omit_empty: bool = Field(
+        default=False,
+        description="Drop keys whose computed value is empty/None — useful when building a payload for an API that rejects explicit nulls.",
+    )
 
     @model_validator(mode="after")
     def targets_are_unique(self) -> "DataTransformConfig":

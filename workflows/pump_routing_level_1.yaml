@@ -1,0 +1,538 @@
+name: Pump Customer Routing — Level 1 · Simple
+description: >-
+  The idea, in eight steps: read an incoming customer message in any language, and send it to the
+  department that handles that kind of request.
+
+      Customer message
+            ↓
+      Understand Message        AI · what is the customer asking for?
+            ↓
+      Department Rules          deterministic · which department handles it?
+            ↓
+      ┌──────────┬──────────────┬──────────────────┬──────────────────┬──────────┐
+      Sales   Supply Chain   Product Service    Customer Support    Other
+
+  The model understands the message. It does not choose the department — a rule does, from the
+  intent and where the customer is in the lifecycle. That separation is the point of the whole
+  design, and it is already visible at this level: two messages that both mention "price" go to
+  different departments because one is about equipment the customer is buying and the other is
+  about a part for a pump they already own.
+
+  What this level deliberately does NOT do: look anything up. It knows nothing about the customer,
+  their orders, their installed pumps or who owns their account. Level 2 adds that.
+version: '1.0'
+use_case: industrial_customer_operations
+library:
+  title: Pump Customer Routing — Level 1 · Simple
+  summary: >-
+    Understand a customer message and route it to one of five departments using clear business
+    rules. No business-system lookups.
+  purpose:
+    - Show the shape of the solution in under two minutes
+    - Separate understanding (AI) from deciding (rules), visibly
+    - Route to Sales, Supply Chain, Product Service, Customer Support or a specialist function
+  suitable_for:
+    - A first demonstration to business stakeholders
+    - Establishing the department model before business data is connected
+  not_suitable_for:
+    - Production use — it has no access to the CRM or ERP and cannot verify anything a customer says
+  outputs:
+    - Owning department and case type
+    - The reason the rules chose it
+    - The next action for the receiving team
+  input_types:
+    - Customer email or message text
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+inputs:
+  message:
+    type: text
+    required: true
+    description: The customer's message, in its original language.
+  subject:
+    type: text
+    required: false
+    description: Subject line, when the channel provides one.
+entry: understand_message
+exit:
+  - sales_case
+  - supply_chain_case
+  - product_service_case
+  - customer_support_case
+  - other_case
+output:
+  include_input: false
+  nodes:
+    - node_id: understand_message
+      flatten: false
+    - node_id: department_decision
+      flatten: false
+nodes:
+  - id: understand_message
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      temperature: 0.0
+      max_tokens: 2048
+      system_prompt: >-
+        You are a customer-intake analyst for an industrial pump manufacturer. Read the customer's
+        message in whatever language it arrives in and extract a few facts about it. You do not
+        decide which department handles it — business rules do that. Never invent a fact: if the
+        message does not say something, return an empty string or UNKNOWN.
+      prompt_template: |-
+        SUBJECT:
+        {{inputs.subject}}
+
+        CUSTOMER MESSAGE:
+        {{inputs.message}}
+
+        Extract:
+
+        language:
+          ISO 639-1 code of the language the customer wrote in.
+
+        summary:
+          One or two sentences in English on what the customer wants.
+
+        intent:
+          The ONE thing this message is mainly asking for, from:
+            NEW_PRODUCT_ENQUIRY | QUOTATION | ORDER_OR_DELIVERY | TECHNICAL_SUPPORT |
+            SPARE_PARTS | DOCUMENT_REQUEST | INVOICE | OTHER
+
+          Judge it by what the customer wants done, not by the words they use. A price question
+          about a replacement part for a pump they already own is SPARE_PARTS, not QUOTATION.
+
+        lifecycle_stage:
+          presales        — choosing, specifying or pricing equipment not yet ordered
+          order_execution — an order already exists and is being executed
+          installed_base  — equipment already supplied and in service
+          unknown         — the message does not say
+
+        product_or_part:
+          The pump model or part the message names, or "".
+
+        order_reference:
+          The order or quotation number quoted, or "".
+
+        serial_number:
+          The serial number quoted, or "".
+
+        confidence:
+          0.0–1.0, how confident you are in this extraction.
+      output_schema:
+        language: str
+        summary: str
+        intent: str
+        lifecycle_stage: str
+        product_or_part: str
+        order_reference: str
+        serial_number: str
+        confidence: float
+    experience:
+      display_name: Understand Message
+      purpose: Read the customer's message in any language and say what it is asking for.
+      contribution: The rules below decide from these fields, never from the raw text.
+      expected_output: An intent, a lifecycle stage, any references, and a confidence score.
+      failure_message: The message could not be read well enough to extract anything from.
+
+  - id: department_decision
+    type: DecisionAgent
+    config:
+      defaults:
+        department: CUSTOMER_SUPPORT
+        case_type: GENERAL_ENQUIRY
+        reason: []
+        next_action: Read the message and reply to the customer.
+      rules:
+        - name: Buying new equipment is Sales
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [NEW_PRODUCT_ENQUIRY, QUOTATION]
+          then:
+            - field: department
+              value: SALES
+            - field: case_type
+              value: NEW_EQUIPMENT_ENQUIRY
+            - field: reason
+              operation: append
+              value: The customer is asking about equipment they have not yet bought.
+            - field: next_action
+              value: Qualify the application and prepare a quotation.
+
+        - name: An existing order is Supply Chain
+          description: >-
+            "Existing" is the operative word — the rule below sends a delivery question with no
+            order behind it back to Sales.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+          then:
+            - field: department
+              value: SUPPLY_CHAIN
+            - field: case_type
+              value: ORDER_ENQUIRY
+            - field: reason
+              operation: append
+              value: The customer is asking about an order that is already being executed.
+            - field: next_action
+              value: Check the order status and confirm the delivery date with the customer.
+
+        - name: An installed pump is Product Service
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [TECHNICAL_SUPPORT, SPARE_PARTS]
+          then:
+            - field: department
+              value: PRODUCT_SERVICE_SPARE_PARTS
+            - field: case_type
+              value: INSTALLED_BASE_REQUEST
+            - field: reason
+              operation: append
+              value: The request concerns a pump the customer already has.
+            - field: next_action
+              value: Identify the unit and arrange the part or the support visit.
+
+        - name: A document request is Customer Support
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: DOCUMENT_REQUEST
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: case_type
+              value: DOCUMENT_REQUEST
+            - field: reason
+              operation: append
+              value: The customer is asking for a document we already publish.
+            - field: next_action
+              value: Send the requested document.
+
+        - name: An invoice question is Finance
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: INVOICE
+          then:
+            - field: department
+              value: OTHER
+            - field: case_type
+              value: INVOICE_QUERY
+            - field: reason
+              operation: append
+              value: The customer is questioning the financial record, which Finance owns.
+            - field: next_action
+              value: Check the invoice against the order and respond to the customer.
+
+        # ---- the two corrections that make the point -----------------------
+        - name: A technical question before buying is a Sales question
+          description: >-
+            "Which pump suits this duty?" and "the pump we installed is not performing" are the
+            same words about two different lifecycle stages, and two different departments.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: TECHNICAL_SUPPORT
+              - field: understand_message.parsed.lifecycle_stage
+                operator: equals
+                value: presales
+          then:
+            - field: department
+              value: SALES
+            - field: case_type
+              value: PRESALES_TECHNICAL_QUESTION
+            - field: reason
+              operation: append
+              value: The question is about choosing equipment, not about equipment already installed.
+            - field: next_action
+              value: Answer the application question and recommend a pump.
+
+        - name: A delivery question with no order behind it is a Sales question
+          description: >-
+            "When could you deliver 10 pumps?" is a promise we have not made yet. Supply Chain
+            executes orders; it cannot commit to one that does not exist.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: understand_message.parsed.order_reference
+                operator: is_empty
+              - field: understand_message.parsed.lifecycle_stage
+                operator: not_equals
+                value: order_execution
+          then:
+            - field: department
+              value: SALES
+            - field: case_type
+              value: LEAD_TIME_ENQUIRY
+            - field: reason
+              operation: append
+              value: No order reference was given, so this is a lead-time question about a future order.
+            - field: next_action
+              value: Confirm the achievable lead time and quote it.
+
+        - name: An order question with no reference needs Customer Support first
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: understand_message.parsed.order_reference
+                operator: is_empty
+              - field: understand_message.parsed.lifecycle_stage
+                operator: equals
+                value: order_execution
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: case_type
+              value: ORDER_LOOKUP_ASSISTANCE
+            - field: reason
+              operation: append
+              value: The customer refers to an order but gave no reference to look it up by.
+            - field: next_action
+              value: Find the order with the customer, then answer the question.
+    experience:
+      display_name: Department Rules
+      purpose: Decide which department handles this request, from the facts above.
+      contribution: >-
+        Every rule is readable, testable and the same every time — which is what makes the routing
+        defensible to the business.
+      expected_output: A department, a case type and the reason the rules chose it.
+      failure_message: The routing rules could not be evaluated.
+
+  - id: department_router
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: department_decision.decisions.department
+      branches:
+        SALES: SALES
+        SUPPLY_CHAIN: SUPPLY_CHAIN
+        PRODUCT_SERVICE_SPARE_PARTS: PRODUCT_SERVICE
+        CUSTOMER_SUPPORT: CUSTOMER_SUPPORT
+        OTHER: OTHER
+      fallback: CUSTOMER_SUPPORT
+    experience:
+      display_name: Route to Department
+      purpose: Send the case to the department the rules chose.
+      contribution: The canvas shows the five destinations the business actually has.
+      expected_output: One department branch.
+      failure_message: The case could not be routed.
+
+  - id: sales_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: SALES
+        - target: case_type
+          operation: copy
+          source: department_decision.decisions.case_type
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: reason
+          operation: copy
+          source: department_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: department_decision.decisions.next_action
+        - target: language
+          operation: copy
+          source: understand_message.parsed.language
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{department_decision.decisions.case_type}}
+            Department: SALES
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{department_decision.decisions.next_action}}
+    experience:
+      display_name: Sales
+      purpose: Hand a new-equipment or commercial request to Sales.
+      contribution: Sales receives a structured request instead of a forwarded email.
+      expected_output: A commercial case with its reason and next action.
+      failure_message: The Sales hand-off could not be built.
+
+  - id: supply_chain_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: SUPPLY_CHAIN
+        - target: case_type
+          operation: copy
+          source: department_decision.decisions.case_type
+        - target: order_reference
+          operation: copy
+          source: understand_message.parsed.order_reference
+          default: not given
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: reason
+          operation: copy
+          source: department_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: department_decision.decisions.next_action
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{department_decision.decisions.case_type}}
+            Department: SUPPLY CHAIN
+            Order reference: {{understand_message.parsed.order_reference}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{department_decision.decisions.next_action}}
+    experience:
+      display_name: Supply Chain
+      purpose: Hand a question about an existing order to Supply Chain.
+      contribution: Supply Chain sees the order reference and the question in one place.
+      expected_output: An order-execution case with its reference.
+      failure_message: The Supply Chain hand-off could not be built.
+
+  - id: product_service_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: PRODUCT_SERVICE_SPARE_PARTS
+        - target: case_type
+          operation: copy
+          source: department_decision.decisions.case_type
+        - target: serial_number
+          operation: copy
+          source: understand_message.parsed.serial_number
+          default: not given
+        - target: product_or_part
+          operation: copy
+          source: understand_message.parsed.product_or_part
+          default: not given
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: reason
+          operation: copy
+          source: department_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: department_decision.decisions.next_action
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{department_decision.decisions.case_type}}
+            Department: PRODUCT SERVICE / SPARE PARTS
+            Serial: {{understand_message.parsed.serial_number}}
+            Part or model: {{understand_message.parsed.product_or_part}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{department_decision.decisions.next_action}}
+    experience:
+      display_name: Product Service and Spare Parts
+      purpose: Hand a request about an installed pump to Service.
+      contribution: Service sees the serial number and the part in one place.
+      expected_output: An installed-base case with whatever identifies the unit.
+      failure_message: The Service hand-off could not be built.
+
+  - id: customer_support_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: CUSTOMER_SUPPORT
+        - target: case_type
+          operation: copy
+          source: department_decision.decisions.case_type
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: reason
+          operation: copy
+          source: department_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: department_decision.decisions.next_action
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{department_decision.decisions.case_type}}
+            Department: CUSTOMER SUPPORT
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{department_decision.decisions.next_action}}
+    experience:
+      display_name: Customer Support
+      purpose: Hand an information or clarification request to Customer Support.
+      contribution: Support answers the question or finds out who can.
+      expected_output: A support case with its next action.
+      failure_message: The Customer Support hand-off could not be built.
+
+  - id: other_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: OTHER
+        - target: case_type
+          operation: copy
+          source: department_decision.decisions.case_type
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: reason
+          operation: copy
+          source: department_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: department_decision.decisions.next_action
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{department_decision.decisions.case_type}}
+            Department: SPECIALIST FUNCTION (Finance, Quality or Engineering)
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{department_decision.decisions.next_action}}
+    experience:
+      display_name: Specialist Function
+      purpose: Hand the case to Finance, Quality or Engineering when they own the decision.
+      contribution: Keeps specialist work out of the customer-facing queues.
+      expected_output: A specialist case with its next action.
+      failure_message: The specialist hand-off could not be built.
+
+edges:
+  - from: understand_message
+    to: department_decision
+  - from: department_decision
+    to: department_router
+  - from: department_router
+    condition: route
+    branches:
+      SALES: sales_case
+      SUPPLY_CHAIN: supply_chain_case
+      PRODUCT_SERVICE: product_service_case
+      CUSTOMER_SUPPORT: customer_support_case
+      OTHER: other_case

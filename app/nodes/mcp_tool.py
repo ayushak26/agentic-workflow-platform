@@ -43,16 +43,22 @@ class MCPToolConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     #: Configured connection id — never a URL, never a credential.
-    server_id: str
-    tool: str
+    server_id: str = Field(description="Which configured MCP server connection this step calls.")
+    tool: str = Field(description="Which tool on that server to invoke.")
     #: Arguments for the tool, matching its discovered input schema. Values are
     #: normally template references the Builder's field picker wrote.
-    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Arguments for the tool, matching its discovered input schema — normally template references from the field picker.",
+    )
 
     #: When false, a failure becomes a routable fact instead of ending the run —
     #: the same choice the AI Task offers, and for the same reason: "the customer
     #: is not in the CRM" is a business outcome, not a crash.
-    fail_on_error: bool = True
+    fail_on_error: bool = Field(
+        default=True,
+        description="When off, a tool failure becomes a routable status instead of stopping the run.",
+    )
 
     #: Upper bound on this one call, overriding the tool policy's and the
     #: connection's. A step whose value is "enrich if you can, now" needs a
@@ -60,17 +66,26 @@ class MCPToolConfig(BaseModel):
     #: promises the run survives a failure, not that it survives a *hang*, and
     #: an emergency route that waits a minute for an unresponsive ERP is
     #: indistinguishable to the person waiting from one that depends on it.
-    timeout_seconds: float | None = Field(default=None, gt=0, le=600)
+    timeout_seconds: float | None = Field(
+        default=None, gt=0, le=600,
+        description="Upper bound on this one call, overriding the connection's default timeout.",
+    )
 
     #: The author's explicit statement that this write may happen without a
     #: human review in front of it. It cannot *grant* permission — the
     #: connection's write policy still governs — but a write that needs
     #: approval will not run just because a node was dropped on the canvas.
-    allow_unattended_write: bool = False
+    allow_unattended_write: bool = Field(
+        default=False,
+        description="Explicit statement that this write may happen without a human review step in front of it. Does not override the connection's own write policy.",
+    )
 
     #: Retries for read operations. Writes are never retried here; the ledger
     #: decides what a repeated write means.
-    max_read_retries: int = Field(default=1, ge=0, le=3)
+    max_read_retries: int = Field(
+        default=1, ge=0, le=3,
+        description="Retries for read-only tool calls. Writes are never retried here.",
+    )
 
 
 class MCPToolInput(BaseModel):
@@ -186,15 +201,34 @@ class MCPToolAgent(NodeType):
         # account id to fetch opportunities for. Calling anyway would send null
         # to the server and produce a confusing error; skipping reports the
         # truth, and `found: false` is exactly what the downstream rules read.
-        missing = _empty_arguments(cfg.arguments)
-        if missing:
+        #
+        # But only a REQUIRED argument coming up empty means the call cannot
+        # happen. An optional one that did not resolve is just a narrowing the
+        # author offered and the message did not supply — a quote lookup mapped
+        # to quotation_reference, account_id and an optional customer PO number
+        # must still run for a customer who quoted no PO number. Those are
+        # dropped from the call instead of cancelling it.
+        arguments = dict(cfg.arguments)
+        empty = _empty_arguments(arguments)
+        if empty:
+            required = await self._required_arguments(service, cfg)
+            missing = [name for name in empty if name in required]
+            if missing:
+                log.info(
+                    "mcp_tool.skipped",
+                    node_id=self.node_id,
+                    tool=cfg.tool,
+                    missing=missing,
+                )
+                return self._skipped(cfg, missing)
+            for name in empty:
+                arguments.pop(name, None)
             log.info(
-                "mcp_tool.skipped",
+                "mcp_tool.optional_arguments_omitted",
                 node_id=self.node_id,
                 tool=cfg.tool,
-                missing=missing,
+                omitted=empty,
             )
-            return self._skipped(cfg, missing)
 
         # Whether a human decision has actually happened on this run's path —
         # read from the run's own state, not asserted by this node's config. A
@@ -207,7 +241,7 @@ class MCPToolAgent(NodeType):
             result = await service.call(
                 server_id=cfg.server_id,
                 tool_name=cfg.tool,
-                arguments=dict(cfg.arguments),
+                arguments=arguments,
                 run_id=run_id,
                 node_id=self.node_id,
                 session_id=session_id,
@@ -240,6 +274,27 @@ class MCPToolAgent(NodeType):
             "retryable": False,
             "suggested_action": None,
         }
+
+    async def _required_arguments(
+        self, service: Any, cfg: MCPToolConfig
+    ) -> set[str]:
+        """The argument names the server itself declares as required.
+
+        Falls back to "all of them" when the tool cannot be described — an
+        unreachable server is not a reason to send it a null-valued argument
+        it may well reject; the conservative answer keeps the old behaviour.
+        """
+        try:
+            descriptor = await service.find_tool(cfg.server_id, cfg.tool)
+        except Exception:
+            descriptor = None
+        if not descriptor:
+            return set(cfg.arguments)
+        schema = descriptor.get("input_schema") or {}
+        required = schema.get("required")
+        if not isinstance(required, list):
+            return set(cfg.arguments)
+        return {name for name in required if isinstance(name, str)}
 
     def _skipped(self, cfg: MCPToolConfig, missing: list[str]) -> dict[str, Any]:
         return {

@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.llm.model_catalog import MODEL_OPTION_LABELS, MODEL_SELECTION_OPTIONS
 
+from .about_synthesis import synthesize_about
 from .base import NodeType
 from .categories import (
     category_for,
@@ -78,7 +79,11 @@ class NodeRegistry:
 
 def _manifest_entry(klass: Type[NodeType]) -> dict:
     uses_llm = _uses_llm(klass)
-    about = dict(getattr(klass, "about", {}) or {})
+    # A class's own `about` always wins; auto-synthesized fields (derived from
+    # its schemas and from real workflow adjacency — see about_synthesis.py)
+    # fill in whatever it didn't declare, so every node type gets a usable
+    # About tab without a second hand-authored description.
+    about = {**synthesize_about(klass), **(getattr(klass, "about", {}) or {})}
     return {
         "type_name": klass.type_name,
         "description": klass.description,

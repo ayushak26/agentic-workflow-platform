@@ -66,29 +66,44 @@ class RouteCase(BaseModel):
 
 
 class RouterConfig(BaseModel):
-    mode: Literal["field", "conditions", "rule", "llm"] = "rule"
+    mode: Literal["field", "conditions", "rule", "llm"] = Field(
+        default="rule",
+        description="How this step decides a branch: field (map a value to a branch), conditions (first matching rule group), rule (legacy expressions), or llm (ask a model).",
+    )
 
     # field mode
     #: The value to branch on, e.g. "outputs.understand.result.intent".
-    route_field: str | None = None
+    route_field: str | None = Field(
+        default=None,
+        description="The value to branch on, in field mode — e.g. an upstream step's classified intent.",
+    )
     #: value → route name. A route name may be reused by several values, which is
     #: how "complaint" and "warranty_claim" both reach Customer Service without
     #: duplicating a branch on the canvas.
-    branches: dict[str, str] = Field(default_factory=dict)
+    branches: dict[str, str] = Field(
+        default_factory=dict,
+        description="value → route name, in field mode. Several values may share one route name.",
+    )
 
     # conditions mode
-    cases: list[RouteCase] = Field(default_factory=list)
+    cases: list[RouteCase] = Field(
+        default_factory=list,
+        description="Ordered rule groups, in conditions mode — the first matching group's route wins.",
+    )
 
     #: Used by both deterministic modes when nothing matches. A router without a
     #: fallback can fail mid-run on an unexpected value, so preflight reports a
     #: missing one (MISSING_DEFAULT_ROUTE).
-    fallback: str | None = None
+    fallback: str | None = Field(
+        default=None,
+        description="Route used when nothing else matches. Leaving this unset can fail a run on an unexpected value — preflight flags a missing fallback.",
+    )
 
     # rule mode (legacy) and llm mode
-    rules: list[RouteRule] = Field(default_factory=list)
-    model: str | None = None
-    prompt: str | None = None                   # asks the model to pick a route name
-    context: str | None = None                  # context passed to the LLM (templated)
+    rules: list[RouteRule] = Field(default_factory=list, description="Legacy string-expression rules, in rule mode.")
+    model: str | None = Field(default=None, description="Which model chooses the route, in llm mode.")
+    prompt: str | None = Field(default=None, description="What to ask the model when picking a route, in llm mode.")
+    context: str | None = Field(default=None, description="Templated context passed to the model, in llm mode.")
 
     @model_validator(mode="after")
     def mode_has_what_it_needs(self) -> "RouterConfig":

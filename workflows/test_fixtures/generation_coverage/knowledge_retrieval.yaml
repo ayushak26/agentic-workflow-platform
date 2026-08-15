@@ -1,0 +1,21 @@
+name: Generation Coverage - KnowledgeRetrieval
+description: >-
+  Smallest valid workflow exercising KnowledgeRetrieval — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: retrieve
+    type: KnowledgeRetrieval
+    config:
+      collection_id: internal-docs
+      retrieval_profile_id: default
+      query: "refund policy"
+  - id: summarize
+    type: Echo
+    config:
+      template: "Found {{retrieve.candidate_count}} candidates, kept {{retrieve.context_count}}."
+edges:
+  - from: retrieve
+    to: summarize
+entry: retrieve
+exit: summarize

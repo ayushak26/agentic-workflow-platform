@@ -104,6 +104,15 @@ async def run_workflow(
     )
 
     merged_inputs: dict[str, Any] = dict(inputs)
+    # A declared input the caller did not supply is present-and-empty, not
+    # absent. Optional inputs are the normal case — an email with no subject
+    # line — and `{{inputs.subject}}` must read as "there was no subject"
+    # rather than crashing the whole run with "Template path not resolvable"
+    # at the first node that mentions it. Templating still reports a reference
+    # to an input the workflow never declared, which is the real authoring
+    # mistake this protects.
+    for name in spec.inputs:
+        merged_inputs.setdefault(name, None)
     merged_inputs["SYSTEM.run_id"] = run_id
     merged_inputs["SYSTEM.workflow_id"] = spec.name
     merged_inputs["SYSTEM.session_id"] = effective_session

@@ -77,6 +77,7 @@ export function ConfigureTab({
             llmModels={llmModels}
             onChange={onConfigChange}
             presets={manifest?.presets ?? []}
+            typeName={typeName}
           />
         )}
 

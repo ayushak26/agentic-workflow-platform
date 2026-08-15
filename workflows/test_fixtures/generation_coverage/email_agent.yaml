@@ -1,0 +1,21 @@
+name: Generation Coverage - EmailAgent
+description: >-
+  Smallest valid workflow exercising EmailAgent — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: search_inbox
+    type: EmailAgent
+    config:
+      connection: default
+      operation: search
+      query: "invoice"
+  - id: summarize
+    type: Echo
+    config:
+      template: "Found {{search_inbox.message_count}} messages."
+edges:
+  - from: search_inbox
+    to: summarize
+entry: search_inbox
+exit: summarize

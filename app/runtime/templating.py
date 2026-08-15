@@ -5,7 +5,8 @@ referenced don't exist until upstream nodes have executed."""
 from __future__ import annotations
 
 import re
-from typing import Any
+from types import UnionType
+from typing import Any, Union, get_args, get_origin
 
 #: A trailing `?` marks the reference as OPTIONAL:
 #:
@@ -128,3 +129,92 @@ def resolve(value: Any, state: dict) -> Any:
     if isinstance(value, list):
         return [resolve(v, state) for v in value]
     return value
+
+
+# ---------------------------------------------------------------------------
+# post-resolution cleanup
+# ---------------------------------------------------------------------------
+#
+# Whole-value mode deliberately preserves types, which means a reference to an
+# optional value that was never supplied substitutes None rather than "". For a
+# config field typed `Any` that is exactly right — MCPToolAgent reads None as
+# "there was nothing to look up" and skips the call. For a field typed `str` it
+# is not: `context: {Subject: '{{inputs.subject}}'}` with no subject given blew
+# up as a raw pydantic `Input should be a valid string` error, naming a config
+# key the person running the workflow never typed and no node they can see.
+#
+# An absent optional value is not a malformed config — it is the field not
+# having been supplied. So it is dropped, and the field's own default applies,
+# exactly as if the author had left it out. Only fields that HAVE a default are
+# dropped: a required field resolving to None is a real problem and still
+# surfaces as a validation error rather than silently becoming something else.
+
+_UNKNOWN = object()
+
+
+def _union_members(annotation: Any) -> list[Any]:
+    if get_origin(annotation) in (Union, UnionType):
+        return list(get_args(annotation))
+    return [annotation]
+
+
+def _accepts_none(annotation: Any) -> bool:
+    """Whether a value of None satisfies this annotation."""
+    if annotation is None or annotation is Any or annotation is type(None):
+        return True
+    if get_origin(annotation) in (Union, UnionType):
+        return any(_accepts_none(member) for member in get_args(annotation))
+    return False
+
+
+def _element_annotation(annotation: Any, container: type, position: int) -> Any:
+    """The declared type of a dict value / list item, or _UNKNOWN.
+
+    Reads through a union, so `dict[str, str] | None` still reports `str` for
+    its values.
+    """
+    for member in _union_members(annotation):
+        if get_origin(member) is container:
+            args = get_args(member)
+            if len(args) > position:
+                return args[position]
+            return Any
+    return _UNKNOWN
+
+
+def prune_absent(config: dict[str, Any], schema: Any) -> dict[str, Any]:
+    """Drop config values that resolved to None but cannot be None.
+
+    Applied to a node's resolved config before the node validates it. Returns a
+    new dict; the input is not modified.
+    """
+    fields = getattr(schema, "model_fields", None)
+    if not fields:
+        return config
+
+    cleaned: dict[str, Any] = {}
+    for key, value in config.items():
+        field = fields.get(key)
+        if field is None:
+            cleaned[key] = value
+            continue
+
+        annotation = field.annotation
+        if value is None:
+            # Required-and-None stays put so validation reports it. Everything
+            # else falls back to the field's declared default.
+            if _accepts_none(annotation) or field.is_required():
+                cleaned[key] = value
+            continue
+
+        if isinstance(value, dict):
+            element = _element_annotation(annotation, dict, 1)
+            if element is not _UNKNOWN and not _accepts_none(element):
+                value = {k: v for k, v in value.items() if v is not None}
+        elif isinstance(value, list):
+            element = _element_annotation(annotation, list, 0)
+            if element is not _UNKNOWN and not _accepts_none(element):
+                value = [item for item in value if item is not None]
+
+        cleaned[key] = value
+    return cleaned

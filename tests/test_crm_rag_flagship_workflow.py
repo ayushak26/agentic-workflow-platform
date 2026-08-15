@@ -249,6 +249,23 @@ async def test_unknown_company_escalates_to_human_review():
 
 
 @pytest.mark.asyncio
+async def test_a_message_with_no_subject_or_sender_still_runs():
+    """Both are declared `required: false` and both are mapped into the AI
+    step's context. Pasting only a message body — the ordinary case from the
+    Builder — used to end the run before any work was done with a raw
+    `AITaskConfig context.Subject: Input should be a valid string` error."""
+    result, _retriever, _mcp = await _run(
+        GERMAN_PUMP_EXTRACTION,
+        "Unsere Produktionslinie steht. Verderflex Dura 35.",
+        subject=None,
+        sender_email=None,
+    )
+
+    assert result["status"] == "completed"
+    assert result["state"]["node_outputs"]["route_request"]["route"] == "technical_support"
+
+
+@pytest.mark.asyncio
 async def test_vague_previous_purchase_reference_is_never_guessed():
     """§13/§127: the ambiguous-reference demo — the system must resolve it
     from real order history or send it to a person, never guess."""

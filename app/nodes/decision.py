@@ -119,17 +119,26 @@ DECISION_PRESETS: list[dict[str, Any]] = [
 class DecisionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    rules: list[Rule] = Field(default_factory=list)
+    rules: list[Rule] = Field(
+        default_factory=list,
+        description="Business rules evaluated in order — the first matching rule's conclusions win.",
+    )
     #: Values written before any rule runs. Two jobs: they document the
     #: node's full output contract (so preflight can authorise references to a
     #: field no rule happened to set on this run), and they give every field a
     #: safe baseline — `human_review: false` means a downstream gate reads false
     #: rather than a missing path when no escalation rule fired.
-    defaults: dict[str, Any] = Field(default_factory=dict)
+    defaults: dict[str, Any] = Field(
+        default_factory=dict,
+        description="What each conclusion is before any rule runs — guarantees a downstream step always has a value to read, even when no rule fires.",
+    )
     #: Fields the node guarantees to emit even when no rule and no default sets
     #: them. Listed explicitly rather than inferred so the contract is visible
     #: in the Builder's Outputs tab.
-    declared_fields: list[str] = Field(default_factory=list)
+    declared_fields: list[str] = Field(
+        default_factory=list,
+        description="Extra output field names this step promises to produce, beyond what defaults/rules already declare.",
+    )
 
     def output_field_names(self) -> set[str]:
         names = set(self.defaults) | set(self.declared_fields)

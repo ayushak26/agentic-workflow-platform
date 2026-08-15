@@ -28,6 +28,7 @@ from app.runtime.loader import load_workflow_from_string
 from app.runtime.preflight import WorkflowPreflightReport, preflight_workflow_for_run
 from app.runtime.schema import WorkflowInputSpec
 from app.security.dependencies import CurrentUser, require_consultant
+from app.workflow.capability_selection import select_candidate_node_types
 from app.workflow.preflight_stats import record_attempt
 
 router = APIRouter(prefix="/api/workflows", tags=["workflow-generation"])
@@ -106,9 +107,21 @@ commentary before or after it.
 """
 
 
-def _node_type_catalog() -> str:
+def _node_type_catalog(type_names: list[str] | None = None) -> str:
+    """The catalog text embedded in the generation system prompt. With
+    `type_names` given, only those entries are described — see
+    app.workflow.capability_selection, which picks a request-relevant
+    shortlist so a generation call doesn't need to spend tokens describing
+    every one of the ~49 registered node types. `None` (the default) keeps
+    the full catalog, which is what every other caller of this function
+    still wants (the node-types-chat "browse everything" case, and the
+    existing test of this function)."""
+    manifest = NodeRegistry.manifest()
+    if type_names is not None:
+        wanted = set(type_names)
+        manifest = [entry for entry in manifest if entry["type_name"] in wanted]
     lines = []
-    for entry in NodeRegistry.manifest():
+    for entry in manifest:
         config_fields = list((entry.get("config_schema") or {}).get("properties", {}).keys())
         output_fields = list((entry.get("output_schema") or {}).get("properties", {}).keys())
         structured = "output_schema" in config_fields
@@ -304,11 +317,36 @@ def build_llm_yaml_generator(
     closure over a live LLM client. Shared by /generate (a fresh workflow
     from a prompt) and /workflows/autofix (repairing an existing one) — both
     need the same node-type-catalog system prompt and prior-attempt/feedback
-    convention, just with a different `base_prompt`."""
-    catalog = _node_type_catalog()
-    system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(catalog=catalog, example=_EXAMPLE_WORKFLOW_YAML)
+    convention, just with a different `base_prompt`.
+
+    The very first call describes only a request-relevant shortlist of node
+    types (app.workflow.capability_selection) rather than the full registry —
+    most requests only need a handful of the ~49 registered types, and
+    describing all of them on every call spends tokens the model doesn't
+    need. Any retry after a failure (static or real-execution) escalates to
+    the full catalog for the rest of this closure's life: a repair attempt
+    must never be worse-informed than before this change, and the full
+    catalog is the safety net for the (rarer) case where the shortlist
+    missed a type the workflow actually needed.
+    """
+    full_catalog = _node_type_catalog()
+    system_prompt_state = {"escalated": False}
+
+    def _system_prompt(base_prompt: str) -> str:
+        if system_prompt_state["escalated"]:
+            catalog = full_catalog
+        else:
+            candidates = select_candidate_node_types(base_prompt, NodeRegistry.manifest())
+            catalog = _node_type_catalog(candidates)
+        return _SYSTEM_PROMPT_TEMPLATE.format(catalog=catalog, example=_EXAMPLE_WORKFLOW_YAML)
 
     async def generate_yaml(base_prompt: str, prior_yaml: str | None, feedback: str | None) -> str:
+        if feedback:
+            # A retry means the shortlist may have been wrong (or simply
+            # incomplete) — widen to the full registry starting with this
+            # very call, not just subsequent ones.
+            system_prompt_state["escalated"] = True
+        system_prompt = _system_prompt(base_prompt)
         context_llm = llm.with_context(
             run_id="workflow-generation", session_id=scope, node_id="generate",
             ledger=services.get("cost_ledger"),

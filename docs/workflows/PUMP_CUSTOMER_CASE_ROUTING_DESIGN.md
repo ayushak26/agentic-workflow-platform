@@ -1,5 +1,13 @@
 # Pump Customer Case Routing Workflow
 
+> **Archived — describes the v1 graph.**
+> This design was replaced by the department-first Level 3 workflow, which now
+> occupies `workflows/pump_manufacturer_case_routing.yaml`. See
+> [PUMP_ROUTING_LEVELS.md](PUMP_ROUTING_LEVELS.md) for the current design.
+> The graph documented below lives on at
+> `workflows/test_fixtures/pump_case_routing_v1.yaml`, kept for the platform
+> behaviour its 105 tests cover (`tests/test_pump_case_routing_v1.py`).
+
 ## Business Logic, Decision Architecture and Modification Guide
 
 **Source of truth:** [`workflows/pump_manufacturer_case_routing.yaml`](../../workflows/pump_manufacturer_case_routing.yaml)

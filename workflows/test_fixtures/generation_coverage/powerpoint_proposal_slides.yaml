@@ -1,0 +1,22 @@
+name: Generation Coverage - PowerPointProposalSlides
+description: >-
+  Smallest valid workflow exercising PowerPointProposalSlides — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: render_slides
+    type: PowerPointProposalSlides
+    config:
+      sections:
+        executive_summary: "Sample executive summary content."
+      proposal_title: "Sample Proposal"
+      client_name: "Acme Corp"
+  - id: confirm
+    type: Echo
+    config:
+      template: "Rendered {{render_slides.slide_count}} slides to {{render_slides.minio_key}}."
+edges:
+  - from: render_slides
+    to: confirm
+entry: render_slides
+exit: confirm

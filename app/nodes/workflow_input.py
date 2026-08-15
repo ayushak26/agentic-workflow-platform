@@ -64,11 +64,17 @@ class InputFieldBinding(BaseModel):
 class WorkflowInputConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source: InputSource = "manual"
-    fields: list[InputFieldBinding] = Field(default_factory=list)
+    source: InputSource = Field(default="manual", description="Where this workflow's input data comes from.")
+    fields: list[InputFieldBinding] = Field(
+        default_factory=list,
+        description="The declared shape of what enters the workflow — every downstream step addresses these by name.",
+    )
     #: Sample payload used by the Builder's Test tab and the Simulator so a
     #: workflow can be exercised before any real integration is connected.
-    sample: dict[str, Any] = Field(default_factory=dict)
+    sample: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Sample payload used by the Builder's Test tab and Simulator to exercise the workflow before any real integration is connected.",
+    )
 
     def as_field_specs(self) -> list[FieldSpec]:
         """The declared shape, as the same FieldSpec rows every other node uses."""

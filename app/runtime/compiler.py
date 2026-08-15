@@ -53,7 +53,7 @@ from app.workflow.run_history import (
 )
 from .schema import WorkflowSpec, EdgeSpec
 from .state import WorkflowState
-from .templating import resolve
+from .templating import prune_absent, resolve
 from .events import RunEvent, RunEventBus
 from .node_events import sanitize_preview, is_graph_interrupt, interrupt_payload
 
@@ -199,7 +199,10 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
         user_pause_triggered = False
         try:
             with metrics.track_node(type_name):
-                resolved = resolve(instance.config.model_dump(), state)
+                resolved = prune_absent(
+                    resolve(instance.config.model_dump(), state),
+                    instance.config_schema,
+                )
                 if audit is not None and run_id:
                     await record_node_started(
                         audit,

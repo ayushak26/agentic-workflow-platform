@@ -1,5 +1,9 @@
 # Golden routing cases — pump manufacturer case routing
 
+> **Archived — cases for the v1 graph**, now at
+> `workflows/test_fixtures/pump_case_routing_v1.yaml`. The current routing cases
+> are in [pump_routing_levels_cases.md](pump_routing_levels_cases.md).
+
 Workflow: `workflows/pump_manufacturer_case_routing.yaml` (111 nodes, 63 exits).
 
 ## Routing priority

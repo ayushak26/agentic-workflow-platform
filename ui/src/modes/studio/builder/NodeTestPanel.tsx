@@ -8,6 +8,7 @@ import {
   sliceWorkflowThroughNode,
   outgoingEdges,
 } from '../builder-graph';
+import { InfoPopover } from './InfoPopover';
 import type {
   WorkflowEdgeData,
   WorkflowNodeData,
@@ -103,7 +104,10 @@ export function NodeTestPanel({
 
   return (
     <div className="builder-inspector-scroll p-4">
-      <div className="builder-panel-heading">Test this step</div>
+      <div className="builder-panel-heading flex items-center gap-1.5">
+        Test this step
+        <InfoPopover feature="node_testing" />
+      </div>
       <p className="mt-1 text-[11px] leading-4 text-ink-500">
         Runs only <span className="font-mono">{selected.data.nodeId}</span>,
         against the example below. Real execution — an AI step really calls the
@@ -209,7 +213,10 @@ export function NodeTestPanel({
 
       <hr className="my-5 border-slate-200" />
 
-      <div className="builder-panel-heading">Test the workflow up to here</div>
+      <div className="builder-panel-heading flex items-center gap-1.5">
+        Test the workflow up to here
+        <InfoPopover feature="branch_testing" />
+      </div>
       <p className="mt-1 text-[11px] leading-4 text-ink-500">
         Runs the smallest valid slice of the workflow ending at this step,
         through the normal preflight, run API and Cockpit. The saved workflow is

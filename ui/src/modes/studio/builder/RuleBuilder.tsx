@@ -16,6 +16,7 @@ import {
   stripBraces,
   valueToText,
 } from './ConditionGroupEditor';
+import { InfoPopover } from './InfoPopover';
 
 /**
  * The no-code rule editor.
@@ -232,7 +233,10 @@ export function RuleBuilder({
   return (
     <section className="mt-4">
       <div className="flex items-center justify-between">
-        <div className="builder-panel-heading">Business rules</div>
+        <div className="builder-panel-heading flex items-center gap-1.5">
+          Business rules
+          <InfoPopover feature="conditional_routing" />
+        </div>
         <button
           className="text-[11px] font-medium text-accent-700 hover:underline"
           onClick={() => setAssistOpen(true)}

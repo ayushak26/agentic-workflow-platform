@@ -1,0 +1,21 @@
+name: Generation Coverage - MCPAgent
+description: >-
+  Smallest valid workflow exercising MCPAgent — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: agent
+    type: MCPAgent
+    config:
+      model: claude-sonnet-4-5
+      objective: "Look up the customer's open tickets and summarize them."
+      max_iterations: 5
+  - id: report
+    type: Echo
+    config:
+      template: "{{agent.answer}} (used {{agent.iterations_used}} iterations)"
+edges:
+  - from: agent
+    to: report
+entry: agent
+exit: report

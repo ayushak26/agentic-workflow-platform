@@ -1,6 +1,7 @@
 /* JSON Schema is recursive and permits arbitrary extension keywords. */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, type ChangeEvent } from 'react';
+import { AskAiDialog } from './builder/AskAiDialog';
 import { PromptDraftAssistant } from './PromptDraftAssistant';
 
 // Treat these field names as multiline regardless of schema (the schema
@@ -11,7 +12,7 @@ const MULTILINE_NAMES = new Set([
 ]);
 
 // Subset of MULTILINE_NAMES that's actually LLM prompt text (as opposed to
-// a plain description/context string) — these get the "Draft with AI"
+// a plain description/context string) — these get the "Draft Prompt"
 // affordance since PromptDraftAssistant is specifically for prompt authoring.
 const PROMPT_FIELD_NAMES = new Set([
   'prompt_template', 'system_prompt', 'prompt', 'generation_prompt', 'instructions',
@@ -31,7 +32,7 @@ export function SchemaForm({
   onChange: (next: Record<string, unknown>) => void;
   hiddenFields?: string[];
   // Which node type this config belongs to — only needed to scope the
-  // "Draft with AI" assistant; omit it and that affordance just won't show.
+  // "Draft Prompt" assistant; omit it and that affordance just won't show.
   typeName?: string;
 }) {
   if (!schema || schema.type !== 'object' || !schema.properties) {
@@ -83,12 +84,33 @@ function FieldRenderer({
   typeName?: string;
 }) {
   const [drafting, setDrafting] = useState(false);
+  const [askingAi, setAskingAi] = useState(false);
   const label = (
-    <label className="block text-xs font-medium text-ink-700">
-      {name}
-      {required && <span className="text-bad ml-1">*</span>}
-    </label>
+    <div className="flex items-center justify-between gap-2">
+      <label className="block text-xs font-medium text-ink-700">
+        {name}
+        {required && <span className="text-bad ml-1">*</span>}
+      </label>
+      {typeName && (
+        <button
+          className="flex-none text-[10px] font-medium text-accent-700 hover:underline"
+          onClick={() => setAskingAi(true)}
+          title={`Ask AI about the "${name}" field`}
+          type="button"
+        >
+          Ask AI
+        </button>
+      )}
+    </div>
   );
+  const askAiDialog = typeName && askingAi ? (
+    <AskAiDialog
+      context={{ node_type: typeName, field: name }}
+      onClose={() => setAskingAi(false)}
+      starterQuestion={`Explain the "${name}" configuration field on ${typeName} — what it controls and how I should set it.`}
+      title={`Ask AI — ${typeName}.${name}`}
+    />
+  ) : null;
 
   // Resolve anyOf with null → optional field of the non-null branch
   const effective = resolveOptional(schema);
@@ -112,6 +134,7 @@ function FieldRenderer({
           ))}
         </select>
         {effective.description && <Hint text={effective.description} />}
+        {askAiDialog}
       </div>
     );
   }
@@ -119,15 +142,31 @@ function FieldRenderer({
   // Boolean → checkbox
   if (effective.type === 'boolean') {
     return (
-      <div className="flex items-start gap-2">
-        <input
-          id={`f-${name}`}
-          type="checkbox"
-          checked={Boolean(value)}
-          onChange={e => onChange(e.target.checked)}
-          className="mt-0.5"
-        />
-        <label htmlFor={`f-${name}`} className="text-sm">{name}</label>
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-start gap-2">
+            <input
+              id={`f-${name}`}
+              type="checkbox"
+              checked={Boolean(value)}
+              onChange={e => onChange(e.target.checked)}
+              className="mt-0.5"
+            />
+            <label htmlFor={`f-${name}`} className="text-sm">{name}</label>
+          </span>
+          {typeName && (
+            <button
+              className="flex-none text-[10px] font-medium text-accent-700 hover:underline"
+              onClick={() => setAskingAi(true)}
+              title={`Ask AI about the "${name}" field`}
+              type="button"
+            >
+              Ask AI
+            </button>
+          )}
+        </div>
+        {effective.description && <Hint text={effective.description} />}
+        {askAiDialog}
       </div>
     );
   }
@@ -144,6 +183,7 @@ function FieldRenderer({
           onChange={e => onChange(e.target.value === '' ? null : Number(e.target.value))}
           className="mt-1 block w-full rounded-md border-slate-300 text-sm py-1.5 px-2 border"
         />
+        {askAiDialog}
       </div>
     );
   }
@@ -167,7 +207,7 @@ function FieldRenderer({
               onClick={() => setDrafting(true)}
               className="text-xs text-accent-700 hover:underline"
             >
-              ✨ Draft with AI
+              ✨ Draft Prompt
             </button>
           )}
         </div>
@@ -185,6 +225,7 @@ function FieldRenderer({
             onClose={() => setDrafting(false)}
           />
         )}
+        {askAiDialog}
       </div>
     );
   }
@@ -202,6 +243,7 @@ function FieldRenderer({
           className="mt-1 block w-full rounded-md border-slate-300 text-sm py-1.5 px-2 border font-mono"
         />
         <Hint text="One value per line." />
+        {askAiDialog}
       </div>
     );
   }
@@ -224,6 +266,7 @@ function FieldRenderer({
         className="mt-1 block w-full rounded-md border-slate-300 text-xs py-1.5 px-2 border font-mono"
       />
       <Hint text="Edit as JSON. Phase 11 may add a typed editor." />
+      {askAiDialog}
     </div>
   );
 }

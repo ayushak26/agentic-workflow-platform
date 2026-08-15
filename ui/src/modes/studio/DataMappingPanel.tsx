@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Edge, Node } from 'reactflow';
 import type { ContractField, NodeTypeManifest, OutputContract } from '../../api/types';
 import { FieldDetail, FieldPicker } from './builder/FieldPicker';
+import { InfoPopover } from './builder/InfoPopover';
 import type {
   WorkflowEdgeData,
   WorkflowNodeData,
@@ -87,7 +88,11 @@ export function DataMappingPanel({
 
   return (
     <div className="builder-inspector-scroll p-4">
-      <div className="builder-panel-heading">What this step reads</div>
+      <div className="builder-panel-heading flex items-center gap-1.5">
+        What this step reads
+        <InfoPopover feature="data_mapping" />
+        <InfoPopover feature="variable_picker" />
+      </div>
       <p className="mt-1 text-[11px] leading-4 text-ink-500">
         Pick a configuration field, then click the value to connect. Only values
         from steps that always run before this one are offered.

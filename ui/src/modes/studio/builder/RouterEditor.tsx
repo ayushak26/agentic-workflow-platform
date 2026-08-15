@@ -8,6 +8,7 @@ import type {
 } from '../../../api/types';
 import { ConditionGroupEditor, newGroup } from './ConditionGroupEditor';
 import { FieldPicker } from './FieldPicker';
+import { InfoPopover } from './InfoPopover';
 
 /**
  * The visual router editor.
@@ -67,7 +68,10 @@ export function RouterEditor({
   return (
     <div>
       <section>
-        <div className="builder-panel-heading">How should this step branch?</div>
+        <div className="builder-panel-heading flex items-center gap-1.5">
+          How should this step branch?
+          <InfoPopover feature="conditional_routing" />
+        </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <ModeCard
             active={mode === 'field'}

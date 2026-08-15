@@ -123,6 +123,21 @@ export function BuilderInspector({
     selected?.id ?? null,
   );
 
+  // The selected step's real neighbours on THIS canvas, by node type — the
+  // compact context an "Ask AI" question about this step is grounded in
+  // (see AboutPanel.tsx), instead of the whole workflow.
+  const typeNameOf = (nodeId: string) => nodes.find(node => node.id === nodeId)?.data.typeName;
+  const upstreamTypes = selected
+    ? [...new Set(
+        edges.filter(edge => edge.target === selected.id).map(edge => typeNameOf(edge.source)).filter(Boolean),
+      )] as string[]
+    : [];
+  const downstreamTypes = selected
+    ? [...new Set(
+        edges.filter(edge => edge.source === selected.id).map(edge => typeNameOf(edge.target)).filter(Boolean),
+      )] as string[]
+    : [];
+
   const businessLabel = selected?.data.experience?.display_name ?? '';
 
   return (
@@ -190,12 +205,14 @@ export function BuilderInspector({
               selected ? (
                 <AboutPanel
                   businessLabel={businessLabel}
+                  downstreamTypes={downstreamTypes}
                   manifest={manifest}
                   nodeId={selected.data.nodeId}
                   onBusinessLabelChange={label => onExperienceChange({
                     ...(selected.data.experience ?? {}),
                     display_name: label || undefined,
                   })}
+                  upstreamTypes={upstreamTypes}
                 />
               ) : (
                 <EmptyState message="Select a step to see what it does." />

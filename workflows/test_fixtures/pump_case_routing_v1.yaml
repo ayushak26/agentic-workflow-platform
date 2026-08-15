@@ -1,0 +1,2696 @@
+name: Pump Manufacturer Multilingual Customer Case Routing
+description: >-
+  Multilingual industrial B2B intake for a pump manufacturer. The LLM is used only to understand and
+  structure the incoming customer message. CRM/ERP facts are retrieved through Dynamics 365 MCP. All
+  ownership and team routing is then performed by deterministic RouterAgent rules, with human triage
+  for uncertain or uncategorised cases.
+version: '1.1'
+use_case: industrial_customer_operations
+inputs:
+  message:
+    type: text
+    required: true
+  subject:
+    type: text
+    required: false
+  sender_email:
+    type: text
+    required: false
+  source_channel:
+    type: text
+    required: false
+entry: understand_message
+exit:
+  - manual_low_confidence
+  - route_safety
+  - route_production_stoppage
+  - rfq_named_kam
+  - rfq_kam_queue
+  - rfq_named_territory_owner
+  - rfq_inside_sales_queue
+  - rfq_named_sales_engineer
+  - rfq_sales_engineering_queue
+  - rfq_named_application_specialist
+  - rfq_application_engineering_queue
+  - order_customer_not_found
+  - order_commercial_review
+  - order_technical_review
+  - order_credit_hold
+  - order_supply_chain_review
+  - order_management_ready
+  - status_missing_reference
+  - status_order_not_found
+  - status_material_shortage
+  - status_production_delay
+  - status_quality_hold
+  - status_dispatched
+  - status_normal
+  - change_order_not_found
+  - change_production_started
+  - change_commercial
+  - change_order_admin
+  - technical_named_sales_engineer
+  - technical_sales_engineering_queue
+  - technical_need_serial
+  - technical_named_service_owner
+  - technical_service_queue
+  - complaint_transport_damage
+  - complaint_delivery
+  - complaint_product_quality
+  - complaint_warranty
+  - complaint_commercial
+  - complaint_documentation
+  - complaint_other
+  - spare_parts_need_serial
+  - spare_parts_named_owner
+  - spare_parts_queue
+  - document_ga_drawing
+  - document_certificate
+  - document_manual
+  - document_datasheet
+  - document_other
+  - invoice_finance
+  - manual_other_case
+  - route_dual_intent
+  - change_commercial_and_engineering
+  - customer_ambiguous
+  - order_missing_quote_reference
+  - order_product_not_identified
+  - order_customer_system_unavailable
+  - order_credit_unknown
+  - status_system_unavailable
+  - status_fulfilment_unknown
+  - change_system_unavailable
+  - change_production_status_unknown
+  - installed_unit_identity_conflict
+  - complaint_warranty_lapsed
+  - routing_operations_queue
+nodes:
+  - id: understand_message
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      temperature: 0
+      system_prompt: >-
+        You are an industrial B2B customer-intake analyst for a pump manufacturer. Interpret
+        multilingual customer messages accurately, but do not decide who should own the case.
+        Extract facts only. When information is absent, use empty strings, false, UNKNOWN, or OTHER
+        as appropriate. Do not invent order, quotation, customer, product, delivery, or technical
+        facts.
+      prompt_template: |
+        SUBJECT:
+        {{inputs.subject}}
+
+        SENDER:
+        {{inputs.sender_email}}
+
+        CHANNEL:
+        {{inputs.source_channel}}
+
+        CUSTOMER MESSAGE:
+        {{inputs.message}}
+
+        Extract the following fields using exactly the allowed values where listed.
+
+        intent:
+          RFQ | NEW_ORDER | ORDER_STATUS | ORDER_CHANGE | TECHNICAL_SUPPORT |
+          COMPLAINT | SPARE_PARTS | DOCUMENT_REQUEST | INVOICE | OTHER
+
+        secondary_intents:
+          A LIST of the other allowed intent values present in this message, or [] when
+          there is only one ask.
+
+          A single business message often carries two genuinely separate asks - for
+          example a request for new equipment AND a spare-parts request against an
+          old order. They are separate asks when they need different work by
+          different people, not merely two sentences. Set intent to the commercially
+          larger ask and list every other distinct ask in secondary_intents.
+
+          Use [] when the message has only one ask, or when a later sentence merely
+          supports the first rather than being a distinct request.
+
+          Example: 'Pump P-100 is leaking. Also send us the certificate and please
+          quote two replacement pumps.' has intent=COMPLAINT and
+          secondary_intents=[DOCUMENT_REQUEST, RFQ] — three separate pieces of work
+          owned by three different teams.
+
+        secondary_reference:
+          The order, PO or quotation reference belonging to the secondary ask, when it
+          names one - e.g. 'spare parts for old order: PO 231706' gives 'PO 231706'.
+          Empty string when there is no secondary ask, or none names a reference.
+
+        technical_complexity:
+          standard | technical | complex
+
+        lifecycle_stage:
+          presales | order_execution | installed_base | unknown
+
+        complaint_type:
+          transport_damage | delivery | product_quality | warranty | commercial |
+          documentation | other | none
+
+        requested_document_type:
+          DATASHEET | GA_DRAWING | CERTIFICATE | MANUAL | OTHER | NONE
+
+        Also extract:
+        - language: ISO-like language name/code
+        - english_summary: concise English summary
+        - customer_name
+        - contact_name
+        - quotation_reference
+        - customer_po_reference
+        - sales_order_reference
+        - pump_model
+        - serial_number
+        - requested_delivery_date
+        - requested_quantity
+        - requested_action
+        - confidence: 0.0 to 1.0
+        - has_safety_issue: true only for credible personal/environmental safety risk
+        - production_stoppage: true when the customer's plant/process is stopped or
+          critically unable to operate
+        - technical_deviation_requested: true when requested specification differs
+          from quoted/standard specification
+        - price_or_terms_changed: true when customer asks to change price, payment,
+          Incoterms, cancellation, or other commercial terms
+        - order_reference_present: true when an SO/order number is present
+        - serial_number_present: true when a serial number is present
+        - missing_information: list of material missing facts
+      output_schema:
+        language: str
+        english_summary: str
+        intent: str
+        secondary_intents: list
+        secondary_reference: str
+        customer_name: str
+        contact_name: str
+        quotation_reference: str
+        customer_po_reference: str
+        sales_order_reference: str
+        pump_model: str
+        serial_number: str
+        requested_delivery_date: str
+        requested_quantity: str
+        requested_action: str
+        confidence: float
+        has_safety_issue: bool
+        production_stoppage: bool
+        technical_complexity: str
+        lifecycle_stage: str
+        complaint_type: str
+        requested_document_type: str
+        technical_deviation_requested: bool
+        price_or_terms_changed: bool
+        order_reference_present: bool
+        serial_number_present: bool
+        missing_information: list
+  - id: emergency_customer_lookup
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_customer
+      fail_on_error: false
+      arguments:
+        customer_name: '{{outputs.understand_message.parsed.customer_name?}}'
+        limit: 5
+      timeout_seconds: 5
+  - id: emergency_ownership_lookup
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_account_ownership
+      fail_on_error: false
+      arguments:
+        account_id: '{{outputs.emergency_customer_lookup.first.account_id?}}'
+      timeout_seconds: 5
+  - id: stoppage_customer_lookup
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_customer
+      fail_on_error: false
+      arguments:
+        customer_name: '{{outputs.understand_message.parsed.customer_name?}}'
+        limit: 5
+      timeout_seconds: 5
+  - id: stoppage_ownership_lookup
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_account_ownership
+      fail_on_error: false
+      arguments:
+        account_id: '{{outputs.stoppage_customer_lookup.first.account_id?}}'
+      timeout_seconds: 5
+  - id: find_customer
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_customer
+      fail_on_error: false
+      arguments:
+        customer_name: '{{outputs.understand_message.parsed.customer_name}}'
+        limit: 5
+  - id: customer_match_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: AMBIGUOUS
+          description: Several customer accounts match the name in the message.
+          when:
+            operator: and
+            conditions:
+              - field: find_customer.count
+                operator: greater_than
+                value: 1
+      fallback: CONTINUE
+  - id: customer_ambiguous
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        More than one Dynamics 365 customer matches the name in this message. Confirm which account
+        the case belongs to before it is routed — the owner, credit position and order history all
+        differ between them. Approve once the correct account is confirmed; reject to correct the
+        extracted customer name and rerun.
+      context_fields:
+        - inputs.message
+        - understand_message.parsed.customer_name
+        - find_customer.count
+        - find_customer.data
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+  - id: customer_confirmed
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: account_id
+          operation: copy
+          source: find_customer.first.account_id
+        - target: account_name
+          operation: copy
+          source: find_customer.first.account_name
+        - target: match_count
+          operation: copy
+          source: find_customer.count
+  - id: get_ownership
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_account_ownership
+      fail_on_error: false
+      arguments:
+        account_id: '{{outputs.find_customer.first.account_id?}}'
+  - id: get_credit
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_credit_status
+      fail_on_error: false
+      arguments:
+        account_id: '{{outputs.find_customer.first.account_id?}}'
+  - id: get_quote
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_quote
+      fail_on_error: false
+      arguments:
+        quotation_reference: '{{outputs.understand_message.parsed.quotation_reference?}}'
+        customer_po_reference: '{{outputs.understand_message.parsed.customer_po_reference?}}'
+        account_id: '{{outputs.find_customer.first.account_id?}}'
+  - id: get_sales_order
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_sales_order
+      fail_on_error: false
+      arguments:
+        sales_order_reference: '{{outputs.understand_message.parsed.sales_order_reference?}}'
+  - id: get_fulfilment
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_order_fulfilment_status
+      fail_on_error: false
+      arguments:
+        sales_order_reference: '{{outputs.understand_message.parsed.sales_order_reference?}}'
+  - id: get_availability
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_inventory_availability
+      fail_on_error: false
+      arguments:
+        pump_model: '{{outputs.understand_message.parsed.pump_model?}}'
+  # An order placed against a quotation names no pump model in the message — the
+  # quotation carries it. Without this second lookup the model is known (from the
+  # quote) but its availability never is, so the case reaches Order Management
+  # with stock unchecked. Skips itself when no quotation was matched.
+  - id: get_quoted_model_availability
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_inventory_availability
+      fail_on_error: false
+      arguments:
+        pump_model: '{{outputs.get_quote.first.pump_model?}}'
+  - id: get_installed_unit
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_installed_unit
+      fail_on_error: false
+      arguments:
+        serial_number: '{{outputs.understand_message.parsed.serial_number?}}'
+        account_id: '{{outputs.find_customer.first.account_id?}}'
+  - id: serial_identity_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: IDENTITY_CONFLICT
+          description: The quoted serial number belongs to a different customer.
+          when:
+            operator: and
+            conditions:
+              - field: get_installed_unit.found
+                operator: is_true
+              - field: get_installed_unit.first.belongs_to_customer
+                operator: is_false
+      fallback: CONTINUE
+  - id: warranty_status_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: WARRANTY_LAPSED
+          description: The installed unit's warranty period appears to have ended.
+          when:
+            operator: and
+            conditions:
+              - field: get_installed_unit.found
+                operator: is_true
+              - field: get_installed_unit.first.belongs_to_customer
+                operator: is_true
+              - field: get_installed_unit.first.warranty_active
+                operator: is_false
+      fallback: IN_WARRANTY
+  - id: installed_unit_identity_conflict
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: SERIAL NUMBER DOES NOT BELONG TO THIS CUSTOMER
+            Team: Service Support — human review required
+
+            Serial quoted by the customer: {{understand_message.parsed.serial_number?}}
+            Belongs to this customer: {{get_installed_unit.first.belongs_to_customer?}}
+
+            What is deliberately not shown:
+            Which customer does own this unit, where it is installed, and what it is.
+            Answering a serial number back to whoever asked would disclose another
+            customer's equipment and site to them.
+
+            Why this is not simply a wrong number:
+            It is usually a transcription error, occasionally a unit bought second-hand,
+            and rarely something worse. All three need a person, and none of them should
+            be resolved by quoting the record back.
+
+            Action:
+            Confirm the correct serial with the customer directly. Do not describe the
+            unit on file until identity is resolved.
+
+            Automatic technical response: BLOCKED.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_warranty_lapsed
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: WARRANTY CLAIM - COVER PERIOD APPEARS TO HAVE ENDED
+
+            Team: Service / Warranty — commercial decision required
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+
+            Unit: {{get_installed_unit.first.pump_model?}} (serial
+            {{understand_message.parsed.serial_number?}})
+
+            Site: {{get_installed_unit.first.install_site?}}
+
+            Warranty active in Dynamics 365: {{get_installed_unit.first.warranty_active?}}
+
+            Warranty end date on file: {{get_installed_unit.first.warranty_end_date?}}
+
+
+            What this workflow has NOT decided:
+
+            Whether the claim is refused. An expiry date on file is evidence, not a
+
+            contractual ruling — the claim may still be met on goodwill, under a service
+
+            agreement, or because the fault predates expiry. That judgement is Service
+
+            and Commercial's to make, not this workflow's.
+
+
+            Action:
+
+            Assess the claim on its merits with the expiry date as one input, and reply
+
+            to the customer with a decision a person has taken.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: confidence_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: MANUAL_REVIEW
+          condition: understand_message.parsed.confidence < 0.8
+        - name: CONTINUE
+          default: true
+  - id: safety_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: SAFETY
+          condition: understand_message.parsed.has_safety_issue == true
+        - name: CONTINUE
+          default: true
+  - id: stoppage_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: PRODUCTION_STOPPAGE
+          condition: understand_message.parsed.production_stoppage == true
+        - name: CONTINUE
+          default: true
+  - id: second_ask_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: DUAL
+          description: The message carries more than one distinct ask.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.secondary_intents
+                operator: is_not_empty
+      fallback: CONTINUE
+  - id: route_dual_intent
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: SEVERAL SEPARATE ASKS IN ONE MESSAGE - PARENT CASE
+
+            Primary ask: {{understand_message.parsed.intent?}}
+            Additional asks: {{understand_message.parsed.secondary_intents?}}
+            Reference given for a secondary ask: {{understand_message.parsed.secondary_reference?}}
+
+            Each ask below is a separate piece of work with its own owner. This
+            case is not complete until every one of them has been answered, and
+            answering only the primary ask leaves the customer waiting on the rest.
+
+            Who owns which kind of ask:
+              RFQ / NEW_ORDER          New Equipment Sales — {{get_ownership.first.account_owner_name?}}
+              TECHNICAL_SUPPORT        Sales Engineering — {{get_ownership.first.sales_engineer_name?}}
+              SPARE_PARTS              Aftermarket / Spare Parts — {{get_ownership.first.service_owner_name?}}
+              COMPLAINT                Quality / Service — {{get_ownership.first.service_owner_name?}}
+              DOCUMENT_REQUEST         Documentation / Quality
+              ORDER_STATUS / CHANGE    Order Management
+              INVOICE                  Finance
+
+            Action:
+            Open one child work item per ask, assign each to the owner above, and
+            coordinate a single combined reply to the customer.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+        - target: work_items
+          operation: object
+          value:
+            parent_summary: $understand_message.parsed.english_summary
+            primary_ask: $understand_message.parsed.intent
+            additional_asks: $understand_message.parsed.secondary_intents
+            secondary_reference: $understand_message.parsed.secondary_reference
+            customer: $find_customer.first.account_name
+            commercial_owner: $get_ownership.first.account_owner_name
+            service_owner: $get_ownership.first.service_owner_name
+            sales_engineer: $get_ownership.first.sales_engineer_name
+  - id: change_deviation_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: DUAL
+          condition: understand_message.parsed.technical_deviation_requested == true
+        - name: SINGLE
+          default: true
+  - id: change_commercial_and_engineering
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER CHANGE - TECHNICAL DEVIATION AND COMMERCIAL CHANGE
+
+            Primary team: Sales Engineering
+            Primary owner: {{get_ownership.first.sales_engineer_name?}}
+
+            Second team: Order Administration
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Order: {{understand_message.parsed.sales_order_reference?}}
+
+            Second team required: Order Administration
+
+            Why both teams are required:
+            This change request alters both the technical specification and the commercial
+            terms. Engineering feasibility and order repricing are separate approvals, and
+            applying one without the other produces an order that either cannot be built or
+            cannot be invoiced.
+
+            Primary team is expected to:
+            Confirm whether the deviation is technically feasible and what it changes in
+            scope, lead time and build.
+
+            Second team is expected to:
+            Reprice, amend the order and confirm the revised commercial terms once
+            feasibility is confirmed.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: intent_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: RFQ
+          condition: understand_message.parsed.intent == 'RFQ'
+        - name: NEW_ORDER
+          condition: understand_message.parsed.intent == 'NEW_ORDER'
+        - name: ORDER_STATUS
+          condition: understand_message.parsed.intent == 'ORDER_STATUS'
+        - name: ORDER_CHANGE
+          condition: understand_message.parsed.intent == 'ORDER_CHANGE'
+        - name: TECHNICAL_SUPPORT
+          condition: understand_message.parsed.intent == 'TECHNICAL_SUPPORT'
+        - name: COMPLAINT
+          condition: understand_message.parsed.intent == 'COMPLAINT'
+        - name: SPARE_PARTS
+          condition: understand_message.parsed.intent == 'SPARE_PARTS'
+        - name: DOCUMENT_REQUEST
+          condition: understand_message.parsed.intent == 'DOCUMENT_REQUEST'
+        - name: INVOICE
+          condition: understand_message.parsed.intent == 'INVOICE'
+        - name: OTHER
+          default: true
+  - id: rfq_complexity_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: COMPLEX
+          condition: understand_message.parsed.technical_complexity == 'complex'
+        - name: TECHNICAL
+          condition: understand_message.parsed.technical_complexity == 'technical'
+        - name: STANDARD
+          default: true
+  - id: rfq_standard_key_account_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: KEY_ACCOUNT
+          condition: find_customer.first.key_account == true
+        - name: TERRITORY
+          default: true
+  - id: rfq_kam_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_KAM
+          condition: get_ownership.first.account_owner_name != ''
+        - name: KAM_QUEUE
+          default: true
+  - id: rfq_territory_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_TERRITORY_OWNER
+          condition: get_ownership.first.territory_sales_owner_name != ''
+        - name: INSIDE_SALES_QUEUE
+          default: true
+  - id: rfq_technical_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_SALES_ENGINEER
+          condition: get_ownership.first.sales_engineer_name != ''
+        - name: SALES_ENGINEERING_QUEUE
+          default: true
+  - id: rfq_complex_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_APPLICATION_SPECIALIST
+          condition: get_ownership.first.application_specialist_name != ''
+        - name: APPLICATION_ENGINEERING_QUEUE
+          default: true
+  - id: order_customer_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: CUSTOMER_SYSTEM_UNAVAILABLE
+          description: The customer lookup did not answer.
+          when:
+            operator: and
+            conditions:
+              - field: find_customer.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+        - route: CUSTOMER_NOT_FOUND
+          description: The lookup answered and found no such customer.
+          when:
+            operator: and
+            conditions:
+              - field: find_customer.found
+                operator: is_false
+      fallback: CONTINUE
+  - id: order_quote_match_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: NO_QUOTE_REFERENCE
+          description: The message names no quotation to validate the PO against.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.quotation_reference
+                operator: is_empty
+        - route: COMMERCIAL_REVIEW
+          description: >-
+            A quotation was named but the PO does not match it, or the quote belongs to a different
+            customer.
+          when:
+            operator: or
+            conditions:
+              - field: get_quote.first.po_matches_quote
+                operator: is_false
+              - field: get_quote.first.belongs_to_customer
+                operator: is_false
+      fallback: CONTINUE
+  - id: order_technical_deviation_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: TECHNICAL_REVIEW
+          condition: understand_message.parsed.technical_deviation_requested == true
+        - name: CONTINUE
+          default: true
+  - id: order_credit_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: CREDIT_UNKNOWN
+          description: The credit lookup did not answer.
+          when:
+            operator: and
+            conditions:
+              - field: get_credit.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+        - route: CREDIT_HOLD
+          description: Finance has this customer on credit hold.
+          when:
+            operator: and
+            conditions:
+              - field: get_credit.first.credit_hold
+                operator: is_true
+      fallback: CONTINUE
+  - id: order_availability_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: PRODUCT_NOT_IDENTIFIED
+          description: >-
+            Neither the message nor the quotation it references names a pump model,
+            so there is nothing to identify the order by.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.pump_model
+                operator: is_empty
+              # An order placed against a quotation usually names no model at all —
+              # the quote carries it. Asking the customer to confirm a model that is
+              # on their own confirmed quotation is exactly the guess this workflow
+              # exists to avoid, so the retrieved quote counts as an identification.
+              - field: get_quote.first.pump_model
+                operator: is_empty
+        - route: SUPPLY_CHAIN_REVIEW
+          description: Availability was checked and is not feasible.
+          when:
+            operator: or
+            conditions:
+              # Each half asks the same question of one lookup: did it actually run,
+              # and did it come back anything other than feasible? The `skipped`
+              # guard matters because a lookup that never ran leaves
+              # availability_status absent, which "not FEASIBLE" would otherwise
+              # read as a supply problem the ERP never reported.
+              - operator: and
+                conditions:
+                  - field: get_availability.status
+                    operator: not_equals
+                    value: skipped
+                  - field: get_availability.first.availability_status
+                    operator: not_equals
+                    value: FEASIBLE
+              - operator: and
+                conditions:
+                  - field: get_quoted_model_availability.status
+                    operator: not_equals
+                    value: skipped
+                  - field: get_quoted_model_availability.first.availability_status
+                    operator: not_equals
+                    value: FEASIBLE
+      fallback: ORDER_MANAGEMENT
+  - id: status_reference_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        # Gate on the reference the lookup actually uses, not on the model's
+        # separate order_reference_present flag. A message that sets the flag but
+        # leaves sales_order_reference empty made get_sales_order skip and the run
+        # then told the customer their order was not found, which is a different
+        # and untrue statement from "we need the reference".
+        - name: MISSING_REFERENCE
+          condition: understand_message.parsed.sales_order_reference == ''
+        - name: CONTINUE
+          default: true
+  - id: status_order_found_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: ORDER_SYSTEM_UNAVAILABLE
+          description: The order lookup did not answer.
+          when:
+            operator: and
+            conditions:
+              - field: get_sales_order.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+        - route: ORDER_NOT_FOUND
+          description: The lookup answered and found no such order.
+          when:
+            operator: and
+            conditions:
+              - field: get_sales_order.found
+                operator: is_false
+      fallback: CONTINUE
+  - id: fulfilment_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: FULFILMENT_UNKNOWN
+          description: The fulfilment lookup did not answer.
+          when:
+            operator: and
+            conditions:
+              - field: get_fulfilment.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+        - route: MATERIAL_SHORTAGE
+          description: The ERP reports MATERIAL_SHORTAGE.
+          when:
+            operator: and
+            conditions:
+              - field: get_fulfilment.first.fulfilment_status
+                operator: equals
+                value: MATERIAL_SHORTAGE
+        - route: PRODUCTION_DELAY
+          description: The ERP reports PRODUCTION_DELAY.
+          when:
+            operator: and
+            conditions:
+              - field: get_fulfilment.first.fulfilment_status
+                operator: equals
+                value: PRODUCTION_DELAY
+        - route: QUALITY_HOLD
+          description: The ERP reports QUALITY_HOLD.
+          when:
+            operator: and
+            conditions:
+              - field: get_fulfilment.first.fulfilment_status
+                operator: equals
+                value: QUALITY_HOLD
+        - route: DISPATCHED
+          description: The ERP reports DISPATCHED.
+          when:
+            operator: and
+            conditions:
+              - field: get_fulfilment.first.fulfilment_status
+                operator: equals
+                value: DISPATCHED
+      fallback: NORMAL_STATUS
+  - id: change_order_found_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: ORDER_SYSTEM_UNAVAILABLE
+          description: The order lookup did not answer.
+          when:
+            operator: and
+            conditions:
+              - field: get_sales_order.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+        - route: ORDER_NOT_FOUND
+          description: The lookup answered and found no such order.
+          when:
+            operator: and
+            conditions:
+              - field: get_sales_order.found
+                operator: is_false
+      fallback: CONTINUE
+  - id: change_production_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: PRODUCTION_STATUS_UNKNOWN
+          description: The order lookup did not answer, so the production state is unknown.
+          when:
+            operator: and
+            conditions:
+              - field: get_sales_order.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+        - route: PRODUCTION_STARTED
+          description: Manufacturing has already started on this order.
+          when:
+            operator: and
+            conditions:
+              - field: get_sales_order.first.production_started
+                operator: is_true
+      fallback: CONTINUE
+  - id: change_commercial_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: COMMERCIAL_CHANGE
+          condition: understand_message.parsed.price_or_terms_changed == true
+        - name: ORDER_ADMIN_CHANGE
+          default: true
+  - id: technical_lifecycle_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: PRESALES
+          condition: understand_message.parsed.lifecycle_stage == 'presales'
+        - name: AFTERSALES
+          default: true
+  - id: technical_presales_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_SALES_ENGINEER
+          condition: get_ownership.first.sales_engineer_name != ''
+        - name: SALES_ENGINEERING_QUEUE
+          default: true
+  - id: technical_serial_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        # The serial itself, for the same reason as status_reference_router: the
+        # installed-unit lookup keys on serial_number, so routing must ask the same
+        # question the lookup does.
+        - name: NEED_SERIAL
+          condition: understand_message.parsed.serial_number == ''
+        - name: CONTINUE
+          default: true
+  - id: technical_service_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_SERVICE_OWNER
+          condition: get_ownership.first.service_owner_name != ''
+        - name: SERVICE_QUEUE
+          default: true
+  - id: complaint_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: TRANSPORT_DAMAGE
+          condition: understand_message.parsed.complaint_type == 'transport_damage'
+        - name: DELIVERY
+          condition: understand_message.parsed.complaint_type == 'delivery'
+        - name: PRODUCT_QUALITY
+          condition: understand_message.parsed.complaint_type == 'product_quality'
+        - name: WARRANTY
+          condition: understand_message.parsed.complaint_type == 'warranty'
+        - name: COMMERCIAL
+          condition: understand_message.parsed.complaint_type == 'commercial'
+        - name: DOCUMENTATION
+          condition: understand_message.parsed.complaint_type == 'documentation'
+        - name: OTHER_COMPLAINT
+          default: true
+  - id: spare_parts_serial_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NEED_SERIAL
+          condition: understand_message.parsed.serial_number == ''
+        - name: CONTINUE
+          default: true
+  - id: spare_parts_owner_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: NAMED_SERVICE_OWNER
+          condition: get_ownership.first.service_owner_name != ''
+        - name: SPARE_PARTS_QUEUE
+          default: true
+  - id: document_router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: GA_DRAWING
+          condition: understand_message.parsed.requested_document_type == 'GA_DRAWING'
+        - name: CERTIFICATE
+          condition: understand_message.parsed.requested_document_type == 'CERTIFICATE'
+        - name: MANUAL
+          condition: understand_message.parsed.requested_document_type == 'MANUAL'
+        - name: DATASHEET
+          condition: understand_message.parsed.requested_document_type == 'DATASHEET'
+        - name: OTHER_DOCUMENT
+          default: true
+  - id: manual_low_confidence
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        Intake confidence is below 0.80. CRM / Customer Support must inspect the original message,
+        extracted fields and live business context before assigning the case. Approve only after the
+        case has been manually triaged; reject when the extraction must be corrected and rerun.
+      context_fields:
+        - inputs.message
+        - understand_message.parsed
+        - find_customer.first
+        - find_customer.count
+        - get_ownership.first
+        - get_credit.first
+        - get_quote.first
+        - get_sales_order.first
+        - get_fulfilment.first
+        - get_availability.first
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+  - id: route_safety
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            PRIORITY: CRITICAL SAFETY CASE
+
+            Primary team: Service Emergency queue
+            Supporting teams: Quality + EHS / Safety
+
+            Reason: a credible safety risk was detected in the customer's own words.
+            This route is decided from the message alone and does not wait for Dynamics
+            365 — an enrichment failure must never delay an emergency.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Second team required: Service / QHSE, alongside the commercial owner
+
+            Why both teams are required:
+            The message reports a credible safety risk. Assessing that risk and handling
+            the customer commercially are different responsibilities, and neither team
+            can close the case on its own.
+
+            Primary team is expected to:
+            Assess the reported risk, decide containment and any field action, and supply
+            the findings the commercial reply depends on.
+
+            Second team is expected to:
+            Hold any related open orders, own customer communication, and commit to no
+            remedy or liability until QHSE has reported.
+
+            Customer identity (enrichment only — not a routing input):
+              Dynamics 365 lookup: {{emergency_customer_lookup.status?}} ({{emergency_customer_lookup.error_code?}})
+              Resolved account: {{emergency_customer_lookup.first.account_name?}}
+              Matching accounts: {{emergency_customer_lookup.count?}}
+              Service owner: {{emergency_ownership_lookup.first.service_owner_name?}}
+              Commercial owner: {{emergency_ownership_lookup.first.account_owner_name?}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Automatic commercial action: BLOCKED pending human review.
+  - id: route_production_stoppage
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            PRIORITY: URGENT PRODUCTION STOPPAGE
+
+            Primary team: Service / Field Service emergency queue
+            Supporting team: Sales (account owner visibility)
+
+            Reason: the customer's production or process is stopped or critically
+            unavailable. This route is decided from the message alone and does not wait
+            for Dynamics 365.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Second team required: Sales, alongside Service / Field Support
+
+            Why both teams are required:
+            The customer's plant or process is stopped. Restoring production and owning
+            the commercial consequences of the downtime are different jobs that have to
+            run in parallel rather than one after the other.
+
+            Primary team is expected to:
+            Diagnose and restore production, and report the technical cause and expected
+            recovery time back to Sales.
+
+            Second team is expected to:
+            Own escalation and priority, set customer expectations, and handle the
+            commercial consequences of the downtime.
+
+            Customer identity (enrichment only — not a routing input):
+              Dynamics 365 lookup: {{stoppage_customer_lookup.status?}} ({{stoppage_customer_lookup.error_code?}})
+              Resolved account: {{stoppage_customer_lookup.first.account_name?}}
+              Matching accounts: {{stoppage_customer_lookup.count?}}
+              Service owner: {{stoppage_ownership_lookup.first.service_owner_name?}}
+              Commercial owner: {{stoppage_ownership_lookup.first.account_owner_name?}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Automatic commercial action: BLOCKED pending human review.
+  - id: rfq_named_kam
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: STANDARD RFQ - KEY ACCOUNT
+
+            Primary owner: {{get_ownership.first.account_owner_name?}}
+
+            Team: Key Account Sales
+
+            Support: Inside Sales / Customer Support for quotation administration
+
+            Customer: {{find_customer.first.account_name?}}
+
+            Reason: standard enquiry from a key account; commercial relationship remains with the
+            KAM.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: rfq_kam_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: STANDARD RFQ - KEY ACCOUNT
+            Primary team: Key Account Management queue
+            Support: Inside Sales
+            Customer: {{find_customer.first.account_name?}}
+            Reason: key account detected but no named account owner was returned by CRM.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.account_owner_recorded_name?}}
+              Directory status: {{get_ownership.first.account_owner_status?}}
+              Owning team: {{get_ownership.first.account_owner_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: rfq_named_territory_owner
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: STANDARD RFQ
+            Primary owner: {{get_ownership.first.territory_sales_owner_name?}}
+            Team: Regional / Territory Sales
+            Support: Inside Sales
+            Region: {{find_customer.first.sales_region?}}
+            Customer: {{find_customer.first.account_name?}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: rfq_inside_sales_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: STANDARD RFQ
+            Primary team: Inside Sales / Customer Support
+            Region: {{find_customer.first.sales_region?}}
+            Customer: {{find_customer.first.account_name?}}
+            Reason: standard enquiry and no named territory owner was returned by CRM.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.territory_sales_owner_recorded_name?}}
+              Directory status: {{get_ownership.first.territory_sales_owner_status?}}
+              Owning team: {{get_ownership.first.territory_sales_owner_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: rfq_named_sales_engineer
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: TECHNICAL RFQ
+            Primary technical owner: {{get_ownership.first.sales_engineer_name?}}
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Team: Sales Engineering
+            Customer: {{find_customer.first.account_name?}}
+            Reason: enquiry requires technical selection/application input before quotation.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: rfq_sales_engineering_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: TECHNICAL RFQ
+            Primary team: Sales Engineering queue
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Customer: {{find_customer.first.account_name?}}
+            Reason: technical enquiry and no named Sales Engineer was returned by CRM.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.sales_engineer_recorded_name?}}
+              Directory status: {{get_ownership.first.sales_engineer_status?}}
+              Owning team: {{get_ownership.first.sales_engineer_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: rfq_named_application_specialist
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: COMPLEX / ENGINEERED RFQ
+            Primary technical owner: {{get_ownership.first.application_specialist_name?}}
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Team: Application / Product Engineering
+            Customer: {{find_customer.first.account_name?}}
+            Reason: complex or engineered-to-order enquiry requiring specialist application review.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: rfq_application_engineering_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: COMPLEX / ENGINEERED RFQ
+            Primary team: Application / Product Engineering queue
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Customer: {{find_customer.first.account_name?}}
+            Reason: complex enquiry and no named application specialist was returned by CRM.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.application_specialist_recorded_name?}}
+              Directory status: {{get_ownership.first.application_specialist_status?}}
+              Owning team: {{get_ownership.first.application_specialist_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: order_customer_not_found
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - CUSTOMER MASTER REVIEW
+
+            Primary team: Customer Support / CRM Operations
+
+            Supporting team: Finance if a new customer/credit setup is required
+
+            Reason: the customer could not be verified in Dynamics 365. Do not create a Sales Order
+            yet.
+
+            Sender: {{inputs.sender_email}}
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_commercial_review
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - COMMERCIAL ORDER REVIEW
+
+            Primary owner: {{get_ownership.first.account_owner_name?}}
+
+            Supporting team: Inside Sales / Order Management
+
+            Customer: {{find_customer.first.account_name?}}
+
+            Reason: customer PO does not cleanly match a verified quotation/order basis.
+
+            Action: verify price, quantity, terms, Incoterms and accepted quotation before Sales
+            Order creation.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_technical_review
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - TECHNICAL DEVIATION
+
+            Primary technical owner: {{get_ownership.first.sales_engineer_name?}}
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Team: Sales Engineering / Application Engineering
+
+            Action: approve or correct the technical deviation before Sales Order acceptance and
+            Order Confirmation.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_credit_hold
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: NEW ORDER - CREDIT HOLD
+            Primary team: Finance / Credit Control
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Customer: {{find_customer.first.account_name?}}
+            Action: resolve credit status before normal order release.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_supply_chain_review
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - DELIVERY FEASIBILITY REVIEW
+
+            Primary team: Supply Chain / Planning
+
+            Supporting team: Order Management
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Availability status: {{get_availability.first.availability_status?}}
+
+            Customer requested date: {{understand_message.parsed.requested_delivery_date}}
+
+            Action: confirm feasible supply/production date before sending the customer an Order
+            Confirmation.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_management_ready
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - READY FOR ORDER MANAGEMENT
+
+            Primary team: Order Management / Customer Support
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Customer: {{find_customer.first.account_name?}}
+
+            Action sequence:
+              1. Create/review the internal Sales Order from the accepted PO/quotation.
+              2. Complete required technical, credit and availability checks.
+              3. Send the customer-facing Order Confirmation with the confirmed delivery commitment.
+            Important: Sales Order is the internal transaction; Order Confirmation is the
+            customer-facing commitment.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_missing_reference
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER STATUS - INFORMATION REQUIRED
+
+            Primary team: Customer Support
+
+            Action: ask the customer for the Sales Order / Order Confirmation / PO reference needed
+            to locate the order.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_order_not_found
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER STATUS - MANUAL LOOKUP
+
+            Primary team: Customer Support / Order Management
+
+            Customer: {{find_customer.first.account_name?}}
+
+            Action: manually locate the order using customer, PO, product and date details because
+            the supplied reference was not found.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_material_shortage
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER STATUS - MATERIAL SHORTAGE
+
+            Primary team: Supply Chain / Material Planning
+
+            Customer-facing coordinator: Customer Support
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Action: obtain a revised material/production plan and proactively communicate the
+            delivery impact.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_production_delay
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER STATUS - PRODUCTION DELAY
+            Primary team: Supply Chain / Production Planning
+            Customer-facing coordinator: Customer Support
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Action: confirm revised completion and dispatch dates before updating the customer.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_quality_hold
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER STATUS - QUALITY HOLD
+
+            Primary team: Quality
+
+            Supporting team: Supply Chain / Order Management
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Action: determine release/rework status and give Customer Support the approved customer
+            communication.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_dispatched
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER STATUS - DISPATCHED
+            Primary team: Customer Support / Logistics Coordination
+            Delivery status: {{get_fulfilment.first.delivery_status?}}
+            Action: provide shipment/tracking information and expected arrival.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_normal
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER STATUS - NORMAL
+            Primary team: Customer Support
+            Order status: {{get_sales_order.first.order_status?}}
+            Fulfilment status: {{get_fulfilment.first.fulfilment_status?}}
+            Delivery status: {{get_fulfilment.first.delivery_status?}}
+            Action: answer the customer directly from verified ERP status.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: change_order_not_found
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER CHANGE - ORDER NOT FOUND
+            Primary team: Customer Support / Order Management
+            Action: verify order identity before applying any change.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: change_production_started
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER CHANGE - PRODUCTION ALREADY STARTED
+
+            Primary team: Order Management
+
+            Supporting teams: Supply Chain + Production Planning
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Action: assess cost, schedule and feasibility impact before accepting cancellation or
+            change.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: change_commercial
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER CHANGE - COMMERCIAL TERMS
+
+            Primary owner: {{get_ownership.first.account_owner_name?}}
+
+            Supporting team: Order Management / Finance as required
+
+            Action: sales must approve changes to price, payment, Incoterms or other commercial
+            commitments.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: change_order_admin
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: ORDER CHANGE - ADMINISTRATIVE
+
+            Primary team: Order Management / Customer Support
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Action: validate the requested change, update the Sales Order and send an updated Order
+            Confirmation when customer commitments change.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: technical_named_sales_engineer
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: PRE-SALES TECHNICAL SUPPORT
+            Primary owner: {{get_ownership.first.sales_engineer_name?}}
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Team: Sales Engineering
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: technical_sales_engineering_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: PRE-SALES TECHNICAL SUPPORT
+            Primary team: Sales Engineering queue
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Reason: no named Sales Engineer was returned by CRM.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.sales_engineer_recorded_name?}}
+              Directory status: {{get_ownership.first.sales_engineer_status?}}
+              Owning team: {{get_ownership.first.sales_engineer_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: technical_need_serial
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: AFTER-SALES TECHNICAL SUPPORT - INFORMATION REQUIRED
+
+            Primary team: Customer Support / Service Triage
+
+            Action: obtain pump serial number, model, symptoms, installation and operating
+            conditions before specialist diagnosis.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: technical_named_service_owner
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: AFTER-SALES TECHNICAL SUPPORT
+            Primary owner: {{get_ownership.first.service_owner_name?}}
+            Team: Service
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+            Pump: {{understand_message.parsed.pump_model}}
+            Serial: {{understand_message.parsed.serial_number}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: technical_service_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: AFTER-SALES TECHNICAL SUPPORT
+            Primary team: Service / Technical Support queue
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+            Pump: {{understand_message.parsed.pump_model}}
+            Serial: {{understand_message.parsed.serial_number}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.service_owner_recorded_name?}}
+              Directory status: {{get_ownership.first.service_owner_status?}}
+              Owning team: {{get_ownership.first.service_owner_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: complaint_transport_damage
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: COMPLAINT - TRANSPORT DAMAGE
+
+            Primary team: Supply Chain / Logistics
+
+            Supporting teams: Quality + Customer Support
+
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+
+            Action: preserve delivery/damage evidence, determine carrier responsibility and
+            coordinate replacement/claim handling.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_delivery
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: COMPLAINT - DELIVERY
+            Primary team: Supply Chain / Logistics
+            Customer-facing coordinator: Customer Support
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_product_quality
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: COMPLAINT - PRODUCT QUALITY
+
+            Primary team: Quality
+
+            Supporting team: Service
+
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+
+            Action: open a quality complaint / non-conformance investigation and coordinate
+            technical containment.
+
+
+            Second team required: Quality / Service ({{get_ownership.first.service_owner_name?}}),
+            alongside the commercial owner
+
+
+            Why both teams are required:
+
+            A product-quality complaint needs both a root-cause finding and a commercial
+
+            remedy. The root cause decides whether the remedy is warranty, credit or
+
+            replacement, so neither decision can be taken independently.
+
+
+            Primary team is expected to:
+
+            Own the customer relationship and decide credit, replacement or goodwill once the
+
+            root cause is known.
+
+
+            Second team is expected to:
+
+            Establish root cause and the warranty position, and confirm whether other units or
+
+            shipments are affected.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_warranty
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: COMPLAINT - WARRANTY
+            Primary team: Service / Warranty
+            Supporting team: Quality
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+            Pump: {{understand_message.parsed.pump_model}}
+            Serial: {{understand_message.parsed.serial_number}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_commercial
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: COMPLAINT - COMMERCIAL
+
+            Primary owner: {{get_ownership.first.account_owner_name?}}
+
+            Supporting team: CRM / Customer Support
+
+            Action: sales owns the commercial relationship; CRM/Support owns case tracking and
+            closure discipline.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_documentation
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: COMPLAINT - DOCUMENTATION
+            Primary team: Customer Support / Document Coordination
+            Supporting team: Quality or Engineering depending on document type.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: complaint_other
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: COMPLAINT - GENERAL
+
+            Primary team: CRM / Customer Support complaint coordination
+
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+
+            Action: register the complaint, assign the accountable specialist team and track
+            closure.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: spare_parts_need_serial
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: SPARE PARTS - INFORMATION REQUIRED
+            Primary team: Customer Support / Spare Parts
+            Action: obtain serial number/model and required component before parts selection.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: spare_parts_named_owner
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: SPARE PARTS
+            Primary owner: {{get_ownership.first.service_owner_name?}}
+            Team: Service / Spare Parts
+            Pump: {{understand_message.parsed.pump_model}}
+            Serial: {{understand_message.parsed.serial_number}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: spare_parts_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: SPARE PARTS
+            Primary team: Service / Spare Parts queue
+            Pump: {{understand_message.parsed.pump_model}}
+            Serial: {{understand_message.parsed.serial_number}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+
+            Why no named owner:
+              Owner recorded on the account: {{get_ownership.first.service_owner_recorded_name?}}
+              Directory status: {{get_ownership.first.service_owner_status?}}
+              Owning team: {{get_ownership.first.service_owner_team?}}
+            An owner who has left or is inactive is not an assignable owner. The case
+            goes to the team queue rather than to a mailbox nobody reads.
+        - target: customer_reply_draft
+          operation: constant
+          value: >-
+            Thank you for your message. Your request has been assigned to the appropriate team and
+            you will receive a reply shortly.
+  - id: document_ga_drawing
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: DOCUMENT REQUEST - GA DRAWING
+            Primary team: Sales Engineering / Engineering Documentation
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+            Pump: {{understand_message.parsed.pump_model}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: document_certificate
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: DOCUMENT REQUEST - CERTIFICATE
+            Primary team: Quality / Certification
+            Customer-facing coordinator: Customer Support
+            Pump: {{understand_message.parsed.pump_model}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: document_manual
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: DOCUMENT REQUEST - MANUAL
+            Primary team: Customer Support
+            Supporting team: Service when installed-base clarification is required.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: document_datasheet
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: DOCUMENT REQUEST - DATASHEET
+            Primary team: Customer Support / Inside Sales
+            Pump: {{understand_message.parsed.pump_model}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: document_other
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: DOCUMENT REQUEST - OTHER
+            Primary team: Customer Support / Document Coordination
+            Action: determine whether Engineering, Quality or Service owns the requested document.
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: invoice_finance
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: INVOICE / RECEIVABLES
+            Primary team: Finance / Accounts Receivable
+            Commercial visibility: {{get_ownership.first.account_owner_name?}}
+            Customer: {{find_customer.first.account_name?}}
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: manual_other_case
+    type: HumanInLoopAgent
+    config:
+      question: >-
+        The message did not match a governed business intent. CRM / Customer Support should review
+        the original message, structured intake and Dynamics context, then decide the correct owner.
+        Approve after manual assignment or reject to correct and rerun the intake.
+      context_fields:
+        - inputs.message
+        - understand_message.parsed
+        - find_customer.first
+        - find_customer.count
+        - get_ownership.first
+        - get_credit.first
+        - get_quote.first
+        - get_sales_order.first
+        - get_fulfilment.first
+        - get_availability.first
+      allow_document_override: false
+      allowed_actions:
+        - approve
+        - reject
+  - id: order_missing_quote_reference
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - NO QUOTATION REFERENCE GIVEN
+
+            Team: Inside Sales
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Action: ask the customer which quotation this order is against before entering it.
+
+            Reason: the message names no quotation, so there is nothing to validate the purchase
+            order against. This is a missing fact, not a pricing dispute.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_product_not_identified
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: >
+            CASE: NEW ORDER - PRODUCT NOT IDENTIFIED
+
+            Team: Inside Sales
+
+            Commercial owner: {{get_ownership.first.account_owner_name?}}
+
+            Action: confirm the pump model with the customer before confirming delivery.
+
+            Reason: no pump model could be extracted from the message, so availability was never
+            checked. Availability is unknown, not confirmed.
+
+
+            Contact: {{understand_message.parsed.contact_name?}}
+
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_customer_system_unavailable
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: NEW ORDER - CUSTOMER SYSTEM UNAVAILABLE
+            Team: Inside Sales / Master Data
+
+            Dynamics 365 lookup: {{find_customer.status?}}
+            Reported error: {{find_customer.error?}}
+            Retryable: {{find_customer.retryable?}}
+
+            What is unknown:
+            Whether this customer exists in Dynamics 365, and who owns the account.
+
+            Why this is not a negative answer:
+            A failed lookup is not evidence of a new customer. Treating it as one would
+            send an existing account into customer onboarding and lose its ownership,
+            credit position and order history.
+
+            Action:
+            Retry the lookup. If Dynamics remains unavailable, hold the order and
+            confirm the account manually before entering it.
+
+            Automatic commercial action: BLOCKED — this case was routed because a
+            business fact could not be established, not because it was established.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: order_credit_unknown
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: NEW ORDER - CREDIT POSITION UNKNOWN
+            Team: Finance
+
+            Dynamics 365 lookup: {{get_credit.status?}}
+            Reported error: {{get_credit.error?}}
+            Retryable: {{get_credit.retryable?}}
+
+            What is unknown:
+            Whether this customer is on credit hold.
+
+            Why this is not a negative answer:
+            'Not on hold' and 'we could not check' are different facts. Only Finance
+            releases an order against an unverified credit position.
+
+            Action:
+            Finance to confirm the credit position before the order is accepted.
+
+            Automatic commercial action: BLOCKED — this case was routed because a
+            business fact could not be established, not because it was established.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_system_unavailable
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER STATUS - ORDER SYSTEM UNAVAILABLE
+            Team: Customer Support
+
+            Dynamics 365 lookup: {{get_sales_order.status?}}
+            Reported error: {{get_sales_order.error?}}
+            Retryable: {{get_sales_order.retryable?}}
+
+            What is unknown:
+            Whether the referenced order exists and what state it is in.
+
+            Why this is not a negative answer:
+            Reporting 'order not found' to a customer whose order does exist is worse
+            than saying we cannot reach the system right now.
+
+            Action:
+            Retry, then reply to the customer with an honest status once the lookup
+            succeeds. Do not tell the customer the order does not exist.
+
+            Automatic commercial action: BLOCKED — this case was routed because a
+            business fact could not be established, not because it was established.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: status_fulfilment_unknown
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER STATUS - FULFILMENT STATE UNKNOWN
+            Team: Customer Support / Supply Chain
+
+            Dynamics 365 lookup: {{get_fulfilment.status?}}
+            Reported error: {{get_fulfilment.error?}}
+            Retryable: {{get_fulfilment.retryable?}}
+
+            What is unknown:
+            The production and delivery state of an order we know exists.
+
+            Why this is not a negative answer:
+            This router previously fell through to 'normal' when the lookup failed,
+            which turns an outage into a positive delivery claim to the customer.
+
+            Action:
+            Retry before replying. Promise no date that has not been read from the ERP.
+
+            Automatic commercial action: BLOCKED — this case was routed because a
+            business fact could not be established, not because it was established.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: change_system_unavailable
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER CHANGE - ORDER SYSTEM UNAVAILABLE
+            Team: Order Management
+
+            Dynamics 365 lookup: {{get_sales_order.status?}}
+            Reported error: {{get_sales_order.error?}}
+            Retryable: {{get_sales_order.retryable?}}
+
+            What is unknown:
+            Whether the order to be changed exists and what state it is in.
+
+            Why this is not a negative answer:
+            A change request cannot be assessed, accepted or refused against an order
+            we could not read.
+
+            Action:
+            Retry, then assess the change against the real order state.
+
+            Automatic commercial action: BLOCKED — this case was routed because a
+            business fact could not be established, not because it was established.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: change_production_status_unknown
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: ORDER CHANGE - PRODUCTION STATE UNKNOWN
+            Team: Order Management / Engineering
+
+            Dynamics 365 lookup: {{get_sales_order.status?}}
+            Reported error: {{get_sales_order.error?}}
+            Retryable: {{get_sales_order.retryable?}}
+
+            What is unknown:
+            Whether manufacturing has already started on this order.
+
+            Why this is not a negative answer:
+            Whether production has started decides whether a change is a simple
+            amendment or a scrap-and-rebuild. Defaulting to 'not started' invites a
+            change to be promised that the shop floor has already made impossible.
+
+            Action:
+            Confirm the production state with Order Management before responding.
+            Promise no change until it is known.
+
+            Automatic commercial action: BLOCKED — this case was routed because a
+            business fact could not be established, not because it was established.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+  - id: ownership_availability_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: OWNERSHIP_UNAVAILABLE
+          description: The ownership lookup did not answer.
+          when:
+            operator: and
+            conditions:
+              - field: get_ownership.status
+                operator: in
+                value:
+                  - error
+                  - denied
+                  - needs_approval
+      fallback: CONTINUE
+  - id: routing_operations_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: text
+          operation: format
+          value: |
+            CASE: OWNERSHIP UNREADABLE - ROUTING OPERATIONS
+            Team: Routing Operations
+
+            Dynamics 365 ownership lookup: {{get_ownership.status?}}
+            Reported error: {{get_ownership.error?}}
+
+            What is unknown:
+            Who owns this account. Not that nobody owns it — that we could not read it.
+
+            Why this is not the same as an unassigned account:
+            Falling through to a team queue would look identical to a genuinely
+            unassigned customer, and the named owner would never learn the case
+            arrived.
+
+            Action:
+            Retry the lookup, then route to the owner it returns.
+
+            Summary: {{understand_message.parsed.english_summary}}
+
+            Contact: {{understand_message.parsed.contact_name?}}
+            Company (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Company (as stated by the customer): {{understand_message.parsed.customer_name?}}
+edges:
+  - from: understand_message
+    to: safety_router
+  - from: find_customer
+    to: customer_match_router
+  - from: customer_match_router
+    condition: route
+    branches:
+      AMBIGUOUS: customer_ambiguous
+      CONTINUE: customer_confirmed
+  - from: customer_confirmed
+    to: get_installed_unit
+  - from: customer_confirmed
+    to: get_ownership
+  - from: customer_confirmed
+    to: get_credit
+  - from: customer_confirmed
+    to: get_quote
+  - from: customer_confirmed
+    to: get_sales_order
+  - from: customer_confirmed
+    to: get_fulfilment
+  - from: customer_confirmed
+    to: get_availability
+  - from: get_ownership
+    to: confidence_router
+  - from: get_credit
+    to: confidence_router
+  - from: get_quote
+    to: get_quoted_model_availability
+  - from: get_quoted_model_availability
+    to: confidence_router
+  - from: get_sales_order
+    to: confidence_router
+  - from: get_fulfilment
+    to: confidence_router
+  - from: get_availability
+    to: confidence_router
+  - from: confidence_router
+    condition: route
+    branches:
+      MANUAL_REVIEW: manual_low_confidence
+      CONTINUE: ownership_availability_router
+  - from: safety_router
+    condition: route
+    branches:
+      SAFETY: emergency_customer_lookup
+      CONTINUE: stoppage_router
+  - from: stoppage_router
+    condition: route
+    branches:
+      PRODUCTION_STOPPAGE: stoppage_customer_lookup
+      CONTINUE: find_customer
+  - from: second_ask_router
+    condition: route
+    branches:
+      DUAL: route_dual_intent
+      CONTINUE: serial_identity_router
+  - from: intent_router
+    condition: route
+    branches:
+      RFQ: rfq_complexity_router
+      NEW_ORDER: order_customer_router
+      ORDER_STATUS: status_reference_router
+      ORDER_CHANGE: change_order_found_router
+      TECHNICAL_SUPPORT: technical_lifecycle_router
+      COMPLAINT: complaint_router
+      SPARE_PARTS: spare_parts_serial_router
+      DOCUMENT_REQUEST: document_router
+      INVOICE: invoice_finance
+      OTHER: manual_other_case
+  - from: rfq_complexity_router
+    condition: route
+    branches:
+      COMPLEX: rfq_complex_owner_router
+      TECHNICAL: rfq_technical_owner_router
+      STANDARD: rfq_standard_key_account_router
+  - from: rfq_standard_key_account_router
+    condition: route
+    branches:
+      KEY_ACCOUNT: rfq_kam_owner_router
+      TERRITORY: rfq_territory_owner_router
+  - from: rfq_kam_owner_router
+    condition: route
+    branches:
+      NAMED_KAM: rfq_named_kam
+      KAM_QUEUE: rfq_kam_queue
+  - from: rfq_territory_owner_router
+    condition: route
+    branches:
+      NAMED_TERRITORY_OWNER: rfq_named_territory_owner
+      INSIDE_SALES_QUEUE: rfq_inside_sales_queue
+  - from: rfq_technical_owner_router
+    condition: route
+    branches:
+      NAMED_SALES_ENGINEER: rfq_named_sales_engineer
+      SALES_ENGINEERING_QUEUE: rfq_sales_engineering_queue
+  - from: rfq_complex_owner_router
+    condition: route
+    branches:
+      NAMED_APPLICATION_SPECIALIST: rfq_named_application_specialist
+      APPLICATION_ENGINEERING_QUEUE: rfq_application_engineering_queue
+  - from: order_customer_router
+    condition: route
+    branches:
+      CUSTOMER_NOT_FOUND: order_customer_not_found
+      CONTINUE: order_quote_match_router
+      CUSTOMER_SYSTEM_UNAVAILABLE: order_customer_system_unavailable
+  - from: order_quote_match_router
+    condition: route
+    branches:
+      COMMERCIAL_REVIEW: order_commercial_review
+      CONTINUE: order_technical_deviation_router
+      NO_QUOTE_REFERENCE: order_missing_quote_reference
+  - from: order_technical_deviation_router
+    condition: route
+    branches:
+      TECHNICAL_REVIEW: order_technical_review
+      CONTINUE: order_credit_router
+  - from: order_credit_router
+    condition: route
+    branches:
+      CREDIT_HOLD: order_credit_hold
+      CONTINUE: order_availability_router
+      CREDIT_UNKNOWN: order_credit_unknown
+  - from: order_availability_router
+    condition: route
+    branches:
+      SUPPLY_CHAIN_REVIEW: order_supply_chain_review
+      ORDER_MANAGEMENT: order_management_ready
+      PRODUCT_NOT_IDENTIFIED: order_product_not_identified
+  - from: status_reference_router
+    condition: route
+    branches:
+      MISSING_REFERENCE: status_missing_reference
+      CONTINUE: status_order_found_router
+  - from: status_order_found_router
+    condition: route
+    branches:
+      ORDER_NOT_FOUND: status_order_not_found
+      CONTINUE: fulfilment_router
+      ORDER_SYSTEM_UNAVAILABLE: status_system_unavailable
+  - from: fulfilment_router
+    condition: route
+    branches:
+      MATERIAL_SHORTAGE: status_material_shortage
+      PRODUCTION_DELAY: status_production_delay
+      QUALITY_HOLD: status_quality_hold
+      DISPATCHED: status_dispatched
+      NORMAL_STATUS: status_normal
+      FULFILMENT_UNKNOWN: status_fulfilment_unknown
+  - from: change_order_found_router
+    condition: route
+    branches:
+      ORDER_NOT_FOUND: change_order_not_found
+      CONTINUE: change_production_router
+      ORDER_SYSTEM_UNAVAILABLE: change_system_unavailable
+  - from: change_production_router
+    condition: route
+    branches:
+      PRODUCTION_STARTED: change_production_started
+      CONTINUE: change_commercial_router
+      PRODUCTION_STATUS_UNKNOWN: change_production_status_unknown
+  - from: change_commercial_router
+    condition: route
+    branches:
+      COMMERCIAL_CHANGE: change_deviation_router
+      ORDER_ADMIN_CHANGE: change_order_admin
+  - from: change_deviation_router
+    condition: route
+    branches:
+      DUAL: change_commercial_and_engineering
+      SINGLE: change_commercial
+  - from: technical_lifecycle_router
+    condition: route
+    branches:
+      PRESALES: technical_presales_owner_router
+      AFTERSALES: technical_serial_router
+  - from: technical_presales_owner_router
+    condition: route
+    branches:
+      NAMED_SALES_ENGINEER: technical_named_sales_engineer
+      SALES_ENGINEERING_QUEUE: technical_sales_engineering_queue
+  - from: technical_serial_router
+    condition: route
+    branches:
+      NEED_SERIAL: technical_need_serial
+      CONTINUE: technical_service_owner_router
+  - from: technical_service_owner_router
+    condition: route
+    branches:
+      NAMED_SERVICE_OWNER: technical_named_service_owner
+      SERVICE_QUEUE: technical_service_queue
+  - from: complaint_router
+    condition: route
+    branches:
+      TRANSPORT_DAMAGE: complaint_transport_damage
+      DELIVERY: complaint_delivery
+      PRODUCT_QUALITY: complaint_product_quality
+      WARRANTY: warranty_status_router
+      COMMERCIAL: complaint_commercial
+      DOCUMENTATION: complaint_documentation
+      OTHER_COMPLAINT: complaint_other
+  - from: spare_parts_serial_router
+    condition: route
+    branches:
+      NEED_SERIAL: spare_parts_need_serial
+      CONTINUE: spare_parts_owner_router
+  - from: spare_parts_owner_router
+    condition: route
+    branches:
+      NAMED_SERVICE_OWNER: spare_parts_named_owner
+      SPARE_PARTS_QUEUE: spare_parts_queue
+  - from: document_router
+    condition: route
+    branches:
+      GA_DRAWING: document_ga_drawing
+      CERTIFICATE: document_certificate
+      MANUAL: document_manual
+      DATASHEET: document_datasheet
+      OTHER_DOCUMENT: document_other
+  - from: emergency_customer_lookup
+    to: emergency_ownership_lookup
+  - from: emergency_ownership_lookup
+    to: route_safety
+  - from: stoppage_customer_lookup
+    to: stoppage_ownership_lookup
+  - from: stoppage_ownership_lookup
+    to: route_production_stoppage
+  - from: get_installed_unit
+    to: confidence_router
+  - from: serial_identity_router
+    condition: route
+    branches:
+      IDENTITY_CONFLICT: installed_unit_identity_conflict
+      CONTINUE: intent_router
+  - from: warranty_status_router
+    condition: route
+    branches:
+      WARRANTY_LAPSED: complaint_warranty_lapsed
+      IN_WARRANTY: complaint_warranty
+  - from: ownership_availability_router
+    condition: route
+    branches:
+      OWNERSHIP_UNAVAILABLE: routing_operations_queue
+      CONTINUE: second_ask_router

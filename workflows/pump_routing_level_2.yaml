@@ -1,0 +1,1245 @@
+name: Pump Customer Routing — Level 2 · Context-Aware
+description: >-
+  Level 1 understood the message. Level 2 checks it against what the business already knows, and
+  that changes the answer.
+
+      Customer message
+            ↓
+      Understand Message        AI · what is the customer asking for?
+            ↓
+      Find Customer             Dynamics 365 · who is writing?
+            ↓
+      Business Context          Dynamics 365 · order, fulfilment, installed unit, ownership
+            ↓
+      Department Rules          deterministic · lifecycle + ERP state → department
+            ↓
+      ┌──────────┬──────────────┬──────────────────┬──────────────────┬──────────┐
+      Sales   Supply Chain   Product Service    Customer Support    Other
+            ↓
+      Named owner where the directory confirms one, otherwise the team queue
+
+  One sentence makes the case for this level. "When will the pump arrive?" is ambiguous on its own:
+  if no order exists it is a lead-time question for Sales, and if SO-2026-1402 exists and Dynamics
+  reports a material shortage it is Material Planning's. Same words, different department, decided
+  by data rather than by wording.
+
+  What this level does NOT yet do: handle the messy cases. A CRM that does not answer, a serial
+  belonging to another customer, an inactive account owner, three requests in one email. Level 3
+  adds those.
+version: '1.0'
+use_case: industrial_customer_operations
+library:
+  title: Pump Customer Routing — Level 2 · Context-Aware
+  summary: >-
+    Route a customer message using both what it says and what Dynamics 365 knows about the customer,
+    their order and their installed pumps.
+  purpose:
+    - Show that the same sentence routes differently depending on business state
+    - Identify the customer in Dynamics 365 rather than trusting the signature
+    - Let the ERP's own fulfilment reason decide which planning team acts
+    - Assign a named owner when there is one, and a team queue when there is not
+  suitable_for:
+    - The second demonstration, once the department model is understood
+    - Showing the value of connecting the CRM/ERP to the routing decision
+  not_suitable_for:
+    - Production use — the failure cases that occur daily in real operations are handled at Level 3
+  outputs:
+    - Owning department and sub-team
+    - Named owner or team queue
+    - The business facts the decision used
+  input_types:
+    - Customer email or message text
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+inputs:
+  message:
+    type: text
+    required: true
+    description: The customer's message, in its original language.
+  subject:
+    type: text
+    required: false
+    description: Subject line, when the channel provides one.
+  sender_email:
+    type: text
+    required: false
+    description: Sender address, when known.
+entry: understand_message
+exit:
+  - sales_named_owner
+  - sales_queue
+  - supply_chain_case
+  - service_named_owner
+  - service_queue
+  - customer_support_case
+  - specialist_case
+output:
+  include_input: false
+  nodes:
+    - node_id: understand_message
+      flatten: false
+    - node_id: business_context
+      flatten: false
+    - node_id: routing_decision
+      flatten: false
+nodes:
+  - id: understand_message
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      temperature: 0.0
+      max_tokens: 2048
+      system_prompt: >-
+        You are a customer-intake analyst for an industrial pump manufacturer. Read the customer's
+        message in whatever language it arrives in and extract facts about it. You do not decide
+        which department handles it, and you never state a business fact: whether an order exists,
+        what its status is, whether a serial belongs to this customer and who owns the account are
+        all answered by Dynamics 365. If the message does not say something, return "" or UNKNOWN.
+      prompt_template: |-
+        SUBJECT:
+        {{inputs.subject}}
+
+        SENDER:
+        {{inputs.sender_email}}
+
+        CUSTOMER MESSAGE:
+        {{inputs.message}}
+
+        Extract:
+
+        language:
+          ISO 639-1 code of the language the customer wrote in.
+
+        summary:
+          One or two sentences in English on what the customer wants.
+
+        intent:
+          The ONE thing this message is mainly asking for, from:
+            NEW_PRODUCT_ENQUIRY | QUOTATION | ORDER_OR_DELIVERY | TECHNICAL_SUPPORT |
+            SPARE_PARTS | DOCUMENT_REQUEST | INVOICE | OTHER
+
+          Judge it by what the customer wants done, not by the words they use. A price question
+          about a replacement part for a pump they already own is SPARE_PARTS, not QUOTATION.
+
+        lifecycle_stage:
+          presales | order_execution | installed_base | unknown
+
+        customer_name:
+          The company the customer writes for, exactly as written, or "".
+
+        contact_name:
+          The person writing, from the signature, or "".
+
+        order_reference:
+          The sales-order or purchase-order number quoted, or "".
+
+        serial_number:
+          The serial number quoted, or "".
+
+        product_or_part:
+          The pump model or part named, or "".
+
+        technical_complexity:
+          standard  — a catalogue product against ordinary conditions
+          technical — needs a selection judgement: duty point, elastomer, compatibility
+          complex   — engineered, non-standard, or several constraints interacting at once
+
+        requested_document_type:
+          DATASHEET | GA_DRAWING | CERTIFICATE | MANUAL | ORDER_CONFIRMATION | OTHER | NONE
+
+        confidence:
+          0.0–1.0, how confident you are in this extraction.
+      output_schema:
+        language: str
+        summary: str
+        intent: str
+        lifecycle_stage: str
+        customer_name: str
+        contact_name: str
+        order_reference: str
+        serial_number: str
+        product_or_part: str
+        technical_complexity: str
+        requested_document_type: str
+        confidence: float
+    experience:
+      display_name: Understand Message
+      purpose: Read the customer's message in any language and say what it is asking for.
+      contribution: The lookups below use these references; the rules decide from these fields.
+      expected_output: An intent, a lifecycle stage, the company, and any references quoted.
+      failure_message: The message could not be read well enough to extract anything from.
+
+  - id: find_customer
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_customer
+      fail_on_error: false
+      arguments:
+        customer_name: '{{outputs.understand_message.parsed.customer_name}}'
+        limit: 5
+    experience:
+      display_name: Find Customer
+      purpose: Identify the writing company in Dynamics 365.
+      contribution: The account this resolves is what every other lookup is scoped to.
+      expected_output: The matching account, or none.
+      failure_message: The customer lookup could not be reached.
+
+  - id: customer_confirmed
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: account_id
+          operation: copy
+          source: find_customer.first.account_id
+          default: ''
+        - target: account_name
+          operation: copy
+          source: find_customer.first.account_name
+          default: ''
+        - target: match_count
+          operation: count
+          source: find_customer.data.customers
+    experience:
+      display_name: Customer Resolved
+      purpose: One place the lookups below read the account from.
+      contribution: Keeps the account-scoped lookups pointed at a single company.
+      expected_output: The account id and name used for the rest of the run.
+      failure_message: The resolved account could not be prepared for the lookups.
+
+  - id: get_ownership
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_account_ownership
+      fail_on_error: false
+      arguments:
+        account_id: '{{outputs.customer_confirmed.data.account_id?}}'
+    experience:
+      display_name: Account Ownership
+      purpose: Find who owns this account, and whether they can still be assigned work.
+      contribution: A named owner is only used when the directory says the person is active.
+      expected_output: Owner names per role, each with a status.
+      failure_message: Ownership could not be read, so no owner can be named.
+
+  - id: get_order
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_sales_order
+      fail_on_error: false
+      arguments:
+        sales_order_reference: '{{outputs.understand_message.parsed.order_reference?}}'
+    experience:
+      display_name: Sales Order
+      purpose: Establish whether the order the customer refers to actually exists.
+      contribution: Order existence is what separates a Sales question from a Supply Chain one.
+      expected_output: The order and its status, or nothing.
+      failure_message: The order system did not answer.
+
+  - id: get_fulfilment
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_order_fulfilment_status
+      fail_on_error: false
+      arguments:
+        sales_order_reference: '{{outputs.understand_message.parsed.order_reference?}}'
+    experience:
+      display_name: Fulfilment Status
+      purpose: Ask the ERP why the order is where it is.
+      contribution: The ERP's reason — not the customer's wording — chooses the planning team.
+      expected_output: MATERIAL_SHORTAGE, PRODUCTION_DELAY, QUALITY_HOLD, DISPATCHED or NORMAL.
+      failure_message: The fulfilment status could not be read.
+
+  - id: get_installed_unit
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: get_installed_unit
+      fail_on_error: false
+      arguments:
+        serial_number: '{{outputs.understand_message.parsed.serial_number?}}'
+        account_id: '{{outputs.customer_confirmed.data.account_id?}}'
+    experience:
+      display_name: Installed Unit
+      purpose: Check the serial number against this customer's installed base.
+      contribution: A verified unit lets the case go straight to the service owner.
+      expected_output: The installed unit and its warranty state, or nothing.
+      failure_message: The installed base could not be read.
+
+  - id: business_context
+    type: DecisionAgent
+    config:
+      defaults:
+        customer_verified: false
+        order_exists: false
+        fulfilment_state: UNKNOWN
+        serial_verified: false
+        customer_ambiguous: false
+      rules:
+        - name: The customer was identified
+          when:
+            operator: and
+            conditions:
+              - field: find_customer.found
+                operator: is_true
+          then:
+            - field: customer_verified
+              value: true
+        - name: Several accounts match the name
+          when:
+            operator: and
+            conditions:
+              - field: find_customer.count
+                operator: greater_than
+                value: 1
+          then:
+            - field: customer_ambiguous
+              value: true
+            - field: customer_verified
+              value: false
+        - name: The order exists
+          when:
+            operator: and
+            conditions:
+              - field: get_order.found
+                operator: is_true
+          then:
+            - field: order_exists
+              value: true
+        - name: The ERP reported a fulfilment state
+          when:
+            operator: and
+            conditions:
+              - field: get_fulfilment.first.fulfilment_status
+                operator: is_not_empty
+          then:
+            - field: fulfilment_state
+              value: $get_fulfilment.first.fulfilment_status
+        - name: The serial belongs to this customer
+          when:
+            operator: and
+            conditions:
+              - field: get_installed_unit.first.belongs_to_customer
+                operator: is_true
+          then:
+            - field: serial_verified
+              value: true
+    experience:
+      display_name: Business Context
+      purpose: Turn the lookups into the few facts the routing rules read.
+      contribution: The rules below compare the message against these facts, not against guesses.
+      expected_output: Whether the customer, order and serial are known, and what the ERP reports.
+      failure_message: The business context could not be established.
+
+  - id: routing_decision
+    type: DecisionAgent
+    config:
+      defaults:
+        department: CUSTOMER_SUPPORT
+        sub_team: Customer Support
+        case_type: GENERAL_ENQUIRY
+        owner_name: ''
+        owner_team: ''
+        reason: []
+        next_action: Read the message and reply to the customer.
+      rules:
+        # ---- the intent proposes a department -----------------------------
+        - name: Buying new equipment is Sales
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [NEW_PRODUCT_ENQUIRY, QUOTATION]
+          then:
+            - field: department
+              value: SALES
+            - field: sub_team
+              value: Inside Sales
+            - field: case_type
+              value: NEW_EQUIPMENT_ENQUIRY
+            - field: owner_name
+              value: $get_ownership.first.account_owner_name
+            - field: owner_team
+              value: $get_ownership.first.account_owner_team
+            - field: reason
+              operation: append
+              value: The customer is asking about equipment they have not yet bought.
+            - field: next_action
+              value: Qualify the application and prepare a quotation.
+
+        - name: A technical selection question needs Sales Engineering
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [NEW_PRODUCT_ENQUIRY, QUOTATION]
+              - field: understand_message.parsed.technical_complexity
+                operator: equals
+                value: technical
+          then:
+            - field: sub_team
+              value: Sales Engineering
+            - field: case_type
+              value: TECHNICAL_RFQ
+            - field: owner_name
+              value: $get_ownership.first.sales_engineer_name
+            - field: owner_team
+              value: $get_ownership.first.sales_engineer_team
+            - field: reason
+              operation: append
+              value: Selecting the right pump requires a technical judgement, not a price list.
+            - field: next_action
+              value: Review the duty point and materials, then prepare a technical quotation.
+
+        - name: A complex application needs an Application Specialist
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [NEW_PRODUCT_ENQUIRY, QUOTATION]
+              - field: understand_message.parsed.technical_complexity
+                operator: equals
+                value: complex
+          then:
+            - field: sub_team
+              value: Application Engineering
+            - field: case_type
+              value: COMPLEX_APPLICATION
+            - field: owner_name
+              value: $get_ownership.first.application_specialist_name
+            - field: owner_team
+              value: $get_ownership.first.application_specialist_team
+            - field: reason
+              operation: append
+              value: >-
+                Several process constraints interact, so this is an engineered application rather
+                than a catalogue selection.
+            - field: next_action
+              value: Assess the application and confirm what can be offered.
+
+        - name: An installed pump is Product Service
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [TECHNICAL_SUPPORT, SPARE_PARTS]
+          then:
+            - field: department
+              value: PRODUCT_SERVICE_SPARE_PARTS
+            - field: sub_team
+              value: Product Service
+            - field: case_type
+              value: INSTALLED_BASE_REQUEST
+            - field: reason
+              operation: append
+              value: The request concerns a pump the customer already has.
+            - field: next_action
+              value: Identify the unit and arrange the part or the support visit.
+
+        - name: Replacement components are Spare Parts
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: SPARE_PARTS
+          then:
+            - field: sub_team
+              value: Spare Parts
+            - field: case_type
+              value: SPARE_PART_REQUEST
+            - field: reason
+              operation: append
+              value: >-
+                A price question about a part for an installed pump is after-sales work, not a
+                new-equipment quotation.
+            - field: next_action
+              value: Identify the part against the installed unit and quote it.
+
+        - name: A technical question before buying is a Sales question
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: TECHNICAL_SUPPORT
+              - field: understand_message.parsed.lifecycle_stage
+                operator: equals
+                value: presales
+          then:
+            - field: department
+              value: SALES
+            - field: sub_team
+              value: Sales Engineering
+            - field: case_type
+              value: PRESALES_TECHNICAL_QUESTION
+            - field: owner_name
+              value: $get_ownership.first.sales_engineer_name
+            - field: owner_team
+              value: $get_ownership.first.sales_engineer_team
+            - field: reason
+              operation: append
+              value: The question is about choosing equipment, not about equipment already installed.
+            - field: next_action
+              value: Answer the application question and recommend a pump.
+
+        - name: A document request is Customer Support
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: DOCUMENT_REQUEST
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: sub_team
+              value: Customer Support
+            - field: case_type
+              value: DOCUMENT_REQUEST
+            - field: reason
+              operation: append
+              value: The customer is asking for a document we already publish.
+            - field: next_action
+              value: Send the requested document.
+
+        - name: A certificate belongs to Quality
+          description: >-
+            The document type changes who owns the request — Customer Support cannot issue a
+            controlled quality record.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: DOCUMENT_REQUEST
+              - field: understand_message.parsed.requested_document_type
+                operator: equals
+                value: CERTIFICATE
+          then:
+            - field: department
+              value: OTHER
+            - field: sub_team
+              value: Quality
+            - field: case_type
+              value: CERTIFICATE_REQUEST
+            - field: reason
+              operation: append
+              value: A material or conformity certificate is a controlled quality record.
+            - field: next_action
+              value: Issue the certificate for the supplied material or unit.
+
+        - name: An invoice question is Finance
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: INVOICE
+          then:
+            - field: department
+              value: OTHER
+            - field: sub_team
+              value: Finance
+            - field: case_type
+              value: INVOICE_QUERY
+            - field: reason
+              operation: append
+              value: The customer is questioning the financial record, which Finance owns.
+            - field: next_action
+              value: Check the invoice against the order and respond to the customer.
+
+        # ---- Dynamics 365 corrects the department -------------------------
+        - name: A delivery question with no order behind it is a Sales question
+          description: >-
+            This is the Level 2 demonstration. The same sentence — "when will the pump arrive?" —
+            routes to Sales or to Supply Chain depending on whether Dynamics has an order for it.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: business_context.decisions.order_exists
+                operator: is_false
+          then:
+            - field: department
+              value: SALES
+            - field: sub_team
+              value: Inside Sales
+            - field: case_type
+              value: LEAD_TIME_ENQUIRY
+            - field: owner_name
+              value: $get_ownership.first.account_owner_name
+            - field: owner_team
+              value: $get_ownership.first.account_owner_team
+            - field: reason
+              operation: append
+              value: Dynamics has no order for this, so it is a lead-time question rather than execution.
+            - field: next_action
+              value: Confirm the achievable lead time and quote it.
+
+        - name: An order that exists is handled by Customer Support until the ERP says otherwise
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: business_context.decisions.order_exists
+                operator: is_true
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: sub_team
+              value: Order Support
+            - field: case_type
+              value: ORDER_ENQUIRY
+            - field: reason
+              operation: append
+              value: The order exists and is progressing normally.
+            - field: next_action
+              value: Confirm the order status with the customer.
+
+        - name: A material shortage belongs to Material Planning
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: business_context.decisions.fulfilment_state
+                operator: equals
+                value: MATERIAL_SHORTAGE
+          then:
+            - field: department
+              value: SUPPLY_CHAIN
+            - field: sub_team
+              value: Material Planning
+            - field: case_type
+              value: DELIVERY_DELAY
+            - field: reason
+              operation: append
+              value: Dynamics reports a material shortage against this order.
+            - field: next_action
+              value: Confirm the revised material and production plan, then give the customer a date.
+
+        - name: A production delay belongs to Production Planning
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: business_context.decisions.fulfilment_state
+                operator: equals
+                value: PRODUCTION_DELAY
+          then:
+            - field: department
+              value: SUPPLY_CHAIN
+            - field: sub_team
+              value: Production Planning
+            - field: case_type
+              value: DELIVERY_DELAY
+            - field: reason
+              operation: append
+              value: Dynamics reports a production delay against this order.
+            - field: next_action
+              value: Confirm the revised production slot, then give the customer a date.
+
+        - name: An order held by Quality belongs to Quality
+          description: Supply Chain cannot release an order that Quality is holding.
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: business_context.decisions.fulfilment_state
+                operator: equals
+                value: QUALITY_HOLD
+          then:
+            - field: department
+              value: OTHER
+            - field: sub_team
+              value: Quality
+            - field: case_type
+              value: ORDER_ON_QUALITY_HOLD
+            - field: reason
+              operation: append
+              value: The order is on quality hold, so releasing it is a quality decision.
+            - field: next_action
+              value: Complete the quality assessment; Customer Support communicates the outcome.
+
+        - name: A dispatched order is a logistics enquiry
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: business_context.decisions.fulfilment_state
+                operator: equals
+                value: DISPATCHED
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: sub_team
+              value: Logistics Support
+            - field: case_type
+              value: SHIPMENT_TRACKING
+            - field: reason
+              operation: append
+              value: The goods have already left, so the question is about the shipment.
+            - field: next_action
+              value: Send the customer the dispatch and tracking details.
+
+        - name: A verified serial sends the case to the service owner
+          when:
+            operator: and
+            conditions:
+              - field: business_context.decisions.serial_verified
+                operator: is_true
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [TECHNICAL_SUPPORT, SPARE_PARTS]
+          then:
+            - field: owner_name
+              value: $get_ownership.first.service_owner_name
+            - field: owner_team
+              value: $get_ownership.first.service_owner_team
+            - field: reason
+              operation: append
+              value: The serial number was verified against this customer's installed base.
+
+        - name: Without a serial the unit cannot be identified
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: in
+                value: [TECHNICAL_SUPPORT, SPARE_PARTS]
+              - field: understand_message.parsed.lifecycle_stage
+                operator: equals
+                value: installed_base
+              - field: understand_message.parsed.serial_number
+                operator: is_empty
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: sub_team
+              value: Service Triage
+            - field: case_type
+              value: UNIDENTIFIED_UNIT
+            - field: owner_name
+              value: ''
+            - field: reason
+              operation: append
+              value: The request concerns an installed pump but gives no serial number to identify it.
+            - field: next_action
+              value: Ask the customer for the serial number from the nameplate.
+
+        - name: An order question with no reference needs Customer Support first
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: ORDER_OR_DELIVERY
+              - field: understand_message.parsed.order_reference
+                operator: is_empty
+              - field: understand_message.parsed.lifecycle_stage
+                operator: equals
+                value: order_execution
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: sub_team
+              value: Customer Support
+            - field: case_type
+              value: ORDER_LOOKUP_ASSISTANCE
+            - field: owner_name
+              value: ''
+            - field: reason
+              operation: append
+              value: The customer refers to an order but gave no reference to look it up by.
+            - field: next_action
+              value: Search the account's recent orders and confirm which one the customer means.
+
+        - name: An ambiguous company must be confirmed before the case is worked
+          description: >-
+            Two accounts matched the name. Their orders, owners and installed pumps are different,
+            so the case goes to a person rather than to the first match.
+          when:
+            operator: and
+            conditions:
+              - field: business_context.decisions.customer_ambiguous
+                operator: is_true
+          then:
+            - field: department
+              value: CUSTOMER_SUPPORT
+            - field: sub_team
+              value: Customer Support
+            - field: case_type
+              value: CUSTOMER_IDENTITY_UNCONFIRMED
+            - field: owner_name
+              value: ''
+            - field: reason
+              operation: append
+              value: >-
+                More than one Dynamics account matches this company name, so the right one cannot be
+                chosen automatically.
+            - field: next_action
+              value: Confirm with the customer which legal entity they are writing for.
+    experience:
+      display_name: Department Rules
+      purpose: Decide the department from the message and the business facts together.
+      contribution: >-
+        Every rule is readable and the same every time, and the ERP state can override what the
+        wording suggested.
+      expected_output: A department, a sub-team, an owner where there is one, and the reason.
+      failure_message: The routing rules could not be evaluated.
+
+  - id: department_router
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: routing_decision.decisions.department
+      branches:
+        SALES: SALES
+        SUPPLY_CHAIN: SUPPLY_CHAIN
+        PRODUCT_SERVICE_SPARE_PARTS: PRODUCT_SERVICE
+        CUSTOMER_SUPPORT: CUSTOMER_SUPPORT
+        OTHER: OTHER
+      fallback: CUSTOMER_SUPPORT
+    experience:
+      display_name: Route to Department
+      purpose: Send the case to the department the rules chose.
+      contribution: The canvas shows the five destinations the business actually has.
+      expected_output: One department branch.
+      failure_message: The case could not be routed.
+
+  - id: sales_owner_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: NAMED
+          description: Dynamics named an owner and the directory says they are active.
+          when:
+            operator: and
+            conditions:
+              - field: routing_decision.decisions.owner_name
+                operator: is_not_empty
+      fallback: QUEUE
+    experience:
+      display_name: Named owner or queue?
+      purpose: Assign a person only when Dynamics gives one who can act.
+      contribution: Prevents a case being sent to someone who has left or moved on.
+      expected_output: One branch — a named person or the team queue.
+      failure_message: The assignment branch could not be decided.
+
+  - id: sales_named_owner
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: SALES
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: owner_name
+          operation: copy
+          source: routing_decision.decisions.owner_name
+        - target: owner_team
+          operation: copy
+          source: routing_decision.decisions.owner_team
+        - target: business_context
+          operation: object
+          value:
+            customer_verified: '{{business_context.decisions.customer_verified}}'
+            account: '{{find_customer.first.account_name?}}'
+            order_exists: '{{business_context.decisions.order_exists}}'
+            fulfilment_state: '{{business_context.decisions.fulfilment_state}}'
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: SALES / {{routing_decision.decisions.sub_team}}
+            Assigned to: {{routing_decision.decisions.owner_name}} ({{routing_decision.decisions.owner_team}})
+            Customer (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Sales — named owner
+      purpose: Hand a commercial case to the person Dynamics says owns the account.
+      contribution: The case arrives with the customer already verified.
+      expected_output: A commercial case addressed to a named person.
+      failure_message: The Sales hand-off could not be built.
+
+  - id: sales_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: SALES
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: owner_name
+          operation: constant
+          value: ''
+        - target: business_context
+          operation: object
+          value:
+            customer_verified: '{{business_context.decisions.customer_verified}}'
+            account: '{{find_customer.first.account_name?}}'
+            order_exists: '{{business_context.decisions.order_exists}}'
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: SALES / {{routing_decision.decisions.sub_team}}
+            Assigned to: {{routing_decision.decisions.sub_team}} queue — no assignable owner in Dynamics
+            Customer (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Sales — team queue
+      purpose: Send the case to the team when Dynamics names nobody who can take it.
+      contribution: The case is never sent to an inactive or missing owner.
+      expected_output: A commercial case addressed to a team.
+      failure_message: The Sales queue hand-off could not be built.
+
+  - id: supply_chain_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: SUPPLY_CHAIN
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: order_reference
+          operation: copy
+          source: get_order.first.sales_order_reference
+          default: ''
+        - target: fulfilment_status
+          operation: copy
+          source: get_fulfilment.first.fulfilment_status
+          default: UNKNOWN
+        - target: business_context
+          operation: object
+          value:
+            customer_verified: '{{business_context.decisions.customer_verified}}'
+            account: '{{find_customer.first.account_name?}}'
+            order_exists: '{{business_context.decisions.order_exists}}'
+            fulfilment_state: '{{business_context.decisions.fulfilment_state}}'
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: SUPPLY CHAIN / {{routing_decision.decisions.sub_team}}
+            Order: {{get_order.first.sales_order_reference?}}
+            ERP fulfilment status: {{get_fulfilment.first.fulfilment_status?}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Supply Chain
+      purpose: Hand an execution problem to the planning team the ERP reason points at.
+      contribution: The ERP's reason chooses the team, not the customer's wording.
+      expected_output: A planning case with the order and its fulfilment state.
+      failure_message: The Supply Chain hand-off could not be built.
+
+  - id: service_owner_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: NAMED
+          description: The serial was verified and the account has an active service owner.
+          when:
+            operator: and
+            conditions:
+              - field: routing_decision.decisions.owner_name
+                operator: is_not_empty
+      fallback: QUEUE
+    experience:
+      display_name: Service owner or queue?
+      purpose: Assign the service owner only when Dynamics gives one who can act.
+      contribution: Keeps unidentified units out of a named engineer's inbox.
+      expected_output: One branch — a named person or the service queue.
+      failure_message: The service assignment branch could not be decided.
+
+  - id: service_named_owner
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: PRODUCT_SERVICE_SPARE_PARTS
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: owner_name
+          operation: copy
+          source: routing_decision.decisions.owner_name
+        - target: owner_team
+          operation: copy
+          source: routing_decision.decisions.owner_team
+        - target: installed_unit
+          operation: object
+          value:
+            serial_number: '{{understand_message.parsed.serial_number}}'
+            verified: '{{business_context.decisions.serial_verified}}'
+            pump_model: '{{get_installed_unit.first.pump_model?}}'
+            install_site: '{{get_installed_unit.first.install_site?}}'
+            warranty_active: '{{get_installed_unit.first.warranty_active?}}'
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: PRODUCT SERVICE / {{routing_decision.decisions.sub_team}}
+            Assigned to: {{routing_decision.decisions.owner_name}} ({{routing_decision.decisions.owner_team}})
+            Installed unit: {{understand_message.parsed.serial_number}} — {{get_installed_unit.first.pump_model?}} at {{get_installed_unit.first.install_site?}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Product Service — named owner
+      purpose: Hand an installed-base case to the service owner with the unit identified.
+      contribution: The engineer sees the verified unit and its site before opening the case.
+      expected_output: A service case naming the verified unit.
+      failure_message: The Product Service hand-off could not be built.
+
+  - id: service_queue
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: PRODUCT_SERVICE_SPARE_PARTS
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: serial_number
+          operation: copy
+          source: understand_message.parsed.serial_number
+          default: not given
+        - target: serial_verified
+          operation: boolean
+          source: business_context.decisions.serial_verified
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: PRODUCT SERVICE / {{routing_decision.decisions.sub_team}}
+            Assigned to: {{routing_decision.decisions.sub_team}} queue
+            Serial supplied: {{understand_message.parsed.serial_number}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Product Service — team queue
+      purpose: Send an installed-base case to the team when no owner can be named.
+      contribution: The team sees what is known about the unit and what is missing.
+      expected_output: A service case addressed to a team.
+      failure_message: The service queue hand-off could not be built.
+
+  - id: customer_support_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: CUSTOMER_SUPPORT
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: business_context
+          operation: object
+          value:
+            customer_verified: '{{business_context.decisions.customer_verified}}'
+            customer_ambiguous: '{{business_context.decisions.customer_ambiguous}}'
+            account: '{{find_customer.first.account_name?}}'
+            order_exists: '{{business_context.decisions.order_exists}}'
+            fulfilment_state: '{{business_context.decisions.fulfilment_state}}'
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: CUSTOMER SUPPORT / {{routing_decision.decisions.sub_team}}
+            Customer (verified in Dynamics 365): {{find_customer.first.account_name?}}
+            Order reference given: {{understand_message.parsed.order_reference}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Customer Support
+      purpose: Hand information, clarification and coordination work to Customer Support.
+      contribution: Support answers the question, or finds the fact that unblocks it.
+      expected_output: A support case with what is known and what is missing.
+      failure_message: The Customer Support hand-off could not be built.
+
+  - id: specialist_case
+    type: DataTransformAgent
+    config:
+      operations:
+        - target: department
+          operation: constant
+          value: OTHER
+        - target: sub_team
+          operation: copy
+          source: routing_decision.decisions.sub_team
+        - target: case_type
+          operation: copy
+          source: routing_decision.decisions.case_type
+        - target: order_reference
+          operation: copy
+          source: understand_message.parsed.order_reference
+          default: ''
+        - target: reason
+          operation: copy
+          source: routing_decision.decisions.reason
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: text
+          operation: format
+          value: |-
+            CASE: {{routing_decision.decisions.case_type}}
+            Department: {{routing_decision.decisions.sub_team}}
+            Order: {{understand_message.parsed.order_reference}}
+            Summary: {{understand_message.parsed.summary}}
+            Next action: {{routing_decision.decisions.next_action}}
+    experience:
+      display_name: Specialist Function
+      purpose: Hand the case to Finance or Quality when the decision belongs to them.
+      contribution: Keeps specialist decisions with the function that can actually make them.
+      expected_output: A specialist case with its references.
+      failure_message: The specialist hand-off could not be built.
+
+edges:
+  - from: understand_message
+    to: find_customer
+  - from: find_customer
+    to: customer_confirmed
+  - from: customer_confirmed
+    to:
+      - get_ownership
+      - get_order
+      - get_fulfilment
+      - get_installed_unit
+  - from: get_ownership
+    to: business_context
+  - from: get_order
+    to: business_context
+  - from: get_fulfilment
+    to: business_context
+  - from: get_installed_unit
+    to: business_context
+  - from: business_context
+    to: routing_decision
+  - from: routing_decision
+    to: department_router
+  - from: department_router
+    condition: route
+    branches:
+      SALES: sales_owner_router
+      SUPPLY_CHAIN: supply_chain_case
+      PRODUCT_SERVICE: service_owner_router
+      CUSTOMER_SUPPORT: customer_support_case
+      OTHER: specialist_case
+  - from: sales_owner_router
+    condition: route
+    branches:
+      NAMED: sales_named_owner
+      QUEUE: sales_queue
+  - from: service_owner_router
+    condition: route
+    branches:
+      NAMED: service_named_owner
+      QUEUE: service_queue

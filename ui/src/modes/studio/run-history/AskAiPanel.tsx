@@ -18,10 +18,19 @@ function Avatar({ role }: { role: 'user' | 'assistant' }) {
   );
 }
 
-export function AskAiPanel({ runId }: { runId: string }) {
+export function AskAiPanel({
+  runId,
+  // Lets a caller open the panel already holding the question the person
+  // clicked — a suggested prompt in Business View should not make them retype
+  // it. Left unsent: they can still edit or discard it.
+  initialQuestion,
+}: {
+  runId: string;
+  initialQuestion?: string;
+}) {
   const [turns, setTurns] = useState<RunChatTurn[] | null>(null);
   const [starterQuestions, setStarterQuestions] = useState<string[]>([]);
-  const [question, setQuestion] = useState('');
+  const [question, setQuestion] = useState(initialQuestion ?? '');
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);

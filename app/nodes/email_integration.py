@@ -81,30 +81,33 @@ class EmailNodeConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     #: Named connection resolved by EmailService. Never a token.
-    connection: str
-    operation: EmailOperationName = "search"
+    connection: str = Field(description="Which configured mailbox connection this step acts against.")
+    operation: EmailOperationName = Field(
+        default="search",
+        description="The email operation to perform: search/read change nothing; create_draft/reply/send take action.",
+    )
 
     # search
-    query: str = ""
-    from_address: str | None = None
-    subject_contains: str | None = None
-    unread_only: bool = False
-    has_attachments: bool = False
-    folder: str = "inbox"
-    newer_than_days: int | None = Field(default=None, ge=1, le=3650)
-    max_results: int = Field(default=10, ge=1, le=100)
+    query: str = Field(default="", description="Search query, in search operations.")
+    from_address: str | None = Field(default=None, description="Filter search results to this sender.")
+    subject_contains: str | None = Field(default=None, description="Filter search results to a subject substring.")
+    unread_only: bool = Field(default=False, description="Only match unread messages, in search operations.")
+    has_attachments: bool = Field(default=False, description="Only match messages with attachments, in search operations.")
+    folder: str = Field(default="inbox", description="Mailbox folder to search.")
+    newer_than_days: int | None = Field(default=None, ge=1, le=3650, description="Only match messages newer than this many days.")
+    max_results: int = Field(default=10, ge=1, le=100, description="Maximum number of search results to return.")
 
     # read / reply
-    message_id: str | None = None
-    thread_id: str | None = None
+    message_id: str | None = Field(default=None, description="Message to read or reply to.")
+    thread_id: str | None = Field(default=None, description="Thread to reply within.")
 
     # create_draft / reply / send
-    to: list[EmailRecipient] = Field(default_factory=list)
-    cc: list[EmailRecipient] = Field(default_factory=list)
-    bcc: list[EmailRecipient] = Field(default_factory=list)
-    subject: str = ""
-    body: str = ""
-    body_html: str | None = None
+    to: list[EmailRecipient] = Field(default_factory=list, description="Recipients, in create_draft/reply/send operations.")
+    cc: list[EmailRecipient] = Field(default_factory=list, description="CC recipients.")
+    bcc: list[EmailRecipient] = Field(default_factory=list, description="BCC recipients.")
+    subject: str = Field(default="", description="Message subject, in create_draft/send operations.")
+    body: str = Field(default="", description="Plain-text message body — normally a template reference.")
+    body_html: str | None = Field(default=None, description="Optional HTML message body.")
 
     @model_validator(mode="after")
     def operation_has_what_it_needs(self) -> "EmailNodeConfig":

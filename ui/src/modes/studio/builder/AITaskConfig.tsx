@@ -10,6 +10,7 @@ import type {
 import { FieldPicker } from './FieldPicker';
 import { SchemaBuilder } from './SchemaBuilder';
 import { ModelSelect } from '../ModelSelect';
+import { PromptDraftAssistant } from '../PromptDraftAssistant';
 
 /**
  * Configuring the one AI capability.
@@ -49,14 +50,17 @@ export function AITaskConfig({
   llmModels,
   presets,
   onChange,
+  typeName = 'AITaskAgent',
 }: {
   config: Config;
   contract: OutputContract | null;
   llmModels: LLMModelInfo[];
   presets: NodePreset[];
   onChange: (next: Config) => void;
+  typeName?: string;
 }) {
   const [pickingInput, setPickingInput] = useState(false);
+  const [draftingInstruction, setDraftingInstruction] = useState(false);
   const language = asRecord(config.language);
   const outputFields = (config.output_fields as FieldSpec[] | undefined) ?? [];
   const task = asString(config.task, 'extract');
@@ -104,24 +108,41 @@ export function AITaskConfig({
       )}
 
       <section className="mt-4">
-        <label className="block text-[11px] font-medium text-ink-700">
-          Instructions
-          <textarea
-            className="builder-field mt-1"
-            onChange={event => set({ instruction: event.target.value })}
-            placeholder={
-              'Understand the incoming customer communication.\n\n'
-              + 'Extract only information that is explicitly stated or strongly implied.\n'
-              + 'Do not invent missing values.'
-            }
-            rows={6}
-            value={asString(config.instruction)}
-          />
-        </label>
+        <div className="flex items-center justify-between">
+          <label className="block text-[11px] font-medium text-ink-700">
+            Instructions
+          </label>
+          <button
+            className="text-[11px] font-medium text-accent-700 hover:underline"
+            onClick={() => setDraftingInstruction(true)}
+            type="button"
+          >
+            ✨ Draft Prompt
+          </button>
+        </div>
+        <textarea
+          className="builder-field mt-1"
+          onChange={event => set({ instruction: event.target.value })}
+          placeholder={
+            'Understand the incoming customer communication.\n\n'
+            + 'Extract only information that is explicitly stated or strongly implied.\n'
+            + 'Do not invent missing values.'
+          }
+          rows={6}
+          value={asString(config.instruction)}
+        />
         <p className="mt-1 text-[11px] text-ink-500">
           Written for a colleague, not for a model. Say what to do and what not
           to guess at.
         </p>
+        {draftingInstruction && (
+          <PromptDraftAssistant
+            fieldName="instruction"
+            onClose={() => setDraftingInstruction(false)}
+            onInsert={text => set({ instruction: text })}
+            typeName={typeName}
+          />
+        )}
       </section>
 
       <section className="mt-4">

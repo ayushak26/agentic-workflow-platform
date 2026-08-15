@@ -38,6 +38,7 @@ import { BuilderInspector, type BuilderInspectorTab } from './BuilderInspector';
 import { BuilderStart } from './BuilderStart';
 import { renameNodeReferencesInConfig } from './builder-graph';
 import { generateDefaults, findManifest, newNodeId } from './builder-helpers';
+import { InfoPopover } from './builder/InfoPopover';
 import { NodeSearchPalette } from './builder/NodeSearchPalette';
 import { BuilderStageBandNode, BuilderStagePlaceholderNode } from './builder/StageNodes';
 import {
@@ -1119,33 +1120,54 @@ export function Builder() {
         </div>
 
         <div className="builder-actionbar-actions" role="toolbar" aria-label="Workflow Builder actions">
-          <button aria-label="Undo" className="ui-icon-button" disabled={past.length === 0} onClick={undo} title="Undo" type="button"><Icon name="undo" size={15} /></button>
-          <button aria-label="Redo" className="ui-icon-button" disabled={future.length === 0} onClick={redo} title="Redo" type="button"><Icon name="redo" size={15} /></button>
+          <span className="inline-flex items-center gap-1">
+            <button aria-label="Undo" className="ui-icon-button" disabled={past.length === 0} onClick={undo} title="Undo" type="button"><Icon name="undo" size={15} /></button>
+            <button aria-label="Redo" className="ui-icon-button" disabled={future.length === 0} onClick={redo} title="Redo" type="button"><Icon name="redo" size={15} /></button>
+            <InfoPopover feature="undo_redo" />
+          </span>
           <span className="builder-toolbar-separator" />
-          <button className="ui-button ui-button--secondary" onClick={() => { setShowInputs(true); setInspectorOpen(true); }} type="button">
-            Inputs <span className="builder-action-count">{Object.keys(meta.inputs ?? {}).length}</span>
-          </button>
-          <button
-            className="ui-button ui-button--secondary"
-            onClick={() => autoLayout()}
-            title={`Arrange ${layoutDirection === 'LR' ? 'left to right' : 'top to bottom'}. Manual positions remain stable until you use this action.`}
-            type="button"
-          >
-            Auto-layout
-          </button>
+          <span className="inline-flex items-center gap-1">
+            <button className="ui-button ui-button--secondary" onClick={() => { setShowInputs(true); setInspectorOpen(true); }} type="button">
+              Inputs <span className="builder-action-count">{Object.keys(meta.inputs ?? {}).length}</span>
+            </button>
+            <InfoPopover feature="inputs" />
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <button
+              className="ui-button ui-button--secondary"
+              onClick={() => autoLayout()}
+              title={`Arrange ${layoutDirection === 'LR' ? 'left to right' : 'top to bottom'}. Manual positions remain stable until you use this action.`}
+              type="button"
+            >
+              Auto-layout
+            </button>
+            <InfoPopover feature="auto_layout" />
+          </span>
           {workflowName && (
-            <button className="ui-button ui-button--secondary" onClick={() => setVersionHistoryOpen(true)} type="button"><Icon name="history" size={14} /> Versions</button>
+            <span className="inline-flex items-center gap-1">
+              <button className="ui-button ui-button--secondary" onClick={() => setVersionHistoryOpen(true)} type="button"><Icon name="history" size={14} /> Versions</button>
+              <InfoPopover feature="versions" />
+            </span>
           )}
-          <button className="ui-button ui-button--secondary" disabled={validating} onClick={() => { setShowInputs(false); setInspectorOpen(true); setInspectorTab('checks'); void validate(); }} type="button">
-            <Icon name="check" size={14} /> {validating ? 'Checking…' : 'Preflight'}
-          </button>
+          <span className="inline-flex items-center gap-1">
+            <button className="ui-button ui-button--secondary" disabled={validating} onClick={() => { setShowInputs(false); setInspectorOpen(true); setInspectorTab('checks'); void validate(); }} type="button">
+              <Icon name="check" size={14} /> {validating ? 'Checking…' : 'Preflight'}
+            </button>
+            <InfoPopover feature="preflight" />
+          </span>
           {preflight && !preflight.valid && (
             <button className="ui-button ui-button--secondary" disabled={autofixing} onClick={() => void autofix()} type="button">
               <Icon name="check" size={14} /> {autofixing ? 'Fixing…' : 'Auto-fix'}
             </button>
           )}
-          <button className="ui-button ui-button--secondary" disabled={nodes.length === 0} onClick={() => void prepareRun(currentWorkflow, 'Full workflow')} type="button"><Icon name="play" size={14} /> Run in Cockpit</button>
-          <button className="ui-button ui-button--primary" disabled={saveState === 'saving'} onClick={() => void onSave()} type="button"><Icon name="save" size={14} /> {saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+          <span className="inline-flex items-center gap-1">
+            <button className="ui-button ui-button--secondary" disabled={nodes.length === 0} onClick={() => void prepareRun(currentWorkflow, 'Full workflow')} type="button"><Icon name="play" size={14} /> Run in Cockpit</button>
+            <InfoPopover feature="run_test" />
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <button className="ui-button ui-button--primary" disabled={saveState === 'saving'} onClick={() => void onSave()} type="button"><Icon name="save" size={14} /> {saveState === 'saving' ? 'Saving…' : 'Save'}</button>
+            <InfoPopover feature="save" />
+          </span>
           <button
             aria-pressed={inspectorOpen}
             className={inspectorOpen ? 'ui-button builder-action-active' : 'ui-button ui-button--secondary'}
@@ -1249,6 +1271,9 @@ export function Builder() {
           {/* View controls live on the canvas rather than in the action bar:
               they change how the workflow is read, not what it is. */}
           <div className="builder-canvas-tools" role="toolbar" aria-label="Canvas view controls">
+            <span className="builder-canvas-tool inline-flex items-center gap-1 !p-0.5">
+              <InfoPopover feature="canvas_basics" />
+            </span>
             <button
               className="builder-canvas-tool"
               disabled={nodes.length === 0}

@@ -7,6 +7,7 @@ import type {
   OutputContract,
 } from '../../../api/types';
 import { FieldPicker } from './FieldPicker';
+import { PromptDraftAssistant } from '../PromptDraftAssistant';
 
 /**
  * The Email capability's configuration.
@@ -157,7 +158,12 @@ export function EmailConfig({
       )}
 
       {WRITE_OPERATIONS.has(operation) && (
-        <MessageFields config={config} onChange={onChange} showRecipients={operation !== 'reply'} />
+        <MessageFields
+          config={config}
+          onChange={onChange}
+          showRecipients={operation !== 'reply'}
+          typeName="EmailAgent"
+        />
       )}
     </div>
   );
@@ -295,13 +301,16 @@ function MessageFields({
   config,
   onChange,
   showRecipients,
+  typeName,
 }: {
   config: Config;
   onChange: (next: Config) => void;
   showRecipients: boolean;
+  typeName: string;
 }) {
   const recipients = recipientsOf(config.to);
   const set = (patch: Config) => onChange({ ...config, ...patch });
+  const [draftingBody, setDraftingBody] = useState(false);
 
   return (
     <section className="mt-4 space-y-2">
@@ -354,20 +363,36 @@ function MessageFields({
         />
       </label>
 
-      <label className="block text-[11px] font-medium text-ink-700">
-        Body
-        <textarea
-          className="builder-field mt-1"
-          onChange={event => set({ body: event.target.value })}
-          placeholder="{{outputs.draft_reply.text}}"
-          rows={6}
-          value={asString(config.body)}
-        />
-      </label>
+      <div className="flex items-center justify-between">
+        <label className="text-[11px] font-medium text-ink-700">Body</label>
+        <button
+          className="text-[11px] font-medium text-accent-700 hover:underline"
+          onClick={() => setDraftingBody(true)}
+          type="button"
+        >
+          ✨ Draft Email
+        </button>
+      </div>
+      <textarea
+        className="builder-field mt-1"
+        onChange={event => set({ body: event.target.value })}
+        placeholder="{{outputs.draft_reply.text}}"
+        rows={6}
+        value={asString(config.body)}
+      />
       <p className="text-[10px] text-ink-500">
         Usually mapped from a drafting step&apos;s output, reviewed by a person
         before it is sent.
       </p>
+      {draftingBody && (
+        <PromptDraftAssistant
+          fieldName="body"
+          label="Draft Email"
+          onClose={() => setDraftingBody(false)}
+          onInsert={text => set({ body: text })}
+          typeName={typeName}
+        />
+      )}
     </section>
   );
 }

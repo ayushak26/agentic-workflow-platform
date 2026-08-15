@@ -36,15 +36,24 @@ class ReviewPanel(BaseModel):
 
 
 class HITLConfig(BaseModel):
-    question: str                                  # shown to the human, templated
-    context_fields: list[str] = Field(default_factory=list)
+    question: str = Field(description="The question shown to the reviewer, templated with upstream values.")
+    context_fields: list[str] = Field(
+        default_factory=list,
+        description="Raw upstream fields to show the reviewer as fallback context, when review_panels isn't set.",
+    )
     #: Optional presentation for the review screen. When set, the Cockpit renders
     #: these labelled panels; `context_fields` remains the raw fallback so
     #: existing workflows are unaffected.
-    review_panels: list[ReviewPanel] = Field(default_factory=list)
+    review_panels: list[ReviewPanel] = Field(
+        default_factory=list,
+        description="Labelled panels the reviewer sees, in place of the raw context_fields list.",
+    )
     #: Business-language explanation of why this gate exists, shown above the
     #: decision buttons.
-    review_purpose: str = ""
+    review_purpose: str = Field(
+        default="",
+        description="Business-language explanation of why this gate exists, shown above the decision buttons.",
+    )
     # paths into state, e.g. ["rfp_intel.parsed.requirements"]
     editable_content_field: str | None = Field(
         default=None,

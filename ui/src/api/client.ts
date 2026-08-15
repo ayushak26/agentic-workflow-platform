@@ -1,4 +1,5 @@
 import type {
+  AskContext,
   AuditEvent,
   AutofixWorkflowResult,
   BudgetsResponse,
@@ -34,7 +35,11 @@ import type {
   ProposalRenderRequest,
   ProposalRenderResult,
   ProposalReview,
+  BusinessActionResult,
+  BusinessExplanation,
+  BusinessNarration,
   BusinessProjection,
+  BusinessTechnicalDetail,
   RunChatTurn,
   RunCostSummary,
   RunDetail,
@@ -665,6 +670,25 @@ export const api = {
   businessProjection: (run_id: string) =>
     afetch(`${API}/runs/mine/${run_id}/business-projection`, { headers: authHeaders() })
       .then(j<BusinessProjection>),
+  // Narration is a separate POST because it may cost a model call. The
+  // projection renders fully without it; this only improves the wording.
+  businessNarration: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/business-narration`, {
+      method: 'POST',
+      headers: authHeaders(),
+    }).then(j<BusinessNarration>),
+  businessExplanation: (run_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/business-explanation`, { headers: authHeaders() })
+      .then(j<BusinessExplanation>),
+  businessTechnicalDetail: (run_id: string, activity_id: string) =>
+    afetch(`${API}/runs/mine/${run_id}/business-technical/${activity_id}`, { headers: authHeaders() })
+      .then(j<BusinessTechnicalDetail>),
+  businessAction: (run_id: string, type: string, params: Record<string, unknown> = {}) =>
+    afetch(`${API}/runs/mine/${run_id}/business-action`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ type, params }),
+    }).then(j<BusinessActionResult>),
   assignRun: (run_id: string, assignee: string) =>
     afetch(`${API}/runs/mine/${run_id}/assign`, {
       method: 'POST',
@@ -712,6 +736,7 @@ export const api = {
     question: string,
     focus_type_name?: string,
     history: RunChatTurn[] = [],
+    context?: AskContext,
   ) =>
     afetch(`${API}/node-types/ask`, {
       method: 'POST',
@@ -720,6 +745,7 @@ export const api = {
         question,
         focus_type_name,
         history: history.map(({ role, content }) => ({ role, content })),
+        context,
       }),
     }).then(j<{ answer: string }>),
   draftPrompt: (

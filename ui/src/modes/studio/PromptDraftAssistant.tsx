@@ -7,14 +7,26 @@ export function PromptDraftAssistant({
   fieldName,
   onInsert,
   onClose,
+  label = 'Draft Prompt',
 }: {
   typeName: string;
   fieldName: string;
   onInsert: (text: string) => void;
   onClose: () => void;
+  // What this drafting session is for, e.g. "Draft Prompt" for an LLM
+  // instruction field or "Draft Email" for an email body — shown in the
+  // modal header so the affordance reads as specific to the field, not a
+  // generic catch-all.
+  label?: string;
 }) {
   const [turns, setTurns] = useState<RunChatTurn[]>([]);
   const [instruction, setInstruction] = useState('');
+  // 'chat' iterates one short message at a time; 'own' takes a whole block of
+  // already-written instructions — in any language — and recreates it as a
+  // ready-to-use prompt in one shot. Same endpoint, same model, just a
+  // different input shape for a different authoring habit.
+  const [mode, setMode] = useState<'chat' | 'own'>('chat');
+  const [ownText, setOwnText] = useState('');
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -25,6 +37,7 @@ export function PromptDraftAssistant({
     setError(null);
     setAsking(true);
     setInstruction('');
+    setOwnText('');
     const withQuestion: RunChatTurn[] = [
       ...turns,
       { role: 'user', content: trimmed, ts: Date.now() / 1000 },
@@ -55,16 +68,39 @@ export function PromptDraftAssistant({
       >
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between flex-none">
           <h2 className="text-sm font-semibold text-ink-900">
-            Draft with AI — {typeName}.{fieldName}
+            {label} — {typeName}.{fieldName}
           </h2>
           <button onClick={onClose} className="text-lg leading-none text-ink-500 hover:text-ink-900">×</button>
         </div>
 
+        <div className="flex-none flex gap-1 border-b border-slate-200 px-3 pt-2">
+          {(['chat', 'own'] as const).map(m => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={`rounded-t-md px-3 py-1.5 text-xs font-medium ${
+                mode === m
+                  ? 'bg-white border border-b-0 border-slate-200 text-ink-900'
+                  : 'text-ink-500 hover:text-ink-700'
+              }`}
+            >
+              {m === 'chat' ? 'Chat with AI' : 'Paste my instructions'}
+            </button>
+          ))}
+        </div>
+
         <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[140px]">
-          {turns.length === 0 && (
+          {turns.length === 0 && mode === 'chat' && (
             <div className="text-sm text-ink-500">
               Describe what this {fieldName} should do — e.g. "summarize competitor pricing pages
               and flag price drops."
+            </div>
+          )}
+          {turns.length === 0 && mode === 'own' && (
+            <div className="text-sm text-ink-500">
+              Write your own instructions below — in whatever language is easiest for you —
+              and it'll be recreated as a ready-to-use prompt for this field.
             </div>
           )}
           {turns.map((turn, i) => (
@@ -98,25 +134,48 @@ export function PromptDraftAssistant({
           </div>
         )}
 
-        <form
-          onSubmit={e => { e.preventDefault(); ask(instruction); }}
-          className="flex-none flex items-center gap-2 border-t border-slate-200 p-3"
-        >
-          <input
-            value={instruction}
-            onChange={e => setInstruction(e.target.value)}
-            placeholder={lastAssistantDraft ? 'Ask for changes…' : 'What should this prompt do?'}
-            disabled={asking}
-            className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
-          />
-          <button
-            type="submit"
-            disabled={asking || !instruction.trim()}
-            className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
+        {mode === 'chat' ? (
+          <form
+            onSubmit={e => { e.preventDefault(); ask(instruction); }}
+            className="flex-none flex items-center gap-2 border-t border-slate-200 p-3"
           >
-            {lastAssistantDraft ? 'Revise' : 'Draft'}
-          </button>
-        </form>
+            <input
+              value={instruction}
+              onChange={e => setInstruction(e.target.value)}
+              placeholder={lastAssistantDraft ? 'Ask for changes…' : 'What should this prompt do?'}
+              disabled={asking}
+              className="flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={asking || !instruction.trim()}
+              className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
+            >
+              {lastAssistantDraft ? 'Revise' : 'Draft'}
+            </button>
+          </form>
+        ) : (
+          <form
+            onSubmit={e => { e.preventDefault(); ask(ownText); }}
+            className="flex-none space-y-2 border-t border-slate-200 p-3"
+          >
+            <textarea
+              value={ownText}
+              onChange={e => setOwnText(e.target.value)}
+              placeholder="Write your instructions here, in any language — e.g. „Fasse eingehende Preisanfragen zusammen und markiere Rabatte über 10 %.“"
+              rows={4}
+              disabled={asking}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50"
+            />
+            <button
+              type="submit"
+              disabled={asking || !ownText.trim()}
+              className="w-full rounded-md bg-accent-600 px-4 py-2 text-sm text-white hover:bg-accent-500 disabled:opacity-50"
+            >
+              {asking ? 'Recreating…' : 'Recreate prompt'}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );

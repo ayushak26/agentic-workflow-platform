@@ -249,32 +249,65 @@ class AITaskExample(BaseModel):
 class AITaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    task: AITaskKind = "extract"
-    instruction: str = ""
+    task: AITaskKind = Field(
+        default="extract",
+        description="What kind of AI capability this step performs — extract, classify, summarize, translate, draft a reply, etc.",
+    )
+    instruction: str = Field(
+        default="",
+        description="The task in your own words — what you want the model to do with the input.",
+    )
     #: The content the task operates on. Normally a template reference such as
     #: {{inputs.message}} or {{outputs.previous.text}} — the Builder's mapping
     #: picker writes it.
-    input: str = ""
+    input: str = Field(
+        default="",
+        description="What this step reads — normally a reference to an earlier step's output, written by the mapping picker.",
+    )
     #: Extra labelled context blocks, each templated. Keeps the main `input`
     #: readable when a task needs several sources.
-    context: dict[str, str] = Field(default_factory=dict)
-    model: str = "auto"
-    output_fields: list[FieldSpec] = Field(default_factory=list)
-    language: LanguagePolicy = Field(default_factory=LanguagePolicy)
-    examples: list[AITaskExample] = Field(default_factory=list)
+    context: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra labelled context blocks (each templated) to keep the main input readable when the task needs several sources.",
+    )
+    model: str = Field(
+        default="auto",
+        description="Which language model runs this step. 'auto' lets the platform route to the best fit for the task.",
+    )
+    output_fields: list[FieldSpec] = Field(
+        default_factory=list,
+        description="The structured output shape this step must return — required for extract/classify tasks.",
+    )
+    language: LanguagePolicy = Field(
+        default_factory=LanguagePolicy,
+        description="Which language the model should reply in, or whether to match the input's language.",
+    )
+    examples: list[AITaskExample] = Field(
+        default_factory=list,
+        description="Optional worked examples shown to the model to steer its output format and tone.",
+    )
     #: Adds a numeric `confidence` and a `reasoning` field to the contract
     #: without the author having to remember to. Confidence is what makes
     #: uncertainty routable (§12).
-    include_confidence: bool = True
-    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=8192, ge=256)
-    max_retries: int = Field(default=1, ge=0, le=3)
+    include_confidence: bool = Field(
+        default=True,
+        description="Adds a confidence score and reasoning to the output, so a Decision/Router step can route uncertain answers to a human.",
+    )
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0, description="Higher values make the model's answer more varied; 0 is the most consistent.")
+    max_tokens: int = Field(default=8192, ge=256, description="Upper bound on how long the model's answer may be.")
+    max_retries: int = Field(default=1, ge=0, le=3, description="How many times to retry if the model's output fails to validate against the output schema.")
     #: When false, a refusal/invalid output/provider failure is reported as a
     #: status instead of raising. Downstream Decision/Router nodes can then
     #: route the failure to a human rather than killing the run — which is the
     #: behaviour a business process usually wants.
-    fail_on_error: bool = True
-    reasoning_effort: str | None = None
+    fail_on_error: bool = Field(
+        default=True,
+        description="When off, a model failure becomes a routable status instead of stopping the run — lets a Decision/Router step send it to a human instead.",
+    )
+    reasoning_effort: str | None = Field(
+        default=None,
+        description="Optional reasoning-effort override for models that support it (low/medium/high).",
+    )
 
     @model_validator(mode="after")
     def structured_tasks_declare_a_schema(self) -> "AITaskConfig":
