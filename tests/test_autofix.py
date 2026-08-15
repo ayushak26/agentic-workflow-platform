@@ -215,6 +215,84 @@ exit: second
 
 
 # ---------------------------------------------------------------------------
+# TEMPLATE_UNKNOWN_INPUT / TEMPLATE_UNKNOWN_VARIABLE
+# ---------------------------------------------------------------------------
+
+def test_unknown_input_single_suggestion_is_fixed():
+    yaml_text = """
+name: t
+inputs:
+  message:
+    type: text
+nodes:
+  - id: a
+    type: Echo
+    config:
+      template: "{{inputs.mesage}}"
+"""
+    issue = _error(
+        "TEMPLATE_UNKNOWN_INPUT",
+        "Template references unknown input 'inputs.mesage'.",
+        path="nodes.0.config.template",
+        node_id="a",
+        suggestion="Did you mean message?",
+    )
+    result = apply_deterministic_fixes(yaml_text, _report(issue))
+
+    assert result.changed
+    assert "{{inputs.message}}" in result.yaml_text
+
+
+def test_unknown_variable_single_suggestion_is_fixed():
+    yaml_text = """
+name: t
+static_variables:
+  - name: greeting
+    type: text
+    value: hi
+nodes:
+  - id: a
+    type: Echo
+    config:
+      template: "{{variables.greting}}"
+"""
+    issue = _error(
+        "TEMPLATE_UNKNOWN_VARIABLE",
+        "Template references unknown variable 'variables.greting'.",
+        path="nodes.0.config.template",
+        node_id="a",
+        suggestion="Did you mean greeting?",
+    )
+    result = apply_deterministic_fixes(yaml_text, _report(issue))
+
+    assert result.changed
+    assert "{{variables.greeting}}" in result.yaml_text
+
+
+def test_unknown_input_without_suggestion_is_left_unchanged():
+    yaml_text = """
+name: t
+inputs:
+  message:
+    type: text
+nodes:
+  - id: a
+    type: Echo
+    config:
+      template: "{{inputs.totally_unrelated}}"
+"""
+    issue = _error(
+        "TEMPLATE_UNKNOWN_INPUT",
+        "Template references unknown input 'inputs.totally_unrelated'.",
+        path="nodes.0.config.template",
+        node_id="a",
+    )
+    result = apply_deterministic_fixes(yaml_text, _report(issue))
+
+    assert result.changed is False
+
+
+# ---------------------------------------------------------------------------
 # UNKNOWN_NODE_TYPE
 # ---------------------------------------------------------------------------
 
@@ -385,6 +463,78 @@ exit: b
 def _load_edges(yaml_text: str) -> list:
     import yaml as yaml_module
     return yaml_module.safe_load(yaml_text)["edges"]
+
+
+def _load_node(yaml_text: str, node_id: str) -> dict:
+    import yaml as yaml_module
+    raw = yaml_module.safe_load(yaml_text)
+    return next(node for node in raw["nodes"] if node["id"] == node_id)
+
+
+# ---------------------------------------------------------------------------
+# ROUTER_MULTIPLE_DEFAULTS / ROUTER_DUPLICATE_RULE
+# ---------------------------------------------------------------------------
+
+_ROUTER_WORKFLOW = """
+name: t
+nodes:
+  - id: classify
+    type: Literal
+    config:
+      value: a
+  - id: router
+    type: RouterAgent
+    config:
+      mode: rule
+      rules:
+        - name: a
+          default: true
+          then: []
+        - name: b
+          default: true
+          then: []
+edges:
+  - from: classify
+    to: router
+    condition: route
+    branches:
+      a: classify
+      b: classify
+entry: classify
+"""
+
+
+def test_router_multiple_defaults_keeps_first():
+    issue = _error(
+        "ROUTER_MULTIPLE_DEFAULTS",
+        "Router may define at most one default rule.",
+        path="nodes.1.config.rules",
+        node_id="router",
+    )
+    result = apply_deterministic_fixes(_ROUTER_WORKFLOW, _report(issue))
+
+    assert result.changed
+    rules = _load_node(result.yaml_text, "router")["config"]["rules"]
+    assert [rule["default"] for rule in rules] == [True, False]
+
+
+def test_router_duplicate_rule_keeps_first_occurrence():
+    yaml_text = _ROUTER_WORKFLOW.replace(
+        "        - name: b\n          default: true\n          then: []",
+        "        - name: a\n          default: false\n          then: []",
+    )
+    issue = _error(
+        "ROUTER_DUPLICATE_RULE",
+        "Router has duplicate rule names: ['a'].",
+        path="nodes.1.config.rules",
+        node_id="router",
+    )
+    result = apply_deterministic_fixes(yaml_text, _report(issue))
+
+    assert result.changed
+    rules = _load_node(result.yaml_text, "router")["config"]["rules"]
+    assert len(rules) == 1
+    assert rules[0]["default"] is True
 
 
 # ---------------------------------------------------------------------------

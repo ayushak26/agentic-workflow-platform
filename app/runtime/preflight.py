@@ -1104,22 +1104,34 @@ def _validate_template_output_path(
 
     if first == "inputs":
         if len(parts) < 2 or parts[1] not in input_names:
+            close = (
+                get_close_matches(parts[1], sorted(input_names), n=1, cutoff=0.5)
+                if len(parts) >= 2
+                else []
+            )
             _issue(
                 report,
                 "TEMPLATE_UNKNOWN_INPUT",
                 f"Template references unknown input {reference!r}.",
                 path=path,
                 node_id=current_node.id,
+                suggestion=f"Did you mean {close[0]}?" if close else None,
             )
         return
     if first == "variables":
         if len(parts) < 2 or parts[1] not in variable_names:
+            close = (
+                get_close_matches(parts[1], sorted(variable_names), n=1, cutoff=0.5)
+                if len(parts) >= 2
+                else []
+            )
             _issue(
                 report,
                 "TEMPLATE_UNKNOWN_VARIABLE",
                 f"Template references unknown variable {reference!r}.",
                 path=path,
                 node_id=current_node.id,
+                suggestion=f"Did you mean {close[0]}?" if close else None,
             )
         return
     if first in {"outputs", "node_outputs"}:
@@ -1145,6 +1157,20 @@ def _validate_template_output_path(
         return
     if first not in node_map:
         close = get_close_matches(first, sorted(node_map), n=3, cutoff=0.5)
+        # A node can never reference its own output (that's
+        # TEMPLATE_SELF_REFERENCE below, for a *valid* self-id) and a
+        # reference can only ever resolve to a node upstream of the one
+        # making it — so narrowing the fuzzy matches to upstream candidates
+        # often turns an ambiguous "did you mean A, B?" into a single
+        # unambiguous suggestion, which is what lets autofix's deterministic
+        # fixer (rather than a slower, non-guaranteed LLM repair pass) act
+        # on it directly.
+        close = [candidate for candidate in close if candidate != current_node.id]
+        upstream_close = [
+            candidate for candidate in close
+            if current_node.id in _reachable(candidate, forward)
+        ]
+        ranked = upstream_close or close
         _issue(
             report,
             "TEMPLATE_UNKNOWN_NODE",
@@ -1152,7 +1178,7 @@ def _validate_template_output_path(
             path=path,
             node_id=current_node.id,
             suggestion=(
-                f"Did you mean {', '.join(close)}?" if close else None
+                f"Did you mean {', '.join(ranked)}?" if ranked else None
             ),
         )
         return

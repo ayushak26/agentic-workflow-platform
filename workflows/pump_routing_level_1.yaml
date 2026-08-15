@@ -15,8 +15,8 @@ description: >-
   The model understands the message. It does not choose the department — a rule does, from the
   intent and where the customer is in the lifecycle. That separation is the point of the whole
   design, and it is already visible at this level: two messages that both mention "price" go to
-  different departments because one is about equipment the customer is buying and the other is
-  about a part for a pump they already own.
+  different departments because one is about equipment the customer is buying and the other is about
+  a part for a pump they already own.
 
   What this level deliberately does NOT do: look anything up. It knows nothing about the customer,
   their orders, their installed pumps or who owns their account. Level 2 adds that.
@@ -74,7 +74,7 @@ nodes:
     type: TransformAgent
     config:
       model: claude-sonnet-4-5
-      temperature: 0.0
+      temperature: 0
       max_tokens: 2048
       system_prompt: >-
         You are a customer-intake analyst for an industrial pump manufacturer. Read the customer's
@@ -136,7 +136,6 @@ nodes:
       contribution: The rules below decide from these fields, never from the raw text.
       expected_output: An intent, a lifecycle stage, any references, and a confidence score.
       failure_message: The message could not be read well enough to extract anything from.
-
   - id: department_decision
     type: DecisionAgent
     config:
@@ -152,7 +151,9 @@ nodes:
             conditions:
               - field: understand_message.parsed.intent
                 operator: in
-                value: [NEW_PRODUCT_ENQUIRY, QUOTATION]
+                value:
+                  - NEW_PRODUCT_ENQUIRY
+                  - QUOTATION
           then:
             - field: department
               value: SALES
@@ -163,7 +164,6 @@ nodes:
               value: The customer is asking about equipment they have not yet bought.
             - field: next_action
               value: Qualify the application and prepare a quotation.
-
         - name: An existing order is Supply Chain
           description: >-
             "Existing" is the operative word — the rule below sends a delivery question with no
@@ -184,14 +184,15 @@ nodes:
               value: The customer is asking about an order that is already being executed.
             - field: next_action
               value: Check the order status and confirm the delivery date with the customer.
-
         - name: An installed pump is Product Service
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.intent
                 operator: in
-                value: [TECHNICAL_SUPPORT, SPARE_PARTS]
+                value:
+                  - TECHNICAL_SUPPORT
+                  - SPARE_PARTS
           then:
             - field: department
               value: PRODUCT_SERVICE_SPARE_PARTS
@@ -202,7 +203,6 @@ nodes:
               value: The request concerns a pump the customer already has.
             - field: next_action
               value: Identify the unit and arrange the part or the support visit.
-
         - name: A document request is Customer Support
           when:
             operator: and
@@ -220,7 +220,6 @@ nodes:
               value: The customer is asking for a document we already publish.
             - field: next_action
               value: Send the requested document.
-
         - name: An invoice question is Finance
           when:
             operator: and
@@ -238,12 +237,10 @@ nodes:
               value: The customer is questioning the financial record, which Finance owns.
             - field: next_action
               value: Check the invoice against the order and respond to the customer.
-
-        # ---- the two corrections that make the point -----------------------
         - name: A technical question before buying is a Sales question
           description: >-
-            "Which pump suits this duty?" and "the pump we installed is not performing" are the
-            same words about two different lifecycle stages, and two different departments.
+            "Which pump suits this duty?" and "the pump we installed is not performing" are the same
+            words about two different lifecycle stages, and two different departments.
           when:
             operator: and
             conditions:
@@ -263,7 +260,6 @@ nodes:
               value: The question is about choosing equipment, not about equipment already installed.
             - field: next_action
               value: Answer the application question and recommend a pump.
-
         - name: A delivery question with no order behind it is a Sales question
           description: >-
             "When could you deliver 10 pumps?" is a promise we have not made yet. Supply Chain
@@ -289,7 +285,6 @@ nodes:
               value: No order reference was given, so this is a lead-time question about a future order.
             - field: next_action
               value: Confirm the achievable lead time and quote it.
-
         - name: An order question with no reference needs Customer Support first
           when:
             operator: and
@@ -320,7 +315,6 @@ nodes:
         defensible to the business.
       expected_output: A department, a case type and the reason the rules chose it.
       failure_message: The routing rules could not be evaluated.
-
   - id: department_router
     type: RouterAgent
     config:
@@ -339,7 +333,6 @@ nodes:
       contribution: The canvas shows the five destinations the business actually has.
       expected_output: One department branch.
       failure_message: The case could not be routed.
-
   - id: sales_case
     type: DataTransformAgent
     config:
@@ -375,7 +368,6 @@ nodes:
       contribution: Sales receives a structured request instead of a forwarded email.
       expected_output: A commercial case with its reason and next action.
       failure_message: The Sales hand-off could not be built.
-
   - id: supply_chain_case
     type: DataTransformAgent
     config:
@@ -413,7 +405,6 @@ nodes:
       contribution: Supply Chain sees the order reference and the question in one place.
       expected_output: An order-execution case with its reference.
       failure_message: The Supply Chain hand-off could not be built.
-
   - id: product_service_case
     type: DataTransformAgent
     config:
@@ -456,7 +447,6 @@ nodes:
       contribution: Service sees the serial number and the part in one place.
       expected_output: An installed-base case with whatever identifies the unit.
       failure_message: The Service hand-off could not be built.
-
   - id: customer_support_case
     type: DataTransformAgent
     config:
@@ -489,7 +479,6 @@ nodes:
       contribution: Support answers the question or finds out who can.
       expected_output: A support case with its next action.
       failure_message: The Customer Support hand-off could not be built.
-
   - id: other_case
     type: DataTransformAgent
     config:
@@ -522,7 +511,6 @@ nodes:
       contribution: Keeps specialist work out of the customer-facing queues.
       expected_output: A specialist case with its next action.
       failure_message: The specialist hand-off could not be built.
-
 edges:
   - from: understand_message
     to: department_decision

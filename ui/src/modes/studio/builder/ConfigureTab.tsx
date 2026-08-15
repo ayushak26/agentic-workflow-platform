@@ -13,6 +13,7 @@ import type {
 import { SchemaForm } from '../SchemaForm';
 import type { WorkflowNodeData } from '../yaml-bridge';
 import { AITaskConfig } from './AITaskConfig';
+import { DataTransformConfig } from './DataTransformConfig';
 import { EmailConfig } from './EmailConfig';
 import { MCPToolConfig } from './MCPToolConfig';
 import { RouterEditor } from './RouterEditor';
@@ -118,7 +119,15 @@ export function ConfigureTab({
           />
         )}
 
-        {!['AITaskAgent', 'DecisionAgent', 'RouterAgent', 'EmailAgent', 'MCPToolAgent'].includes(typeName)
+        {typeName === 'DataTransformAgent' && (
+          <DataTransformConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {!['AITaskAgent', 'DecisionAgent', 'RouterAgent', 'EmailAgent', 'MCPToolAgent', 'DataTransformAgent'].includes(typeName)
           && (manifest ? (
             <SchemaForm
               onChange={onConfigChange}

@@ -36,7 +36,7 @@ import { Spinner } from '../../components/Spinner';
 import { Icon } from '../../components/ui/Icon';
 import { BuilderInspector, type BuilderInspectorTab } from './BuilderInspector';
 import { BuilderStart } from './BuilderStart';
-import { renameNodeReferencesInConfig } from './builder-graph';
+import { pruneNodeReferencesInConfig, renameNodeReferencesInConfig } from './builder-graph';
 import { generateDefaults, findManifest, newNodeId } from './builder-helpers';
 import { InfoPopover } from './builder/InfoPopover';
 import { NodeSearchPalette } from './builder/NodeSearchPalette';
@@ -476,9 +476,47 @@ export function Builder() {
         changes.filter(change => change.type === 'remove').map(change => change.id),
       );
       if (selectedId && removed.has(selectedId)) setSelectedId(null);
+      // A deleted node's id can still be addressed by every other node's
+      // template tokens (`{{outputs.deletedId.field}}`, a DecisionAgent
+      // `field: outputs.deletedId...` condition, a DataTransformAgent
+      // `$deletedId.field` value) — those are references just like an edge,
+      // and left behind they surface as TEMPLATE_UNKNOWN_NODE preflight
+      // errors autofix can only resolve when the "did you mean" match is
+      // unambiguous. Scrub them here the same way onIdChange scrubs a
+      // rename, and drop the node from entry/exit/output.nodes too.
+      setNodes(current => current.map(node => {
+        if (removed.has(node.id)) return node;
+        let config = node.data.config;
+        for (const deletedId of removed) {
+          config = pruneNodeReferencesInConfig(config, deletedId);
+        }
+        return config !== node.data.config
+          ? { ...node, data: { ...node.data, config } }
+          : node;
+      }));
+      setMeta(current => {
+        if (!current) return current;
+        const output = current.output as {
+          include_input?: boolean;
+          nodes?: Array<{ node_id: string; flatten?: boolean }>;
+        } | undefined;
+        return {
+          ...current,
+          entry: current.entry && removed.has(current.entry) ? undefined : current.entry,
+          exit: Array.isArray(current.exit)
+            ? current.exit.filter(id => !removed.has(id))
+            : current.exit && removed.has(current.exit)
+              ? undefined
+              : current.exit,
+          output: output ? {
+            ...output,
+            nodes: (output.nodes ?? []).filter(item => !removed.has(item.node_id)),
+          } : current.output,
+        };
+      });
     }
     applyNodeChanges(changes);
-  }, [applyNodeChanges, captureSnapshot, markChanged, pushHistory, selectedId]);
+  }, [applyNodeChanges, captureSnapshot, markChanged, pushHistory, selectedId, setMeta, setNodes]);
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     if (changes.some(change => change.type === 'remove')) {

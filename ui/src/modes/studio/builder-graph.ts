@@ -69,6 +69,78 @@ export function renameNodeReferencesInConfig(
   return renameNodeReferencesInValue(config, oldId, nextId) as Record<string, unknown>;
 }
 
+// Deleting a node must not leave every other node's template tokens
+// pointing at a ghost — that's exactly the shape of a TEMPLATE_UNKNOWN_NODE
+// preflight error ("Template references unknown node/path ..."), and
+// autofix only closes those automatically when the fuzzy "did you mean"
+// match is unambiguous. A reference to a deleted node can show up as:
+//   - a `{{outputs.deletedId.field}}` / `{{deletedId.field}}` token, possibly
+//     embedded inside a larger prompt string alongside other tokens/prose;
+//   - a bare dotted path used as a whole field value, e.g. a
+//     DataTransformAgent `source: deletedId.data.x` or a DecisionAgent
+//     `field: outputs.deletedId.data.x` condition;
+//   - a `$deletedId.field` shorthand, used as a whole DataTransformAgent
+//     object-builder value.
+// Whole-value matches remove the containing key/array-item outright (that's
+// what a human doing this by hand does — see the ATTACHMENT_FILE_METADATA
+// and `provided`/`input_file_count` cases this mirrors); an embedded token
+// inside a longer string is stripped in place, leaving the rest of the text.
+const EMBEDDED_TOKEN_RE = (nodeId: string) => new RegExp(
+  `\\{\\{\\s*(?:outputs\\.)?${nodeId}(?:\\.[\\w.]*)?\\??\\s*\\}\\}`,
+  'g',
+);
+const WHOLE_VALUE_RE = (nodeId: string) => new RegExp(
+  `^\\{\\{\\s*(?:outputs\\.)?${nodeId}(?:\\.[\\w.]*)?\\??\\s*\\}\\}$`
+  + `|^\\$(?:outputs\\.)?${nodeId}(?:\\.[\\w.]*)?$`
+  + `|^(?:outputs\\.)?${nodeId}(?:\\.[\\w.]*)?$`,
+);
+
+type PruneResult = { value: unknown; drop: boolean };
+
+function pruneNodeReferencesInValue(value: unknown, nodeId: string): PruneResult {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length > 0 && WHOLE_VALUE_RE(nodeId).test(trimmed)) {
+      return { value: undefined, drop: true };
+    }
+    const stripped = value.replace(EMBEDDED_TOKEN_RE(nodeId), '');
+    return { value: stripped, drop: false };
+  }
+  if (Array.isArray(value)) {
+    const items: unknown[] = [];
+    for (const item of value) {
+      const result = pruneNodeReferencesInValue(item, nodeId);
+      if (result.drop) continue;
+      items.push(result.value);
+    }
+    return { value: items, drop: false };
+  }
+  if (value && typeof value === 'object') {
+    const entries: Array<[string, unknown]> = [];
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      const result = pruneNodeReferencesInValue(item, nodeId);
+      if (result.drop) continue;
+      entries.push([key, result.value]);
+    }
+    // An object that lost every key to pruning (e.g. a DecisionAgent
+    // condition whose only `field` addressed the deleted node) no longer
+    // means anything on its own — drop it too, so the emptiness propagates
+    // to the array/object that contains it.
+    if (entries.length === 0 && Object.keys(value as Record<string, unknown>).length > 0) {
+      return { value: undefined, drop: true };
+    }
+    return { value: Object.fromEntries(entries), drop: false };
+  }
+  return { value, drop: false };
+}
+
+export function pruneNodeReferencesInConfig(
+  config: Record<string, unknown>,
+  nodeId: string,
+): Record<string, unknown> {
+  return pruneNodeReferencesInValue(config, nodeId).value as Record<string, unknown>;
+}
+
 export function upstreamNodeIds(
   selectedId: string,
   edges: Array<Pick<Edge, 'source' | 'target'>>,

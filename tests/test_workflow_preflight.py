@@ -176,6 +176,59 @@ def test_bad_template_paths_are_blocked_before_execution():
     assert "TEMPLATE_UNKNOWN_INPUT" in codes(report)
 
 
+def test_unknown_input_and_variable_suggest_closest_name():
+    workflow = """
+name: Typo suggestions
+inputs:
+  message:
+    type: text
+static_variables:
+  - name: greeting
+    type: text
+    value: hi
+nodes:
+  - id: use
+    type: Echo
+    config:
+      template: "{{inputs.mesage}} {{variables.greting}}"
+"""
+    report = preflight_workflow_yaml(workflow)
+
+    input_issue = next(i for i in report.errors if i.code == "TEMPLATE_UNKNOWN_INPUT")
+    variable_issue = next(i for i in report.errors if i.code == "TEMPLATE_UNKNOWN_VARIABLE")
+    assert input_issue.suggestion == "Did you mean message?"
+    assert variable_issue.suggestion == "Did you mean greeting?"
+
+
+def test_unknown_node_suggestion_excludes_self_and_prefers_upstream():
+    # "load_dat" fuzzy-matches both "load_data" (the real upstream typo
+    # target) and "use_data" (the node making the reference, and therefore
+    # never a valid answer) closely enough for a naive difflib match to
+    # offer both — the suggestion must narrow to the one that could ever
+    # actually resolve.
+    workflow = """
+name: Ambiguous fuzzy match
+nodes:
+  - id: load_data
+    type: Literal
+    config:
+      value: hello
+  - id: use_data
+    type: Echo
+    config:
+      template: "{{outputs.load_dat.value}}"
+edges:
+  - from: load_data
+    to: use_data
+entry: load_data
+exit: use_data
+"""
+    report = preflight_workflow_yaml(workflow)
+
+    issue = next(i for i in report.errors if i.code == "TEMPLATE_UNKNOWN_NODE")
+    assert issue.suggestion == "Did you mean load_data?"
+
+
 def test_downstream_template_reference_is_blocked():
     invalid = VALID.replace(
         'value: hello',

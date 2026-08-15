@@ -112,71 +112,12 @@ nodes:
           type: string
           required: false
           description: Receive timestamp.
-  - id: normalise_attachments
-    type: DataTransformAgent
-    config:
-      operations:
-        - target: attachments
-          operation: copy
-          source: inputs.attachments
-          default: []
-          description: >-
-            Read the optional top-level workflow file input directly and convert an absent value to
-            an empty list so WorkflowFileLoader can run safely.
   - id: load_attachments
     type: WorkflowFileLoader
     config:
-      files: '{{outputs.normalise_attachments.data.attachments}}'
+      files: '{{inputs.attachments}}'
       max_chars_per_file: 100000
       fail_on_unreadable: false
-  - id: attachment_metrics
-    type: DataTransformAgent
-    config:
-      operations:
-        - target: input_file_count
-          operation: count
-          source: normalise_attachments.data.attachments
-          description: How many attachments were supplied.
-          default: 0
-        - target: extracted_text_file_count
-          operation: copy
-          source: load_attachments.text_file_count
-          default: 0
-        - target: extracted_text_chars
-          operation: count
-          source: load_attachments.text
-          description: Length of concatenated extracted attachment text.
-          default: 0
-        - target: attachment_file_metadata_text
-          operation: format
-          value: 'Attachment files: {{load_attachments.files}}'
-          description: >-
-            Attachment file metadata rendered as text. AITaskAgent context values must be
-            strings, and load_attachments.files is a list, so it cannot be bound directly —
-            the surrounding literal text forces the runtime's embedded-template mode (which
-            stringifies), instead of its whole-value mode (which would preserve the list and
-            fail AITaskConfig's context validation).
-  - id: attachment_presence
-    type: DecisionAgent
-    config:
-      defaults:
-        provided: false
-      rules:
-        - name: Attachment supplied
-          description: At least one optional attachment was supplied with the customer inquiry.
-          when:
-            operator: and
-            conditions:
-              - field: outputs.attachment_metrics.data.input_file_count
-                operator: greater_than
-                value: 0
-          then:
-            - field: provided
-              operation: set
-              value: true
-          stop_on_match: true
-      declared_fields:
-        - provided
   - id: interpret_customer_inquiry
     type: AITaskAgent
     config:
@@ -200,7 +141,6 @@ nodes:
         SENDER_PHONE: '{{outputs.customer_inquiry.data.sender_phone}}'
         SOURCE_CHANNEL: '{{outputs.customer_inquiry.data.source_channel}}'
         ATTACHMENT_EXTRACTED_TEXT: '{{outputs.load_attachments.text}}'
-        ATTACHMENT_FILE_METADATA: '{{outputs.attachment_metrics.data.attachment_file_metadata_text}}'
       instruction: >
         Act as the intake-understanding capability for a pump-manufacturer CRM team.
 
@@ -803,8 +743,6 @@ nodes:
         - target: attachment
           operation: object
           value:
-            provided: $attachment_presence.decisions.provided
-            input_file_count: $attachment_metrics.data.input_file_count
             text_file_count: $load_attachments.text_file_count
             files: $load_attachments.files
             extracted_text: $load_attachments.text
@@ -3029,15 +2967,7 @@ nodes:
           source: customer_context.decisions
           default: {}
 edges:
-  - from: customer_inquiry
-    to: normalise_attachments
-  - from: normalise_attachments
-    to: load_attachments
   - from: load_attachments
-    to: attachment_metrics
-  - from: attachment_metrics
-    to: attachment_presence
-  - from: attachment_presence
     to: interpret_customer_inquiry
   - from: interpret_customer_inquiry
     to: understand_customer_inquiry
@@ -3071,3 +3001,5 @@ edges:
     to: coordination_decision
   - from: coordination_decision
     to: build_crm_case_payload
+  - from: customer_inquiry
+    to: load_attachments

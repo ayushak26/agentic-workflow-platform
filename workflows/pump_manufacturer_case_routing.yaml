@@ -45,9 +45,13 @@ library:
     keywords.
   purpose:
     - Understand customer messages in any language and extract the business facts they contain
-    - Identify the customer, order, quotation and installed unit in Dynamics 365 rather than guessing
+    - >-
+      Identify the customer, order, quotation and installed unit in Dynamics 365 rather than
+      guessing
     - Decide the owning department deterministically, from lifecycle and ERP state
-    - Name an individual when the directory says they can be assigned, and a team queue when it does not
+    - >-
+      Name an individual when the directory says they can be assigned, and a team queue when it does
+      not
     - Report every outcome with the evidence that produced it
   suitable_for:
     - Shared inbox triage for an industrial manufacturer with a CRM/ERP of record
@@ -113,18 +117,8 @@ output:
       flatten: false
     - node_id: assignment_decision
       flatten: false
-
-# ---------------------------------------------------------------------------
-# Shared outcome fragments.
-#
-# Every terminal packet answers the same four questions — what was decided, who
-# gets it, what it was decided from, and why — so the Business View renders one
-# shape regardless of which department received the case. These are YAML anchors
-# rather than copies, so a change to the outcome contract is a change in one
-# place. WorkflowSpec ignores unknown top-level keys, so this block is inert.
-# ---------------------------------------------------------------------------
 x_outcome_fragments:
-  routing: &op_routing
+  routing:
     target: routing
     operation: object
     description: The decision itself, in the vocabulary the business uses.
@@ -133,7 +127,7 @@ x_outcome_fragments:
       sub_team: '{{routing_decision.decisions.sub_team}}'
       case_type: '{{routing_decision.decisions.case_type}}'
       priority: '{{routing_decision.decisions.priority}}'
-  assignment: &op_assignment
+  assignment:
     target: assignment
     operation: object
     description: >-
@@ -146,7 +140,7 @@ x_outcome_fragments:
       owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
       owner_team: '{{assignment_decision.decisions.owner_team}}'
       fallback_team: '{{routing_decision.decisions.sub_team}}'
-  classification: &op_classification
+  classification:
     target: classification
     operation: object
     value:
@@ -156,7 +150,7 @@ x_outcome_fragments:
       complexity: '{{understand_message.parsed.technical_complexity}}'
       language: '{{understand_message.parsed.language}}'
       confidence: '{{understand_message.parsed.confidence}}'
-  evidence: &op_evidence
+  evidence:
     target: evidence
     operation: object
     description: >-
@@ -176,7 +170,7 @@ x_outcome_fragments:
       warranty_state: '{{business_facts.decisions.warranty_state}}'
       availability_state: '{{business_facts.decisions.availability_state}}'
       ownership_state: '{{business_facts.decisions.ownership_state}}'
-  decision: &op_decision
+  decision:
     target: decision
     operation: object
     description: Why here, and — where it is the interesting part — why not somewhere else.
@@ -184,37 +178,33 @@ x_outcome_fragments:
       reason: '{{routing_decision.decisions.reason}}'
       why_not: '{{routing_decision.decisions.why_not}}'
       matched_rules: '{{routing_decision.matched_rules}}'
-  next_action: &op_next_action
+  next_action:
     target: next_action
     operation: copy
     source: routing_decision.decisions.next_action
     default: Review the case and decide the next step with the customer.
-  requires_human: &op_requires_human
+  requires_human:
     target: requires_human
     operation: boolean
     source: routing_decision.decisions.requires_human
-  summary: &op_summary
+  summary:
     target: summary
     operation: copy
     source: understand_message.parsed.english_summary
     default: ''
-  contact: &op_contact
+  contact:
     target: contact
     operation: object
     value:
       contact_name: '{{understand_message.parsed.contact_name}}'
       stated_company: '{{understand_message.parsed.customer_name}}'
       verified_company: '{{find_customer.first.account_name?}}'
-
 nodes:
-  # -------------------------------------------------------------------------
-  # 1. Understanding — the only model call in the workflow
-  # -------------------------------------------------------------------------
   - id: understand_message
     type: TransformAgent
     config:
-      model: claude-sonnet-4-5
-      temperature: 0.0
+      model: gpt-5.6-terra
+      temperature: 0
       max_tokens: 4096
       system_prompt: >-
         You are an industrial B2B customer-intake analyst for a pump manufacturer. You read incoming
@@ -377,10 +367,6 @@ nodes:
       expected_output: Intent, lifecycle stage, references, product identifiers and a confidence score.
       success_condition: A schema-valid extraction.
       failure_message: The message could not be read well enough to extract facts from.
-
-  # -------------------------------------------------------------------------
-  # 2. Customer resolution
-  # -------------------------------------------------------------------------
   - id: find_customer
     type: MCPToolAgent
     config:
@@ -396,7 +382,6 @@ nodes:
       contribution: Every account-scoped fact below hangs off the account id this step resolves.
       expected_output: One matching account, several, or none.
       failure_message: The customer lookup could not be reached.
-
   - id: customer_state_router
     type: RouterAgent
     config:
@@ -421,7 +406,6 @@ nodes:
       expected_output: One branch — continue, or ask a person which account is meant.
       contribution: Keeps every later lookup pointed at one company, not a plausible-looking mix of two.
       failure_message: The identity check could not be evaluated.
-
   - id: customer_confirmed
     type: DataTransformAgent
     config:
@@ -443,12 +427,6 @@ nodes:
       expected_output: The single account id used for every account-scoped lookup.
       contribution: Every account-scoped lookup below reads the account from this one place.
       failure_message: The resolved account could not be prepared for the lookups.
-
-  # -------------------------------------------------------------------------
-  # 3. Business context — six read-only Dynamics 365 lookups, in parallel.
-  #    Each skips itself when the fact it needs is absent, which is why an RFQ
-  #    from an unknown company costs one call rather than six.
-  # -------------------------------------------------------------------------
   - id: get_ownership
     type: MCPToolAgent
     config:
@@ -462,8 +440,9 @@ nodes:
       purpose: Find who can actually be assigned this case today.
       contribution: A name on an account is not an owner; the directory decides assignability.
       expected_output: Per-role owner names, each with an active/inactive/unassigned status.
-      failure_message: Ownership could not be read, so no owner can be named — which is not the same as the account having none.
-
+      failure_message: >-
+        Ownership could not be read, so no owner can be named — which is not the same as the account
+        having none.
   - id: get_order
     type: MCPToolAgent
     config:
@@ -478,7 +457,6 @@ nodes:
       contribution: Order existence is what separates a pre-sales question from an execution question.
       expected_output: The order and its status, or an explicit not-found.
       failure_message: The order system did not answer, so this order's existence is unknown.
-
   - id: get_fulfilment
     type: MCPToolAgent
     config:
@@ -495,7 +473,6 @@ nodes:
         reason is what decides who must act.
       expected_output: MATERIAL_SHORTAGE, PRODUCTION_DELAY, QUALITY_HOLD, DISPATCHED or NORMAL.
       failure_message: The fulfilment status could not be read, so the reason for any delay is unknown.
-
   - id: get_installed_unit
     type: MCPToolAgent
     config:
@@ -513,7 +490,6 @@ nodes:
         mistyped digit can never expose another customer's site or configuration.
       expected_output: The unit and its warranty state, or an ownership mismatch.
       failure_message: The installed base could not be read, so the serial number remains unverified.
-
   - id: get_quote
     type: MCPToolAgent
     config:
@@ -530,7 +506,6 @@ nodes:
       contribution: A quotation reference is not proof of ownership; the ERP confirms both.
       expected_output: Quote status, whether it belongs to this customer, whether the PO matches.
       failure_message: The quotation could not be read, so the order cannot be reconciled against it.
-
   - id: get_availability
     type: MCPToolAgent
     config:
@@ -545,13 +520,6 @@ nodes:
       expected_output: FEASIBLE, DELAYED or NOT_AVAILABLE for the named model.
       contribution: Gives Sales a factual lead time to quote instead of an optimistic one.
       failure_message: Stock could not be checked, so availability is unknown rather than confirmed.
-
-  # -------------------------------------------------------------------------
-  # 4. Business facts — normalise every lookup into a state a rule can read.
-  #    This node exists so "we do not know" is never spelled the same way as
-  #    "no": FOUND, NOT_FOUND, SYSTEM_ERROR and NO_REFERENCE are four different
-  #    business situations and each one routes differently.
-  # -------------------------------------------------------------------------
   - id: business_facts
     type: DecisionAgent
     config:
@@ -568,7 +536,6 @@ nodes:
         order_exists: false
         serial_verified: false
       rules:
-        # -- customer -----------------------------------------------------
         - name: The customer was identified
           when:
             operator: and
@@ -589,13 +556,15 @@ nodes:
             conditions:
               - field: find_customer.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: customer_state
               value: SYSTEM_ERROR
             - field: customer_verified
               value: false
-        # -- ownership ----------------------------------------------------
         - name: Ownership was readable
           when:
             operator: and
@@ -615,11 +584,13 @@ nodes:
             conditions:
               - field: get_ownership.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: ownership_state
               value: SYSTEM_ERROR
-        # -- order --------------------------------------------------------
         - name: The order exists
           when:
             operator: and
@@ -649,11 +620,13 @@ nodes:
             conditions:
               - field: get_order.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: order_state
               value: SYSTEM_ERROR
-        # -- fulfilment ---------------------------------------------------
         - name: The ERP reported a fulfilment state
           when:
             operator: and
@@ -669,11 +642,13 @@ nodes:
             conditions:
               - field: get_fulfilment.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: fulfilment_state
               value: SYSTEM_ERROR
-        # -- quotation ----------------------------------------------------
         - name: The quotation belongs to this customer and matches the PO
           when:
             operator: and
@@ -725,11 +700,13 @@ nodes:
             conditions:
               - field: get_quote.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: quote_state
               value: SYSTEM_ERROR
-        # -- installed unit ----------------------------------------------
         - name: The serial belongs to this customer
           when:
             operator: and
@@ -770,7 +747,10 @@ nodes:
             conditions:
               - field: get_installed_unit.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: serial_state
               value: SYSTEM_ERROR
@@ -794,7 +774,6 @@ nodes:
           then:
             - field: warranty_state
               value: EXPIRED
-        # -- availability -------------------------------------------------
         - name: Stock was checked
           when:
             operator: and
@@ -810,7 +789,10 @@ nodes:
             conditions:
               - field: get_availability.status
                 operator: in
-                value: [error, denied, needs_approval]
+                value:
+                  - error
+                  - denied
+                  - needs_approval
           then:
             - field: availability_state
               value: SYSTEM_ERROR
@@ -822,13 +804,6 @@ nodes:
         becomes a false statement.
       expected_output: A named state for the customer, order, fulfilment, quote, serial and stock.
       failure_message: The business facts could not be established from the lookups.
-
-  # -------------------------------------------------------------------------
-  # 5. The routing decision — every department rule in one auditable place.
-  #    Rules are evaluated in order and later rules override earlier ones, so
-  #    the file reads as: the intent proposes a department, business facts
-  #    correct it, and a small number of hard overrides win outright.
-  # -------------------------------------------------------------------------
   - id: routing_decision
     type: DecisionAgent
     config:
@@ -847,7 +822,6 @@ nodes:
         why_not: ''
         next_action: Review the enquiry and reply to the customer.
       rules:
-        # ---- LAYER A · the intent proposes a department -------------------
         - name: A new-equipment enquiry belongs to Sales
           description: RFQ, product selection and new orders are all pre-sales commercial work.
           when:
@@ -855,7 +829,10 @@ nodes:
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [RFQ, PRODUCT_SELECTION, NEW_ORDER]
+                value:
+                  - RFQ
+                  - PRODUCT_SELECTION
+                  - NEW_ORDER
           then:
             - field: primary_department
               value: SALES
@@ -872,14 +849,15 @@ nodes:
               value: The customer is asking about equipment they have not yet bought.
             - field: next_action
               value: Qualify the application and prepare a quotation.
-
         - name: A technical selection question needs Sales Engineering
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [RFQ, PRODUCT_SELECTION]
+                value:
+                  - RFQ
+                  - PRODUCT_SELECTION
               - field: understand_message.parsed.technical_complexity
                 operator: equals
                 value: technical
@@ -897,14 +875,15 @@ nodes:
               value: Selecting the right pump requires a technical judgement, not a price list.
             - field: next_action
               value: Review the duty point and materials, then prepare a technical quotation.
-
         - name: A complex application needs an Application Specialist
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [RFQ, PRODUCT_SELECTION]
+                value:
+                  - RFQ
+                  - PRODUCT_SELECTION
               - field: understand_message.parsed.technical_complexity
                 operator: equals
                 value: complex
@@ -926,7 +905,6 @@ nodes:
                 than a catalogue selection.
             - field: next_action
               value: Assess the application and confirm what can be offered.
-
         - name: A question about an existing order starts with Customer Support
           description: >-
             Ownership then moves to whoever the ERP says must act — see the fulfilment rules below.
@@ -936,7 +914,10 @@ nodes:
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
           then:
             - field: primary_department
               value: CUSTOMER_SUPPORT
@@ -953,7 +934,6 @@ nodes:
               value: The customer is asking about an order that already exists.
             - field: next_action
               value: Confirm the order status with the customer.
-
         - name: An order change is administrative until proven otherwise
           when:
             operator: and
@@ -977,7 +957,6 @@ nodes:
               value: The customer is changing an order that has already been accepted.
             - field: next_action
               value: Amend the order and confirm the change to the customer.
-
         - name: A technical question before purchase is a Sales Engineering question
           when:
             operator: and
@@ -1008,7 +987,6 @@ nodes:
                 installed base to support.
             - field: next_action
               value: Answer the application question and offer a recommendation.
-
         - name: A technical problem after installation belongs to Product Service
           when:
             operator: and
@@ -1041,7 +1019,6 @@ nodes:
                 enquiry.
             - field: next_action
               value: Diagnose the reported symptom against the installed unit's history.
-
         - name: Replacement components belong to Spare Parts
           description: >-
             Including when the customer asks for a price. A price question about a part for a pump
@@ -1074,7 +1051,6 @@ nodes:
                 work, not a new-equipment quotation.
             - field: next_action
               value: Identify the part against the installed unit and quote it.
-
         - name: A product complaint starts with Product Service
           when:
             operator: and
@@ -1100,7 +1076,6 @@ nodes:
               value: The customer is dissatisfied with equipment already supplied.
             - field: next_action
               value: Investigate the complaint against the installed unit.
-
         - name: A manufacturing-quality complaint belongs to Quality
           when:
             operator: and
@@ -1126,7 +1101,6 @@ nodes:
               value: A product-quality complaint is a non-conformance, which Quality owns.
             - field: next_action
               value: Raise a non-conformance and assess the reported defect.
-
         - name: A datasheet or manual is a Customer Support request
           when:
             operator: and
@@ -1150,7 +1124,6 @@ nodes:
               value: The customer is asking for a document we already publish.
             - field: next_action
               value: Send the requested document.
-
         - name: A certificate request belongs to Quality
           description: >-
             A material or EN 10204 certificate is a controlled quality record, not a marketing
@@ -1182,7 +1155,6 @@ nodes:
               value: 'Not Customer Support: certificates are issued and signed by Quality.'
             - field: next_action
               value: Issue the certificate for the supplied material or unit.
-
         - name: A general-arrangement drawing belongs to Sales Engineering
           when:
             operator: and
@@ -1213,7 +1185,6 @@ nodes:
                 issued by the engineer who configured it.
             - field: next_action
               value: Issue the general-arrangement drawing for the configuration concerned.
-
         - name: An invoice question belongs to Finance
           when:
             operator: and
@@ -1237,7 +1208,6 @@ nodes:
               value: The customer is questioning the financial record.
             - field: next_action
               value: Check the invoice against the order and respond to the customer.
-
         - name: An account or master-data question is Customer Support work
           when:
             operator: and
@@ -1254,8 +1224,6 @@ nodes:
               value: ACCOUNT_QUERY
             - field: next_action
               value: Answer the account question, involving Master Data if a record must change.
-
-        # ---- LAYER B · business facts correct the department ---------------
         - name: A delivery question with no order behind it is a Sales question
           description: >-
             "If we order today, can you deliver by 15 October?" is a commitment we have not made
@@ -1265,7 +1233,9 @@ nodes:
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
               - field: business_facts.decisions.order_exists
                 operator: is_false
               - field: understand_message.parsed.lifecycle_stage
@@ -1291,14 +1261,17 @@ nodes:
                 what we can promise.
             - field: next_action
               value: Confirm the achievable lead time and quote it.
-
         - name: A material shortage belongs to Material Planning
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT, ORDER_CHANGE]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
+                  - ORDER_CHANGE
               - field: business_facts.decisions.fulfilment_state
                 operator: equals
                 value: MATERIAL_SHORTAGE
@@ -1320,14 +1293,17 @@ nodes:
               value: Dynamics reports a material shortage against this order.
             - field: next_action
               value: Confirm the revised material and production plan, then give the customer a date.
-
         - name: A production delay belongs to Production Planning
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT, ORDER_CHANGE]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
+                  - ORDER_CHANGE
               - field: business_facts.decisions.fulfilment_state
                 operator: equals
                 value: PRODUCTION_DELAY
@@ -1349,7 +1325,6 @@ nodes:
               value: Dynamics reports a production delay against this order.
             - field: next_action
               value: Confirm the revised production slot, then give the customer a date.
-
         - name: An order held by Quality belongs to Quality
           description: >-
             The customer asked a delivery question and the answer is a quality decision. Supply
@@ -1359,7 +1334,10 @@ nodes:
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
               - field: business_facts.decisions.fulfilment_state
                 operator: equals
                 value: QUALITY_HOLD
@@ -1383,14 +1361,16 @@ nodes:
               value: 'Not Supply Chain: planning cannot release an order that Quality is holding.'
             - field: next_action
               value: Complete the quality assessment; Customer Support communicates the outcome.
-
         - name: A dispatched order is a logistics enquiry
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
               - field: business_facts.decisions.fulfilment_state
                 operator: equals
                 value: DISPATCHED
@@ -1410,7 +1390,6 @@ nodes:
               value: 'Not Production Planning: nothing remains to plan — the goods have left.'
             - field: next_action
               value: Send the customer the dispatch and tracking details.
-
         - name: An order that cannot be found needs a better reference
           description: >-
             The reference did not match. That is not the same as "your order does not exist" — the
@@ -1420,7 +1399,11 @@ nodes:
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT, ORDER_CHANGE]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
+                  - ORDER_CHANGE
               - field: business_facts.decisions.order_state
                 operator: equals
                 value: NOT_FOUND
@@ -1442,14 +1425,16 @@ nodes:
               value: >-
                 Look the order up manually and, if it cannot be found, ask the customer to confirm
                 the reference. Do not tell the customer the order does not exist.
-
         - name: The customer refers to an order but gave no reference
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_STATUS, DELIVERY_QUERY, DELIVERY_COMPLAINT]
+                value:
+                  - ORDER_STATUS
+                  - DELIVERY_QUERY
+                  - DELIVERY_COMPLAINT
               - field: understand_message.parsed.order_reference_present
                 operator: is_true
               - field: understand_message.parsed.sales_order_reference
@@ -1470,7 +1455,6 @@ nodes:
               value: The customer refers to an order but did not give a reference we can look up.
             - field: next_action
               value: Search the account's recent orders and confirm which one the customer means.
-
         - name: An expedite or date change on a live order is a planning decision
           when:
             operator: and
@@ -1493,23 +1477,22 @@ nodes:
               value: EXPEDITE_REQUEST
             - field: reason
               operation: append
-              value: >-
-                The customer is asking to move a confirmed order, which only planning can assess.
+              value: The customer is asking to move a confirmed order, which only planning can assess.
             - field: reason_line
-              value: >-
-                The customer is asking to move a confirmed order, which only planning can assess.
+              value: The customer is asking to move a confirmed order, which only planning can assess.
             - field: next_action
               value: >-
                 Assess feasibility against the production plan before anything is promised to the
                 customer.
-
         - name: A technical change to an accepted order needs Engineering
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [ORDER_CHANGE, NEW_ORDER]
+                value:
+                  - ORDER_CHANGE
+                  - NEW_ORDER
               - field: understand_message.parsed.technical_change_requested
                 operator: is_true
           then:
@@ -1528,7 +1511,6 @@ nodes:
               value: The change alters the technical configuration that was quoted.
             - field: next_action
               value: Assess the deviation, then have Sales confirm any commercial consequence.
-
         - name: A commercial change or dispute belongs to Sales
           description: >-
             Price, discount, Incoterms and payment terms are the commercial agreement. Finance owns
@@ -1540,7 +1522,12 @@ nodes:
                 operator: is_true
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [NEW_ORDER, ORDER_CHANGE, INVOICE_QUERY, RFQ, GENERAL_ENQUIRY]
+                value:
+                  - NEW_ORDER
+                  - ORDER_CHANGE
+                  - INVOICE_QUERY
+                  - RFQ
+                  - GENERAL_ENQUIRY
           then:
             - field: primary_department
               value: SALES
@@ -1567,7 +1554,6 @@ nodes:
               value: >-
                 Verify what was actually agreed before accepting the change. Do not confirm a
                 discount the customer asserts.
-
         - name: An order against a quotation that does not reconcile needs commercial review
           when:
             operator: and
@@ -1577,7 +1563,10 @@ nodes:
                 value: NEW_ORDER
               - field: business_facts.decisions.quote_state
                 operator: in
-                value: [PO_MISMATCH, NOT_THIS_CUSTOMER, NOT_FOUND]
+                value:
+                  - PO_MISMATCH
+                  - NOT_THIS_CUSTOMER
+                  - NOT_FOUND
           then:
             - field: primary_department
               value: SALES
@@ -1596,7 +1585,6 @@ nodes:
               value: The purchase order does not reconcile with the quotation it references.
             - field: next_action
               value: Reconcile the PO against the quotation before the order is entered.
-
         - name: A purchase order naming no quotation cannot be entered yet
           when:
             operator: and
@@ -1621,11 +1609,9 @@ nodes:
             - field: reason_line
               value: The order names no quotation, so there is nothing to validate it against.
             - field: why_not
-              value: >-
-                Not a commercial dispute: this is a missing fact, not a disagreement about price.
+              value: 'Not a commercial dispute: this is a missing fact, not a disagreement about price.'
             - field: next_action
               value: Ask the customer which quotation this purchase order relates to.
-
         - name: A verified serial sends the case to the service owner
           when:
             operator: and
@@ -1635,8 +1621,10 @@ nodes:
                 value: VERIFIED
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [TECHNICAL_SUPPORT, SPARE_PARTS, PRODUCT_COMPLAINT]
-              # Refines a Product Service case; it never takes one back from Quality.
+                value:
+                  - TECHNICAL_SUPPORT
+                  - SPARE_PARTS
+                  - PRODUCT_COMPLAINT
               - field: decisions.primary_department
                 operator: equals
                 value: PRODUCT_SERVICE
@@ -1652,7 +1640,6 @@ nodes:
               value: The serial number was verified against this customer's installed base.
             - field: reason_line
               value: The serial number was verified against this customer's installed base.
-
         - name: An out-of-warranty unit is still a service case
           description: >-
             Warranty state is evidence for the person handling the case, not grounds for the
@@ -1665,8 +1652,9 @@ nodes:
                 value: EXPIRED
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [TECHNICAL_SUPPORT, PRODUCT_COMPLAINT]
-              # Refines a Product Service case; it never takes one back from Quality.
+                value:
+                  - TECHNICAL_SUPPORT
+                  - PRODUCT_COMPLAINT
               - field: decisions.primary_department
                 operator: equals
                 value: PRODUCT_SERVICE
@@ -1687,9 +1675,7 @@ nodes:
                 The installed unit's warranty period has ended, which is evidence for the assessment
                 rather than a decision on the claim.
             - field: next_action
-              value: >-
-                Assess the claim on its merits and quote chargeable service if it is not covered.
-
+              value: Assess the claim on its merits and quote chargeable service if it is not covered.
         - name: A serial belonging to another account must be verified by a person
           when:
             operator: and
@@ -1720,9 +1706,7 @@ nodes:
                 The serial number quoted is on record against a different account, so nothing about
                 that unit may be discussed with this customer.
             - field: next_action
-              value: >-
-                Ask the customer to confirm the serial. Disclose nothing about the unit on record.
-
+              value: Ask the customer to confirm the serial. Disclose nothing about the unit on record.
         - name: A serial we cannot place needs the customer's help
           when:
             operator: and
@@ -1732,7 +1716,10 @@ nodes:
                 value: NOT_FOUND
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [TECHNICAL_SUPPORT, SPARE_PARTS, PRODUCT_COMPLAINT]
+                value:
+                  - TECHNICAL_SUPPORT
+                  - SPARE_PARTS
+                  - PRODUCT_COMPLAINT
           then:
             - field: primary_department
               value: CUSTOMER_SUPPORT
@@ -1751,14 +1738,15 @@ nodes:
               value: >-
                 Ask the customer to confirm the serial and model from the nameplate. Do not tell
                 them the pump is not ours.
-
         - name: After-sales work without a serial cannot be identified
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [TECHNICAL_SUPPORT, SPARE_PARTS]
+                value:
+                  - TECHNICAL_SUPPORT
+                  - SPARE_PARTS
               - field: understand_message.parsed.lifecycle_stage
                 operator: equals
                 value: installed_base
@@ -1786,8 +1774,6 @@ nodes:
                 given, so the unit cannot be identified.
             - field: next_action
               value: Ask the customer for the serial number or model from the nameplate.
-
-        # ---- LAYER C · overrides that win outright ------------------------
         - name: A message that asks for nothing needs no case
           description: >-
             An acknowledgement quoting an old thread is not a new request. Routing the quoted
@@ -1819,7 +1805,6 @@ nodes:
               value: The current message contains no new request; earlier text is quoted history.
             - field: next_action
               value: Note the acknowledgement against the existing case. No new case is needed.
-
         - name: A business system that did not answer must not be reported as an answer
           when:
             operator: or
@@ -1854,9 +1839,8 @@ nodes:
                 not the same as normal, late, or non-existent.
             - field: next_action
               value: >-
-                Retry the lookup, then answer the customer. Do not state an order status the ERP
-                did not give.
-
+                Retry the lookup, then answer the customer. Do not state an order status the ERP did
+                not give.
         - name: An unverifiable customer is not a new customer
           when:
             operator: and
@@ -1876,7 +1860,6 @@ nodes:
               value: >-
                 The customer lookup did not answer, so this company is unverified — it is not a new
                 customer and must not be onboarded as one.
-
         - name: An extraction we do not trust is triaged by a person
           when:
             operator: and
@@ -1899,21 +1882,20 @@ nodes:
               value: true
             - field: reason
               operation: append
-              value: >-
-                The message could not be understood confidently enough to route it automatically.
+              value: The message could not be understood confidently enough to route it automatically.
             - field: reason_line
-              value: >-
-                The message could not be understood confidently enough to route it automatically.
+              value: The message could not be understood confidently enough to route it automatically.
             - field: next_action
               value: Read the original message and route it manually.
-
         - name: A message with no identifiable business ask is triaged by a person
           when:
             operator: and
             conditions:
               - field: understand_message.parsed.primary_intent
                 operator: in
-                value: [OTHER, GENERAL_ENQUIRY]
+                value:
+                  - OTHER
+                  - GENERAL_ENQUIRY
               - field: understand_message.parsed.requires_action
                 operator: is_true
               - field: understand_message.parsed.missing_information
@@ -1950,10 +1932,6 @@ nodes:
         spread across the graph or hidden in a prompt.
       expected_output: A department, a sub-team, a case type, a priority and the reasons behind them.
       failure_message: The routing rules could not be evaluated.
-
-  # -------------------------------------------------------------------------
-  # 6. Assignment — a name only when the directory says it can be assigned
-  # -------------------------------------------------------------------------
   - id: assignment_decision
     type: DecisionAgent
     config:
@@ -1973,8 +1951,6 @@ nodes:
               - field: routing_decision.decisions.assignment_track
                 operator: equals
                 value: ACCOUNT
-              # Only name somebody when ownership was actually readable. A skipped
-              # or failed lookup leaves the owner empty and the case goes to the queue.
               - field: business_facts.decisions.ownership_state
                 operator: equals
                 value: AVAILABLE
@@ -1994,8 +1970,6 @@ nodes:
               - field: routing_decision.decisions.assignment_track
                 operator: equals
                 value: ACCOUNT
-              # Only name somebody when ownership was actually readable. A skipped
-              # or failed lookup leaves the owner empty and the case goes to the queue.
               - field: business_facts.decisions.ownership_state
                 operator: equals
                 value: AVAILABLE
@@ -2017,8 +1991,6 @@ nodes:
               - field: routing_decision.decisions.assignment_track
                 operator: equals
                 value: ENGINEERING
-              # Only name somebody when ownership was actually readable. A skipped
-              # or failed lookup leaves the owner empty and the case goes to the queue.
               - field: business_facts.decisions.ownership_state
                 operator: equals
                 value: AVAILABLE
@@ -2038,8 +2010,6 @@ nodes:
               - field: routing_decision.decisions.assignment_track
                 operator: equals
                 value: APPLICATION
-              # Only name somebody when ownership was actually readable. A skipped
-              # or failed lookup leaves the owner empty and the case goes to the queue.
               - field: business_facts.decisions.ownership_state
                 operator: equals
                 value: AVAILABLE
@@ -2059,8 +2029,6 @@ nodes:
               - field: routing_decision.decisions.assignment_track
                 operator: equals
                 value: SERVICE
-              # Only name somebody when ownership was actually readable. A skipped
-              # or failed lookup leaves the owner empty and the case goes to the queue.
               - field: business_facts.decisions.ownership_state
                 operator: equals
                 value: AVAILABLE
@@ -2096,10 +2064,6 @@ nodes:
         having named an owner.
       expected_output: An assignable owner with their status, or an empty owner and the team queue.
       failure_message: No assignment could be computed; the case goes to the department queue.
-
-  # -------------------------------------------------------------------------
-  # 7. Multi-intent — one message, several genuinely separate asks
-  # -------------------------------------------------------------------------
   - id: multi_intent_router
     type: RouterAgent
     config:
@@ -2121,7 +2085,6 @@ nodes:
       contribution: Stops a second or third request being lost because the first one was answered.
       expected_output: One branch — a single case, or a parent case with work items.
       failure_message: The number of asks in the message could not be established.
-
   - id: work_item_plan
     type: DecisionAgent
     config:
@@ -2225,7 +2188,6 @@ nodes:
       expected_output: One work item per genuinely separate ask.
       contribution: Names every department the message needs, so none of them is left waiting.
       failure_message: The work items could not be planned.
-
   - id: multi_intent_case
     type: DataTransformAgent
     config:
@@ -2256,11 +2218,52 @@ nodes:
         - target: departments_involved
           operation: copy
           source: work_item_plan.decisions.departments
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
         - target: requires_human
           operation: constant
           value: true
@@ -2286,10 +2289,6 @@ nodes:
       contribution: One customer message, one coordinated reply, several owners.
       expected_output: A parent case naming each ask and the department that owns it.
       failure_message: The multi-department case packet could not be built.
-
-  # -------------------------------------------------------------------------
-  # 8. The business router
-  # -------------------------------------------------------------------------
   - id: primary_department_router
     type: RouterAgent
     config:
@@ -2308,8 +2307,6 @@ nodes:
       contribution: The one place the canvas shows the five customer-facing destinations.
       expected_output: One department branch, with the decision recorded.
       failure_message: The case could not be routed to a department.
-
-  # ---- Sales --------------------------------------------------------------
   - id: sales_owner_router
     type: RouterAgent
     config:
@@ -2329,20 +2326,83 @@ nodes:
       contribution: Prevents a case being sent to someone who cannot act on it today.
       expected_output: One branch — a named person, or the team queue.
       failure_message: The assignment branch could not be decided.
-
   - id: sales_named_owner
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: text
           operation: format
           value: |-
@@ -2362,55 +2422,189 @@ nodes:
       expected_output: A commercial case packet addressed to a named, assignable person.
       contribution: Sales receives the case with the account context already gathered.
       failure_message: The Sales hand-off could not be built.
-
   - id: sales_queue
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: text
           operation: format
-          value: |-
+          value: >-
             CASE: {{routing_decision.decisions.case_type}}
+
             Primary team: {{routing_decision.decisions.sub_team}}
+
             Department: SALES
+
             Reason: {{routing_decision.decisions.reason_line}}
+
             Action: {{routing_decision.decisions.next_action}}
+
             Summary: {{understand_message.parsed.english_summary}}
-            Owner on record: {{assignment_decision.decisions.owner_recorded_name}} ({{assignment_decision.decisions.owner_status}})
+
+            Owner on record: {{assignment_decision.decisions.owner_recorded_name}}
+            ({{assignment_decision.decisions.owner_status}})
+
             Customer: {{find_customer.first.account_name?}}
+
             Contact: {{understand_message.parsed.contact_name}}
+
             Order: {{understand_message.parsed.sales_order_reference}}
     experience:
       display_name: Sales — team queue
-      purpose: >-
-        Send the case to the team when the recorded owner has left, is inactive, or was never set.
+      purpose: Send the case to the team when the recorded owner has left, is inactive, or was never set.
       contribution: The recorded name and its status travel with the case, so the queue knows why.
       expected_output: A commercial case packet addressed to a team.
       failure_message: The Sales queue hand-off could not be built.
-
-  # ---- Supply Chain -------------------------------------------------------
   - id: supply_chain_case
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: order_reference
           operation: copy
           source: get_order.first.sales_order_reference
@@ -2443,8 +2637,6 @@ nodes:
       contribution: The ERP's own reason decides which planning team acts, not the customer's wording.
       expected_output: A planning case packet with the order and its fulfilment state.
       failure_message: The Supply Chain hand-off could not be built.
-
-  # ---- Product Service / Spare Parts --------------------------------------
   - id: service_owner_router
     type: RouterAgent
     config:
@@ -2463,20 +2655,83 @@ nodes:
       contribution: Separates a case that can be worked from one that must first be verified.
       expected_output: One branch — named owner, service queue, or serial verification.
       failure_message: The service assignment branch could not be decided.
-
   - id: service_named_owner
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: installed_unit
           operation: object
           value:
@@ -2488,17 +2743,28 @@ nodes:
             warranty_end_date: '{{get_installed_unit.first.warranty_end_date?}}'
         - target: text
           operation: format
-          value: |-
+          value: >-
             CASE: {{routing_decision.decisions.case_type}}
+
             Primary team: {{routing_decision.decisions.sub_team}}
+
             Department: PRODUCT SERVICE
+
             Reason: {{routing_decision.decisions.reason_line}}
+
             Action: {{routing_decision.decisions.next_action}}
+
             Summary: {{understand_message.parsed.english_summary}}
+
             Primary owner: {{assignment_decision.decisions.owner_name}}
+
             Customer: {{find_customer.first.account_name?}}
+
             Contact: {{understand_message.parsed.contact_name}}
-            Unit: {{understand_message.parsed.serial_number}} — {{get_installed_unit.first.pump_model?}}
+
+            Unit: {{understand_message.parsed.serial_number}} —
+            {{get_installed_unit.first.pump_model?}}
+
             Site: {{get_installed_unit.first.install_site?}}
     experience:
       display_name: Product Service — named owner
@@ -2506,40 +2772,113 @@ nodes:
       expected_output: A service case packet naming the verified unit and its warranty state.
       contribution: The service owner sees the verified unit, its site and its warranty state immediately.
       failure_message: The Product Service hand-off could not be built.
-
   - id: service_queue
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: text
           operation: format
-          value: |-
+          value: >-
             CASE: {{routing_decision.decisions.case_type}}
+
             Primary team: {{routing_decision.decisions.sub_team}}
+
             Department: PRODUCT SERVICE
+
             Reason: {{routing_decision.decisions.reason_line}}
+
             Action: {{routing_decision.decisions.next_action}}
+
             Summary: {{understand_message.parsed.english_summary}}
-            Owner on record: {{assignment_decision.decisions.owner_recorded_name}} ({{assignment_decision.decisions.owner_status}})
+
+            Owner on record: {{assignment_decision.decisions.owner_recorded_name}}
+            ({{assignment_decision.decisions.owner_status}})
+
             Customer: {{find_customer.first.account_name?}}
+
             Contact: {{understand_message.parsed.contact_name}}
-            Unit: {{understand_message.parsed.serial_number}} ({{business_facts.decisions.serial_state}})
+
+            Unit: {{understand_message.parsed.serial_number}}
+            ({{business_facts.decisions.serial_state}})
     experience:
       display_name: Product Service — team queue
       purpose: Send an installed-base case to the service team when no owner can be named.
       expected_output: A service case packet addressed to a team.
       contribution: The service team sees what is known about the unit and what is still missing.
       failure_message: The service queue hand-off could not be built.
-
   - id: service_serial_verification
     type: HumanInLoopAgent
     config:
@@ -2579,8 +2918,6 @@ nodes:
       contribution: Nothing about the unit on record is retrieved, so nothing can leak.
       expected_output: A person confirms the serial with the customer, or rejects the case.
       failure_message: The verification could not be presented to a reviewer.
-
-  # ---- Customer Support ---------------------------------------------------
   - id: support_router
     type: RouterAgent
     config:
@@ -2596,33 +2933,107 @@ nodes:
       contribution: Keeps unroutable messages out of a queue that cannot act on them.
       expected_output: One branch — a support case, or human triage.
       failure_message: The support branch could not be decided.
-
   - id: support_case
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: text
           operation: format
-          value: |-
+          value: >-
             CASE: {{routing_decision.decisions.case_type}}
+
             Primary team: {{routing_decision.decisions.sub_team}}
+
             Department: CUSTOMER SUPPORT
+
             Reason: {{routing_decision.decisions.reason_line}}
+
             Action: {{routing_decision.decisions.next_action}}
+
             Summary: {{understand_message.parsed.english_summary}}
+
             Customer: {{find_customer.first.account_name?}}
+
             Contact: {{understand_message.parsed.contact_name}}
-            Order: {{understand_message.parsed.sales_order_reference}} ({{business_facts.decisions.order_state}})
-            Unit: {{understand_message.parsed.serial_number}} ({{business_facts.decisions.serial_state}})
+
+            Order: {{understand_message.parsed.sales_order_reference}}
+            ({{business_facts.decisions.order_state}})
+
+            Unit: {{understand_message.parsed.serial_number}}
+            ({{business_facts.decisions.serial_state}})
     experience:
       display_name: Customer Support
       purpose: >-
@@ -2631,7 +3042,6 @@ nodes:
       expected_output: A support case packet with what is known and what is still missing.
       contribution: Customer Support can answer or coordinate without re-reading the original message.
       failure_message: The Customer Support hand-off could not be built.
-
   - id: support_triage
     type: HumanInLoopAgent
     config:
@@ -2671,8 +3081,6 @@ nodes:
       contribution: An unroutable message reaches a human in one step, not after a wrong hand-off.
       expected_output: A person assigns the case, or rejects it.
       failure_message: The triage review could not be presented.
-
-  # ---- Other specialist functions ----------------------------------------
   - id: other_router
     type: RouterAgent
     config:
@@ -2688,20 +3096,83 @@ nodes:
       contribution: Reserves specialist queues for cases those specialists genuinely own.
       expected_output: One branch — a named specialist function, or a person to assign it.
       failure_message: The specialist branch could not be decided.
-
   - id: specialist_case
     type: DataTransformAgent
     config:
       operations:
-        - *op_routing
-        - *op_assignment
-        - *op_classification
-        - *op_evidence
-        - *op_decision
-        - *op_contact
-        - *op_summary
-        - *op_next_action
-        - *op_requires_human
+        - target: routing
+          operation: object
+          description: The decision itself, in the vocabulary the business uses.
+          value:
+            primary_department: '{{routing_decision.decisions.primary_department}}'
+            sub_team: '{{routing_decision.decisions.sub_team}}'
+            case_type: '{{routing_decision.decisions.case_type}}'
+            priority: '{{routing_decision.decisions.priority}}'
+        - target: assignment
+          operation: object
+          description: >-
+            Who receives it. owner_name is only ever filled when the directory says that person is
+            assignable today; the recorded name and its status travel alongside, so a queue can
+            explain why it got the case.
+          value:
+            owner_name: '{{assignment_decision.decisions.owner_name}}'
+            owner_status: '{{assignment_decision.decisions.owner_status}}'
+            owner_recorded_name: '{{assignment_decision.decisions.owner_recorded_name}}'
+            owner_team: '{{assignment_decision.decisions.owner_team}}'
+            fallback_team: '{{routing_decision.decisions.sub_team}}'
+        - target: classification
+          operation: object
+          value:
+            intent: '{{understand_message.parsed.primary_intent}}'
+            secondary_intents: '{{understand_message.parsed.secondary_intents}}'
+            lifecycle_stage: '{{understand_message.parsed.lifecycle_stage}}'
+            complexity: '{{understand_message.parsed.technical_complexity}}'
+            language: '{{understand_message.parsed.language}}'
+            confidence: '{{understand_message.parsed.confidence}}'
+        - target: evidence
+          operation: object
+          description: >-
+            Every business fact the decision used, with its lookup state. UNKNOWN is never rendered
+            as a "no" — a failed lookup and a negative answer are different facts and are reported
+            differently.
+          value:
+            customer_state: '{{business_facts.decisions.customer_state}}'
+            customer_verified: '{{business_facts.decisions.customer_verified}}'
+            account_id: '{{find_customer.first.account_id?}}'
+            account_name: '{{find_customer.first.account_name?}}'
+            key_account: '{{find_customer.first.key_account?}}'
+            order_state: '{{business_facts.decisions.order_state}}'
+            order_reference: '{{get_order.first.sales_order_reference?}}'
+            fulfilment_state: '{{business_facts.decisions.fulfilment_state}}'
+            quote_state: '{{business_facts.decisions.quote_state}}'
+            serial_state: '{{business_facts.decisions.serial_state}}'
+            warranty_state: '{{business_facts.decisions.warranty_state}}'
+            availability_state: '{{business_facts.decisions.availability_state}}'
+            ownership_state: '{{business_facts.decisions.ownership_state}}'
+        - target: decision
+          operation: object
+          description: Why here, and — where it is the interesting part — why not somewhere else.
+          value:
+            reason: '{{routing_decision.decisions.reason}}'
+            why_not: '{{routing_decision.decisions.why_not}}'
+            matched_rules: '{{routing_decision.matched_rules}}'
+        - target: contact
+          operation: object
+          value:
+            contact_name: '{{understand_message.parsed.contact_name}}'
+            stated_company: '{{understand_message.parsed.customer_name}}'
+            verified_company: '{{find_customer.first.account_name?}}'
+        - target: summary
+          operation: copy
+          source: understand_message.parsed.english_summary
+          default: ''
+        - target: next_action
+          operation: copy
+          source: routing_decision.decisions.next_action
+          default: Review the case and decide the next step with the customer.
+        - target: requires_human
+          operation: boolean
+          source: routing_decision.decisions.requires_human
         - target: references
           operation: object
           value:
@@ -2731,12 +3202,10 @@ nodes:
         place, which go to Customer Support triage instead.
       expected_output: A specialist case packet naming the function and the references it needs.
       failure_message: The specialist hand-off could not be built.
-
   - id: other_human_review
     type: HumanInLoopAgent
     config:
-      question: >-
-        This case needs a specialist owner and the rules could not name one. Assign it.
+      question: This case needs a specialist owner and the rules could not name one. Assign it.
       review_purpose: >-
         The case does not belong to Sales, Supply Chain, Product Service or Customer Support, and no
         specialist function matched it either. A person decides rather than the workflow inventing
@@ -2755,8 +3224,6 @@ nodes:
       expected_output: An assignment decision, or a rejection.
       contribution: Nothing is invented an owner for; a person decides instead.
       failure_message: The review could not be presented.
-
-  # ---- Customer identity --------------------------------------------------
   - id: customer_clarification
     type: HumanInLoopAgent
     config:
@@ -2793,7 +3260,6 @@ nodes:
         base can reach the case.
       expected_output: A person names the correct account, or rejects the case.
       failure_message: The identity review could not be presented.
-
 edges:
   - from: understand_message
     to: find_customer

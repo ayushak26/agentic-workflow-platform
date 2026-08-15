@@ -12,6 +12,7 @@ import { SimulatorPanel } from './builder/SimulatorPanel';
 import { DataMappingPanel } from './DataMappingPanel';
 import { GuidedExperiencePanel } from './GuidedExperiencePanel';
 import { PreflightPanel } from './PreflightPanel';
+import { ModelSelect } from './ModelSelect';
 import { WorkflowInputsPanel } from './WorkflowInputsPanel';
 import type {
   ModelRoutingPolicy,
@@ -363,11 +364,11 @@ function AdvancedPanel({
       {supportsModel && (
         <section className="rounded-lg border border-accent-200 bg-accent-50/40 p-3">
           <div className="builder-panel-heading">Model routing</div>
-          <select
-            className="builder-field mt-2"
-            onChange={event => {
-              const next = event.target.value || null;
-              onModelSelectionChange(next);
+          <ModelSelect
+            className="mt-2"
+            llmModels={llmModels}
+            onChange={next => {
+              onModelSelectionChange(next || null);
               if (next === 'auto' && !selected.data.modelRouting) {
                 onModelRoutingChange({
                   accuracy_priority: 'maximum',
@@ -376,14 +377,7 @@ function AdvancedPanel({
               }
             }}
             value={selectedModel ?? ''}
-          >
-            {llmModels.map(model => (
-              <option key={model.name} value={model.name}>
-                {model.display_name}
-                {!model.configured && !model.automatic ? ' — not configured' : ''}
-              </option>
-            ))}
-          </select>
+          />
 
           {selectedModel === 'auto' && (
             <div className="mt-3 space-y-2 border-t border-accent-200 pt-3">

@@ -260,6 +260,127 @@ def _fix_template_unknown_node(raw: dict, issue: PreflightIssue) -> str | None:
     return f"Replaced unknown template node id {old_node_id!r} with {new_node_id!r} at {issue.path}."
 
 
+def _replace_template_named_root_segment(
+    text: str, root: str, old_name: str, new_name: str,
+) -> tuple[str, bool]:
+    """Rewrite a `{{root.old_name...}}` reference (root is `inputs` or
+    `variables`) to address `new_name` instead, keeping any remainder."""
+    replaced = False
+
+    def repl(match: re.Match[str]) -> str:
+        nonlocal replaced
+        parts = match.group(1).split(".")
+        if len(parts) > 1 and parts[0] == root and parts[1] == old_name:
+            replaced = True
+            new_parts = [root, new_name] + parts[2:]
+            return "{{" + ".".join(new_parts) + "}}"
+        return match.group(0)
+
+    return TEMPLATE_RE.sub(repl, text), replaced
+
+
+def _fix_template_unknown_named_root(
+    raw: dict, issue: PreflightIssue, *, root: str, noun: str,
+) -> str | None:
+    if not issue.path or not issue.suggestion:
+        return None
+    message_match = re.match(
+        rf"^Template references unknown {noun} '{root}\.(.+)'\.$", issue.message,
+    )
+    suggestion_match = re.match(r"^Did you mean (.+)\?$", issue.suggestion)
+    if not message_match or not suggestion_match:
+        return None
+    old_name = message_match.group(1)
+    new_name = suggestion_match.group(1).strip()
+    if not new_name or "," in new_name:
+        return None
+
+    try:
+        text = _get_path(raw, issue.path)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+    if not isinstance(text, str):
+        return None
+    new_text, replaced = _replace_template_named_root_segment(text, root, old_name, new_name)
+    if not replaced:
+        return None
+    _set_path(raw, issue.path, new_text)
+    return f"Replaced {{{{{root}.{old_name}}}}} with {{{{{root}.{new_name}}}}} at {issue.path}."
+
+
+def _fix_template_unknown_input(raw: dict, issue: PreflightIssue) -> str | None:
+    return _fix_template_unknown_named_root(raw, issue, root="inputs", noun="input")
+
+
+def _fix_template_unknown_variable(raw: dict, issue: PreflightIssue) -> str | None:
+    return _fix_template_unknown_named_root(raw, issue, root="variables", noun="variable")
+
+
+def _fix_router_multiple_defaults(raw: dict, issue: PreflightIssue) -> str | None:
+    """A legacy rule-mode Router with more than one `default: true` rule —
+    keep the first and clear the flag on the rest. Any one is as arbitrary a
+    pick as another from the YAML alone, but leaving more than one is a
+    runtime bug (only the first evaluated wins anyway), so normalizing to
+    "the first one wins, explicitly" is strictly safer than leaving it."""
+    if not issue.node_id:
+        return None
+    node = _node_by_id(raw, issue.node_id)
+    if node is None:
+        return None
+    rules = (node.get("config") or {}).get("rules")
+    if not isinstance(rules, list):
+        return None
+    seen_default = False
+    changed = False
+    for rule in rules:
+        if not isinstance(rule, dict) or not rule.get("default"):
+            continue
+        if seen_default:
+            rule["default"] = False
+            changed = True
+        else:
+            seen_default = True
+    if not changed:
+        return None
+    return (
+        f"Kept the first default rule and cleared 'default' on the rest in "
+        f"{issue.node_id!r}'s rules."
+    )
+
+
+def _fix_router_duplicate_rule(raw: dict, issue: PreflightIssue) -> str | None:
+    """Duplicate rule names in a legacy rule-mode Router — keep the first
+    occurrence of each name. A later rule with the same name as an earlier
+    one can never be reached (rules are evaluated in order, first match
+    wins), so dropping it changes nothing about which rule actually runs."""
+    if not issue.node_id:
+        return None
+    node = _node_by_id(raw, issue.node_id)
+    if node is None:
+        return None
+    rules = (node.get("config") or {}).get("rules")
+    if not isinstance(rules, list):
+        return None
+    seen_names: set[str] = set()
+    deduped = []
+    changed = False
+    for rule in rules:
+        name = rule.get("name") if isinstance(rule, dict) else None
+        if name and name in seen_names:
+            changed = True
+            continue
+        if name:
+            seen_names.add(name)
+        deduped.append(rule)
+    if not changed:
+        return None
+    node["config"]["rules"] = deduped
+    return (
+        f"Removed duplicate rule name(s) from {issue.node_id!r}'s rules, "
+        "keeping the first occurrence of each."
+    )
+
+
 def _fix_unknown_node_type(raw: dict, issue: PreflightIssue) -> str | None:
     if not issue.path or not issue.suggestion:
         return None
@@ -390,10 +511,14 @@ _SINGLE_ISSUE_FIXERS: dict[str, Callable[[dict, PreflightIssue], str | None]] = 
     "TEMPLATE_UNKNOWN_OUTPUT_FIELD": _fix_template_unknown_output_field,
     "TEMPLATE_UNKNOWN_STRUCTURED_FIELD": _fix_template_unknown_structured_field,
     "TEMPLATE_UNKNOWN_NODE": _fix_template_unknown_node,
+    "TEMPLATE_UNKNOWN_INPUT": _fix_template_unknown_input,
+    "TEMPLATE_UNKNOWN_VARIABLE": _fix_template_unknown_variable,
     "UNKNOWN_NODE_TYPE": _fix_unknown_node_type,
     "MODEL_NOT_IN_CATALOG": _fix_model_not_in_catalog,
     "UNKNOWN_NODE_CONFIG_FIELD": _fix_unknown_node_config_field,
     "NODE_CONFIG_INVALID": _fix_dict_where_string_expected,
+    "ROUTER_MULTIPLE_DEFAULTS": _fix_router_multiple_defaults,
+    "ROUTER_DUPLICATE_RULE": _fix_router_duplicate_rule,
 }
 
 
