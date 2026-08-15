@@ -451,6 +451,51 @@ GENERIC_REPAIR_PROMPT = (
     "Fix the validation errors in this workflow YAML while preserving its "
     "structure and intent."
 )
+# Historical note on why this is passed through `generate_yaml` at all: the
+# repair-mode generator (app.api.workflow_generation.build_llm_yaml_generator,
+# mode="repair") ignores this string entirely — it frames the request as
+# "edit the existing document" rather than "describe workflow: {base_prompt}",
+# which is what let this exact sentence get misread, once, as a literal spec
+# for a workflow whose job is repairing YAML. Kept only so `generate_yaml`
+# still matches the shared `(base_prompt, prior_yaml, feedback)` signature.
+
+
+def _workflow_identity(yaml_text: str) -> tuple[str | None, set[str]]:
+    """(name, node ids) for a parseable workflow dict, or (None, set()) if
+    `yaml_text` isn't one — used to sanity-check an LLM repair actually
+    revised the given workflow rather than returning an unrelated one."""
+    try:
+        raw = yaml.safe_load(yaml_text)
+    except yaml.YAMLError:
+        return None, set()
+    if not isinstance(raw, dict):
+        return None, set()
+    name = raw.get("name") if isinstance(raw.get("name"), str) else None
+    node_ids = {
+        node.get("id")
+        for node in (raw.get("nodes") or [])
+        if isinstance(node, dict) and isinstance(node.get("id"), str)
+    }
+    return name, node_ids
+
+
+def _preserves_identity(original_yaml: str, candidate_yaml: str) -> bool:
+    """Guards against a repaired workflow that is well-formed but is not
+    actually a fix of the input — the observed failure mode was an LLM
+    repair call returning a different, generic workflow (one whose own job
+    was "repair workflow YAML") instead of the user's real workflow with its
+    validation errors fixed. That result passes static preflight cleanly, so
+    nothing else in this loop would catch it. Requires the original's name
+    (when parseable) to survive unchanged, and at least half of its original
+    node ids to still be present. Vacuously true when the original text
+    isn't a parseable workflow dict (nothing to compare against yet)."""
+    original_name, original_ids = _workflow_identity(original_yaml)
+    candidate_name, candidate_ids = _workflow_identity(candidate_yaml)
+    if original_name is not None and candidate_name != original_name:
+        return False
+    if original_ids and len(original_ids & candidate_ids) < len(original_ids) / 2:
+        return False
+    return True
 
 
 def format_preflight_feedback(report: WorkflowPreflightReport) -> str:
@@ -488,7 +533,18 @@ async def repair_with_llm(
             f"issues: {format_preflight_feedback(current_report)}. Return a "
             "corrected, complete YAML."
         )
-        current_yaml = await generate_yaml(GENERIC_REPAIR_PROMPT, current_yaml, feedback)
+        candidate_yaml = await generate_yaml(GENERIC_REPAIR_PROMPT, current_yaml, feedback)
+        if not _preserves_identity(current_yaml, candidate_yaml):
+            attempts.append(LlmRepairAttempt(
+                success=False,
+                detail=(
+                    "Rejected: the repaired YAML no longer matches the original "
+                    "workflow's name/nodes — looks like a different workflow was "
+                    "generated instead of a repair of this one. Retrying."
+                ),
+            ))
+            continue
+        current_yaml = candidate_yaml
         current_report = await static_check(current_yaml)
         attempts.append(LlmRepairAttempt(
             success=current_report.valid,

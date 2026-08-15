@@ -330,7 +330,7 @@ async def autofix_workflow(
                     from app.api.workflow_generation import build_llm_yaml_generator
 
                     scope = getattr(user, "session_id", None) or user.username
-                    generate_yaml = build_llm_yaml_generator(llm, services, scope)
+                    generate_yaml = build_llm_yaml_generator(llm, services, scope, mode="repair")
 
                     async def static_check(yaml_text: str) -> WorkflowPreflightReport:
                         return await _run_preflight(yaml_text, req, services)

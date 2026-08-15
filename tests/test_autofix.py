@@ -5,6 +5,7 @@ import pytest
 from app.runtime.autofix import (
     MAX_LLM_REPAIR_ATTEMPTS,
     NOT_AUTOFIXABLE_CODES,
+    _preserves_identity,
     apply_deterministic_fixes,
     repair_with_llm,
 )
@@ -470,3 +471,88 @@ async def test_repair_with_llm_gives_up_after_max_attempts():
 
     assert final_report.valid is False
     assert len(attempts) == MAX_LLM_REPAIR_ATTEMPTS
+
+
+# ---------------------------------------------------------------------------
+# _preserves_identity / repair_with_llm identity safety net
+#
+# Regression coverage for a real incident: autofix's LLM repair call
+# returned an entirely different, generic "Workflow YAML Validation Repair"
+# workflow (well-formed, passes preflight) instead of the user's actual
+# workflow with its validation errors fixed. Nothing in the old loop caught
+# this because it only checked static validity, which the wrong workflow
+# satisfied trivially.
+# ---------------------------------------------------------------------------
+
+_REAL_USER_WORKFLOW = """
+name: Pump CRM Orchestrator
+nodes:
+  - id: interpret_customer_inquiry
+    type: AITaskAgent
+    config:
+      task: analyze
+      model: auto
+      input: "{{inputs.message}}"
+  - id: route
+    type: Echo
+    config:
+      template: "{{interpret_customer_inquiry.result}}"
+"""
+
+_UNRELATED_META_WORKFLOW = """
+name: Workflow YAML Validation Repair
+nodes:
+  - id: repair_yaml
+    type: AITaskAgent
+    config:
+      task: analyze
+      model: auto
+      input: "{{inputs.workflow_yaml}}"
+  - id: corrected_workflow
+    type: Echo
+    config:
+      template: "{{repair_yaml.result}}"
+"""
+
+
+def test_preserves_identity_accepts_a_genuine_repair():
+    # Same name, same nodes, one field's value corrected in place.
+    repaired = _REAL_USER_WORKFLOW.replace(
+        '"{{interpret_customer_inquiry.result}}"',
+        '"{{interpret_customer_inquiry.result.summary}}"',
+    )
+    assert _preserves_identity(_REAL_USER_WORKFLOW, repaired) is True
+
+
+def test_preserves_identity_rejects_an_unrelated_workflow():
+    assert _preserves_identity(_REAL_USER_WORKFLOW, _UNRELATED_META_WORKFLOW) is False
+
+
+def test_preserves_identity_is_vacuous_for_unparseable_text():
+    # Matches repair_with_llm's own unit tests, which exercise the control
+    # flow with plain non-YAML placeholder strings rather than real
+    # documents — the identity check must not reject those.
+    assert _preserves_identity("original", "attempt-1") is True
+
+
+@pytest.mark.asyncio
+async def test_repair_with_llm_rejects_an_unrelated_workflow_and_keeps_retrying():
+    async def generate_yaml(base_prompt, prior_yaml, feedback):
+        return _UNRELATED_META_WORKFLOW
+
+    async def static_check(yaml_text):
+        # The unrelated meta-workflow is itself perfectly valid — this is
+        # exactly what let it slip through before the identity check existed.
+        return WorkflowPreflightReport(valid=True)
+
+    initial_report = _report(_error("WORKFLOW_SCHEMA", "broken"))
+    final_yaml, final_report, attempts = await repair_with_llm(
+        _REAL_USER_WORKFLOW, initial_report,
+        static_check=static_check, generate_yaml=generate_yaml,
+    )
+
+    assert final_yaml == _REAL_USER_WORKFLOW
+    assert final_report.valid is False
+    assert len(attempts) == MAX_LLM_REPAIR_ATTEMPTS
+    assert all(not attempt.success for attempt in attempts)
+    assert all("Rejected" in attempt.detail for attempt in attempts)

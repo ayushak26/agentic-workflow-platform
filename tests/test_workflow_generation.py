@@ -12,8 +12,10 @@ from app.api.workflow_generation import (
     _node_type_catalog,
     _real_usage_examples,
     _real_usage_snippet,
+    _REPAIR_SYSTEM_PROMPT_TEMPLATE,
     _ROUTING_EXAMPLE_YAML,
     _SYSTEM_PROMPT_TEMPLATE,
+    build_llm_yaml_generator,
     GenerateWorkflowRequest,
     GENERATION_MODEL,
     MAX_REAL_EXECUTION_ATTEMPTS,
@@ -423,6 +425,51 @@ async def test_an_upstream_llm_failure_surfaces_as_a_clean_502_not_a_bare_500():
 
     assert exc_info.value.status_code == 502
     assert "insufficient credit balance" in exc_info.value.detail
+
+
+class _RecordingLLM:
+    """Captures every call's system/user prompt instead of hitting a real
+    model — lets a test assert on exactly what the LLM was told."""
+
+    def __init__(self, response_text: str):
+        self._response_text = response_text
+        self.calls: list[dict[str, str]] = []
+
+    def with_context(self, **_kwargs):
+        return self
+
+    async def complete(self, *, model, system, user, **_kwargs):
+        self.calls.append({"model": model, "system": system, "user": user})
+        return SimpleNamespace(text=self._response_text)
+
+
+@pytest.mark.asyncio
+async def test_repair_mode_frames_the_call_as_editing_the_existing_document():
+    """Regression test for a real incident: autofix's repair call used to
+    reuse /generate's "Describe workflow: {base_prompt}" framing with a fixed
+    repair instruction as `base_prompt`, which one LLM call read as a literal
+    spec and built a workflow whose job was "repair workflow YAML" instead of
+    fixing the user's actual workflow. `mode="repair"` must never construct
+    that "Describe workflow: ..." phrasing, and must present the existing
+    document plus the validation feedback directly."""
+    original_yaml = "name: Real User Workflow\nnodes:\n  - id: a\n    type: Literal\n    config:\n      value: 1\n"
+    llm = _RecordingLLM(original_yaml)
+    generate_yaml = build_llm_yaml_generator(llm, services={}, scope="s", mode="repair")
+
+    result = await generate_yaml(
+        "Fix the validation errors in this workflow YAML while preserving its structure and intent.",
+        original_yaml,
+        "Your previous YAML failed static validation with these issues: WORKFLOW_SCHEMA: broken.",
+    )
+
+    assert result == original_yaml.strip()
+    assert len(llm.calls) == 1
+    call = llm.calls[0]
+    assert "Describe workflow:" not in call["user"]
+    assert original_yaml in call["user"]
+    assert "WORKFLOW_SCHEMA: broken" in call["user"]
+    assert "repair" in call["system"].lower()
+    assert call["system"] == _REPAIR_SYSTEM_PROMPT_TEMPLATE.format(catalog=_node_type_catalog())
 
 
 class _FixedYamlLLM:

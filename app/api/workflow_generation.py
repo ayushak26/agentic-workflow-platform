@@ -312,6 +312,51 @@ commentary before or after it.
 """
 
 
+_REPAIR_SYSTEM_PROMPT_TEMPLATE = """You repair existing workflow YAML documents for an agentic \
+workflow builder. You are given a COMPLETE, ALREADY-EXISTING workflow definition that fails \
+static validation, plus the exact list of validation errors it currently has. Your only job is \
+to return that SAME document with the smallest set of edits needed to fix exactly those errors.
+
+Preserve the workflow's name, description, node ids, node responsibilities, topology (edges, \
+entry, exit), and every input/output contract whenever at all possible. Do NOT design a new \
+workflow and do NOT change what the workflow does. Critically: the validation-errors text below \
+is a list of defects in the document that follows it, NOT a natural-language request to build a \
+workflow — if you ever find yourself writing a workflow whose own job is "analyze/repair workflow \
+YAML," you have misunderstood the task. You are the one doing the repairing, directly on the \
+document given to you; you are not building a tool that does it.
+
+Hard rules for this platform's workflow YAML — violating any of these is exactly the kind of \
+defect you are being asked to fix:
+- A template like {{{{node_id.field}}}} may ONLY reference a field actually declared as an output \
+field of that node — never invent or guess one.
+- A FieldSpec row (e.g. AITaskAgent's output_fields) has name, type (string, text, number, \
+integer, boolean, enum, object, list, date — never "array"), description, required, and only when \
+relevant enum_values (type: enum) / fields (nested rows, type: object or type: list with \
+item_type: object) / item_type (required when type: list).
+- Templates never loop: a list of structured items cannot be rendered item-by-item via a template \
+reference; that requires an AITaskAgent/DataTransformAgent instructed in plain language to format \
+each item.
+- A bare (whole-value) {{{{node_id.field}}}} preserves the referenced field's real type (list stays \
+a list, object stays an object); embedding it inside surrounding text always renders it as a \
+string — a plain string field (e.g. AITaskAgent's input, Echo's template) fails if given a list or \
+object directly.
+- Workflow-level inputs: only support type: text, type: json, or type: file, and required defaults \
+to false if omitted.
+- A conditional edge (after a RouterAgent or any node with a route output) has exactly from, \
+condition: route (always that literal string, never a template), and branches (a plain \
+{{{{route_value: target_node_id}}}} map) — never combined with a plain to: on the same edge, and \
+branches must never reconverge into one shared downstream node via separate plain edges.
+- route_field and any rule's field (DecisionAgent, RouterAgent cases[].when) are bare dotted \
+paths, never wrapped in {{{{...}}}}.
+
+NODE TYPE CATALOG (every node type already used in the document below is valid; consult this only \
+if you need to understand a field you're changing):
+{catalog}
+
+Return ONLY the complete corrected workflow YAML, with no markdown code fence and no commentary \
+before or after it."""
+
+
 def _field_type_label(schema: dict) -> str:
     """A short type descriptor for one JSON-schema property, e.g. "string",
     "object (label → value)", "string enum". Shown next to every config
@@ -626,13 +671,31 @@ class GenerateWorkflowRequest(BaseModel):
 
 
 def build_llm_yaml_generator(
-    llm: Any, services: dict[str, Any], scope: str,
+    llm: Any, services: dict[str, Any], scope: str, *, mode: str = "generate",
 ) -> Callable[[str, str | None, str | None], Awaitable[str]]:
     """Build a `generate_yaml(base_prompt, prior_yaml, feedback) -> yaml text`
-    closure over a live LLM client. Shared by /generate (a fresh workflow
-    from a prompt) and /workflows/autofix (repairing an existing one) — both
-    need the same node-type-catalog system prompt and prior-attempt/feedback
-    convention, just with a different `base_prompt`.
+    closure over a live LLM client.
+
+    `mode="generate"` (the default, used by /generate) frames the call as
+    "describe a new workflow from this natural-language request." `mode="repair"`
+    (used by /workflows/autofix) frames it instead as "edit this existing
+    workflow document to fix these specific errors" — a deliberately different
+    system prompt and user-prompt shape (see `_REPAIR_SYSTEM_PROMPT_TEMPLATE`),
+    not a repurposing of the generate-mode prompt with a terse `base_prompt`.
+    That repurposing was the actual root cause of a real incident: fed a
+    one-line repair instruction through the "describe a workflow to build"
+    slot, the model read it as a literal spec and built a workflow whose job
+    was "repair workflow YAML" instead of returning the user's own workflow
+    with fixes applied — a well-formed but entirely wrong result that passed
+    static validation and silently overwrote the user's canvas.
+
+    The rest of this docstring (shortlist/model-tier escalation) describes
+    `mode="generate"` only — `mode="repair"` always uses the full node
+    catalog and the complex model tier from the first call; a document that
+    already failed static validation once deserves the more careful
+    treatment from the start, and the request itself (the fixed sentence in
+    `app.runtime.autofix.GENERIC_REPAIR_PROMPT`) carries no request-specific
+    signal a shortlist heuristic could use anyway.
 
     The very first call describes only a request-relevant shortlist of node
     types (app.workflow.capability_selection) rather than the full registry —
@@ -656,9 +719,14 @@ def build_llm_yaml_generator(
     original request looked.
     """
     full_catalog = _node_type_catalog()
-    system_prompt_state = {"escalated": False, "model": GENERATION_MODEL_SIMPLE}
+    system_prompt_state = {
+        "escalated": mode == "repair",
+        "model": GENERATION_MODEL_COMPLEX if mode == "repair" else GENERATION_MODEL_SIMPLE,
+    }
 
     def _system_prompt(base_prompt: str) -> str:
+        if mode == "repair":
+            return _REPAIR_SYSTEM_PROMPT_TEMPLATE.format(catalog=full_catalog)
         if system_prompt_state["escalated"]:
             # The full registry is the safety net for a retry — but step 2's
             # real-usage grounding stays scoped to the original shortlist
@@ -682,7 +750,7 @@ def build_llm_yaml_generator(
         )
 
     async def generate_yaml(base_prompt: str, prior_yaml: str | None, feedback: str | None) -> str:
-        if feedback:
+        if feedback and mode != "repair":
             # A retry means the shortlist may have been wrong (or simply
             # incomplete) — widen to the full registry starting with this
             # very call, not just subsequent ones. Same reasoning promotes
@@ -697,9 +765,21 @@ def build_llm_yaml_generator(
             run_id="workflow-generation", session_id=scope, node_id="generate",
             ledger=services.get("cost_ledger"),
         ) if hasattr(llm, "with_context") else llm
-        user_prompt = f"Describe workflow: {base_prompt}"
-        if prior_yaml and feedback:
-            user_prompt += f"\n\nPrevious attempt:\n{prior_yaml}\n\n{feedback}"
+        if mode == "repair":
+            # `base_prompt` (GENERIC_REPAIR_PROMPT) is a fixed instruction,
+            # not a description of a workflow to design — never fed through
+            # the "Describe workflow: ..." slot generate-mode uses, which is
+            # exactly what caused the model to build a workflow that
+            # performs YAML repair instead of returning the user's own,
+            # repaired workflow. The document to edit is the whole prompt.
+            assert prior_yaml is not None, "repair mode always has an existing document to fix"
+            user_prompt = f"Existing workflow YAML to repair:\n{prior_yaml}"
+            if feedback:
+                user_prompt += f"\n\n{feedback}"
+        else:
+            user_prompt = f"Describe workflow: {base_prompt}"
+            if prior_yaml and feedback:
+                user_prompt += f"\n\nPrevious attempt:\n{prior_yaml}\n\n{feedback}"
         # The complex tier's own reasoning-effort dial — a complex or
         # already-failed-once attempt gets this model's most deliberate
         # reasoning, not just its response.
