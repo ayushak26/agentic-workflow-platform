@@ -150,6 +150,7 @@ _TEMPLATE = re.compile(r"\{\{\s*([\w\.]+)\s*\}\}")
 class DataTransformAgent(NodeType):
     type_name = "DataTransformAgent"
     description = (
+        "Deprecated — use TransformAgent's mode: deterministic instead. "
         "Deterministic data shaping: rename, select, merge, format, normalise "
         "units, build objects. No model call."
     )
@@ -161,6 +162,9 @@ class DataTransformAgent(NodeType):
     execution_kind: ClassVar[str] = "deterministic"
     about: ClassVar[dict[str, Any]] = {
         "what": (
+            "Deprecated. TransformAgent now covers the same deterministic "
+            "operations under mode: deterministic, converging with its AI "
+            "mode on one config/output schema — use that for any new step. "
             "Builds a new object from upstream values using deterministic "
             "operations — copy, rename, format, join, coalesce, unit conversion."
         ),

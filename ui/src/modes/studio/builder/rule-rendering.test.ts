@@ -169,9 +169,9 @@ describe('renderRule', () => {
     const rendered = renderRule({
       name: 'Collect reasons',
       default: true,
-      then: [{ field: 'reasons', operation: 'append', value: 'low confidence' }],
+      then: [{ field: 'reasons', operation: 'merge', value: 'low confidence' }],
     });
-    expect(rendered).toContain('reasons append "low confidence"');
+    expect(rendered).toContain('reasons merge "low confidence"');
   });
 
   it('renders an omitted value as null instead of "undefined"', () => {

@@ -84,13 +84,13 @@ class TestOutputContract:
         )
         fields = {item["path"]: item for item in understand["fields"]}
 
-        assert fields["result.request_types"]["type"] == "list"
-        assert "technical_support" in fields["result.request_types"]["enum_values"]
-        assert fields["result.product_model"]["type"] == "string"
-        assert fields["confidence"]["type"] == "number"
+        assert fields["parsed.request_types"]["type"] == "list"
+        assert "technical_support" in fields["parsed.request_types"]["enum_values"]
+        assert fields["parsed.product_model"]["type"] == "string"
+        assert fields["parsed.confidence"]["type"] == "number"
 
     def test_each_field_carries_the_reference_the_editor_should_write(self, client):
-        """So an author never types `{{outputs.understand_request.result.request_types}}`
+        """So an author never types `{{outputs.understand_request.parsed.request_types}}`
         by hand — clicking the field is the mapping (§14)."""
         body = client.post(
             "/api/builder/output-contract",
@@ -100,9 +100,9 @@ class TestOutputContract:
             item for item in body["nodes"] if item["node_id"] == "understand_request"
         )
         request_types = next(
-            item for item in understand["fields"] if item["path"] == "result.request_types"
+            item for item in understand["fields"] if item["path"] == "parsed.request_types"
         )
-        assert request_types["reference"] == "{{outputs.understand_request.result.request_types}}"
+        assert request_types["reference"] == "{{outputs.understand_request.parsed.request_types}}"
 
     def test_it_flags_values_that_may_be_unavailable(self, client):
         """§15: a required field inside an optional object can still be null, and
@@ -117,7 +117,7 @@ class TestOutputContract:
         email = next(
             item
             for item in understand["fields"]
-            if item["path"] == "result.requestor.email"
+            if item["path"] == "parsed.requestor.email"
         )
         assert email["may_be_unavailable"] is True
 
@@ -132,9 +132,9 @@ class TestOutputContract:
             item for item in body["nodes"] if item["node_id"] == "understand_request"
         )
         fields = {item["path"]: item for item in understand["fields"]}
-        assert "contains" in fields["result.missing_information"]["operators"]
-        assert "greater_or_equal" not in fields["result.missing_information"]["operators"]
-        assert "greater_or_equal" in fields["confidence"]["operators"]
+        assert "contains" in fields["parsed.missing_information"]["operators"]
+        assert "greater_or_equal" not in fields["parsed.missing_information"]["operators"]
+        assert "greater_or_equal" in fields["parsed.confidence"]["operators"]
 
     def test_only_values_that_can_reach_the_node_are_offered(self, client):
         """A mapping picker offering a downstream step's output would let an
@@ -171,12 +171,12 @@ class TestOutputContract:
     def test_what_it_offers_is_what_preflight_authorises(self, client):
         """The invariant that makes the editor trustworthy. Every path offered
         here must be a path a template reference may legally use."""
-        from app.nodes.ai_task import AITaskAgent
+        from app.nodes.transform import TransformAgent
         from app.runtime.loader import load_workflow_from_string
 
         spec = load_workflow_from_string(TRIAGE_YAML)
         node = next(item for item in spec.nodes if item.id == "understand_request")
-        authorised = AITaskAgent.preflight_output_fields(node.effective_config())
+        authorised = TransformAgent.preflight_output_fields(node.effective_config())
 
         body = client.post(
             "/api/builder/output-contract",
@@ -392,7 +392,8 @@ class TestSimulation:
     routers and the trace assembly end to end."""
 
     EXTRACTED = {
-        "result": {
+        "raw": "",
+        "parsed": {
             "language": "de",
             "request_types": ["technical_support"],
             "request_summary": "The customer's pump has failed and production is down.",
@@ -414,21 +415,14 @@ class TestSimulation:
             "confidence": 0.93,
             "reasoning": "Stated failure and stopped production.",
         },
-        "text": "",
         "status": "ok",
         "error": None,
-        "confidence": 0.93,
-        "reasoning": "Stated failure and stopped production.",
-        "detected_language": "de",
-        "model_used": "stub",
-        "attempts": 1,
     }
 
     def simulate(self, client, *, confidence: float, **overrides):
         extracted = {
             **self.EXTRACTED,
-            "confidence": confidence,
-            "result": {**self.EXTRACTED["result"], "confidence": confidence},
+            "parsed": {**self.EXTRACTED["parsed"], "confidence": confidence},
         }
         return client.post(
             "/api/builder/simulate",
@@ -534,8 +528,8 @@ class TestSimulation:
         """Nothing executes, and the report says why — the same zero-token
         report the Checks panel shows."""
         broken = TRIAGE_YAML.replace(
-            "outputs.understand_request.result.production_stopped",
-            "outputs.understand_request.result.production_stoped",
+            "outputs.understand_request.parsed.production_stopped",
+            "outputs.understand_request.parsed.production_stoped",
         )
         response = client.post(
             "/api/builder/simulate",

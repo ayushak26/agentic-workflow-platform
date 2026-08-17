@@ -91,79 +91,101 @@ nodes:
       model: gpt-5.6-sol
       temperature: 0
       max_tokens: 2048
-      system_prompt: >-
-        You are a customer-intake analyst for an industrial pump manufacturer. Read the customer's
-        message in whatever language it arrives in and extract facts about it. You do not decide
-        which department handles it, and you never state a business fact: whether an order exists,
-        what its status is, whether a serial belongs to this customer and who owns the account are
-        all answered by Dynamics 365. If the message does not say something, return "" or UNKNOWN.
-      prompt_template: |-
-        SUBJECT:
-        {{inputs.subject}}
+      input_fields:
+        - name: subject
+          description: Subject line, when the channel provides one.
+          type: string
+          value: "{{inputs.subject}}"
+        - name: sender_email
+          description: Sender address, when known.
+          type: string
+          value: "{{inputs.sender_email}}"
+        - name: message
+          description: The customer's message, in its original language.
+          type: string
+          value: "{{inputs.message}}"
+      instructions: |-
+        You are a customer-intake analyst for an industrial pump manufacturer.
 
-        SENDER:
-        {{inputs.sender_email}}
+        Read the customer's message in whatever language it arrives in and extract facts about
+        it. You do not decide which department handles it, and you never state a business fact:
+        whether an order exists, what its status is, whether a serial belongs to this customer
+        and who owns the account are all answered by Dynamics 365. If the message does not say
+        something, return "" or UNKNOWN.
 
-        CUSTOMER MESSAGE:
-        {{inputs.message}}
-
-        Extract:
-
-        language:
-          ISO 639-1 code of the language the customer wrote in.
-
-        summary:
-          One or two sentences in English on what the customer wants.
-
-        intent:
-          The ONE thing this message is mainly asking for, from:
-            NEW_PRODUCT_ENQUIRY | QUOTATION | ORDER_OR_DELIVERY | TECHNICAL_SUPPORT |
-            SPARE_PARTS | DOCUMENT_REQUEST | INVOICE | OTHER
-
-          Judge it by what the customer wants done, not by the words they use. A price question
-          about a replacement part for a pump they already own is SPARE_PARTS, not QUOTATION.
-
-        lifecycle_stage:
-          presales | order_execution | installed_base | unknown
-
-        customer_name:
-          The company the customer writes for, exactly as written, or "".
-
-        contact_name:
-          The person writing, from the signature, or "".
-
-        order_reference:
-          The sales-order or purchase-order number quoted, or "".
-
-        serial_number:
-          The serial number quoted, or "".
-
-        product_or_part:
-          The pump model or part named, or "".
-
-        technical_complexity:
-          standard  — a catalogue product against ordinary conditions
-          technical — needs a selection judgement: duty point, elastomer, compatibility
-          complex   — engineered, non-standard, or several constraints interacting at once
-
-        requested_document_type:
-          DATASHEET | GA_DRAWING | CERTIFICATE | MANUAL | ORDER_CONFIRMATION | OTHER | NONE
-
-        confidence:
-          0.0–1.0, how confident you are in this extraction.
-      output_schema:
-        language: str
-        summary: str
-        intent: str
-        lifecycle_stage: str
-        customer_name: str
-        contact_name: str
-        order_reference: str
-        serial_number: str
-        product_or_part: str
-        technical_complexity: str
-        requested_document_type: str
-        confidence: float
+        Determine intent based on what the customer wants done, not simply the words they use. A
+        price question about a replacement part for a pump they already own is SPARE_PARTS, not
+        QUOTATION.
+      output_fields:
+        - name: language
+          type: string
+          description: ISO 639-1 code of the language the customer wrote in.
+        - name: summary
+          type: string
+          description: One or two sentences in English on what the customer wants.
+        - name: intent
+          type: enum
+          description: >-
+            The ONE thing this message is mainly asking for. Judge it by what the customer wants
+            done, not by the words they use.
+          enum_values:
+            - NEW_PRODUCT_ENQUIRY
+            - QUOTATION
+            - ORDER_OR_DELIVERY
+            - TECHNICAL_SUPPORT
+            - SPARE_PARTS
+            - DOCUMENT_REQUEST
+            - INVOICE
+            - OTHER
+        - name: lifecycle_stage
+          type: enum
+          description: Where the customer is in the equipment lifecycle.
+          enum_values:
+            - presales
+            - order_execution
+            - installed_base
+            - unknown
+        - name: customer_name
+          type: string
+          description: The company the customer writes for, exactly as written, or "".
+        - name: contact_name
+          type: string
+          description: The person writing, from the signature, or "".
+        - name: order_reference
+          type: string
+          description: The sales-order or purchase-order number quoted, or "".
+        - name: serial_number
+          type: string
+          description: The serial number quoted, or "".
+        - name: product_or_part
+          type: string
+          description: The pump model or part named, or "".
+        - name: technical_complexity
+          type: enum
+          description: >-
+            standard: a catalogue product against ordinary conditions. technical: needs a
+            selection judgement (duty point, elastomer, compatibility). complex: engineered,
+            non-standard, or several constraints interacting at once.
+          enum_values:
+            - standard
+            - technical
+            - complex
+        - name: requested_document_type
+          type: enum
+          description: The kind of document the customer is asking for, or NONE if none.
+          enum_values:
+            - DATASHEET
+            - GA_DRAWING
+            - CERTIFICATE
+            - MANUAL
+            - ORDER_CONFIRMATION
+            - OTHER
+            - NONE
+        - name: confidence
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: How confident you are in this extraction, 0.0-1.0.
     experience:
       display_name: Understand Message
       purpose: Read the customer's message in any language and say what it is asking for.
@@ -210,7 +232,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_account_ownership
+      tool: find_account_ownership
       fail_on_error: false
       arguments:
         account_id: '{{outputs.customer_confirmed.data.account_id?}}'
@@ -224,10 +246,10 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_sales_order
+      tool: find_sales_order
       fail_on_error: false
       arguments:
-        sales_order_reference: '{{outputs.understand_message.parsed.order_reference?}}'
+        order_number: '{{outputs.understand_message.parsed.order_reference?}}'
     experience:
       display_name: Sales Order
       purpose: Establish whether the order the customer refers to actually exists.
@@ -238,10 +260,10 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_order_fulfilment_status
+      tool: find_order_fulfilment_status
       fail_on_error: false
       arguments:
-        sales_order_reference: '{{outputs.understand_message.parsed.order_reference?}}'
+        order_number: '{{outputs.understand_message.parsed.order_reference?}}'
     experience:
       display_name: Fulfilment Status
       purpose: Ask the ERP why the order is where it is.
@@ -252,7 +274,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_installed_unit
+      tool: find_installed_unit
       fail_on_error: false
       arguments:
         serial_number: '{{outputs.understand_message.parsed.serial_number?}}'
@@ -951,7 +973,7 @@ nodes:
           source: routing_decision.decisions.case_type
         - target: order_reference
           operation: copy
-          source: get_order.first.sales_order_reference
+          source: get_order.first.order_number
           default: ''
         - target: fulfilment_status
           operation: copy
@@ -978,7 +1000,7 @@ nodes:
           value: |-
             CASE: {{routing_decision.decisions.case_type}}
             Department: SUPPLY CHAIN / {{routing_decision.decisions.sub_team}}
-            Order: {{get_order.first.sales_order_reference?}}
+            Order: {{get_order.first.order_number?}}
             ERP fulfilment status: {{get_fulfilment.first.fulfilment_status?}}
             Summary: {{understand_message.parsed.summary}}
             Next action: {{routing_decision.decisions.next_action}}
@@ -1032,7 +1054,7 @@ nodes:
             serial_number: '{{understand_message.parsed.serial_number}}'
             verified: '{{business_context.decisions.serial_verified}}'
             pump_model: '{{get_installed_unit.first.pump_model?}}'
-            install_site: '{{get_installed_unit.first.install_site?}}'
+            install_site: '{{get_installed_unit.first.site_or_location?}}'
             warranty_active: '{{get_installed_unit.first.warranty_active?}}'
         - target: reason
           operation: copy
@@ -1054,7 +1076,7 @@ nodes:
             ({{routing_decision.decisions.owner_team}})
 
             Installed unit: {{understand_message.parsed.serial_number}} —
-            {{get_installed_unit.first.pump_model?}} at {{get_installed_unit.first.install_site?}}
+            {{get_installed_unit.first.pump_model?}} at {{get_installed_unit.first.site_or_location?}}
 
             Summary: {{understand_message.parsed.summary}}
 

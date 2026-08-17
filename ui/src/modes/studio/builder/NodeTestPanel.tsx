@@ -2,7 +2,13 @@ import { useCallback, useMemo, useState } from 'react';
 import type { Edge, Node } from 'reactflow';
 
 import { api } from '../../../api/client';
-import type { NodeTestResult, NodeTypeManifest } from '../../../api/types';
+import type {
+  ContractField,
+  LLMModelInfo,
+  NodeTestResult,
+  NodeTypeManifest,
+  OutputContract,
+} from '../../../api/types';
 import {
   sliceWorkflowThroughBranch,
   sliceWorkflowThroughNode,
@@ -15,6 +21,8 @@ import type {
   YamlWorkflow,
 } from '../yaml-bridge';
 import { ExplanationView, ValueTree } from './ExplanationView';
+import { ModelSelect } from '../ModelSelect';
+import { UpstreamSampleEditor, WorkflowInputsEditor } from './TestSampleEditor';
 
 /**
  * The Test tab (§21, §22).
@@ -31,57 +39,139 @@ import { ExplanationView, ValueTree } from './ExplanationView';
  * something you run twenty times while adjusting wording.
  */
 
-function parseJson(text: string): { value: Record<string, unknown>; error: string | null } {
-  if (!text.trim()) return { value: {}, error: null };
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return { value: parsed as Record<string, unknown>, error: null };
-    }
-    return { value: {}, error: 'Expected a JSON object.' };
-  } catch (error) {
-    return { value: {}, error: error instanceof Error ? error.message : String(error) };
+/** A placeholder value shaped like the field's type — not a guess at real
+ *  content, just enough structure that the author is editing values, not
+ *  inventing key names from scratch. */
+function exampleValueForType(field: Pick<ContractField, 'type' | 'enum_values'>): unknown {
+  switch (field.type) {
+    case 'number':
+    case 'integer':
+      return 0;
+    case 'boolean':
+      return false;
+    case 'enum':
+      return field.enum_values[0] ?? '';
+    case 'list':
+      return [];
+    case 'object':
+      return {};
+    default:
+      return '';
   }
 }
 
+function setDeep(target: Record<string, unknown>, path: string, value: unknown): void {
+  const segments = path.split('.');
+  let cursor = target;
+  for (const key of segments.slice(0, -1)) {
+    const existing = cursor[key];
+    if (typeof existing !== 'object' || existing === null || Array.isArray(existing)) {
+      cursor[key] = {};
+    }
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+  cursor[segments[segments.length - 1]] = value;
+}
+
+/** Skeleton "Sample workflow inputs" built from the contract's declared
+ *  workflow inputs — file inputs are skipped, since a file can't be pasted
+ *  as JSON test data. */
+function buildSampleInputs(contract: OutputContract | null): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const input of contract?.inputs ?? []) {
+    if (input.type === 'file') continue;
+    out[input.name] = input.type === 'json' ? {} : '';
+  }
+  return out;
+}
+
+/** Skeleton "Sample results from earlier steps" built from the typed fields
+ *  each upstream node is known to produce — one nested object per node id,
+ *  built from its dotted field paths (e.g. "parsed.intent"). */
+function buildSampleUpstream(contract: OutputContract | null): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const node of contract?.nodes ?? []) {
+    if (node.fields.length === 0) continue;
+    const nodeSample: Record<string, unknown> = {};
+    for (const field of node.fields) {
+      setDeep(nodeSample, field.path, exampleValueForType(field));
+    }
+    out[node.node_id] = nodeSample;
+  }
+  return out;
+}
+
 export function NodeTestPanel({
+  contract,
   edges,
+  llmModels,
   manifest,
   onLaunchTest,
+  onNodeRunOutput,
   selected,
   workflow,
 }: {
+  contract: OutputContract | null;
   edges: Edge<WorkflowEdgeData>[];
+  llmModels: LLMModelInfo[];
   manifest: NodeTypeManifest | undefined;
   onLaunchTest: (workflow: YamlWorkflow, title: string) => void;
+  onNodeRunOutput?: (nodeId: string, output: Record<string, unknown> | null | undefined) => void;
   selected: Node<WorkflowNodeData> | null;
   workflow: YamlWorkflow;
 }) {
-  const [inputsText, setInputsText] = useState('');
-  const [upstreamText, setUpstreamText] = useState('');
+  // Chosen/written values from the structured editors below — no JSON
+  // anywhere in this panel; every value comes from a labeled input box.
+  const [structuredInputs, setStructuredInputs] = useState<Record<string, unknown>>({});
+  const [structuredUpstream, setStructuredUpstream] = useState<Record<string, unknown>>({});
+  const [testModel, setTestModel] = useState('auto');
   const [result, setResult] = useState<NodeTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [prefilledForNode, setPrefilledForNode] = useState<string | null>(null);
 
-  const inputs = useMemo(() => parseJson(inputsText), [inputsText]);
-  const upstream = useMemo(() => parseJson(upstreamText), [upstreamText]);
+  const supportsModel = Boolean(
+    manifest?.uses_ai
+    || (manifest?.config_schema as { properties?: Record<string, unknown> } | undefined)
+      ?.properties?.model,
+  );
+
+  // Prefill the two sections from the contract once per node selection —
+  // not on every contract refetch, so editing something elsewhere in the
+  // workflow (which reruns the debounced output-contract fetch) never clobbers
+  // a value the author already typed in here. Adjusting state directly during
+  // render (rather than in an effect) on a prop change is the React-endorsed
+  // pattern for this — it applies before the browser paints, so there's no
+  // flash of the old value.
+  if (selected && contract && prefilledForNode !== selected.data.nodeId) {
+    setPrefilledForNode(selected.data.nodeId);
+    setStructuredInputs(buildSampleInputs(contract));
+    setStructuredUpstream(buildSampleUpstream(contract));
+    setTestModel(
+      typeof selected.data.config.model === 'string' ? selected.data.config.model : 'auto',
+    );
+  }
 
   const runTest = useCallback(() => {
     if (!selected) return;
     setBusy(true);
     setError(null);
     setResult(null);
+    const nodeId = selected.data.nodeId;
     api.nodeTest({
       type_name: selected.data.typeName,
-      node_id: selected.data.nodeId,
-      config: selected.data.config,
-      inputs: inputs.value,
-      upstream_outputs: upstream.value,
+      node_id: nodeId,
+      config: supportsModel ? { ...selected.data.config, model: testModel } : selected.data.config,
+      inputs: structuredInputs,
+      upstream_outputs: structuredUpstream,
     })
-      .then(setResult)
+      .then(next => {
+        setResult(next);
+        if (next.status === 'completed') onNodeRunOutput?.(nodeId, next.output);
+      })
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))
       .finally(() => setBusy(false));
-  }, [inputs.value, selected, upstream.value]);
+  }, [onNodeRunOutput, selected, structuredInputs, structuredUpstream, supportsModel, testModel]);
 
   if (!selected) {
     return (
@@ -122,41 +212,47 @@ export function NodeTestPanel({
         </div>
       ) : (
         <>
-          <label className="mt-3 block text-[11px] font-medium text-ink-700">
-            Sample workflow inputs
-            <textarea
-              className="builder-field mt-1 font-mono"
-              onChange={event => setInputsText(event.target.value)}
-              placeholder={'{\n  "subject": "Pumpe ausgefallen",\n  "message": "Unsere Dura 15 Pumpe ist ausgefallen…"\n}'}
-              rows={5}
-              value={inputsText}
-            />
-          </label>
-          {inputs.error && (
-            <div className="mt-1 text-[10px] text-red-600">{inputs.error}</div>
+          {supportsModel && (
+            <label className="mt-3 block text-[11px] font-medium text-ink-700">
+              Model for this test
+              <ModelSelect
+                className="mt-1"
+                llmModels={llmModels}
+                onChange={setTestModel}
+                value={testModel}
+              />
+              <span className="mt-1 block text-[10px] font-normal text-ink-500">
+                Overrides the configured model for this test run only — the saved
+                step keeps whatever model it's set to.
+              </span>
+            </label>
           )}
 
           <label className="mt-3 block text-[11px] font-medium text-ink-700">
-            Sample results from earlier steps
-            <textarea
-              className="builder-field mt-1 font-mono"
-              onChange={event => setUpstreamText(event.target.value)}
-              placeholder={'{\n  "understand_request": { "confidence": 0.64 }\n}'}
-              rows={4}
-              value={upstreamText}
-            />
+            Sample workflow inputs
           </label>
-          {upstream.error && (
-            <div className="mt-1 text-[10px] text-red-600">{upstream.error}</div>
-          )}
+          <WorkflowInputsEditor
+            contract={contract}
+            onChange={setStructuredInputs}
+            values={structuredInputs}
+          />
+
+          <label className="mt-4 block text-[11px] font-medium text-ink-700">
+            Sample results from earlier steps
+          </label>
           <p className="mt-1 text-[10px] text-ink-500">
-            Keyed by step id. Lets you test this step without running the ones
-            before it — and lets you try a value the model rarely produces.
+            Lets you test this step without running the ones before it — and
+            lets you try a value the model rarely produces.
           </p>
+          <UpstreamSampleEditor
+            contract={contract}
+            onChange={setStructuredUpstream}
+            values={structuredUpstream}
+          />
 
           <button
             className="ui-button ui-button--primary mt-3 w-full justify-center"
-            disabled={busy || Boolean(inputs.error) || Boolean(upstream.error)}
+            disabled={busy}
             onClick={runTest}
             type="button"
           >

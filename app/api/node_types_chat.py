@@ -5,7 +5,8 @@ types are currently registered (no hardcoded description file to go stale).
 """
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -376,5 +377,165 @@ async def draft_prompt(
         system=_PROMPT_DRAFTING_SYSTEM_PROMPT,
         user=user_prompt,
         temperature=0.4,
+    )
+    return {"answer": response.text}
+
+
+_INSTRUCTIONS_DRAFTING_SYSTEM_PROMPT = """You write the Instructions text for one step of an automated business workflow. This text is the ONLY thing that tells the AI model what to do — there is no separate system prompt the user manages, and the model never sees raw template syntax like `{{inputs.x}}`. You are given the step's declared Inputs (the information it receives) and Outputs (the information it must produce), and sometimes the Instructions text a person already wrote.
+
+## When there are no existing instructions
+
+Write clear, complete instructions from scratch, grounded only in the given Inputs and Outputs:
+- Explain what to do with the inputs in plain business language.
+- For every output field, explain how to decide its value. For an enum/fixed-set field, give the disambiguation rule a person would actually need — the realistic edge case where two plausible values could both seem to fit, and which one wins and why (reason from the field's own name, description and allowed values; do not invent business facts the fields don't imply).
+- Instruct the model to never invent a value that is not stated or strongly implied by the inputs — when something is missing, it should say so (empty value, or the closest catch-all allowed value) rather than guess.
+- Do not mention config fields, JSON, schemas, or `{{...}}` template syntax anywhere — write only about what the inputs mean and what the outputs should contain, in the language a business colleague would use.
+
+## When existing instructions are given
+
+Treat them as the source of truth for business logic. You MUST preserve, unchanged in meaning:
+- every business rule and classification distinction already stated,
+- every worked example (e.g. "X should be classified as A, not B, because..."),
+- every restriction, exception and "never do this" instruction.
+Rewrite only for clarity, structure and concision — remove repetition, tighten wording, reorganize for readability. Add instructions only for Inputs or Outputs the existing text doesn't yet address, inferring what's needed the same way as the from-scratch case above. Never silently drop or reverse a business rule, and never add a new business rule the fields don't imply just to sound more thorough.
+
+## Output contract for this integration
+
+Respond with ONLY the drafted instructions text: no heading, no preamble like "Here are the instructions", no markdown fences, no commentary about what you changed. Just the ready-to-use instructions text, exactly as it should appear in the field."""
+
+
+class DraftInstructionsFieldSpec(BaseModel):
+    name: str
+    description: str = ""
+    type: str | None = None
+    enum_values: list[str] = []
+
+
+class DraftInstructionsRequest(BaseModel):
+    existing_instructions: str = ""
+    input_fields: list[DraftInstructionsFieldSpec] = []
+    output_fields: list[DraftInstructionsFieldSpec] = []
+
+
+def _describe_fields(fields: list[DraftInstructionsFieldSpec]) -> str:
+    if not fields:
+        return "(none declared yet)"
+    lines = []
+    for field in fields:
+        bits = [field.type] if field.type else []
+        if field.enum_values:
+            bits.append("one of: " + ", ".join(field.enum_values))
+        suffix = f" ({'; '.join(bits)})" if bits else ""
+        description = f" — {field.description}" if field.description else ""
+        lines.append(f"- {field.name}{suffix}{description}")
+    return "\n".join(lines)
+
+
+@router.post("/draft-instructions")
+async def draft_instructions(
+    req: DraftInstructionsRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    services = request.app.state.services
+    llm = services.get("llm")
+    if llm is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM gateway unavailable")
+
+    scope = getattr(user, "session_id", None) or user.username
+    if hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id="node-types-chat", session_id=scope, node_id="draft_instructions",
+            ledger=services.get("cost_ledger"),
+        )
+
+    sections = [
+        f"INPUTS this step receives:\n{_describe_fields(req.input_fields)}",
+        f"OUTPUTS this step must produce:\n{_describe_fields(req.output_fields)}",
+    ]
+    if req.existing_instructions.strip():
+        sections.append(
+            "EXISTING INSTRUCTIONS (preserve their business logic; improve "
+            f"clarity):\n{req.existing_instructions.strip()}"
+        )
+    else:
+        sections.append("No existing instructions — write these from scratch.")
+    user_prompt = "\n\n".join(sections)
+
+    response = await llm.complete(
+        model=PROMPT_DRAFTING_MODEL,
+        system=_INSTRUCTIONS_DRAFTING_SYSTEM_PROMPT,
+        user=user_prompt,
+        temperature=0.4,
+    )
+    return {"answer": response.text}
+
+
+_CODE_DRAFTING_SYSTEM_PROMPT = """You write one short code snippet for a step of an automated business workflow — either a Python snippet (PythonSnippetAgent) or a read-only SQL SELECT (SQLQueryAgent). You are given the step's declared inputs and outputs, sometimes example values for them, and sometimes code a person already wrote to refine.
+
+Rules specific to each language:
+
+PYTHON: The snippet runs in an isolated sandbox with `inputs` (a dict) already bound — read values as `inputs["name"]`, never `import` anything of this platform's own, never assume network or filesystem access beyond what stdlib gives you in-memory. Write results into the `output` dict, e.g. `output["total"] = ...` — one assignment per declared output field. Do not write `import os`, `import sys`, or attempt any file/network/subprocess access; none of it works in the sandbox and it will just look like a mistake.
+
+SQL: Write exactly one SELECT statement, never more than one statement, never a write (no INSERT/UPDATE/DELETE/CREATE/ALTER/DROP). Use named placeholders in the form %(name)s for any value that should come from params — never inline a value directly into the query text.
+
+## Output contract for this integration
+
+Respond with ONLY the code: no heading, no preamble, no markdown fences (no ```), no commentary about what you changed or why. Just the ready-to-use code, exactly as it should appear in the field."""
+
+
+class DraftCodeRequest(BaseModel):
+    language: Literal["python", "sql"]
+    existing_code: str = ""
+    input_fields: list[DraftInstructionsFieldSpec] = []
+    output_fields: list[DraftInstructionsFieldSpec] = []
+    #: Optional concrete example values — few-shot grounding, not just field
+    #: names/types. `Any`-typed since an example value can legitimately be
+    #: a number, string, list, or object.
+    example_inputs: dict[str, Any] = {}
+    example_outputs: dict[str, Any] = {}
+    instructions: str = ""
+
+
+@router.post("/draft-code")
+async def draft_code(
+    req: DraftCodeRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    services = request.app.state.services
+    llm = services.get("llm")
+    if llm is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM gateway unavailable")
+
+    scope = getattr(user, "session_id", None) or user.username
+    if hasattr(llm, "with_context"):
+        llm = llm.with_context(
+            run_id="node-types-chat", session_id=scope, node_id="draft_code",
+            ledger=services.get("cost_ledger"),
+        )
+
+    sections = [f"LANGUAGE: {req.language}"]
+    if req.instructions.strip():
+        sections.append(f"WHAT THIS STEP SHOULD DO:\n{req.instructions.strip()}")
+    sections.append(f"INPUTS available:\n{_describe_fields(req.input_fields)}")
+    sections.append(f"OUTPUTS required:\n{_describe_fields(req.output_fields)}")
+    if req.example_inputs:
+        sections.append(f"EXAMPLE INPUT VALUES:\n{json.dumps(req.example_inputs, indent=2, default=str)}")
+    if req.example_outputs:
+        sections.append(f"EXAMPLE OUTPUT VALUES (what a correct run should produce):\n{json.dumps(req.example_outputs, indent=2, default=str)}")
+    if req.existing_code.strip():
+        sections.append(
+            f"EXISTING CODE (preserve its intent; fix or improve it):\n{req.existing_code.strip()}"
+        )
+    else:
+        sections.append("No existing code — write it from scratch.")
+    user_prompt = "\n\n".join(sections)
+
+    response = await llm.complete(
+        model=PROMPT_DRAFTING_MODEL,
+        system=_CODE_DRAFTING_SYSTEM_PROMPT,
+        user=user_prompt,
+        temperature=0.2,
     )
     return {"answer": response.text}

@@ -28,12 +28,12 @@ from app.workflow.business_view.runstate import RunView
 #: name that tool expects). Used only to offer a lookup when the run's own
 #: workflow already calls that tool on that server.
 RECORD_LOOKUPS: dict[str, tuple[str, str, str]] = {
-    "sales_order_reference": ("order", "get_sales_order", "sales_order_reference"),
-    "quotation_reference": ("quotation", "get_quote", "quotation_reference"),
-    "serial_number": ("installed unit", "get_installed_unit", "serial_number"),
-    "pump_model": ("product", "get_inventory_availability", "pump_model"),
-    "customer_po_reference": ("purchase order", "get_quote", "customer_po_reference"),
-    "secondary_reference": ("related order", "get_sales_order", "sales_order_reference"),
+    "sales_order_reference": ("order", "find_sales_order", "order_number"),
+    "quotation_reference": ("quotation", "find_quote", "quotation_number"),
+    "serial_number": ("installed unit", "find_installed_unit", "serial_number"),
+    "pump_model": ("product", "find_inventory_availability", "pump_model"),
+    "customer_po_reference": ("purchase order", "find_quote", "purchase_order_number"),
+    "secondary_reference": ("related order", "find_sales_order", "order_number"),
 }
 
 #: Human labels for the record kinds above.

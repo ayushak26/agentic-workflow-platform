@@ -91,6 +91,32 @@ class FieldSpec(BaseModel):
     minimum: float | None = None
     maximum: float | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_item_enum_values(cls, data: Any) -> Any:
+        """Fold list-of-enum values stored under the field-level `enum_values`
+        key into `item_enum_values`.
+
+        Two independent sources produce this shape: an older saved workflow
+        from before `item_enum_values` existed, and an AI-drafted suggestion
+        (`/builder/assist/schema`) whose model reached for the only "allowed
+        values" key it knows about instead of the list-item-specific one.
+        Applied here — the single construction path every FieldSpec goes
+        through, whether from YAML, a manual save, or an AI suggestion — so
+        no caller has to remember to normalize it themselves. Only migrates
+        when unambiguous: a list of enums with values sitting in the wrong
+        key. A single enum field's `enum_values` is never touched.
+        """
+        if (
+            isinstance(data, dict)
+            and data.get("type") == "list"
+            and data.get("item_type") == "enum"
+            and not data.get("item_enum_values")
+            and data.get("enum_values")
+        ):
+            data = {**data, "item_enum_values": data["enum_values"]}
+        return data
+
     @field_validator("name")
     @classmethod
     def name_is_an_identifier(cls, value: str) -> str:

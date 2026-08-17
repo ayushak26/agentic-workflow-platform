@@ -218,7 +218,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_account_ownership
+      tool: find_account_ownership
       fail_on_error: false
       arguments:
         account_id: '{{outputs.emergency_customer_lookup.first.account_id?}}'
@@ -237,7 +237,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_account_ownership
+      tool: find_account_ownership
       fail_on_error: false
       arguments:
         account_id: '{{outputs.stoppage_customer_lookup.first.account_id?}}'
@@ -299,7 +299,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_account_ownership
+      tool: find_account_ownership
       fail_on_error: false
       arguments:
         account_id: '{{outputs.find_customer.first.account_id?}}'
@@ -307,7 +307,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_credit_status
+      tool: find_credit_status
       fail_on_error: false
       arguments:
         account_id: '{{outputs.find_customer.first.account_id?}}'
@@ -315,33 +315,33 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_quote
+      tool: find_quote
       fail_on_error: false
       arguments:
-        quotation_reference: '{{outputs.understand_message.parsed.quotation_reference?}}'
-        customer_po_reference: '{{outputs.understand_message.parsed.customer_po_reference?}}'
+        quotation_number: '{{outputs.understand_message.parsed.quotation_reference?}}'
+        purchase_order_number: '{{outputs.understand_message.parsed.customer_po_reference?}}'
         account_id: '{{outputs.find_customer.first.account_id?}}'
   - id: get_sales_order
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_sales_order
+      tool: find_sales_order
       fail_on_error: false
       arguments:
-        sales_order_reference: '{{outputs.understand_message.parsed.sales_order_reference?}}'
+        order_number: '{{outputs.understand_message.parsed.sales_order_reference?}}'
   - id: get_fulfilment
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_order_fulfilment_status
+      tool: find_order_fulfilment_status
       fail_on_error: false
       arguments:
-        sales_order_reference: '{{outputs.understand_message.parsed.sales_order_reference?}}'
+        order_number: '{{outputs.understand_message.parsed.sales_order_reference?}}'
   - id: get_availability
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_inventory_availability
+      tool: find_inventory_availability
       fail_on_error: false
       arguments:
         pump_model: '{{outputs.understand_message.parsed.pump_model?}}'
@@ -353,7 +353,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_inventory_availability
+      tool: find_inventory_availability
       fail_on_error: false
       arguments:
         pump_model: '{{outputs.get_quote.first.pump_model?}}'
@@ -361,7 +361,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_installed_unit
+      tool: find_installed_unit
       fail_on_error: false
       arguments:
         serial_number: '{{outputs.understand_message.parsed.serial_number?}}'
@@ -447,7 +447,7 @@ nodes:
             Unit: {{get_installed_unit.first.pump_model?}} (serial
             {{understand_message.parsed.serial_number?}})
 
-            Site: {{get_installed_unit.first.install_site?}}
+            Site: {{get_installed_unit.first.site_or_location?}}
 
             Warranty active in Dynamics 365: {{get_installed_unit.first.warranty_active?}}
 

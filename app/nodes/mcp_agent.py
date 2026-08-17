@@ -30,6 +30,11 @@ class MCPAgentConfig(BaseModel):
     )
     max_iterations: int = 5
     temperature: float = 0.2
+    #: Restricts which of the connected server's tools this step may see and
+    #: call. `None` (the default) is unrestricted — every discovered tool is
+    #: offered to the model, which is why preflight warns when this is unset
+    #: and no human review precedes the node (see logic_preflight.py).
+    allowed_tools: list[str] | None = None
 
 
 class MCPAgentInput(BaseModel):
@@ -70,6 +75,11 @@ class MCPAgent(NodeType):
 
         # 1. Discover tools and convert to the LLM's tool-definition format
         mcp_tools = await mcp.list_tools()
+        if cfg.allowed_tools is not None:
+            # Never let the model see a tool outside its declared allowlist —
+            # narrowing here (not just at call time) keeps an out-of-scope
+            # tool from ever being offered as a choice in the first place.
+            mcp_tools = [t for t in mcp_tools if t.name in cfg.allowed_tools]
         llm_tools = [
             {
                 "name": t.name,
@@ -118,6 +128,30 @@ class MCPAgent(NodeType):
             messages.append(assistant_turn)
 
             for tc in response.tool_calls:
+                if cfg.allowed_tools is not None and tc.name not in cfg.allowed_tools:
+                    # Defense in depth: even if a model somehow names a tool it
+                    # wasn't shown (e.g. from prior conversation context or a
+                    # prompt injection), never execute it — tell the model and
+                    # let the loop continue instead of crashing the run.
+                    log.warning(
+                        "mcp_agent.tool_not_allowed",
+                        node_id=self.node_id,
+                        tool=tc.name,
+                    )
+                    denial = f"Tool '{tc.name}' is not permitted for this step and was not called."
+                    tool_call_log.append(ToolCallRecord(
+                        iteration=iteration,
+                        tool=tc.name,
+                        arguments=dict(tc.arguments),
+                        result_preview=denial,
+                    ))
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": denial,
+                    })
+                    continue
+
                 args = dict(tc.arguments)
                 args["session_id"] = session_id
 

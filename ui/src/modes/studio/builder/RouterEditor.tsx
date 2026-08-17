@@ -62,7 +62,12 @@ export function RouterEditor({
   operators: OperatorCatalog | null;
   onChange: (next: Config) => void;
 }) {
-  const mode = asString(config.mode, 'field');
+  // No fallback substitution here on purpose: a fresh node has no `mode` at
+  // all (see Builder.tsx's addNode), and collapsing that into 'field' would
+  // silently re-create the old trap where the picker never actually gated
+  // anything.
+  const mode = typeof config.mode === 'string' ? config.mode : undefined;
+  const selection = config.selection === 'multi' ? 'multi' : 'single';
   const set = (patch: Config) => onChange({ ...config, ...patch });
 
   return (
@@ -86,6 +91,11 @@ export function RouterEditor({
             onSelect={() => set({ mode: 'conditions' })}
           />
         </div>
+        {mode === undefined && (
+          <p className="mt-2 text-[11px] text-ink-500">
+            Pick how this step should branch to configure it.
+          </p>
+        )}
         {(mode === 'rule' || mode === 'llm') && (
           <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
             This router uses the{' '}
@@ -95,6 +105,37 @@ export function RouterEditor({
           </div>
         )}
       </section>
+
+      {mode !== undefined && mode !== 'rule' && (
+        <section className="mt-4">
+          <div className="builder-panel-heading flex items-center gap-1.5">
+            How many branches can fire?
+            <InfoPopover feature="multi_route" />
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-1.5">
+            <ModeCard
+              active={selection === 'single'}
+              description="Choose exactly one branch. The usual choice."
+              label="Single"
+              onSelect={() => set({ selection: 'single' })}
+            />
+            <ModeCard
+              active={selection === 'multi'}
+              description="Multi-Route: select every branch that applies (e.g. Sales AND Engineering), and run all of them in parallel."
+              label="Multi-Route"
+              onSelect={() => set({ selection: 'multi' })}
+            />
+          </div>
+          {selection === 'multi' && (
+            <p className="mt-2 text-[11px] leading-4 text-ink-500">
+              Each selected branch must run to its own conclusion — nothing
+              downstream may wait for more than one of them at once, since a
+              branch that isn&apos;t selected never runs. Collect results in
+              the workflow&apos;s Outputs tab instead of reconverging them.
+            </p>
+          )}
+        </section>
+      )}
 
       {mode === 'field' && (
         <FieldModeEditor config={config} contract={contract} onChange={onChange} />
@@ -108,26 +149,28 @@ export function RouterEditor({
         />
       )}
 
-      <section className="mt-4">
-        <label className="block text-[11px] font-medium text-ink-700">
-          Otherwise, send to
-          <input
-            className="builder-field mt-1 font-mono"
-            onChange={event => set({ fallback: event.target.value })}
-            placeholder="human_review"
-            value={asString(config.fallback)}
-          />
-        </label>
-        <p className="mt-1 text-[11px] text-ink-500">
-          Where anything unmatched goes. Without a fallback an unexpected value
-          fails the run instead of reaching a person.
-        </p>
-      </section>
+      {mode !== undefined && (
+        <section className="mt-4">
+          <label className="block text-[11px] font-medium text-ink-700">
+            Otherwise, send to
+            <input
+              className="builder-field mt-1 font-mono"
+              onChange={event => set({ fallback: event.target.value })}
+              placeholder="human_review"
+              value={asString(config.fallback)}
+            />
+          </label>
+          <p className="mt-1 text-[11px] text-ink-500">
+            Where anything unmatched goes. Without a fallback an unexpected
+            value fails the run instead of reaching a person.
+          </p>
+        </section>
+      )}
     </div>
   );
 }
 
-function ModeCard({
+export function ModeCard({
   active,
   description,
   label,

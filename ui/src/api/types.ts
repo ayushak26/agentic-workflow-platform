@@ -91,6 +91,29 @@ export type FieldSpec = {
   maximum?: number | null;
 };
 
+// ---- Draft Instructions (Prompt Template editor's inline "✨ Draft
+// Instructions" action — mirrors app.api.node_types_chat.DraftInstructionsFieldSpec) ----
+
+export type DraftInstructionsField = {
+  name: string;
+  description?: string;
+  type?: string;
+  enum_values?: string[];
+};
+
+// ---- Draft Code (Code Snippet / SQL Query editors' "✨ Generate Code"
+// action — mirrors app.api.node_types_chat.DraftCodeRequest) ----
+
+export type DraftCodeRequest = {
+  language: 'python' | 'sql';
+  existing_code?: string;
+  input_fields?: DraftInstructionsField[];
+  output_fields?: DraftInstructionsField[];
+  example_inputs?: Record<string, unknown>;
+  example_outputs?: Record<string, unknown>;
+  instructions?: string;
+};
+
 export type SchemaPreview = {
   json_schema: Record<string, unknown>;
   contract: string;
@@ -122,7 +145,7 @@ export type RuleConditionGroup = {
 
 export type RuleAction = {
   field: string;
-  operation?: 'set' | 'append' | 'increase' | 'decrease';
+  operation?: 'set' | 'merge' | 'increase' | 'decrease';
   value?: unknown;
 };
 
@@ -244,8 +267,12 @@ export type SimulationResult = {
 // ---- MCP integration ----
 
 /** How a tool affects the outside world. Rendered on the canvas so the
- *  automation boundary is visible before anything runs. */
-export type MCPOperationClass = 'read' | 'write' | 'destructive' | 'unknown';
+ *  automation boundary is visible before anything runs. `external_action`
+ *  is not an MCP-discovered value (MCP tools are always read/write/
+ *  destructive/unknown) — it's the explicit third safety class an author
+ *  declares directly on an ExternalActionAgent step, sharing this same
+ *  badge component rather than inventing a second visual language. */
+export type MCPOperationClass = 'read' | 'write' | 'destructive' | 'unknown' | 'external_action';
 
 export type MCPServerInfo = {
   id: string;

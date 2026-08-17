@@ -277,7 +277,18 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
             # Server-side logging must not depend on a client being connected.
             # Interrupts are control flow (HITL pause), not errors — info only.
             if is_graph_interrupt(e):
-                pause_kind = "user_requested" if user_pause_triggered else "hitl_gate"
+                pause_kind = (
+                    "user_requested" if user_pause_triggered
+                    # A Subprocess node pauses itself the same way a HITL gate
+                    # does (interrupt() called directly, not via the
+                    # request_pause flag) — but resuming it delivers the
+                    # child run's result, not an approve/reject/edit decision,
+                    # so it needs its own pause_kind rather than being
+                    # mistaken for a HITL gate by resume_workflow_durable's
+                    # _validate_saved_decision (app/runtime/hitl.py).
+                    else "subprocess" if type_name == "SubprocessAgent"
+                    else "hitl_gate"
+                )
                 log.info("node_paused", node_id=node_id, type_name=type_name,
                          run_id=run_id, pause_kind=pause_kind)
                 if audit is not None and run_id:
@@ -406,7 +417,10 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
     return runtime_fn
 
 def _wire_edges(
-    graph: StateGraph, edges: list[EdgeSpec], hitl_ids: set[str]
+    graph: StateGraph,
+    edges: list[EdgeSpec],
+    hitl_ids: set[str],
+    multi_router_ids: set[str] | None = None,
 ) -> set[str]:
     """Add edges, return the set of source node ids (used to compute terminals).
 
@@ -441,6 +455,7 @@ def _wire_edges(
     dispatch (HITL or router) targets instead of the shared node directly,
     combined into that one list.
     """
+    multi_router_ids = multi_router_ids or set()
     sources: set[str] = set()
 
     # 1. Collect all targets for each HITL node (across its multiple edges).
@@ -534,6 +549,45 @@ def _wire_edges(
             else:
                 branch_map[decision] = target
 
+        if edge.from_ in multi_router_ids:
+            # Multi-Route: dispatch to every SELECTED branch's resolved
+            # target/gate at once (a list, like the HITL dispatch above) —
+            # not exactly one. Still goes through branch_map/join-gate
+            # substitution above unchanged: a selected target reachable via
+            # another independent arrival group still needs the gate to
+            # avoid the same fan-in race the HITL/router join-gate fixes.
+            # MULTIROUTE_ANDJOIN_MAY_NOT_FIRE (preflight.py) guarantees no
+            # workflow that reaches this path depends on an unconditional
+            # AND-join of two or more of THIS router's own branches, so the
+            # gate path here is a correctness backstop, not something a
+            # passing workflow actually exercises.
+            def _multi_router(state: dict, _edge=edge, _branch_map=branch_map) -> list[str]:
+                selected = state["node_outputs"][_edge.from_].get("routes") or []
+                if isinstance(selected, str):
+                    selected = [selected]
+                unknown = [route for route in selected if route not in _edge.branches]
+                if unknown:
+                    raise ValueError(
+                        f"Multi-route {_edge.from_} selected unknown route(s) "
+                        f"{unknown}; expected a subset of {list(_edge.branches)}"
+                    )
+                # Dedupe by resolved DESTINATION, not by label — two labels
+                # may resolve to the same target/gate and it must be
+                # scheduled exactly once.
+                dests = list(dict.fromkeys(_branch_map[route] for route in selected))
+                if not dests:
+                    raise ValueError(
+                        f"Multi-route {_edge.from_} selected no routes; a "
+                        "multi-route must select at least one branch "
+                        "(configure a fallback)"
+                    )
+                return dests
+
+            graph.add_conditional_edges(
+                edge.from_, _multi_router, list(dict.fromkeys(branch_map.values()))
+            )
+            continue
+
         def _router(state: dict, _edge=edge, _branch_map=branch_map) -> str:
             decision = state["node_outputs"][_edge.from_].get("route")
             if decision not in _edge.branches:
@@ -590,13 +644,25 @@ def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
         nid for nid, inst in instances.items()
         if inst.type_name == "HumanInLoopAgent"
     }
+    # Which routers are Multi-Route (selection="multi")? Their conditional
+    # edge dispatches to a LIST of resolved targets (every branch selected),
+    # not one — see _wire_edges' _multi_router closure. Preflight's
+    # MULTIROUTE_ANDJOIN_MAY_NOT_FIRE check (app/runtime/preflight.py) is
+    # what guarantees no downstream node depends on more than one of a
+    # single multi-router's branches through an unconditional AND-join, so
+    # this dispatch never has to resolve a partial/variable-size join itself.
+    multi_router_ids = {
+        nid for nid, inst in instances.items()
+        if inst.type_name == "RouterAgent"
+        and getattr(inst.config, "selection", "single") == "multi"
+    }
 
     # 2. Add each node as a runtime function — bus-aware and cost-aware.
     for node_id, instance in instances.items():
         graph.add_node(node_id, _make_runtime_fn(instance, bus, services))
 
     # 3-5. Wire edges, entry, and exits.
-    sources = _wire_edges(graph, spec.edges, hitl_ids)
+    sources = _wire_edges(graph, spec.edges, hitl_ids, multi_router_ids)
 
     entry = spec.entry or spec.nodes[0].id
     graph.add_edge(START, entry)

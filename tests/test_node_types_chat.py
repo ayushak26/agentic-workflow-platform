@@ -12,9 +12,12 @@ from app.api.node_types_chat import (
     NODE_TYPE_CHAT_MODEL,
     PROMPT_DRAFTING_MODEL,
     AskAboutNodeTypesRequest,
+    DraftInstructionsFieldSpec,
+    DraftInstructionsRequest,
     DraftPromptRequest,
     _build_node_type_catalog,
     ask_about_node_types,
+    draft_instructions,
     draft_prompt,
 )
 from app.nodes.base import NodeType
@@ -143,3 +146,61 @@ async def test_draft_prompt_404s_for_a_node_type_outside_the_registry():
         )
     assert exc_info.value.status_code == 404
     assert len(llm.calls) == 0
+
+
+@pytest.mark.asyncio
+async def test_draft_instructions_from_scratch_grounds_in_inputs_and_outputs():
+    llm = FakeLLM()
+
+    result = await draft_instructions(
+        DraftInstructionsRequest(
+            input_fields=[
+                DraftInstructionsFieldSpec(name="subject", description="Subject of the customer message"),
+                DraftInstructionsFieldSpec(name="message", description="Customer's full message"),
+            ],
+            output_fields=[
+                DraftInstructionsFieldSpec(
+                    name="intent",
+                    description="Main customer request",
+                    type="enum",
+                    enum_values=["QUOTATION", "SPARE_PARTS", "OTHER"],
+                ),
+                DraftInstructionsFieldSpec(name="confidence", description="Confidence 0.0-1.0", type="number"),
+            ],
+        ),
+        _request(llm),
+        USER,
+    )
+
+    assert result["answer"] == "mock explanation"
+    assert len(llm.calls) == 1
+    call = llm.calls[0]
+    assert call["model"] == PROMPT_DRAFTING_MODEL == "gpt-5.6-luna"
+    assert "subject" in call["user"]
+    assert "Customer's full message" in call["user"]
+    assert "QUOTATION" in call["user"]
+    assert "No existing instructions" in call["user"]
+    # Tells the drafting model to never write template syntax into the
+    # instructions it produces.
+    assert "template syntax" in call["system"]
+
+
+@pytest.mark.asyncio
+async def test_draft_instructions_with_existing_text_asks_to_preserve_business_logic():
+    llm = FakeLLM()
+
+    result = await draft_instructions(
+        DraftInstructionsRequest(
+            existing_instructions="Classify SPARE_PARTS vs QUOTATION by what the customer wants done.",
+            input_fields=[DraftInstructionsFieldSpec(name="message")],
+            output_fields=[DraftInstructionsFieldSpec(name="intent", type="enum", enum_values=["SPARE_PARTS", "QUOTATION"])],
+        ),
+        _request(llm),
+        USER,
+    )
+
+    assert result["answer"] == "mock explanation"
+    call = llm.calls[0]
+    assert "EXISTING INSTRUCTIONS" in call["user"]
+    assert "Classify SPARE_PARTS vs QUOTATION" in call["user"]
+    assert "preserve" in call["system"].lower()

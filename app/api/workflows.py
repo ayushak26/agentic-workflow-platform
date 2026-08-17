@@ -471,6 +471,7 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
         db=db,
         run_id=run_id,
         session=session,
+        services=services,
     )
     return {"run_id": run_id, "status": "running"}
 
@@ -515,7 +516,9 @@ async def resume(
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         # A node failed after resume.
-        return await record_run_failure(db, run_id=run_id, session=session, error=e)
+        return await record_run_failure(
+            db, run_id=run_id, session=session, error=e, services=services,
+        )
 
     # Phase 11A — HITL audit event: the human decision, now that session is in scope.
     action = guarded_decision.get("decision")
@@ -553,7 +556,54 @@ async def resume(
         run_id=run_id,
         session=session,
         record_rejection_reason=True,
+        services=services,
     )
+
+
+class SubprocessCallbackRequest(BaseModel):
+    status: str = Field(description="'completed', 'rejected', or 'failed'.")
+    output: Any = None
+    node_outputs: dict[str, Any] = Field(default_factory=dict)
+    error: str | None = None
+
+
+@router.post("/workflows/subprocess-callback/{token}")
+async def subprocess_callback(
+    token: str,
+    req: SubprocessCallbackRequest,
+    request: Request,
+):
+    """Deliver a Subprocess child's terminal result to its waiting parent.
+
+    A real, independently callable endpoint — a "webhook" in the plain
+    sense — but every current caller of it is this deployment's own child
+    run finishing through its completely ordinary finalize path
+    (app.workflow.orchestration), which reaches this exact logic in-process
+    rather than looping back over HTTP. The single-use `token` (minted at
+    launch time, see app.workflow.subprocess_launches) is what makes a
+    replayed or duplicate call safe: the second call finds nothing left to
+    deliver and is a no-op, not an error. Unauthenticated by design — the
+    token itself is the credential, the same shape the email-OAuth callback
+    already uses for its own single-use state parameter.
+    """
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    if db is None:
+        raise HTTPException(status_code=503, detail="Run history is unavailable")
+
+    from app.workflow.subprocess_callback import deliver_by_token
+
+    try:
+        result = await deliver_by_token(
+            db, services, token,
+            status=req.status,
+            output=req.output,
+            node_outputs=req.node_outputs,
+            error=req.error,
+        )
+    except (HITLResumeError, HITLResumeConflict) as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return result
 
 
 WORKFLOWS_DIR = Path("workflows")

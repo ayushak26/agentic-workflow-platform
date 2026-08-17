@@ -31,7 +31,7 @@ from typing import (
 from pydantic import ValidationError
 
 from app.nodes.registry import NodeRegistry
-from app.runtime.field_schema import FieldPath, field_paths
+from app.runtime.field_schema import FieldPath, FieldSpec, field_paths, parse_fields
 from app.runtime.rules import (
     SET_OPERATORS,
     UNARY_OPERATORS,
@@ -107,12 +107,127 @@ def _register_builders() -> None:
             for op in parsed.operations
         ]
 
+    def transform_agent_paths(config: dict[str, Any]) -> list[FieldPath]:
+        from app.nodes.transform import TransformConfig, is_new_style
+
+        parsed = TransformConfig(**config)
+        found = [FieldPath(path="raw", type="string", description="The model's unparsed response.")]
+
+        if is_new_style(parsed):
+            if not parsed.output_fields:
+                # Matches TransformAgent._run_new_style: with no output_fields
+                # the model is asked for free text and "parsed" is hardcoded
+                # to {} forever — a reference into it is a dead end.
+                return found
+            found.append(FieldPath(path="parsed", type="object", description="The extracted fields."))
+            found.extend(
+                path.model_copy(update={"path": f"parsed.{path.path}"})
+                for path in field_paths(parsed.output_fields)
+            )
+            return found
+
+        declared = parsed.output_schema
+        if not declared:
+            # Matches TransformAgent._run_legacy: with no output_schema the
+            # model is asked for free text and "parsed" is hardcoded to {}
+            # forever — a reference into it is a dead end, so only "raw" is
+            # offered.
+            return found
+        found.append(FieldPath(path="parsed", type="object", description="The extracted fields."))
+        for key, type_str in declared.items():
+            found.append(
+                FieldPath(
+                    path=f"parsed.{key}",
+                    type=_TRANSFORM_AGENT_KINDS.get(type_str.lower(), "unknown"),
+                )
+            )
+        return found
+
+    def mcp_tool_paths(config: dict[str, Any]) -> list[FieldPath]:
+        schema = _static_mcp_output_schema(config.get("server_id"), config.get("tool"))
+        if not schema:
+            # Unknown tool — a live/third-party server, a renamed/retired
+            # mock tool, or one this platform doesn't ship a static schema
+            # for. Nothing more to add; build_field_index never treats a
+            # MCPToolAgent node as closed-world regardless (see its
+            # MCPToolAgent special case), so an empty list here is exactly
+            # as permissive as before this builder existed.
+            return []
+
+        found = _json_schema_paths(schema, "data")
+        properties = schema.get("properties") or {}
+        # Mirrors MCPToolAgent._summarise's own runtime heuristic exactly: the
+        # first array-of-objects property becomes `first.*`; failing that, a
+        # single object-valued property does. Keeping these in lockstep is
+        # what makes `first.account_id` a real, checkable path rather than a
+        # guess at what the node will actually put there.
+        collection_key = next(
+            (
+                name for name, sub in properties.items()
+                if isinstance(sub, dict)
+                and _json_schema_kind(sub) == "list"
+                and isinstance(sub.get("items"), dict)
+                and _json_schema_kind(sub["items"]) == "object"
+            ),
+            None,
+        )
+        if collection_key:
+            found.extend(_json_schema_paths(properties[collection_key]["items"], "first"))
+        else:
+            object_keys = [
+                name for name, sub in properties.items()
+                if isinstance(sub, dict) and _json_schema_kind(sub) == "object"
+            ]
+            if len(object_keys) == 1:
+                found.extend(_json_schema_paths(properties[object_keys[0]], "first"))
+        return found
+
+    def subprocess_output_paths(config: dict[str, Any]) -> list[FieldPath]:
+        child_spec = _static_subprocess_child_spec(config)
+        if child_spec is None or child_spec.output is None:
+            # No declared output: contract on the child, or the child
+            # couldn't be resolved statically (missing/invalid — the
+            # dedicated subprocess check reports that). Either way, `result`
+            # stays a generic untyped object rather than a guess.
+            return []
+
+        found: list[FieldPath] = []
+        for output_node in child_spec.output.nodes:
+            node_paths = _shallow_child_node_paths(child_spec, output_node.node_id)
+            prefix = (
+                "result" if output_node.flatten
+                else f"result.{output_node.node_id}"
+            )
+            found.extend(
+                path.model_copy(update={"path": f"{prefix}.{path.path}"})
+                for path in node_paths
+            )
+        return found
+
+    def python_snippet_paths(config: dict[str, Any]) -> list[FieldPath]:
+        from app.nodes.python_snippet import PythonSnippetConfig
+
+        parsed = PythonSnippetConfig(**config)
+        if not parsed.output_fields:
+            # No declared shape: `result` stays a generic object rather
+            # than a guess — same convention as TransformAgent's own
+            # no-schema case.
+            return []
+        return [
+            path.model_copy(update={"path": f"result.{path.path}"})
+            for path in field_paths(parsed.output_fields)
+        ]
+
     _TYPED_OUTPUT_BUILDERS.update(
         {
             "AITaskAgent": ai_task_paths,
             "WorkflowInputAgent": input_paths,
             "DecisionAgent": decision_paths,
             "DataTransformAgent": transform_paths,
+            "TransformAgent": transform_agent_paths,
+            "MCPToolAgent": mcp_tool_paths,
+            "SubprocessAgent": subprocess_output_paths,
+            "PythonSnippetAgent": python_snippet_paths,
         }
     )
 
@@ -143,6 +258,152 @@ def _infer_kind(value: Any) -> str:
     return "unknown"
 
 
+#: JSON-Schema `type` -> this platform's own FieldKind vocabulary.
+_JSON_SCHEMA_KINDS = {
+    "string": "string",
+    "integer": "integer",
+    "number": "number",
+    "boolean": "boolean",
+    "object": "object",
+    "array": "list",
+}
+
+
+def _json_schema_kind(schema: dict[str, Any]) -> str:
+    type_ = schema.get("type")
+    if isinstance(type_, list):
+        # e.g. ["string", "null"] from an Optional field — the null arm carries
+        # no shape information, so the first real type wins.
+        type_ = next((item for item in type_ if item != "null"), None)
+    return _JSON_SCHEMA_KINDS.get(type_, "unknown")
+
+
+def _json_schema_paths(schema: dict[str, Any], prefix: str) -> list[FieldPath]:
+    """Flatten a JSON-Schema object's `properties` into typed dotted paths.
+
+    Mirrors `_field_paths`' own `<list>.items.<name>` convention for a list of
+    objects (app/runtime/field_schema.py), so a tool's declared output_schema
+    reads through the exact same picker/rule-editor machinery as a visually
+    authored schema — an MCP tool's `data.accounts.items.account_id` is not a
+    special case, it is the same mechanism DataTransformAgent's item fields use.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return []
+    required = {name for name in (schema.get("required") or []) if isinstance(name, str)}
+
+    found: list[FieldPath] = []
+    for name, subschema in properties.items():
+        if not isinstance(subschema, dict):
+            continue
+        path = f"{prefix}.{name}"
+        kind = _json_schema_kind(subschema)
+        items_schema = subschema.get("items") if kind == "list" else None
+        item_kind = (
+            _json_schema_kind(items_schema)
+            if isinstance(items_schema, dict)
+            else None
+        )
+        found.append(
+            FieldPath(
+                path=path,
+                type=kind,
+                description=str(subschema.get("description") or ""),
+                required=name in required,
+                item_type=item_kind if item_kind and item_kind != "unknown" else None,
+                may_be_unavailable=name not in required,
+            )
+        )
+        if kind == "object":
+            found.extend(_json_schema_paths(subschema, path))
+        elif kind == "list" and isinstance(items_schema, dict) and item_kind == "object":
+            found.extend(_json_schema_paths(items_schema, f"{path}.items"))
+    return found
+
+
+def _static_mcp_output_schema(server_id: Any, tool_name: Any) -> dict[str, Any] | None:
+    """The declared output_schema for a tool this platform ships itself.
+
+    Only the built-in servers whose tool vocabulary is a plain Python object
+    (loaded at import time, no live round trip) can be resolved this way —
+    the F&O connector's `live` mode and any third-party MCP_SERVERS entry are
+    genuinely unknown until the server itself is asked, which is exactly what
+    the Builder's tool-discovery panel is for. A tool name is unambiguous
+    either way: `dynamics365_finance_scm`'s mock and live modes never share a
+    tool name, so resolving it here can never describe the wrong backend.
+    """
+    if not isinstance(server_id, str) or not isinstance(tool_name, str):
+        return None
+
+    from app.mcp.business_records.tools import TOOLS_BY_NAME as _BUSINESS_RECORDS_TOOLS
+    from app.mcp.d365_finance.tools import TOOLS_BY_NAME as _D365_FINANCE_TOOLS
+    from app.mcp.dynamics.tools import TOOLS_BY_NAME as _DYNAMICS_TOOLS
+
+    registries = {
+        "business_records": _BUSINESS_RECORDS_TOOLS,
+        "dynamics365_finance_scm": _D365_FINANCE_TOOLS,
+        "dynamics365": _DYNAMICS_TOOLS,
+        "dynamics365_readonly": _DYNAMICS_TOOLS,
+    }
+    definition = registries.get(server_id, {}).get(tool_name)
+    if not definition:
+        return None
+    schema = definition.get("output_schema")
+    return schema if isinstance(schema, dict) else None
+
+
+def _static_subprocess_child_spec(config: dict[str, Any]) -> WorkflowSpec | None:
+    """Load the referenced workflow's spec purely to read its shape (declared
+    output contract) — None for anything not statically resolvable (missing
+    name, bad charset, file not found, fails to parse). The dedicated
+    subprocess check (_check_subprocess_agents) is what reports those as
+    authoring errors; this just declines to guess a shape it doesn't have.
+    """
+    import re
+    from pathlib import Path
+
+    name = config.get("workflow")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        return None
+    path = Path("workflows") / f"{name}.yaml"
+    if not path.exists():
+        return None
+    try:
+        from app.runtime.loader import load_workflow_from_string
+
+        return load_workflow_from_string(path.read_text())
+    except Exception:
+        return None
+
+
+def _shallow_child_node_paths(child_spec: WorkflowSpec, node_id: str) -> list[FieldPath]:
+    """One node's typed output paths, one level deep, deliberately NOT a
+    recursive call into build_field_index(child_spec): a SubprocessAgent
+    output node's own further-nested child is left untyped rather than
+    resolved, so a long — or cyclic — subprocess reference chain can never
+    blow the Python call stack just to compute field paths. (A genuine cycle
+    is instead reported cleanly as SUBPROCESS_RECURSION, by the iterative,
+    non-recursive walker in _check_subprocess_agents.)
+    """
+    child_node = next((n for n in child_spec.nodes if n.id == node_id), None)
+    if child_node is None or child_node.type == "SubprocessAgent":
+        return []
+
+    _register_builders()
+    found: list[FieldPath] = []
+    try:
+        found.extend(_declared_output_paths(NodeRegistry.get(child_node.type)))
+    except Exception:
+        pass
+    builder = _TYPED_OUTPUT_BUILDERS.get(child_node.type)
+    if builder is not None:
+        try:
+            found.extend(builder(child_node.effective_config()))
+        except (ValidationError, ValueError):
+            pass
+    return found
+
+
 _TRANSFORM_KINDS = {
     "count": "integer",
     "number": "number",
@@ -160,6 +421,24 @@ _TRANSFORM_KINDS = {
 
 def _transform_kind(operation: str) -> str:
     return _TRANSFORM_KINDS.get(operation, "unknown")
+
+
+#: Mirrors TransformAgent's own `_TYPE_MAP` (app/nodes/transform.py) — the
+#: author writes "str"/"int"/"float"/... in `output_schema`, so the contract
+#: needs the same aliases to report a type instead of "unknown".
+_TRANSFORM_AGENT_KINDS = {
+    "str": "string",
+    "string": "string",
+    "int": "integer",
+    "integer": "integer",
+    "float": "number",
+    "number": "number",
+    "bool": "boolean",
+    "boolean": "boolean",
+    "list": "list",
+    "dict": "object",
+    "object": "object",
+}
 
 
 _ANNOTATION_KINDS: list[tuple[type, str]] = [
@@ -306,6 +585,51 @@ def build_field_index(spec: WorkflowSpec) -> FieldIndex:
                 index.add(node.id, path)
             continue
 
+        if node.type == "PythonSnippetAgent" and not node.effective_config().get("output_fields"):
+            # No declared output shape: a snippet with no output_fields can
+            # still write any key into `output` at runtime, so this node is
+            # exactly as closed-world as an MCP tool with an under-specified
+            # schema — best-effort only (there is nothing to enrich the
+            # index with here, since there is no declared shape at all),
+            # never closed-world.
+            index.typed_nodes[node.id] = False
+            try:
+                for path in _declared_output_paths(NodeRegistry.get(node.type)):
+                    index.add(node.id, path)
+            except Exception:
+                pass
+            continue
+
+        if node.type in ("MCPToolAgent", "SubprocessAgent"):
+            # Best-effort enrichment only, never closed-world. MCPToolAgent:
+            # several tools this platform ships declare an under-specified
+            # sub-schema (e.g. find_order_fulfilment_status's `fulfilment`
+            # is a bare `{"type": "object"}` — the real handler's shape
+            # isn't fully mirrored in the static schema). SubprocessAgent:
+            # the referenced workflow might not exist yet at authoring time,
+            # might have no declared output: contract, or (result_from ==
+            # "node"/"all_outputs") is deliberately never typed at all.
+            # Either way, marking the node "fully typed" would make the
+            # rule/condition checker below reject a reference into a field
+            # that is real at runtime but merely undeclared — exactly the
+            # false positive a free-form dict is supposed to avoid. So these
+            # paths feed the field index (for the Builder's picker, which
+            # doesn't gate on `typed_nodes`) while `typed_nodes` stays
+            # False, preserving this node type's always-permissive behavior
+            # for the strict checks.
+            index.typed_nodes[node.id] = False
+            try:
+                for path in _declared_output_paths(NodeRegistry.get(node.type)):
+                    index.add(node.id, path)
+            except Exception:
+                pass
+            try:
+                for path in builder(node.effective_config()):
+                    index.add(node.id, path)
+            except (ValidationError, ValueError):
+                pass
+            continue
+
         index.typed_nodes[node.id] = True
         try:
             paths = builder(node.effective_config())
@@ -356,9 +680,14 @@ def validate_business_logic(
             _check_router(node, config, index, nodes, issue, guaranteed_before)
         elif node.type == "AITaskAgent":
             _check_ai_task(node, config, issue)
+        elif node.type == "TransformAgent":
+            _check_transform_agent(node, config, issue)
 
     _check_conditional_join_reachability(spec, issue)
     _check_external_actions(spec, issue, guaranteed_before)
+    _check_subprocess_agents(spec, issue, guaranteed_before)
+    _check_sql_query_agents(spec, issue)
+    _check_python_snippet_agents(spec, issue)
 
 
 def _check_conditional_join_reachability(
@@ -546,6 +875,30 @@ def _check_router(
             guaranteed_before=guaranteed_before,
             label="the routing field",
         )
+        # Multi-Route field mode maps EACH element of a list through
+        # `branches` (see RouterAgent._route_by_field_multi) — a scalar
+        # field can hold at most one value, defeating the entire point of
+        # selecting several branches at once.
+        if (
+            parsed.selection == "multi"
+            and described is not None
+            and described.type not in ("list", "unknown")
+        ):
+            issue(
+                "MULTIROUTE_FIELD_NOT_A_LIST",
+                (
+                    f"Multi-Route field mode reads {parsed.route_field}, but "
+                    f"it is a {described.type}, not a list — only one value "
+                    "can ever be selected, the same as single selection."
+                ),
+                path=f"nodes.{node.id}.config.route_field",
+                node_id=node.id,
+                suggestion=(
+                    "Point route_field at a list-typed value (e.g. a "
+                    "Transform field declared as a list), or switch this "
+                    "router back to single selection."
+                ),
+            )
         if described is not None and described.enum_values:
             unknown = [
                 value
@@ -883,6 +1236,38 @@ def _check_ai_task(
     except (ValidationError, ValueError):
         return
 
+    _check_output_field_enums(node, fields, issue)
+
+
+def _check_transform_agent(
+    node: NodeSpec,
+    config: dict[str, Any],
+    issue: Callable[..., None],
+) -> None:
+    """Same contract sanity as `_check_ai_task`, for a new-style TransformAgent
+    node's `output_fields`. Legacy nodes (`output_schema`'s plain type map, no
+    enum concept) have nothing for this check to do."""
+    from app.nodes.transform import is_new_style, TransformConfig
+
+    try:
+        if not is_new_style(TransformConfig(**config)):
+            return
+    except (ValidationError, ValueError):
+        return
+
+    try:
+        fields = parse_fields(config.get("output_fields") or [])
+    except (ValidationError, ValueError):
+        return
+
+    _check_output_field_enums(node, fields, issue)
+
+
+def _check_output_field_enums(
+    node: NodeSpec,
+    fields: list[FieldSpec],
+    issue: Callable[..., None],
+) -> None:
     for path in field_paths(fields):
         if path.type == "enum" and not path.enum_values:
             issue(
@@ -961,6 +1346,368 @@ def _check_external_actions(
 
         if node.type == "MCPToolAgent":
             _check_mcp_tool(node, issue, reviewed_before)
+            continue
+
+        if node.type == "MCPAgent":
+            _check_mcp_agent(node, issue, reviewed_before)
+            continue
+
+        if node.type == "ExternalActionAgent":
+            _check_external_action(node, issue, reviewed_before)
+
+
+def _check_external_action(
+    node: NodeSpec,
+    issue: Callable[..., None],
+    reviewed_before: Callable[[str], bool],
+) -> None:
+    """A write or external_action call with nothing between it and the model.
+
+    Same shape as MCP's and Email's own checks: the classification is
+    authored on the node (§48 — surfaced, not buried), so preflight only
+    needs to read it and check whether a human review is guaranteed first.
+    """
+    config = node.effective_config()
+    safety_class = config.get("safety_class")
+    if safety_class not in ("write", "external_action"):
+        return
+    if config.get("allow_unattended_write"):
+        return
+    if reviewed_before(node.id):
+        return
+    issue(
+        "EXTERNAL_ACTION_WITHOUT_REVIEW",
+        (
+            f"Step {node.id!r} is a {safety_class} external action with no "
+            "human review guaranteed before it and allow_unattended_write is "
+            "not set."
+        ),
+        severity="warning",
+        path=f"nodes.{node.id}.config.safety_class",
+        node_id=node.id,
+        suggestion=(
+            "Add a Human Review step upstream, or set allow_unattended_write "
+            "if this call is meant to run unattended."
+        ),
+    )
+
+
+def _check_subprocess_agents(
+    spec: WorkflowSpec,
+    issue: Callable[..., None],
+    guaranteed_before: Callable[[str, str], bool] | None,
+) -> None:
+    """Everything about a Subprocess step preflight can prove without
+    actually running the child: the referenced workflow exists and parses,
+    every explicit input mapping targets a real declared input of it, every
+    *required* input of it resolves to something, and the whole reference
+    graph this workflow reaches (through its own and every downstream
+    workflow's Subprocess steps) is acyclic.
+    """
+    import re
+    from pathlib import Path
+
+    from app.runtime.loader import load_workflow_from_string
+
+    nodes_by_id = {node.id: node for node in spec.nodes}
+    declared_inputs = set(spec.inputs)
+    name_re = re.compile(r"^[A-Za-z0-9_-]+$")
+
+    root_refs: set[str] = set()
+
+    for node in spec.nodes:
+        if node.type != "SubprocessAgent":
+            continue
+        config = node.effective_config()
+        name = str(config.get("workflow") or "").strip()
+        if not name or not name_re.fullmatch(name):
+            issue(
+                "SUBPROCESS_WORKFLOW_NOT_CONFIGURED",
+                f"Step {node.id!r} has no valid workflow selected.",
+                path=f"nodes.{node.id}.config.workflow",
+                node_id=node.id,
+                suggestion="Pick a saved workflow to run as a subprocess.",
+            )
+            continue
+
+        root_refs.add(name)
+        child_path = Path("workflows") / f"{name}.yaml"
+        if not child_path.exists():
+            issue(
+                "SUBPROCESS_WORKFLOW_NOT_FOUND",
+                (
+                    f"Step {node.id!r} references workflow {name!r}, which "
+                    "does not exist."
+                ),
+                path=f"nodes.{node.id}.config.workflow",
+                node_id=node.id,
+                suggestion="Pick an existing saved workflow.",
+            )
+            continue
+
+        try:
+            child_spec = load_workflow_from_string(child_path.read_text())
+        except Exception as exc:
+            issue(
+                "SUBPROCESS_WORKFLOW_INVALID",
+                (
+                    f"Step {node.id!r} references workflow {name!r}, which "
+                    f"failed to load: {exc}."
+                ),
+                path=f"nodes.{node.id}.config.workflow",
+                node_id=node.id,
+            )
+            continue
+
+        explicit_inputs = config.get("inputs")
+        explicit_inputs = explicit_inputs if isinstance(explicit_inputs, dict) else {}
+
+        for input_name in explicit_inputs:
+            if input_name in child_spec.inputs:
+                continue
+            issue(
+                "SUBPROCESS_INPUT_NOT_DECLARED",
+                (
+                    f"Step {node.id!r} maps {input_name!r}, which {name!r} "
+                    "does not declare as an input — this value is dropped, "
+                    "not delivered."
+                ),
+                path=f"nodes.{node.id}.config.inputs.{input_name}",
+                node_id=node.id,
+                suggestion=f"Remove it, or check {name!r}'s declared inputs.",
+            )
+
+        for input_name, input_spec in child_spec.inputs.items():
+            if not input_spec.required or input_name in explicit_inputs:
+                continue
+            if input_name in declared_inputs:
+                continue
+            source_node = nodes_by_id.get(input_name)
+            if source_node is not None and (
+                guaranteed_before is None
+                or guaranteed_before(input_name, node.id)
+            ):
+                continue
+            issue(
+                "SUBPROCESS_REQUIRED_INPUT_UNRESOLVED",
+                (
+                    f"Step {node.id!r} calls {name!r}, which requires "
+                    f"{input_name!r} — nothing maps to it."
+                ),
+                path=f"nodes.{node.id}.config.inputs",
+                node_id=node.id,
+                suggestion=(
+                    f"Map {input_name!r} explicitly, or name a workflow "
+                    f"input or an upstream step {input_name!r}."
+                ),
+            )
+
+    cycle = _find_subprocess_cycle(root_refs)
+    if cycle:
+        issue(
+            "SUBPROCESS_RECURSION",
+            (
+                "Subprocess workflows reference each other in a cycle: "
+                f"{' -> '.join(cycle)}."
+            ),
+            suggestion="Break the cycle — a subprocess chain must terminate.",
+        )
+
+
+def _load_subprocess_refs(name: str) -> set[str]:
+    """Workflow names a *saved* workflow's own SubprocessAgent nodes
+    reference. Empty for a missing or unparsable file — those are reported
+    as authoring errors by _check_subprocess_agents itself, not here."""
+    from pathlib import Path
+
+    from app.runtime.loader import load_workflow_from_string
+
+    path = Path("workflows") / f"{name}.yaml"
+    if not path.exists():
+        return set()
+    try:
+        spec = load_workflow_from_string(path.read_text())
+    except Exception:
+        return set()
+    return {
+        str(node.effective_config().get("workflow") or "").strip()
+        for node in spec.nodes
+        if node.type == "SubprocessAgent" and node.effective_config().get("workflow")
+    }
+
+
+def _find_subprocess_cycle(entry_refs: set[str]) -> list[str] | None:
+    """Iterative cycle detection over the on-disk subprocess call graph.
+
+    One iterative, memoised worklist walker — never mutually-recursive
+    callbacks, which is exactly what caused a real RecursionError in an
+    earlier design for this feature. Each on-disk workflow file is parsed at
+    most once (`memo`). Returns the cyclic path if one exists, else None.
+
+    Standard two-colour (gray/black) iterative DFS: `color[name] == 1` means
+    "on the current path" (a return to it is a real cycle), `== 2` means
+    "fully explored, clean". The explicit stack of `[name, children, index]`
+    frames is what replaces Python call recursion.
+    """
+    memo: dict[str, set[str]] = {}
+
+    def refs_of(name: str) -> list[str]:
+        cached = memo.get(name)
+        if cached is None:
+            cached = _load_subprocess_refs(name)
+            memo[name] = cached
+        return sorted(cached)
+
+    color: dict[str, int] = {}
+    for start in sorted(entry_refs):
+        if color.get(start) == 2:
+            continue
+        stack: list[list[Any]] = [[start, refs_of(start), 0]]
+        color[start] = 1
+        while stack:
+            frame = stack[-1]
+            frame_name, children, i = frame
+            if i >= len(children):
+                color[frame_name] = 2
+                stack.pop()
+                continue
+            frame[2] += 1
+            nxt = children[i]
+            state = color.get(nxt)
+            if state == 1:
+                return [f[0] for f in stack] + [nxt]
+            if state != 2:
+                color[nxt] = 1
+                stack.append([nxt, refs_of(nxt), 0])
+    return None
+
+
+def _check_sql_query_agents(spec: WorkflowSpec, issue: Callable[..., None]) -> None:
+    """A literal `{{...}}` inside the `sql` field text would be substituted
+    by the compiler's generic templating pass before run() ever sees it —
+    landing a mapped value directly in SQL text instead of going through
+    `params` as a bound `%(name)s` placeholder. That is exactly the
+    SQL-injection shape this node type exists to prevent (see
+    app/nodes/sql_query.py's own module docstring), so it is an authoring
+    error, not a style preference.
+    """
+    for node in spec.nodes:
+        if node.type != "SQLQueryAgent":
+            continue
+        sql = node.effective_config().get("sql")
+        if not isinstance(sql, str):
+            continue
+        if "{{" in sql:
+            issue(
+                "SQL_QUERY_TEMPLATE_IN_TEXT",
+                (
+                    f"Step {node.id!r}'s sql field contains a {{{{...}}}} "
+                    "reference. A mapped value belongs in params, referenced "
+                    "in the SQL text as %(name)s — never substituted "
+                    "directly into the query string."
+                ),
+                path=f"nodes.{node.id}.config.sql",
+                node_id=node.id,
+                suggestion="Move the mapped value into params and reference it as %(name)s.",
+            )
+        if "%s" in sql:
+            issue(
+                "SQL_QUERY_POSITIONAL_PARAM",
+                (
+                    f"Step {node.id!r}'s sql field uses a bare %s "
+                    "placeholder — query_readonly binds params by name, so "
+                    "this will fail at run time."
+                ),
+                severity="warning",
+                path=f"nodes.{node.id}.config.sql",
+                node_id=node.id,
+                suggestion="Use a %(name)s placeholder matching a key in params.",
+            )
+
+
+def _check_python_snippet_agents(spec: WorkflowSpec, issue: Callable[..., None]) -> None:
+    """Everything decidable about a Python snippet without running it:
+    a syntax error (would fail every run identically, so it is an error, not
+    a warning), plus authoring hints — an import with no effect inside the
+    sandbox, a dunder-attribute access, or a snippet that never touches
+    `output` at all. None of these are the actual security boundary (that is
+    the sidecar's own network_mode: none and resource limits, which hold
+    regardless of what a snippet imports) — they are just help an author
+    would otherwise only get by running it and finding out.
+    """
+    from app.nodes.python_snippet import assigns_output, scan_snippet_for_warnings
+
+    for node in spec.nodes:
+        if node.type != "PythonSnippetAgent":
+            continue
+        code = node.effective_config().get("code")
+        if not isinstance(code, str) or not code.strip():
+            continue
+
+        try:
+            compile(code, "<snippet>", "exec")
+        except SyntaxError as exc:
+            issue(
+                "SNIPPET_SYNTAX_ERROR",
+                f"Step {node.id!r}'s code has a syntax error: {exc.msg} (line {exc.lineno}).",
+                path=f"nodes.{node.id}.config.code",
+                node_id=node.id,
+                suggestion="Fix the syntax error before this step can run.",
+            )
+            continue
+
+        for hint in scan_snippet_for_warnings(code):
+            issue(
+                "SNIPPET_SUSPICIOUS_CODE",
+                f"Step {node.id!r}'s code {hint}.",
+                severity="warning",
+                path=f"nodes.{node.id}.config.code",
+                node_id=node.id,
+                suggestion="Remove it if unintentional — it has no effect in the sandbox either way.",
+            )
+
+        if not assigns_output(code):
+            issue(
+                "SNIPPET_NEVER_SETS_OUTPUT",
+                f"Step {node.id!r}'s code never appears to write to `output` — its result will be empty.",
+                severity="warning",
+                path=f"nodes.{node.id}.config.code",
+                node_id=node.id,
+                suggestion="Assign the fields you want downstream steps to read, e.g. output['field'] = ....",
+            )
+
+
+def _check_mcp_agent(
+    node: NodeSpec,
+    issue: Callable[..., None],
+    reviewed_before: Callable[[str], bool],
+) -> None:
+    """MCPAgent chooses its own tools at runtime, so — unlike MCPToolAgent —
+    there is no single static tool name preflight can classify read/write
+    against. What preflight *can* check without a server round-trip: whether
+    the author narrowed the tool surface at all, and whether a human reviews
+    the outcome before it can have an effect outside the run."""
+
+    config = node.effective_config()
+    if config.get("allowed_tools"):
+        return
+    if reviewed_before(node.id):
+        return
+    issue(
+        "EXTERNAL_ACTION_WITHOUT_REVIEW",
+        (
+            f"Step {node.id!r} is an autonomous tool-calling agent with no "
+            "allowed_tools restriction and no human review guaranteed before "
+            "it. It may call any tool the connected server exposes."
+        ),
+        severity="warning",
+        path=f"nodes.{node.id}.config.allowed_tools",
+        node_id=node.id,
+        suggestion=(
+            "Set allowed_tools to the specific tools this step needs, or add "
+            "a Human Review step upstream."
+        ),
+    )
 
 
 def _check_mcp_tool(

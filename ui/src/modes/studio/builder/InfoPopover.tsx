@@ -9,8 +9,12 @@ import { FEATURE_HELP } from './feature-help';
  * dynamic follow-up never needs a second explanation authored server-side.
  *
  * Usage: <InfoPopover feature="preflight" />
+ *
+ * Pass `label` to render it as a plain-language link (e.g. "How does this
+ * work?") instead of a bare ⓘ icon, for spots where the icon-only trigger
+ * reads as too subtle to notice on a first visit.
  */
-export function InfoPopover({ feature, align = 'left' }: { feature: string; align?: 'left' | 'right' }) {
+export function InfoPopover({ feature, align = 'left', label }: { feature: string; align?: 'left' | 'right'; label?: string }) {
   const [open, setOpen] = useState(false);
   const [askingAi, setAskingAi] = useState(false);
   const entry = FEATURE_HELP[feature];
@@ -18,16 +22,18 @@ export function InfoPopover({ feature, align = 'left' }: { feature: string; alig
   if (!entry) return null;
 
   return (
-    <span className="relative inline-flex">
+    <span className="relative inline-flex items-center gap-1">
       <button
         aria-expanded={open}
         aria-label={`About ${entry.title}`}
-        className="inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none text-ink-400 hover:text-accent-700"
+        className={label
+          ? 'text-[11px] font-medium text-accent-700 hover:underline'
+          : 'inline-flex h-4 w-4 items-center justify-center rounded-full text-[11px] leading-none text-ink-400 hover:text-accent-700'}
         onClick={event => { event.stopPropagation(); setOpen(value => !value); }}
         title={`About ${entry.title}`}
         type="button"
       >
-        ⓘ
+        {label ?? 'ⓘ'}
       </button>
 
       {open && (

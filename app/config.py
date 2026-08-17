@@ -14,7 +14,7 @@ class Settings(BaseSettings):
 
     secret_key: str = "insecure-dev-secret-change-me"
     algorithm: str = "HS256"
-    access_token_expire_minutes: int = 120
+    access_token_expire_minutes: int = 600
     jwt_issuer: str = "eurskem-ai"
     jwt_audience: str = "eurskem-ai-ui"
     environment: str = "development"
@@ -94,9 +94,11 @@ class Settings(BaseSettings):
     # requires `npm run build` + a real F&O environment). `mock` mode (the
     # default) runs app/mcp/d365_finance/server.py, a fixture-backed Python
     # server exposing the narrow business tools (find_customer,
-    # get_account_ownership, get_quote, get_sales_order,
-    # get_order_fulfilment_status, get_credit_status,
-    # get_inventory_availability) that the live server's own README recommends
+    # find_account_ownership, find_credit_status, find_quote,
+    # find_sales_order, find_order_fulfilment_status,
+    # find_inventory_availability, find_installed_unit, find_shipment,
+    # find_invoice, find_contract, find_products) that the live server's own
+    # README recommends
     # building on top of its generic OData adapter — that business-tool layer
     # does not exist yet on the live server, so the two modes are not
     # tool-for-tool identical the way the Dataverse CRM mock/live pair is.
@@ -114,6 +116,62 @@ class Settings(BaseSettings):
     fno_write_entity_allowlist: str = ""
     fno_delete_entity_allowlist: str = ""
     fno_entity_aliases_json: str = ""
+
+    # ── Business Records (MySQL), exposed through MCP ────────────────────────
+    # A real, live MySQL database — unlike the Dataverse CRM / F&O connections
+    # above (fixture-backed in-memory mocks reloaded from JSON on every process
+    # start), this one persists for real. Seeded once from the same two
+    # fixture files (app/mcp/dynamics/fixtures.json,
+    # app/mcp/d365_finance/fixtures.json) via schema.sql + seed.py — see
+    # app/mcp/business_records/. Exposes narrow, classified tools
+    # (customer_search/order_search/inventory_check/product_search — read;
+    # create_case/create_opportunity/create_order/update_order/update_case —
+    # write) rather than a raw SQL executor.
+    business_records_mcp_enabled: bool = True
+    business_records_mysql_host: str = "127.0.0.1"
+    business_records_mysql_port: int = 3306
+    business_records_mysql_user: str = "eurskem-app"
+    business_records_mysql_password: str = "eurskem-local-dev"
+    business_records_mysql_database: str = "business_records"
+    # A second, genuinely lower-privileged credential for the query_readonly
+    # MCP tool (SQLQueryAgent) — GRANT SELECT only, created by seed.py's
+    # ensure_readonly_user(). The only layer of the tool's defense-in-depth
+    # that holds on its own: the existing business_records_mysql_user above
+    # has ALL PRIVILEGES, so a SQL-injection-proof query string alone would
+    # still be one bug away from a write if it ran under that account.
+    business_records_readonly_mysql_user: str = "eurskem-app-ro"
+    business_records_readonly_mysql_password: str = "eurskem-local-dev-ro"
+    # Only ever used once, by seed.py's ensure_readonly_user() — the regular
+    # app user has no CREATE USER privilege, by design, so provisioning the
+    # read-only account needs root. Matches docker-compose.yml's own
+    # BUSINESS_RECORDS_MYSQL_ROOT_PASSWORD env var / local-dev default.
+    business_records_mysql_root_password: str = "eurskem-local-dev-root"
+
+    # Email OAuth (Outlook via Microsoft Graph, Gmail) — lets someone connect
+    # a real mailbox through the Builder instead of a deployment operator
+    # hand-editing EMAIL_CONNECTIONS with a static, non-refreshing access
+    # token (see app/integrations/email/__init__.py). Registering the actual
+    # Azure AD app (Graph Mail.Send/Mail.ReadWrite delegated scopes) and
+    # Google Cloud OAuth client (Gmail gmail.send/gmail.compose/
+    # gmail.readonly scopes) is an external, deployment-owner prerequisite —
+    # these settings only hold what such an app registration issues.
+    microsoft_oauth_client_id: str = ""
+    microsoft_oauth_client_secret: str = ""
+    microsoft_oauth_tenant_id: str = "common"
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    #: Where a provider redirects back to after consent — this app's own
+    #: externally-reachable origin, e.g. https://app.example.com. The full
+    #: callback path (/email/oauth/callback/{provider}) is appended by
+    #: app/api/email_oauth.py.
+    oauth_redirect_base_url: str = "http://localhost:8000"
+    #: Root key (envelope-encryption KEK) for the OAuth token vault
+    #: (app/integrations/email/token_vault.py). Deliberately separate from
+    #: both secret_key (JWT signing) and entity_vault_master_key (a
+    #: different security domain) — the same key-separation reasoning as
+    #: entity_vault_master_key above: a leaked key must compromise exactly
+    #: one thing, never a second by coincidence.
+    email_token_vault_master_key: str = ""
 
     # Research API credentials for paper-search-mcp. These never reach the
     # subprocess by ambient inheritance in local dev (pydantic-settings' own
@@ -200,6 +258,22 @@ class Settings(BaseSettings):
 
     # Every outbound call has a finite deadline.
     external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+
+    # SubprocessAgent: how many levels a subprocess chain may nest at
+    # runtime before it is refused — a real static cycle is already caught
+    # by preflight, but two workflows can be made mutually recursive after
+    # the fact (or the child might not exist yet at authoring time), so this
+    # is the runtime backstop.
+    subprocess_max_depth: int = Field(default=3, ge=1, le=10)
+
+    # PythonSnippetAgent's isolated executor (app/runtime/snippet_daemon.py),
+    # reached over a Unix socket shared with the network-isolated sidecar via
+    # a volume — never a TCP port, since that sidecar has network_mode: none.
+    snippet_runner_enabled: bool = True
+    snippet_runner_socket_path: str = "/run/snippet-runner/snippet-runner.sock"
+    snippet_default_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    snippet_default_memory_mb: int = Field(default=128, ge=16, le=1024)
+
     llm_request_timeout_seconds: float = Field(default=200.0, gt=0, le=900)
     # Strict preflight checks provider model metadata, never generation.
     llm_model_access_probe_timeout_seconds: float = Field(

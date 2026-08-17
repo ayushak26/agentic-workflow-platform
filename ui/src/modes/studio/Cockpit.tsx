@@ -171,6 +171,14 @@ export function Cockpit() {
     });
   }, [cockpit.nodeStates, liveRun, finished, plainEdges, setNodes, liveRunNodeStatus]);
 
+  // What kind of work each step does, read from the node-type manifest —
+  // mirrors Builder.tsx's own `executionKinds` map so a run in Cockpit shows
+  // the same automation-boundary badge the canvas already shows at authoring
+  // time, rather than showing nothing at all.
+  const executionKinds = useMemo(() => new Map(
+    Object.values(nodeTypesByName).map((manifest) => [manifest.type_name, manifest.execution_kind]),
+  ), [nodeTypesByName]);
+
   const stageIndexById = useMemo(() => {
     const map = new Map<string, number>();
     for (const stage of stages) for (const id of stage.nodeIds) map.set(id, stage.index);
@@ -205,11 +213,16 @@ export function Cockpit() {
         || filteredOutIds.has(nodeId)
       );
       const pathHighlighted = selectedId != null && nodeId !== selectedId && pathHighlight.has(nodeId);
-      if (node.data.faded === faded && node.data.pathHighlighted === pathHighlighted) return node;
-      return { ...node, data: { ...node.data, faded, pathHighlighted } };
+      const executionKind = executionKinds.get(node.data.typeName);
+      if (
+        node.data.faded === faded
+        && node.data.pathHighlighted === pathHighlighted
+        && node.data.executionKind === executionKind
+      ) return node;
+      return { ...node, data: { ...node.data, faded, pathHighlighted, executionKind } };
     });
     return [...bandNodes, ...rendered];
-  }, [collapsedResult.nodes, bandNodes, selectedId, pathHighlight, filteredOutIds]);
+  }, [collapsedResult.nodes, bandNodes, selectedId, pathHighlight, filteredOutIds, executionKinds]);
 
   const displayEdges: Edge[] = useMemo(() => collapsedResult.edges.map((edge) => {
     const onPath = selectedId != null && pathHighlight.has(edge.source) && pathHighlight.has(edge.target);

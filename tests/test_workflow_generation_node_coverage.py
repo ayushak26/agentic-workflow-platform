@@ -54,7 +54,12 @@ class GenerationFixture:
 NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     "AITaskAgent": GenerationFixture(
         "Extract structured information from a customer email and classify its intent.",
-        "workflows/multilingual_customer_request_triage.yaml",
+        # AITaskAgent is deprecated in favor of TransformAgent's new-style
+        # editor (see app/nodes/ai_task.py) — its 3 real production instances
+        # were migrated, so no checked-in workflow uses it anymore. This
+        # minimal fixture keeps coverage complete while the type stays
+        # registered.
+        "workflows/test_fixtures/generation_coverage/ai_task_agent.yaml",
     ),
     "BoundedDeepResearchAgent": GenerationFixture(
         "Run a bounded deep research job with a web-search tool-calling loop to build research dossiers.",
@@ -107,6 +112,10 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     "EmailAgent": GenerationFixture(
         "Search the shared inbox for unread messages and reply to the customer.",
         "workflows/test_fixtures/generation_coverage/email_agent.yaml",
+    ),
+    "ExternalActionAgent": GenerationFixture(
+        "Call an external logistics API to check a shipment's delivery status.",
+        "workflows/test_fixtures/generation_coverage/external_action_agent.yaml",
     ),
     "ExcelTableExtractor": GenerationFixture(
         "Extract tables from an uploaded xlsx spreadsheet in storage.",
@@ -231,6 +240,18 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     "StructuredDatasetRetrieverAgent": GenerationFixture(
         "Retrieve bounded Eurostat structured data with explicit filters and auditable provenance.",
         "workflows/database_lookup_smoke_test.yaml",
+    ),
+    "SubprocessAgent": GenerationFixture(
+        "Run another saved workflow as a reusable business subprocess and wait for it to finish.",
+        "workflows/test_fixtures/generation_coverage/subprocess_agent.yaml",
+    ),
+    "SQLQueryAgent": GenerationFixture(
+        "Run a read-only SQL query against the business-records database to look up matching accounts.",
+        "workflows/test_fixtures/generation_coverage/sql_query_agent.yaml",
+    ),
+    "PythonSnippetAgent": GenerationFixture(
+        "Run a short Python snippet to add two numbers together in an isolated sandbox.",
+        "workflows/test_fixtures/generation_coverage/python_snippet_agent.yaml",
     ),
     "TextAssemblerAgent": GenerationFixture(
         "Deterministically join pre-rendered text parts with a separator to assemble the final document.",

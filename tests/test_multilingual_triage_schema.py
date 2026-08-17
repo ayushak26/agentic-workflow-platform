@@ -75,7 +75,7 @@ async def test_multi_intent_request_routes_on_higher_priority_intent():
     )
 
     assert result["status"] == "completed"
-    understood = result["state"]["node_outputs"]["understand_request"]["result"]
+    understood = result["state"]["node_outputs"]["understand_request"]["parsed"]
     assert understood["request_types"] == ["technical_support", "quotation_request"]
     assert understood["product_model"] == "Dura 35"
     assert understood["quantity"] == 2

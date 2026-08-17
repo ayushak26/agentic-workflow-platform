@@ -43,7 +43,9 @@ COPY --from=scientific-skills \
 
 RUN groupadd --system app \
     && useradd --system --uid 10001 --gid app --home-dir /app app \
-    && chown -R app:app /app /opt/scientific-agent-skills
+    && chown -R app:app /app /opt/scientific-agent-skills \
+    && mkdir -p /run/snippet-runner \
+    && chown app:app /run/snippet-runner
 
 USER app
 

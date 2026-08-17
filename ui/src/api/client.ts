@@ -7,6 +7,8 @@ import type {
   CacheSummary,
   ConceptAlternative,
   CostOverview,
+  DraftCodeRequest,
+  DraftInstructionsField,
   EmailConnectionInfo,
   FieldSpec,
   InfraAllocationEntry,
@@ -350,6 +352,23 @@ export const api = {
   emailConnections: () =>
     afetch(`${API}/builder/email/connections`, { headers: authHeaders() })
       .then(j<{ connections: EmailConnectionInfo[]; configured: boolean }>),
+  /** Not a fetch — a real browser navigation URL (opened via window.open),
+   *  since the provider's own consent screen has to render in that window.
+   *  Auth travels via the same access_token cookie login already sets, not
+   *  a header this navigation could carry. */
+  emailConnectUrl: (provider: 'microsoft' | 'gmail') =>
+    `${API}/builder/email/connect/${provider}`,
+  setEmailConnectionAllowSend: (connectionId: string, allowSend: boolean) =>
+    afetch(`${API}/builder/email/connections/${encodeURIComponent(connectionId)}`, {
+      method: 'PATCH',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ allow_send: allowSend }),
+    }).then(j<{ id: string; allow_send: boolean }>),
+  disconnectEmailConnection: (connectionId: string) =>
+    afetch(`${API}/builder/email/connections/${encodeURIComponent(connectionId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then(j<{ id: string; removed: boolean }>),
 
   // ---- MCP: business systems reached through configured servers
   mcpServers: () =>
@@ -763,6 +782,22 @@ export const api = {
         instruction,
         history: history.map(({ role, content }) => ({ role, content })),
       }),
+    }).then(j<{ answer: string }>),
+  draftInstructions: (body: {
+    existing_instructions: string;
+    input_fields: DraftInstructionsField[];
+    output_fields: DraftInstructionsField[];
+  }) =>
+    afetch(`${API}/node-types/draft-instructions`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{ answer: string }>),
+  draftCode: (body: DraftCodeRequest) =>
+    afetch(`${API}/node-types/draft-code`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
     }).then(j<{ answer: string }>),
 
   // ---- pipelines (chain saved workflows: one's outputs become the next's inputs)

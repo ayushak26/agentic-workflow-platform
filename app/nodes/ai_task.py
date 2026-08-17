@@ -393,8 +393,9 @@ def effective_fields(config: dict[str, Any]) -> list[FieldSpec]:
 class AITaskAgent(NodeType):
     type_name = "AITaskAgent"
     description = (
-        "One configurable AI step: extract, classify, summarize, translate, "
-        "draft or analyze — with a typed structured-output contract."
+        "Deprecated — use TransformAgent's Inputs/Instructions/Outputs editor "
+        "instead. One configurable AI step: extract, classify, summarize, "
+        "translate, draft or analyze — with a typed structured-output contract."
     )
     input_schema = AITaskInput
     output_schema = AITaskOutput
@@ -404,8 +405,12 @@ class AITaskAgent(NodeType):
     execution_kind: ClassVar[str] = "ai"
     about: ClassVar[dict[str, Any]] = {
         "what": (
-            "Sends content to a language model with a task, an instruction and a "
-            "typed output schema, and returns a validated structured result."
+            "Deprecated. TransformAgent's new-style editor now covers the same "
+            "ground (structured input fields, instructions, typed output "
+            "schema) plus a `fail_on_error` escape hatch — use that for any "
+            "new step. Sends content to a language model with a task, an "
+            "instruction and a typed output schema, and returns a validated "
+            "structured result."
         ),
         "why": (
             "Replaces per-purpose AI agents. The prompt, labels, schema, "

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 Operator = Literal[
@@ -294,8 +294,18 @@ class Action(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     field: str
-    operation: Literal["set", "append", "increase", "decrease"] = "set"
+    operation: Literal["set", "merge", "increase", "decrease"] = "set"
     value: Any = None
+
+    @field_validator("operation", mode="before")
+    @classmethod
+    def _rename_legacy_append(cls, value: Any) -> Any:
+        """`merge` is `append`'s new name — the accumulate-into-a-list
+        behavior is unchanged, only the label. A rule authored (or saved to
+        a live workflow) before the rename still says `append`; normalizing
+        it here means every already-shipped decision-agent rule keeps
+        working without a bulk rewrite of every saved workflow."""
+        return "merge" if value == "append" else value
 
     @model_validator(mode="after")
     def value_matches_operation(self) -> "Action":
@@ -689,7 +699,7 @@ def _apply_action(
     current = values.get(action.field)
     if action.operation == "set":
         values[action.field] = resolved
-    elif action.operation == "append":
+    elif action.operation == "merge":
         existing = list(current) if isinstance(current, list) else (
             [] if current is None else [current]
         )

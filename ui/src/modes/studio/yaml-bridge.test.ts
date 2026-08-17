@@ -176,6 +176,27 @@ describe('yaml-bridge round trip', () => {
     });
   });
 
+  it('preserves a node-level data_protection_mode override', () => {
+    const workflow: YamlWorkflow = {
+      name: 'Data protection workflow',
+      version: '1.0',
+      nodes: [
+        {
+          id: 'discover_candidates',
+          type: 'ScholarlyCandidateDiscoveryAgent',
+          config: {},
+          data_protection_mode: 'public',
+        },
+        { id: 'no_override', type: 'Literal', config: { value: 1 } },
+      ],
+      edges: [],
+    };
+
+    const result = roundTrip(workflow);
+    expect(result.nodes[0].data_protection_mode).toBe('public');
+    expect(result.nodes[1].data_protection_mode).toBeUndefined();
+  });
+
   it('does not introduce an experience key for a legacy workflow that never had one', () => {
     const workflow: YamlWorkflow = {
       name: 'Legacy workflow',

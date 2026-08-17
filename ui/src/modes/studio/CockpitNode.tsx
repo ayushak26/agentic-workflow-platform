@@ -3,6 +3,7 @@ import { Handle, Position, type NodeProps } from 'reactflow';
 import type { ModelSelection } from '../../api/types';
 import type { WorkflowNodeData } from './yaml-bridge';
 import { STATUS_LABEL, type NodeStatus } from './cockpit-state';
+import { ExecutionKindBadge } from './builder/ExecutionKindBadge';
 
 export type CockpitNodeData = WorkflowNodeData & {
   status: NodeStatus;
@@ -60,6 +61,12 @@ function CockpitNodeImpl({ data, selected }: NodeProps<CockpitNodeData>) {
         </span>
       </div>
       <div className="font-medium text-ink-900 mt-1 truncate" title={data.nodeId}>{data.nodeId}</div>
+
+      {data.executionKind && (
+        <div className="mt-1">
+          <ExecutionKindBadge kind={data.executionKind} />
+        </div>
+      )}
 
       <div className="mt-1.5 flex items-center gap-2 min-h-[16px]">
         {data.durationLabel && (

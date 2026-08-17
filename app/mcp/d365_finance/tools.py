@@ -1,151 +1,265 @@
-"""Tool vocabulary for the fixture-backed d365-finance-scm-mcp business layer.
+"""Atomic read tools for the fixture-backed D365 Finance & SCM connector.
 
-Matches the seven tools named in workflows/pump_manufacturer_case_routing.yaml's
-business_context config and mcp-servers/d365-finance-scm-mcp/README.md's
-"Recommended business layer for your assessment" section.
+The tools accept references extracted from the customer message and return
+matching Finance/SCM records. They do not assemble or interpret higher-level
+workflow state.
 """
 from __future__ import annotations
 
-TOOL_DEFINITIONS: list[dict] = [
+from typing import Any
+
+
+def _string(description: str, **extra: Any) -> dict[str, Any]:
+    return {"type": "string", "description": description, **extra}
+
+
+def _collection(key: str) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            key: {"type": "array"},
+            "count": {"type": "integer"},
+            "truncated": {"type": "boolean"},
+        },
+        "required": [key, "count", "truncated"],
+    }
+
+
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "name": "find_customer",
-        "description": "Find Finance & Operations customers by name.",
+        "title": "Find Customer",
+        "description": "Find Finance & Operations customer records by customer or company name.",
         "operation": "read",
         "input_schema": {
             "type": "object",
             "properties": {
-                "customer_name": {"type": "string", "description": "Customer name to search for."},
+                "customer_name": _string("Customer name extracted from the message.", maxLength=200),
+                "company_name": _string("Company name extracted from the message.", maxLength=200),
                 "limit": {"type": "integer", "minimum": 1, "maximum": 25, "default": 5},
             },
-            "required": ["customer_name"],
+            "required": [],
+            "anyOf": [{"required": ["customer_name"]}, {"required": ["company_name"]}],
         },
-        "output_schema": {
-            "type": "object",
-            "properties": {
-                "customers": {"type": "array"},
-                "count": {"type": "integer"},
-                "truncated": {"type": "boolean"},
-            },
-        },
+        "output_schema": _collection("customers"),
     },
     {
-        "name": "get_account_ownership",
-        "description": "Get the named commercial/technical owners for a customer account.",
+        "name": "find_quote",
+        "title": "Find Quotation",
+        "description": "Find a quotation using a quotation number or purchase-order number.",
         "operation": "read",
         "input_schema": {
             "type": "object",
-            "properties": {"account_id": {"type": "string"}},
+            "properties": {
+                "quotation_number": _string("Quotation number extracted from the message.", maxLength=100),
+                "purchase_order_number": _string("Purchase-order number extracted from the message.", maxLength=100),
+                "account_id": _string(
+                    "Confirmed customer account id, when known — narrows results to that "
+                    "customer's own quotes rather than matching a quote number that happens "
+                    "to belong to someone else.",
+                    maxLength=100,
+                ),
+            },
+            "required": [],
+            "anyOf": [{"required": ["quotation_number"]}, {"required": ["purchase_order_number"]}],
+        },
+        "output_schema": _collection("quotes"),
+    },
+    {
+        "name": "find_account_ownership",
+        "title": "Find Account Ownership",
+        "description": "Resolve a confirmed account's assignable ownership (sales, service, application) by role.",
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": _string("Confirmed customer account id.", maxLength=100),
+            },
             "required": ["account_id"],
         },
         "output_schema": {
             "type": "object",
             "properties": {"ownership": {"type": "object"}},
+            "required": ["ownership"],
         },
     },
     {
-        "name": "get_credit_status",
-        "description": "Get whether a customer account is on credit hold.",
+        "name": "find_credit_status",
+        "title": "Find Credit Status",
+        "description": "Find a confirmed account's credit-hold status.",
         "operation": "read",
         "input_schema": {
             "type": "object",
-            "properties": {"account_id": {"type": "string"}},
+            "properties": {
+                "account_id": _string("Confirmed customer account id.", maxLength=100),
+            },
             "required": ["account_id"],
         },
         "output_schema": {
             "type": "object",
             "properties": {"credit": {"type": "object"}},
+            "required": ["credit"],
         },
     },
     {
-        "name": "get_quote",
-        "description": (
-            "Look up a quotation by reference, confirm it belongs to the given customer, "
-            "and check whether a customer PO matches it."
-        ),
+        "name": "find_order_fulfilment_status",
+        "title": "Find Order Fulfilment Status",
+        "description": "Find why a sales order is where it is, using an order number or purchase-order number.",
         "operation": "read",
         "input_schema": {
             "type": "object",
             "properties": {
-                "quotation_reference": {"type": "string"},
-                # Required: a quotation reference alone is not proof the quote
-                # belongs to whoever sent the message. Without the account to
-                # check it against, one customer's PO would validate cleanly
-                # against another customer's quote.
-                "account_id": {"type": "string"},
-                "customer_po_reference": {"type": "string"},
+                "order_number": _string("Sales-order number extracted from the message.", maxLength=100),
+                "purchase_order_number": _string("Customer purchase-order number extracted from the message.", maxLength=100),
             },
-            "required": ["quotation_reference", "account_id"],
-        },
-        "output_schema": {
-            "type": "object",
-            "properties": {"quote": {"type": "object"}},
-        },
-    },
-    {
-        "name": "get_sales_order",
-        "description": "Look up a sales order's status and whether production has started.",
-        "operation": "read",
-        "input_schema": {
-            "type": "object",
-            "properties": {"sales_order_reference": {"type": "string"}},
-            "required": ["sales_order_reference"],
-        },
-        "output_schema": {
-            "type": "object",
-            "properties": {"order": {"type": "object"}},
-        },
-    },
-    {
-        "name": "get_order_fulfilment_status",
-        "description": "Look up a sales order's production/fulfilment and delivery status.",
-        "operation": "read",
-        "input_schema": {
-            "type": "object",
-            "properties": {"sales_order_reference": {"type": "string"}},
-            "required": ["sales_order_reference"],
+            "required": [],
+            "anyOf": [{"required": ["order_number"]}, {"required": ["purchase_order_number"]}],
         },
         "output_schema": {
             "type": "object",
             "properties": {"fulfilment": {"type": "object"}},
+            "required": ["fulfilment"],
         },
     },
     {
-        "name": "get_installed_unit",
-        "description": (
-            "Look up an installed pump by serial number, confirm it belongs to the given "
-            "customer, and report its warranty position."
-        ),
+        "name": "find_sales_order",
+        "title": "Find Sales Order",
+        "description": "Find a sales order using an order number or customer purchase-order number.",
         "operation": "read",
         "input_schema": {
             "type": "object",
             "properties": {
-                "serial_number": {"type": "string"},
-                # Required for the same reason as get_quote's: a serial number
-                # is not proof of ownership, and the answer must never describe
-                # another customer's equipment.
-                "account_id": {"type": "string"},
+                "order_number": _string("Sales-order number extracted from the message.", maxLength=100),
+                "purchase_order_number": _string("Customer purchase-order number extracted from the message.", maxLength=100),
             },
-            "required": ["serial_number", "account_id"],
+            "required": [],
+            "anyOf": [{"required": ["order_number"]}, {"required": ["purchase_order_number"]}],
         },
-        "output_schema": {
-            "type": "object",
-            "properties": {"unit": {"type": "object"}},
-        },
+        "output_schema": _collection("salesorders"),
     },
     {
-        "name": "get_inventory_availability",
-        "description": "Look up delivery feasibility for a pump model.",
+        "name": "find_shipment",
+        "title": "Find Shipment",
+        "description": "Find shipment records using shipment, order, or purchase-order references.",
         "operation": "read",
         "input_schema": {
             "type": "object",
-            "properties": {"pump_model": {"type": "string"}},
-            "required": ["pump_model"],
+            "properties": {
+                "shipment_number": _string("Shipment number extracted from the message.", maxLength=100),
+                "order_number": _string("Sales-order number extracted from the message.", maxLength=100),
+                "purchase_order_number": _string("Purchase-order number extracted from the message.", maxLength=100),
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["shipment_number"]},
+                {"required": ["order_number"]},
+                {"required": ["purchase_order_number"]},
+            ],
         },
-        "output_schema": {
+        "output_schema": _collection("shipments"),
+    },
+    {
+        "name": "find_invoice",
+        "title": "Find Invoice",
+        "description": "Find an invoice using invoice, order, or purchase-order references.",
+        "operation": "read",
+        "input_schema": {
             "type": "object",
-            "properties": {"availability": {"type": "object"}},
+            "properties": {
+                "invoice_number": _string("Invoice number extracted from the message.", maxLength=100),
+                "order_number": _string("Sales-order number extracted from the message.", maxLength=100),
+                "purchase_order_number": _string("Purchase-order number extracted from the message.", maxLength=100),
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["invoice_number"]},
+                {"required": ["order_number"]},
+                {"required": ["purchase_order_number"]},
+            ],
         },
+        "output_schema": _collection("invoices"),
+    },
+    {
+        "name": "find_contract",
+        "title": "Find Contract",
+        "description": "Find a customer contract by contract number.",
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "contract_number": _string("Contract number extracted from the message.", maxLength=100),
+            },
+            "required": ["contract_number"],
+        },
+        "output_schema": _collection("contracts"),
+    },
+    {
+        "name": "find_installed_unit",
+        "title": "Find Installed Unit",
+        "description": "Find installed equipment using serial number, model, manufacturer, or site.",
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "serial_number": _string("Equipment serial number.", maxLength=100),
+                "existing_pump_model": _string("Existing pump model.", maxLength=200),
+                "existing_pump_manufacturer": _string("Existing pump manufacturer.", maxLength=200),
+                "site_or_location": _string("Installation site or location.", maxLength=200),
+                "account_id": _string(
+                    "Confirmed customer account id, when known — a serial number belonging "
+                    "to a different account is reported as a mismatch rather than returned.",
+                    maxLength=100,
+                ),
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["serial_number"]},
+                {"required": ["existing_pump_model"]},
+                {"required": ["site_or_location"]},
+            ],
+        },
+        "output_schema": _collection("installedunits"),
+    },
+    {
+        "name": "find_inventory_availability",
+        "title": "Find Inventory Availability",
+        "description": "Find availability and lead-time records for a referenced pump model.",
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "product_name": _string("Product name extracted from the message.", maxLength=200),
+                "pump_model": _string("Pump model extracted from the message.", maxLength=200),
+                "product_family": _string("Product family extracted from the message.", maxLength=200),
+                "quantity": {"type": "number", "description": "Requested quantity, when stated."},
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["product_name"]},
+                {"required": ["pump_model"]},
+                {"required": ["product_family"]},
+            ],
+        },
+        "output_schema": _collection("inventory"),
+    },
+    {
+        "name": "find_products",
+        "title": "Find Products",
+        "description": "Find pump catalogue records using product references supplied by the workflow.",
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "product_name": _string("Product name extracted from the message.", maxLength=200),
+                "pump_model": _string("Pump model extracted from the message.", maxLength=200),
+                "product_family": _string("Product family extracted from the message.", maxLength=200),
+            },
+            "required": [],
+        },
+        "output_schema": _collection("products"),
     },
 ]
 
-TOOL_BY_NAME = {definition["name"]: definition for definition in TOOL_DEFINITIONS}
+
+TOOLS_BY_NAME = {definition["name"]: definition for definition in TOOL_DEFINITIONS}
+READ_ONLY_TOOLS = tuple(definition["name"] for definition in TOOL_DEFINITIONS)

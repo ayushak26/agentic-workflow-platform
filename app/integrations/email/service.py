@@ -21,7 +21,7 @@ next retry would turn into a duplicate email to a customer.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.integrations.operations import (
@@ -43,6 +43,12 @@ from .base import (
     EmailResult,
     EmailSearchCriteria,
 )
+
+#: How much lead time to refresh an OAuth token before it actually expires —
+#: generous, since a token that expires mid-request (rather than before it)
+#: would surface as a confusing 401 deep inside an adapter call instead of a
+#: clean refresh-then-retry here.
+_REFRESH_LEAD_TIME = timedelta(minutes=5)
 
 log = get_logger(__name__)
 
@@ -89,10 +95,15 @@ class EmailService:
         adapters: dict[str, EmailAdapter],
         connections: dict[str, EmailConnection],
         ledger: EmailOperationLedger | None = None,
+        db: Any = None,
     ):
         self.adapters = adapters
         self.connections = connections
         self.ledger = ledger or EmailOperationLedger()
+        # Only used for OAuth-issued connections' token refresh (see
+        # _refreshed below) — a deployment with only static, env-var
+        # connections never needs it and `db=None` is fine.
+        self._db = db
 
     # -- connection resolution -----------------------------------------
 
@@ -104,6 +115,74 @@ class EmailService:
                 f"Available: {sorted(self.connections) or 'none'}"
             )
         return found
+
+    def add_connection(self, connection: EmailConnection) -> None:
+        """Adds or replaces a connection at runtime — how a newly completed
+        OAuth connect (app/api/email_oauth.py) becomes usable immediately,
+        with no restart needed."""
+        self.connections[connection.id] = connection
+
+    def remove_connection(self, connection_id: str) -> None:
+        self.connections.pop(connection_id, None)
+
+    async def _refreshed(self, connection: EmailConnection) -> EmailConnection:
+        """Refresh this connection's access token if it's near/past expiry.
+
+        Only OAuth-issued connections (microsoft/gmail, with a refresh_token
+        and expires_at on file) have anything to refresh — a static env-var
+        connection or the memory adapter passes through unchanged. Centralized
+        here (not in the adapters) so msgraph.py/gmail.py never need to know
+        tokens can expire at all; they just read connection.credentials.
+        """
+        expires_at_raw = connection.credentials.get("expires_at")
+        refresh_token = connection.credentials.get("refresh_token")
+        if not expires_at_raw or not refresh_token or connection.provider not in ("microsoft", "gmail"):
+            return connection
+        try:
+            expires_at = datetime.fromisoformat(expires_at_raw)
+        except ValueError:
+            return connection
+        if _now() < expires_at - _REFRESH_LEAD_TIME:
+            return connection
+
+        from . import oauth  # local import: only OAuth-issued connections need this dependency
+
+        try:
+            tokens = await oauth.refresh_access_token(
+                connection.provider, refresh_token=refresh_token
+            )
+        except Exception as error:
+            log.error(
+                "email.token_refresh_failed",
+                connection_id=connection.id,
+                error=str(error),
+            )
+            raise EmailConnectionError(
+                f"connection {connection.id!r}'s access token expired and "
+                f"could not be refreshed: {error}"
+            ) from error
+
+        new_expires_at = _now() + timedelta(seconds=tokens.expires_in_seconds)
+        if self._db is not None:
+            from .token_vault import TokenVault
+
+            await TokenVault(self._db).store(
+                connection.id,
+                access_token=tokens.access_token,
+                refresh_token=tokens.refresh_token,
+                expires_in_seconds=tokens.expires_in_seconds,
+            )
+        refreshed = connection.model_copy(update={
+            "credentials": {
+                **connection.credentials,
+                "access_token": tokens.access_token,
+                "refresh_token": tokens.refresh_token or refresh_token,
+                "expires_at": new_expires_at.isoformat(),
+            },
+        })
+        self.connections[connection.id] = refreshed
+        log.info("email.token_refreshed", connection_id=connection.id)
+        return refreshed
 
     def adapter(self, connection: EmailConnection) -> EmailAdapter:
         found = self.adapters.get(connection.provider)
@@ -140,7 +219,7 @@ class EmailService:
         draft: EmailDraft | None = None,
         idempotency_scope: str | None = None,
     ) -> EmailResult:
-        connection = self.connection(connection_id)
+        connection = await self._refreshed(self.connection(connection_id))
         adapter = self.adapter(connection)
 
         if operation in SIDE_EFFECT_OPERATIONS and not connection.allow_send:

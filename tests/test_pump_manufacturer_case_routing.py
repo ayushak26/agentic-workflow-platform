@@ -604,7 +604,7 @@ async def test_an_order_system_that_does_not_answer_never_becomes_order_not_foun
         {"primary_intent": "ORDER_STATUS", "customer_name": BASF,
          "sales_order_reference": "SO-2026-1310", "lifecycle_stage": "order_execution"},
         "fail-order-system",
-        failing_tools=("get_sales_order", "get_order_fulfilment_status"),
+        failing_tools=("find_sales_order", "find_order_fulfilment_status"),
     )
 
     facts = decisions(result, "business_facts")
@@ -633,7 +633,7 @@ async def test_an_ownership_lookup_that_fails_is_not_reported_as_an_unassigned_a
     result = await run_level_3(
         {"primary_intent": "RFQ", "customer_name": MERIDIAN, "lifecycle_stage": "presales"},
         "fail-ownership",
-        failing_tools=("get_account_ownership",),
+        failing_tools=("find_account_ownership",),
     )
 
     assert decisions(result, "business_facts")["ownership_state"] == "SYSTEM_ERROR"
@@ -649,7 +649,7 @@ async def test_an_installed_base_lookup_failure_does_not_deny_the_unit():
         {"primary_intent": "TECHNICAL_SUPPORT", "customer_name": BASF, "serial_number": "SN-99123",
          "lifecycle_stage": "installed_base"},
         "fail-installed-base",
-        failing_tools=("get_installed_unit",),
+        failing_tools=("find_installed_unit",),
     )
 
     facts = decisions(result, "business_facts")
@@ -675,7 +675,7 @@ async def test_an_ambiguous_company_name_stops_before_any_account_data_is_used()
     for node_id in ("get_ownership", "get_order", "get_installed_unit", "get_quote"):
         assert not reached(result, node_id)
     assert result["mcp"].client.called("find_customer")
-    assert not result["mcp"].client.called("get_account_ownership")
+    assert not result["mcp"].client.called("find_account_ownership")
 
 
 async def test_an_inactive_account_owner_is_replaced_by_the_team_queue():

@@ -1,0 +1,26 @@
+name: Generation Coverage - PythonSnippetAgent
+description: >-
+  Smallest valid workflow exercising PythonSnippetAgent — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: compute
+    type: PythonSnippetAgent
+    config:
+      code: |
+        output["total"] = inputs.get("a", 0) + inputs.get("b", 0)
+      input_fields:
+        a: 2
+        b: 3
+      output_fields:
+        - name: total
+          type: integer
+  - id: summarize
+    type: Echo
+    config:
+      template: "Total: {{compute.result.total}}"
+edges:
+  - from: compute
+    to: summarize
+entry: compute
+exit: summarize

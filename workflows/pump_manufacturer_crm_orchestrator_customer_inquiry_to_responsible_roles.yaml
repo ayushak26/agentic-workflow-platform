@@ -119,29 +119,52 @@ nodes:
       max_chars_per_file: 100000
       fail_on_unreadable: false
   - id: interpret_customer_inquiry
-    type: AITaskAgent
+    type: TransformAgent
     config:
-      task: extract
       model: auto
       temperature: 0
       max_tokens: 12000
       max_retries: 1
       fail_on_error: false
-      include_confidence: true
-      language:
-        input_language: auto
-        process_in_original_language: true
-        output_language: en
-        preserve_original: true
-      input: '{{outputs.customer_inquiry.data.message}}'
-      context:
-        SUBJECT: '{{outputs.customer_inquiry.data.subject}}'
-        SENDER_NAME: '{{outputs.customer_inquiry.data.sender_name}}'
-        SENDER_EMAIL: '{{outputs.customer_inquiry.data.sender_email}}'
-        SENDER_PHONE: '{{outputs.customer_inquiry.data.sender_phone}}'
-        SOURCE_CHANNEL: '{{outputs.customer_inquiry.data.source_channel}}'
-        ATTACHMENT_EXTRACTED_TEXT: '{{outputs.load_attachments.text}}'
-      instruction: >
+      input_fields:
+        - name: message
+          description: Full body of the incoming customer inquiry, in its original language.
+          type: string
+          value: '{{outputs.customer_inquiry.data.message}}'
+        - name: SUBJECT
+          description: Subject line of the incoming communication.
+          type: string
+          value: '{{outputs.customer_inquiry.data.subject}}'
+        - name: SENDER_NAME
+          description: Sender name from channel metadata.
+          type: string
+          value: '{{outputs.customer_inquiry.data.sender_name}}'
+        - name: SENDER_EMAIL
+          description: Sender email from channel metadata.
+          type: string
+          value: '{{outputs.customer_inquiry.data.sender_email}}'
+        - name: SENDER_PHONE
+          description: Sender phone from channel metadata.
+          type: string
+          value: '{{outputs.customer_inquiry.data.sender_phone}}'
+        - name: SOURCE_CHANNEL
+          description: EMAIL / WEB_FORM / PHONE_TRANSCRIPT / MESSAGING / other.
+          type: string
+          value: '{{outputs.customer_inquiry.data.source_channel}}'
+        - name: ATTACHMENT_EXTRACTED_TEXT
+          description: Extracted text of any attachments, evidence only, not authoritative.
+          type: string
+          value: '{{outputs.load_attachments.text}}'
+      instructions: >
+        Extract structured information from the customer's message. Return only the fields defined
+        by the output schema below, and never invent a value.
+
+
+        The customer may write in any language. Detect it, understand the request in its original
+        language, and write every text output field in English, except where a field is explicitly
+        meant to preserve the original wording (e.g. an exact quote or model designation).
+
+
         Act as the intake-understanding capability for a pump-manufacturer CRM team.
 
 
@@ -682,6 +705,18 @@ nodes:
               description: Contradictory/unclear information across the inquiry.
               required: true
               item_type: string
+        - name: confidence
+          type: number
+          required: true
+          minimum: 0.0
+          maximum: 1.0
+          description: >-
+            How certain you are about this result, 0.0 to 1.0. Lower it when the content is
+            ambiguous, incomplete, or outside your competence.
+        - name: reasoning
+          type: text
+          required: false
+          description: One or two sentences on how you reached this result, and what made you uncertain.
     selected_model: auto
   - id: understand_customer_inquiry
     type: DataTransformAgent
@@ -689,44 +724,44 @@ nodes:
       operations:
         - target: language
           operation: copy
-          source: interpret_customer_inquiry.result.language
+          source: interpret_customer_inquiry.parsed.language
           default: UNKNOWN
           description: Language detected by the AI understanding step.
         - target: customer
           operation: copy
-          source: interpret_customer_inquiry.result.customer
+          source: interpret_customer_inquiry.parsed.customer
           default: {}
           description: Customer/contact information stated in the inquiry.
         - target: inquiry
           operation: copy
-          source: interpret_customer_inquiry.result.inquiry
+          source: interpret_customer_inquiry.parsed.inquiry
           default: {}
           description: Human-readable summary of the whole inquiry.
         - target: requests
           operation: copy
-          source: interpret_customer_inquiry.result.requests
+          source: interpret_customer_inquiry.parsed.requests
           default: []
           description: One or more distinct business-object/requested-action pairs.
         - target: routing_keys
           operation: copy
-          source: interpret_customer_inquiry.result.routing_keys
+          source: interpret_customer_inquiry.parsed.routing_keys
           default: []
           description: Typed governed routing keys consumed by deterministic responsibility rules.
         - target: completeness
           operation: copy
-          source: interpret_customer_inquiry.result.completeness
+          source: interpret_customer_inquiry.parsed.completeness
           default:
             missing_information: []
             ambiguous_information: []
           description: Missing or ambiguous information in the customer's content.
         - target: confidence
           operation: copy
-          source: interpret_customer_inquiry.confidence
+          source: interpret_customer_inquiry.parsed.confidence
           default: 0
           description: AI self-reported understanding confidence; advisory, not a calibrated probability.
         - target: reasoning
           operation: copy
-          source: interpret_customer_inquiry.reasoning
+          source: interpret_customer_inquiry.parsed.reasoning
           default: ''
           description: Short AI explanation of uncertainty, when available.
         - target: source_message
@@ -755,15 +790,15 @@ nodes:
       operations:
         - target: request_count
           operation: count
-          source: interpret_customer_inquiry.result.requests
+          source: interpret_customer_inquiry.parsed.requests
           default: 0
         - target: missing_count
           operation: count
-          source: interpret_customer_inquiry.result.completeness.missing_information
+          source: interpret_customer_inquiry.parsed.completeness.missing_information
           default: 0
         - target: ambiguity_count
           operation: count
-          source: interpret_customer_inquiry.result.completeness.ambiguous_information
+          source: interpret_customer_inquiry.parsed.completeness.ambiguous_information
           default: 0
   - id: understanding_quality
     type: DecisionAgent
@@ -809,7 +844,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: is_empty
           then:
             - field: route
@@ -889,7 +924,7 @@ nodes:
       tool: find_customer
       fail_on_error: false
       arguments:
-        customer_name: '{{outputs.interpret_customer_inquiry.result.customer.company_name?}}'
+        customer_name: '{{outputs.interpret_customer_inquiry.parsed.customer.company_name?}}'
         limit: 5
   - id: customer_match_router
     type: RouterAgent
@@ -915,8 +950,8 @@ nodes:
         owners. Approve after manual account selection/assignment, or reject to correct the customer
         identity and rerun.
       context_fields:
-        - interpret_customer_inquiry.result.customer
-        - interpret_customer_inquiry.result.inquiry
+        - interpret_customer_inquiry.parsed.customer
+        - interpret_customer_inquiry.parsed.inquiry
         - find_customer.count
         - find_customer.data
       allow_document_override: false
@@ -927,7 +962,7 @@ nodes:
     type: MCPToolAgent
     config:
       server_id: dynamics365_finance_scm
-      tool: get_account_ownership
+      tool: find_account_ownership
       fail_on_error: false
       arguments:
         account_id: '{{outputs.find_customer.first.account_id?}}'
@@ -1080,10 +1115,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: GENERAL::REQUEST_GENERAL_INFORMATION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_ACCOUNT::REQUEST_GENERAL_INFORMATION
           then:
@@ -1101,10 +1136,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: GENERAL::REQUEST_CLARIFICATION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_ACCOUNT::REQUEST_CLARIFICATION
           then:
@@ -1122,10 +1157,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: GENERAL::REQUEST_CASE_STATUS
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SERVICE::REQUEST_CASE_STATUS
           then:
@@ -1145,13 +1180,13 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: GENERAL::PROVIDE_ADDITIONAL_INFORMATION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: GENERAL::UPDATE_REQUEST
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_ACCOUNT::UPDATE_REQUEST
           then:
@@ -1169,7 +1204,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: NEW_EQUIPMENT::REQUEST_PRODUCT_INFORMATION
           then:
@@ -1189,10 +1224,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: NEW_EQUIPMENT::REQUEST_QUOTATION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: QUOTATION::REQUEST_QUOTATION
           then:
@@ -1214,10 +1249,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: NEW_EQUIPMENT::REQUEST_PRICE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: QUOTATION::REQUEST_PRICE
           then:
@@ -1237,7 +1272,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: QUOTATION::CHECK_QUOTE_STATUS
           then:
@@ -1255,7 +1290,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_PO::SUBMIT_PURCHASE_ORDER
           then:
@@ -1275,7 +1310,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_PO::CHECK_PO_PROCESSING
           then:
@@ -1295,10 +1330,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
           then:
@@ -1320,13 +1355,13 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::CHECK_ORDER_STATUS
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::CHECK_DELIVERY_DATE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REQUEST_ORDER_CONFIRMATION
           then:
@@ -1348,7 +1383,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::CHECK_SHIPMENT_STATUS
           then:
@@ -1370,10 +1405,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: NEW_EQUIPMENT::CHECK_PRODUCT_AVAILABILITY
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: NEW_EQUIPMENT::CHECK_LEAD_TIME
           then:
@@ -1393,10 +1428,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: NEW_EQUIPMENT::REQUEST_PRODUCT_RECOMMENDATION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PRODUCT_APPLICATION::REQUEST_PUMP_SELECTION
           then:
@@ -1414,7 +1449,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PRODUCT_APPLICATION::REQUEST_PUMP_SIZING
           then:
@@ -1432,7 +1467,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PRODUCT_APPLICATION::REQUEST_TECHNICAL_CONFIGURATION
           then:
@@ -1450,7 +1485,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PRODUCT_APPLICATION::REQUEST_APPLICATION_REVIEW
           then:
@@ -1468,7 +1503,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PRODUCT_APPLICATION::REQUEST_TECHNICAL_PROPOSAL
           then:
@@ -1486,7 +1521,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PRODUCT_APPLICATION::REQUEST_ALTERNATIVE_PRODUCT
           then:
@@ -1504,7 +1539,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_TECHNICAL_DRAWING
           then:
@@ -1522,16 +1557,16 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_DOCUMENT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_DATASHEET
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_MANUAL
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_ORDER_DOCUMENT
           then:
@@ -1553,13 +1588,13 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_CERTIFICATE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_MATERIAL_CERTIFICATE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_COMPLIANCE_DOCUMENT
           then:
@@ -1579,7 +1614,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REPORT_DELIVERY_DELAY
           then:
@@ -1603,7 +1638,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REQUEST_DELIVERY_COMMITMENT
           then:
@@ -1625,13 +1660,13 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::EXPEDITE_ORDER
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REQUEST_EXPEDITE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::POSTPONE_ORDER
           then:
@@ -1655,7 +1690,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::CHANGE_DELIVERY_ADDRESS
           then:
@@ -1681,19 +1716,19 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REQUEST_ORDER_CHANGE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::ADD_ITEMS_TO_ORDER
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SALES_ORDER::REPORT_ORDER_ERROR
           then:
@@ -1717,7 +1752,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::TRACK_SHIPMENT
           then:
@@ -1739,10 +1774,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::REQUEST_SHIPPING_DOCUMENTS
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DOCUMENT::REQUEST_DELIVERY_DOCUMENT
           then:
@@ -1764,7 +1799,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::CHANGE_SHIPPING_INSTRUCTION
           then:
@@ -1786,13 +1821,13 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::REPORT_MISSING_DELIVERY
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::REPORT_DAMAGED_DELIVERY
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: DELIVERY_SHIPMENT::REPORT_INCOMPLETE_DELIVERY
           then:
@@ -1814,10 +1849,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REPORT_TECHNICAL_PROBLEM
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_TECHNICAL_DIAGNOSIS
           then:
@@ -1839,7 +1874,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_TROUBLESHOOTING
           then:
@@ -1861,7 +1896,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_REPAIR
           then:
@@ -1883,10 +1918,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_MAINTENANCE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SERVICE::REQUEST_MAINTENANCE
           then:
@@ -1908,7 +1943,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_UPGRADE
           then:
@@ -1930,16 +1965,16 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_INSPECTION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SERVICE::REQUEST_INSPECTION
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_SERVICE_VISIT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SERVICE::REQUEST_SERVICE_VISIT
           then:
@@ -1961,7 +1996,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SERVICE::REQUEST_COMMISSIONING
           then:
@@ -1985,7 +2020,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INSTALLED_PRODUCT::REQUEST_REPLACEMENT_PRODUCT
           then:
@@ -2009,7 +2044,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SPARE_PART::IDENTIFY_SPARE_PART
           then:
@@ -2031,7 +2066,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SPARE_PART::REQUEST_SPARE_PART
           then:
@@ -2053,7 +2088,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SPARE_PART::REQUEST_SPARE_PART_QUOTATION
           then:
@@ -2075,10 +2110,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SPARE_PART::CHECK_SPARE_PART_AVAILABILITY
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SPARE_PART::CHECK_SPARE_PART_LEAD_TIME
           then:
@@ -2100,7 +2135,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: SPARE_PART::REQUEST_SPARE_PART_ALTERNATIVE
           then:
@@ -2124,10 +2159,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: WARRANTY::REPORT_POTENTIAL_WARRANTY_FAILURE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: WARRANTY::REQUEST_WARRANTY_ASSESSMENT
           then:
@@ -2151,7 +2186,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: WARRANTY::SUBMIT_WARRANTY_CLAIM
           then:
@@ -2173,7 +2208,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: WARRANTY::CHECK_WARRANTY_STATUS
           then:
@@ -2195,10 +2230,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INVOICE::REQUEST_INVOICE_COPY
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INVOICE::REPORT_INVOICE_NOT_RECEIVED
           then:
@@ -2220,10 +2255,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INVOICE::QUESTION_INVOICE
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INVOICE::DISPUTE_INVOICE
           then:
@@ -2245,7 +2280,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INVOICE::REQUEST_INVOICE_CORRECTION
           then:
@@ -2267,7 +2302,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: INVOICE::REQUEST_CREDIT_NOTE
           then:
@@ -2289,10 +2324,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PAYMENT_CREDIT::REPORT_PAYMENT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PAYMENT_CREDIT::CHECK_PAYMENT_STATUS
           then:
@@ -2314,7 +2349,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PAYMENT_CREDIT::QUESTION_PAYMENT_TERMS
           then:
@@ -2336,7 +2371,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PAYMENT_CREDIT::REQUEST_PAYMENT_TERMS_CHANGE
           then:
@@ -2358,7 +2393,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PAYMENT_CREDIT::REQUEST_CREDIT_LIMIT_CHANGE
           then:
@@ -2380,7 +2415,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: PAYMENT_CREDIT::RESOLVE_CREDIT_HOLD
           then:
@@ -2404,22 +2439,22 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_PRODUCT_COMPLAINT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_SERVICE_COMPLAINT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_DELIVERY_COMPLAINT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_BILLING_COMPLAINT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REQUEST_ESCALATION
           then:
@@ -2441,10 +2476,10 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_PRODUCT_COMPLAINT
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_SERVICE_COMPLAINT
           then:
@@ -2468,7 +2503,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_DELIVERY_COMPLAINT
           then:
@@ -2490,7 +2525,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: COMPLAINT::REPORT_BILLING_COMPLAINT
           then:
@@ -2512,7 +2547,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.routing_keys
+              - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                 operator: contains
                 value: OTHER::OTHER_REQUEST
           then:
@@ -2529,7 +2564,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.completeness.missing_information
+              - field: outputs.interpret_customer_inquiry.parsed.completeness.missing_information
                 operator: is_not_empty
           then:
             - field: required_work
@@ -2545,7 +2580,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.interpret_customer_inquiry.result.completeness.ambiguous_information
+              - field: outputs.interpret_customer_inquiry.parsed.completeness.ambiguous_information
                 operator: is_not_empty
           then:
             - field: required_work
@@ -2582,49 +2617,49 @@ nodes:
             conditions:
               - operator: or
                 conditions:
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_QUOTE_REVISION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_DISCOUNT
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::NEGOTIATE_PRICE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_COMMERCIAL_TERMS
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::ACCEPT_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REJECT_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REQUEST_ORDER_CHANGE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::ADD_ITEMS_TO_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REPORT_ORDER_ERROR
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
               - field: outputs.customer_context.decisions.sales_role
@@ -2652,49 +2687,49 @@ nodes:
             conditions:
               - operator: or
                 conditions:
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_QUOTE_REVISION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_DISCOUNT
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::NEGOTIATE_PRICE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_COMMERCIAL_TERMS
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::ACCEPT_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REJECT_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REQUEST_ORDER_CHANGE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::ADD_ITEMS_TO_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REPORT_ORDER_ERROR
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
               - field: outputs.customer_context.decisions.sales_role
@@ -2722,49 +2757,49 @@ nodes:
             conditions:
               - operator: or
                 conditions:
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_QUOTE_REVISION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_DISCOUNT
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::NEGOTIATE_PRICE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_COMMERCIAL_TERMS
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::ACCEPT_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REJECT_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REQUEST_ORDER_CHANGE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::ADD_ITEMS_TO_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: SALES_ORDER::REPORT_ORDER_ERROR
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
               - field: outputs.customer_context.decisions.sales_role
@@ -2792,25 +2827,25 @@ nodes:
             conditions:
               - operator: or
                 conditions:
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: NEW_EQUIPMENT::REQUEST_PRODUCT_INFORMATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: NEW_EQUIPMENT::REQUEST_PRODUCT_RECOMMENDATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: NEW_EQUIPMENT::REQUEST_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: NEW_EQUIPMENT::REQUEST_PRICE
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: PRODUCT_APPLICATION::REQUEST_PUMP_SELECTION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: PRODUCT_APPLICATION::REQUEST_PUMP_SIZING
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: PRODUCT_APPLICATION::REQUEST_TECHNICAL_PROPOSAL
               - field: outputs.customer_context.decisions.customer_state
@@ -2838,16 +2873,16 @@ nodes:
             conditions:
               - operator: or
                 conditions:
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: NEW_EQUIPMENT::REQUEST_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_QUOTATION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_QUOTE_REVISION
-                  - field: outputs.interpret_customer_inquiry.result.routing_keys
+                  - field: outputs.interpret_customer_inquiry.parsed.routing_keys
                     operator: contains
                     value: QUOTATION::REQUEST_PRICE
               - field: outputs.customer_context.decisions.sales_role
@@ -2930,7 +2965,7 @@ nodes:
             source_channel: $customer_inquiry.data.source_channel
             received_at: $customer_inquiry.data.received_at
             language: $understand_customer_inquiry.data.language
-            summary: $interpret_customer_inquiry.result.inquiry.summary
+            summary: $interpret_customer_inquiry.parsed.inquiry.summary
             customer_state: $customer_context.decisions.customer_state
             customer_verified: $customer_context.decisions.customer_verified
             account_id: $find_customer.first.account_id

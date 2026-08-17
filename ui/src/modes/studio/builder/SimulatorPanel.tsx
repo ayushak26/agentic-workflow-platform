@@ -28,12 +28,14 @@ export function SimulatorPanel({
   workflow,
   workflowYaml,
   onHighlightPath,
+  onNodeRunOutput,
   onSelectNode,
 }: {
   workflow: YamlWorkflow;
   workflowYaml: string;
   /** Lights up the executed path on the canvas. */
   onHighlightPath: (path: string[], waiting: string[]) => void;
+  onNodeRunOutput?: (nodeId: string, output: Record<string, unknown> | null | undefined) => void;
   onSelectNode: (nodeId: string) => void;
 }) {
   const [inputs, setInputs] = useState<Record<string, string>>({});
@@ -79,10 +81,13 @@ export function SimulatorPanel({
         setResult(simulation);
         onHighlightPath(simulation.path ?? [], simulation.waiting_for ?? []);
         if (simulation.error) setError(simulation.error);
+        for (const step of simulation.steps ?? []) {
+          onNodeRunOutput?.(step.node_id, step.output ?? undefined);
+        }
       })
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))
       .finally(() => setBusy(false));
-  }, [inputs, onHighlightPath, stubOutputs, workflowYaml]);
+  }, [inputs, onHighlightPath, onNodeRunOutput, stubOutputs, workflowYaml]);
 
   return (
     <div className="builder-inspector-scroll p-4">

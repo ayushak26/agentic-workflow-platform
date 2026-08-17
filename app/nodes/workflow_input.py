@@ -17,11 +17,15 @@ from __future__ import annotations
 
 from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
-from app.runtime.field_schema import FieldSpec, field_paths, parse_fields
+from app.runtime.field_schema import (
+    FieldSpec,
+    build_response_model,
+    field_paths,
+)
 from app.runtime.rules import resolve_path
 
 
@@ -42,20 +46,46 @@ SOURCE_LABELS: dict[str, str] = {
 }
 
 
-class InputFieldBinding(BaseModel):
-    """One declared field and where its value comes from."""
+class InputFieldBinding(FieldSpec):
+    """One declared field and where its value comes from.
 
-    model_config = ConfigDict(extra="forbid")
+    A `FieldSpec` plus the two things that make sense only for a value
+    *entering* the workflow rather than one an AI step must produce: where to
+    read it from, and a fallback for exercising the workflow before that
+    source is wired up. Being a `FieldSpec` (rather than a hand-rolled
+    parallel shape) is what gives an incoming input the exact same
+    enum/list/object vocabulary — including `List<Enum>` — as everywhere
+    else the platform describes a shape, with no separate authoring format
+    or compiler to keep in sync.
+    """
 
-    #: Field name as downstream nodes will address it: `outputs.<node>.data.<name>`.
-    name: str
     #: Path into workflow state. Defaults to `inputs.<name>`, which is the case
     #: that needs no configuration at all.
     source: str | None = None
-    type: str = "string"
-    description: str = ""
-    required: bool = False
     example: Any = None
+    # A workflow input is opt-in by default — unlike an AI-produced field,
+    # nothing guarantees the caller supplied it.
+    required: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_incomplete_legacy_shape(cls, data: Any) -> Any:
+        """A binding saved before `item_type`/`fields`/`enum_values` existed
+        on this model (when `type` was an unvalidated free-text string) may
+        be missing the piece its type now requires. Degrade to a safe,
+        always-loadable shape instead of failing to parse a workflow that
+        used to open fine — the author can then complete the shape from a
+        working starting point rather than a raised exception."""
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        if data.get("type") == "list" and not data.get("item_type"):
+            data["item_type"] = "string"
+        elif data.get("type") == "object" and not data.get("fields"):
+            data["type"] = "string"
+        elif data.get("type") == "enum" and not data.get("enum_values"):
+            data["type"] = "string"
+        return data
 
     def resolved_source(self) -> str:
         return self.source or f"inputs.{self.name}"
@@ -77,31 +107,20 @@ class WorkflowInputConfig(BaseModel):
     )
 
     def as_field_specs(self) -> list[FieldSpec]:
-        """The declared shape, as the same FieldSpec rows every other node uses."""
-        return parse_fields(
-            [
-                {
-                    "name": binding.name,
-                    "type": binding.type if binding.type in _KINDS else "string",
-                    "description": binding.description,
-                    "required": binding.required,
-                    "nullable": not binding.required,
-                }
-                for binding in self.fields
-            ]
-        )
+        """The declared shape, as the same FieldSpec rows every other node uses.
 
-
-_KINDS = {
-    "string",
-    "text",
-    "number",
-    "integer",
-    "boolean",
-    "date",
-    "object",
-    "list",
-}
+        An optional binding is nullable unless the author already said so —
+        the same "may be absent, use null rather than guessing" contract
+        AITaskAgent's output fields use — so a downstream reader sees a
+        clean `None` rather than a field that simply never appears.
+        """
+        return [
+            FieldSpec.model_validate({
+                **binding.model_dump(exclude={"source", "example"}),
+                "nullable": binding.nullable or not binding.required,
+            })
+            for binding in self.fields
+        ]
 
 
 class WorkflowInputInput(BaseModel):
@@ -193,8 +212,44 @@ class WorkflowInputAgent(NodeType):
                 missing.append(binding.name)
             data[binding.name] = value
 
+        _reject_values_outside_declared_shape(cfg, data)
+
         return {
             "data": data,
             "source": cfg.source,
             "missing": missing,
         }
+
+
+def _reject_values_outside_declared_shape(
+    cfg: WorkflowInputConfig, data: dict[str, Any]
+) -> None:
+    """Validate what actually arrived against the declared shape before any
+    downstream node can read it — e.g. a `List<Enum>` field given a value
+    outside its allowed set, or a plain string where a list was declared.
+
+    Compiled the same way an AI step's output schema is (`build_response_model`):
+    one compiler for "what shape is this", used on both sides of the graph,
+    so the values a downstream node receives are held to the same contract
+    a mapping picker or preflight already believes about them.
+    """
+    present = {name: value for name, value in data.items() if value is not None}
+    if not present:
+        return
+    specs = [spec for spec in cfg.as_field_specs() if spec.name in present]
+    if not specs:
+        return
+    # Required/nullable are irrelevant here — presence and required-ness are
+    # already handled above via `missing`; only the shape of what's actually
+    # present is being checked.
+    strict_specs = [
+        spec.model_copy(update={"required": True, "nullable": False})
+        for spec in specs
+    ]
+    model = build_response_model(strict_specs, model_name="WorkflowInputValues")
+    try:
+        model.model_validate(present)
+    except ValidationError as error:
+        raise ValueError(
+            f"workflow input does not match its declared shape: {error}"
+        ) from error

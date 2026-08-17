@@ -32,6 +32,7 @@ from app.integrations.operations import (
 )
 from app.mcp.policy import MCPPolicyError
 from app.mcp.service import MCPToolError
+from app.nodes.approval import human_approved as _human_approved
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.observability.logging import get_logger
@@ -292,9 +293,34 @@ class MCPToolAgent(NodeType):
             return set(cfg.arguments)
         schema = descriptor.get("input_schema") or {}
         required = schema.get("required")
-        if not isinstance(required, list):
-            return set(cfg.arguments)
-        return {name for name in required if isinstance(name, str)}
+        names = (
+            {name for name in required if isinstance(name, str)}
+            if isinstance(required, list)
+            else set()
+        )
+
+        # anyOf: "satisfy at least one of these alternative requirement sets"
+        # — a lookup keyed by, say, a quotation number OR a purchase-order
+        # number. If none of the alternatives are satisfied by what this node
+        # actually supplied, there is nothing left to search by, so every
+        # field named across the alternatives becomes effectively required —
+        # the call should skip rather than run empty-handed.
+        any_of = schema.get("anyOf")
+        if isinstance(any_of, list) and any_of:
+            provided = {
+                name
+                for name, value in cfg.arguments.items()
+                if not (value is None or (isinstance(value, str) and not value.strip()))
+            }
+            alternatives = [
+                set(alt["required"])
+                for alt in any_of
+                if isinstance(alt, dict) and isinstance(alt.get("required"), list)
+            ]
+            if alternatives and not any(alt <= provided for alt in alternatives):
+                names |= {name for alt in alternatives for name in alt}
+
+        return names
 
     def _skipped(self, cfg: MCPToolConfig, missing: list[str]) -> dict[str, Any]:
         return {
@@ -417,13 +443,3 @@ def _summarise(data: dict[str, Any]) -> tuple[int, bool, dict[str, Any]]:
     }
 
 
-def _human_approved(state: dict[str, Any]) -> bool:
-    """Did a human review approve something earlier on this run's path?
-
-    Read from completed node outputs, so it reflects what actually happened
-    rather than what the graph promises. A rejection never counts as approval.
-    """
-    for output in (state.get("node_outputs") or {}).values():
-        if isinstance(output, dict) and output.get("decision") in ("approve", "edit"):
-            return True
-    return False

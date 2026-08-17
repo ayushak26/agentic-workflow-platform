@@ -95,13 +95,14 @@ def test_real_usage_snippet_finds_a_real_config_for_a_type_with_a_known_example(
 
 
 def test_real_usage_snippet_truncates_a_large_real_config():
-    """AITaskAgent's real examples on disk (a 20+ field extraction schema)
-    run well past _MAX_SNIPPET_CHARS — confirm it's actually capped rather
-    than dumped in full, and that the cap lands cleanly with a visible
-    truncation marker instead of a silently cut-off YAML document."""
+    """TransformAgent's real examples on disk (e.g. proposal_blueprint's
+    ~30-field extraction schema) run well past _MAX_SNIPPET_CHARS — confirm
+    it's actually capped rather than dumped in full, and that the cap lands
+    cleanly with a visible truncation marker instead of a silently cut-off
+    YAML document."""
     manifest = {entry["type_name"]: entry for entry in NodeRegistry.manifest()}
-    entry = manifest["AITaskAgent"]
-    snippet = _real_usage_snippet("AITaskAgent", entry)
+    entry = manifest["TransformAgent"]
+    snippet = _real_usage_snippet("TransformAgent", entry)
     assert snippet is not None
     assert len(snippet) <= _MAX_SNIPPET_CHARS + len("\n... (truncated — real file has more; shape shown is representative)")
     assert snippet.endswith("(truncated — real file has more; shape shown is representative)")

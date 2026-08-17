@@ -39,6 +39,7 @@ import { BuilderStart } from './BuilderStart';
 import { pruneNodeReferencesInConfig, renameNodeReferencesInConfig } from './builder-graph';
 import { generateDefaults, findManifest, newNodeId } from './builder-helpers';
 import { InfoPopover } from './builder/InfoPopover';
+import { isNoteNodeId, NOTE_ID_PREFIX, NOTE_NODE_TYPE, NoteNode } from './builder/NoteNode';
 import { NodeSearchPalette } from './builder/NodeSearchPalette';
 import { BuilderStageBandNode, BuilderStagePlaceholderNode } from './builder/StageNodes';
 import {
@@ -74,6 +75,7 @@ import {
   yamlToReactFlow,
   type ModelRoutingPolicy,
   type NodeExperienceSpec,
+  type NoteSpec,
   type WorkflowEdgeData,
   type WorkflowInputSpec,
   type WorkflowNodeData,
@@ -84,7 +86,9 @@ const nodeTypes = {
   workflow: WorkflowNode,
   [BUILDER_STAGE_BAND_TYPE]: BuilderStageBandNode,
   [BUILDER_STAGE_PLACEHOLDER_TYPE]: BuilderStagePlaceholderNode,
+  [NOTE_NODE_TYPE]: NoteNode,
 };
+const NOTE_DEFAULT_SIZE = { width: 220, height: 140 };
 const NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 // Semantic-zoom tiers, with a gap between them so a node's appearance doesn't
 // flicker while the user is scrubbing the zoom around the threshold.
@@ -194,11 +198,27 @@ export function Builder() {
   // without opening it — the classification lives on the server and in the
   // deployment's policy, so it cannot be derived in the browser.
   const [mcpOperations, setMcpOperations] = useState<Map<string, string>>(new Map());
+  // Last real output per node, from either single-step testing or a full
+  // simulation run — lifted here (not into BuilderInspector) because the
+  // inspector panel unmounts on close, which would otherwise throw a step's
+  // captured test value away the moment its panel is collapsed. Feeds the
+  // Inputs tab's "Ran: ..." value previews.
+  const [nodeRunOutputs, setNodeRunOutputs] = useState<Record<string, Record<string, unknown>>>({});
+  const recordNodeOutput = useCallback((nodeId: string, output: Record<string, unknown> | null | undefined) => {
+    if (!output) return;
+    setNodeRunOutputs(prev => ({ ...prev, [nodeId]: output }));
+  }, []);
   const [showInputs, setShowInputs] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [autosaveState, setAutosaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'recovered'>('idle');
+  const [autosaveError, setAutosaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Serializes autosave PUTs so a slow request can never arrive at the server
+  // after a later one and overwrite newer content with stale content; `seq`
+  // guards UI state updates against the same reordering.
+  const autosaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const autosaveSeqRef = useRef(0);
   const [validating, setValidating] = useState(false);
   const [preflight, setPreflight] = useState<WorkflowPreflightReport | null>(null);
   const [autofixing, setAutofixing] = useState(false);
@@ -244,10 +264,20 @@ export function Builder() {
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)));
   }, []);
 
-  const currentWorkflow = useMemo(
-    () => meta ? reactFlowToYaml(meta, nodes, edges) : null,
-    [edges, meta, nodes],
-  );
+  const currentWorkflow = useMemo(() => {
+    if (!meta) return null;
+    // Notes ride along in the same react-flow `nodes` array (so drag/select/
+    // delete/undo all work for free) but must never reach reactFlowToYaml —
+    // they are not workflow steps and carry none of NodeSpec's required
+    // shape. The canvas is their single source of truth: whatever note
+    // nodes currently exist there is exactly what gets written to `notes:`.
+    const workflowNodes = nodes.filter(node => !isNoteNodeId(node.id));
+    const noteSpecs: NoteSpec[] = nodes
+      .filter(node => isNoteNodeId(node.id))
+      .map(node => ({ id: node.id, text: node.data.noteText ?? '', position: node.position }));
+    const built = reactFlowToYaml(meta, workflowNodes, edges);
+    return noteSpecs.length > 0 ? { ...built, notes: noteSpecs } : built;
+  }, [edges, meta, nodes]);
   const currentYaml = useMemo(
     () => currentWorkflow ? dumpYaml(currentWorkflow) : '',
     [currentWorkflow],
@@ -289,10 +319,22 @@ export function Builder() {
     const flow = yamlToReactFlow(workflow);
     const restored = applyCanvasPositions(flow.nodes, canvas);
     const laidOut = restored ?? layoutFlow(flow.nodes, flow.edges, layoutDirection).nodes;
-    const { nodes: ignoredNodes, edges: ignoredEdges, ...workflowMeta } = workflow;
+    // Notes are a Builder-only annotation layer (see builder/NoteNode.tsx) —
+    // never part of yamlToReactFlow's output, so they're rebuilt here
+    // straight from the workflow's own `notes:` key, keeping their saved
+    // position exactly rather than being auto-laid-out with the real steps.
+    const noteNodes: Node<WorkflowNodeData>[] = (workflow.notes ?? []).map(note => ({
+      id: note.id,
+      type: NOTE_NODE_TYPE,
+      position: note.position,
+      style: NOTE_DEFAULT_SIZE,
+      data: { nodeId: note.id, typeName: '__note__', config: {}, noteText: note.text },
+    }));
+    const { nodes: ignoredNodes, edges: ignoredEdges, notes: ignoredNotes, ...workflowMeta } = workflow;
     void ignoredNodes;
     void ignoredEdges;
-    setNodes(laidOut);
+    void ignoredNotes;
+    setNodes([...laidOut, ...noteNodes]);
     setEdges(flow.edges);
     setMeta(workflowMeta);
     setWorkflowName(name);
@@ -380,16 +422,25 @@ export function Builder() {
   useEffect(() => {
     if (!dirty || !workflowName || !currentWorkflow || !NAME_PATTERN.test(workflowName)) return;
     const timer = window.setTimeout(() => {
+      const seq = ++autosaveSeqRef.current;
       setAutosaveState('saving');
-      api.saveWorkflowDraft(
-        workflowName,
-        dumpYaml(currentWorkflow),
-        canvasFor(nodes, selectedId, rfInstance),
-      )
-        .then(() => setAutosaveState('saved'))
+      const yaml = dumpYaml(currentWorkflow);
+      const canvas = canvasFor(nodes, selectedId, rfInstance);
+      // Chained onto the previous attempt so PUTs reach the server in the
+      // order they were made, instead of racing as independent concurrent
+      // requests that could arrive out of order and clobber newer content.
+      autosaveChainRef.current = autosaveChainRef.current
+        .catch(() => {})
+        .then(() => api.saveWorkflowDraft(workflowName, yaml, canvas))
+        .then(() => {
+          if (seq !== autosaveSeqRef.current) return;
+          setAutosaveState('saved');
+          setAutosaveError(null);
+        })
         .catch(reason => {
+          if (seq !== autosaveSeqRef.current) return;
           setAutosaveState('error');
-          setError(reason instanceof Error ? reason.message : String(reason));
+          setAutosaveError(reason instanceof Error ? reason.message : String(reason));
         });
     }, 1200);
     return () => window.clearTimeout(timer);
@@ -413,6 +464,14 @@ export function Builder() {
     const supportsModelSelection = Boolean(
       (manifest.config_schema as { properties?: Record<string, unknown> }).properties?.model,
     );
+    const defaultConfig = generateDefaults(manifest.config_schema) ?? {};
+    if (typeName === 'RouterAgent') {
+      // A fresh Router shouldn't inherit the backend schema's `mode: "rule"`
+      // default — that's a legacy identity nobody chose, and it renders as a
+      // dead end (deprecation banner, no editor for its rules). Leaving
+      // `mode` unset forces the author through the mode picker instead.
+      delete (defaultConfig as Record<string, unknown>).mode;
+    }
     const node: Node<WorkflowNodeData> = {
       id,
       type: 'workflow',
@@ -420,7 +479,7 @@ export function Builder() {
       data: {
         nodeId: id,
         typeName,
-        config: generateDefaults(manifest.config_schema) ?? {},
+        config: defaultConfig,
         ...(supportsModelSelection ? {
           selectedModel: 'auto',
           modelRouting: { accuracy_priority: 'maximum', prefer_low_latency: false },
@@ -441,6 +500,41 @@ export function Builder() {
     if (!typeName || !rfInstance) return;
     addNode(typeName, rfInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
   }, [addNode, rfInstance]);
+
+  // A note is a personal annotation, not a workflow step — see
+  // builder/NoteNode.tsx. It shares the canvas's `nodes` array so drag,
+  // select, delete and undo all work through the same generic machinery as
+  // every real step, but it is filtered out before the workflow is built
+  // (see `currentWorkflow`) and never touches the manifest/config machinery.
+  const addNote = useCallback(() => {
+    const snapshot = captureSnapshot();
+    if (snapshot) pushHistory(snapshot);
+    let position = { x: 80, y: 80 };
+    if (rfInstance && canvasRef.current) {
+      const bounds = canvasRef.current.getBoundingClientRect();
+      position = rfInstance.screenToFlowPosition({
+        x: bounds.left + bounds.width / 2 - NOTE_DEFAULT_SIZE.width / 2,
+        y: bounds.top + bounds.height / 2 - NOTE_DEFAULT_SIZE.height / 2,
+      });
+    }
+    const id = `${NOTE_ID_PREFIX}${crypto.randomUUID()}`;
+    const note: Node<WorkflowNodeData> = {
+      id,
+      type: NOTE_NODE_TYPE,
+      position,
+      style: NOTE_DEFAULT_SIZE,
+      data: { nodeId: id, typeName: '__note__', config: {}, noteText: '' },
+    };
+    setNodes(current => [...current, note]);
+    markChanged();
+  }, [captureSnapshot, markChanged, pushHistory, rfInstance, setNodes]);
+
+  const updateNoteText = useCallback((noteId: string, text: string) => {
+    setNodes(current => current.map(node => (
+      node.id === noteId ? { ...node, data: { ...node.data, noteText: text } } : node
+    )));
+    markChanged();
+  }, [markChanged, setNodes]);
 
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.source || !connection.target) return;
@@ -766,7 +860,13 @@ export function Builder() {
 
   const autoLayout = useCallback((direction = layoutDirection) => {
     pushHistory();
-    setNodes(current => layoutFlow(current, edges, direction).nodes);
+    // Notes have no place in the dagre grid — auto-layout only rearranges
+    // real steps, notes keep whatever position the author dragged them to.
+    setNodes(current => {
+      const workflowNodes = current.filter(node => !isNoteNodeId(node.id));
+      const noteNodes = current.filter(node => isNoteNodeId(node.id));
+      return [...layoutFlow(workflowNodes, edges, direction).nodes, ...noteNodes];
+    });
     markChanged();
     requestAnimationFrame(() => rfInstance?.fitView({ padding: 0.2, duration: 350 }));
   }, [edges, layoutDirection, markChanged, pushHistory, rfInstance, setNodes]);
@@ -848,6 +948,14 @@ export function Builder() {
     }
   }, [hydrateWorkflow, navigate]);
 
+  // Notes are canvas annotations, not workflow steps — the step count, the
+  // empty-canvas prompt, and every "is there anything to run/export/search"
+  // gate must all read on real steps only, or a workflow that is really
+  // empty except for a note would look non-empty and offer to run nothing.
+  const realNodeCount = useMemo(
+    () => nodes.filter(node => !isNoteNodeId(node.id)).length,
+    [nodes],
+  );
   const path = useMemo(() => relatedPath(selectedId, edges), [edges, selectedId]);
   const issueNodes = useMemo(() => new Set(
     (preflight?.issues ?? []).map(issue => issue.node_id).filter(Boolean) as string[],
@@ -923,8 +1031,9 @@ export function Builder() {
 
   // Stages are read off the positions currently on the canvas, not off the last
   // dagre run, so hand-dragging a step moves it between columns as you'd expect.
+  // Notes are not workflow steps, so they never form or join a stage.
   const stages = useMemo(
-    () => (showStages ? groupIntoStages(nodes, layoutDirection) : []),
+    () => (showStages ? groupIntoStages(nodes.filter(node => !isNoteNodeId(node.id)), layoutDirection) : []),
     [layoutDirection, nodes, showStages],
   );
   const stageForNode = useMemo(() => {
@@ -981,22 +1090,36 @@ export function Builder() {
     focusNode(nodeId, options);
   }, [collapsedStages, expandStage, focusNode, stageForNode]);
 
-  const displayNodes = useMemo(() => annotatedNodes.map(node => ({
-    ...node,
-    // The Builder's own `selectedId` is the single source of truth for what is
-    // selected, so a step reached by keyboard or by search is highlighted the
-    // same as one that was clicked — React Flow would otherwise only mark the
-    // ones its own pointer handling selected.
-    selected: node.id === selectedId,
-    sourcePosition: layoutDirection === 'TB' ? Position.Bottom : Position.Right,
-    targetPosition: layoutDirection === 'TB' ? Position.Top : Position.Left,
-    data: {
-      ...node.data,
-      faded: selectedId != null && !path.has(node.id),
-      compact: detailTier === 'compact',
-      flowDirection: layoutDirection,
-    },
-  })), [annotatedNodes, detailTier, layoutDirection, path, selectedId]);
+  const displayNodes = useMemo(() => annotatedNodes.map(node => {
+    const isNote = isNoteNodeId(node.id);
+    return {
+      ...node,
+      // The Builder's own `selectedId` is the single source of truth for what is
+      // selected, so a step reached by keyboard or by search is highlighted the
+      // same as one that was clicked — React Flow would otherwise only mark the
+      // ones its own pointer handling selected. A note is never addressed by
+      // `selectedId` (it has no Inspector tab), so it keeps react-flow's own
+      // native click-to-select instead — that's what makes Delete/Backspace
+      // work on it.
+      selected: isNote ? Boolean(node.selected) : node.id === selectedId,
+      sourcePosition: layoutDirection === 'TB' ? Position.Bottom : Position.Right,
+      targetPosition: layoutDirection === 'TB' ? Position.Top : Position.Left,
+      data: {
+        ...node.data,
+        // A note is context for the author, not a step on the graph's
+        // critical path — it never dims, regardless of what's selected.
+        faded: !isNote && selectedId != null && !isNoteNodeId(selectedId ?? '') && !path.has(node.id),
+        compact: detailTier === 'compact',
+        flowDirection: layoutDirection,
+        ...(isNote ? {
+          onNoteChange: (text: string) => updateNoteText(node.id, text),
+          onNoteDelete: () => onNodesChange([{ type: 'remove', id: node.id }]),
+        } : {
+          onNodeDelete: () => onNodesChange([{ type: 'remove', id: node.id }]),
+        }),
+      },
+    };
+  }), [annotatedNodes, detailTier, layoutDirection, onNodesChange, path, selectedId, updateNoteText]);
   const displayEdges = useMemo(() => edges.map(edge => {
     const highlighted = selectedId != null && path.has(edge.source) && path.has(edge.target);
     return {
@@ -1035,18 +1158,21 @@ export function Builder() {
     try {
       // The whole workflow, every step expanded, whatever the canvas is
       // currently showing — an image of a partially collapsed graph would be a
-      // record of a viewing session rather than of the workflow.
+      // record of a viewing session rather than of the workflow. Notes are a
+      // personal annotation, not part of the workflow being documented, so
+      // they're left out of the exported diagram.
+      const exportNodes = annotatedNodes.filter(node => !isNoteNodeId(node.id));
       const image = buildWorkflowSvg({
         title: meta.name,
         subtitle: [
-          `${annotatedNodes.length} steps`,
+          `${exportNodes.length} steps`,
           `${edges.length} connections`,
           `workflow v${meta.version ?? '1.0'}`,
           workflowName ? `${workflowName}.yaml` : 'unsaved draft',
         ].join(' · '),
-        nodes: annotatedNodes,
+        nodes: exportNodes,
         edges,
-        stages: showStages ? groupIntoStages(nodes, layoutDirection) : [],
+        stages: showStages ? groupIntoStages(nodes.filter(node => !isNoteNodeId(node.id)), layoutDirection) : [],
         direction: layoutDirection,
       });
       const filename = exportFileName(workflowName, meta.name, format);
@@ -1156,12 +1282,15 @@ export function Builder() {
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <h2 className="truncate text-sm font-semibold text-ink-950" title={meta.name}>{meta.name}</h2>
-              <span className={`builder-save-indicator ${dirty ? 'builder-save-indicator--dirty' : 'builder-save-indicator--saved'}`}>
+              <span
+                className={`builder-save-indicator ${dirty ? 'builder-save-indicator--dirty' : 'builder-save-indicator--saved'}`}
+                title={autosaveState === 'error' && autosaveError ? autosaveError : undefined}
+              >
                 {autosaveLabel}
               </span>
             </div>
             <div className="mt-0.5 hidden text-[10px] text-ink-500 sm:block">
-              {nodes.length} nodes · {edges.length} connections · workflow v{meta.version ?? '1.0'}
+              {realNodeCount} nodes · {edges.length} connections · workflow v{meta.version ?? '1.0'}
               {workflowName ? ` · ${workflowName}.yaml` : ''}
             </div>
           </div>
@@ -1209,7 +1338,7 @@ export function Builder() {
             </button>
           )}
           <span className="inline-flex items-center gap-1">
-            <button className="ui-button ui-button--secondary" disabled={nodes.length === 0} onClick={() => void prepareRun(currentWorkflow, 'Full workflow')} type="button"><Icon name="play" size={14} /> Run in Cockpit</button>
+            <button className="ui-button ui-button--secondary" disabled={realNodeCount === 0} onClick={() => void prepareRun(currentWorkflow, 'Full workflow')} type="button"><Icon name="play" size={14} /> Run in Cockpit</button>
             <InfoPopover feature="run_test" />
           </span>
           <span className="inline-flex items-center gap-1">
@@ -1293,6 +1422,10 @@ export function Builder() {
               // Stage bands and collapsed-stage placeholders are drawn by the
               // Builder, not part of the workflow — they carry their own controls.
               if (isSyntheticNodeId(node.id)) return;
+              // A note has no Inspector tab — selecting it for react-flow's own
+              // click-to-select (see displayNodes) must not also drive the
+              // single-selectedId Inspector state.
+              if (isNoteNodeId(node.id)) return;
               setSelectedId(node.id);
               setShowInputs(false);
               setInspectorOpen(true);
@@ -1324,7 +1457,7 @@ export function Builder() {
             </span>
             <button
               className="builder-canvas-tool"
-              disabled={nodes.length === 0}
+              disabled={realNodeCount === 0}
               onClick={() => setSearchOpen(true)}
               title="Find a step by name (⌘K)"
               type="button"
@@ -1332,9 +1465,17 @@ export function Builder() {
               <Icon name="search" size={14} /> Find
             </button>
             <button
+              className="builder-canvas-tool"
+              onClick={addNote}
+              title="Add a yellow sticky note to the canvas — a personal annotation, never sent to the workflow"
+              type="button"
+            >
+              <Icon name="note" size={14} /> Add Note
+            </button>
+            <button
               aria-pressed={showStages}
               className={`builder-canvas-tool${showStages ? ' builder-canvas-tool--on' : ''}`}
-              disabled={nodes.length === 0}
+              disabled={realNodeCount === 0}
               onClick={() => { setShowStages(value => !value); setCollapsedStages(new Set()); }}
               title="Group the canvas into stage columns, so parallel branches read as one stage"
               type="button"
@@ -1364,7 +1505,7 @@ export function Builder() {
             <div className="builder-canvas-tool-group">
               <button
                 className="builder-canvas-tool"
-                disabled={nodes.length === 0 || exporting !== null}
+                disabled={realNodeCount === 0 || exporting !== null}
                 onClick={() => setExportOpen(value => !value)}
                 title="Export the whole workflow as an image"
                 type="button"
@@ -1408,7 +1549,7 @@ export function Builder() {
             {selectedId && <button onClick={() => setSelectedId(null)} type="button">Clear focus</button>}
           </div>
 
-          {nodes.length === 0 && (
+          {realNodeCount === 0 && (
             <div className="builder-empty-canvas">
               <div className="builder-empty-icon"><Icon name="topology" size={22} /></div>
               <div className="mt-3 text-base font-semibold text-ink-900">Your workflow canvas is ready</div>
@@ -1443,6 +1584,8 @@ export function Builder() {
               onLaunchTest={(workflow, title) => void prepareRun(workflow, title)}
               onModelRoutingChange={onModelRoutingChange}
               onModelSelectionChange={onModelSelectionChange}
+              onNodeRunOutput={recordNodeOutput}
+              nodeRunOutputs={nodeRunOutputs}
               onRunWorkflow={() => void prepareRun(currentWorkflow, 'Full workflow')}
               onHighlightPath={(executed, waiting) => {
                 setSimulationPath(new Set(executed));
@@ -1487,7 +1630,7 @@ export function Builder() {
 
       {searchOpen && (
         <NodeSearchPalette
-          nodes={annotatedNodes}
+          nodes={annotatedNodes.filter(node => !isNoteNodeId(node.id))}
           onClose={() => setSearchOpen(false)}
           onSelect={nodeId => {
             setSearchOpen(false);

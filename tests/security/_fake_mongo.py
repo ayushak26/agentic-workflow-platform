@@ -20,6 +20,13 @@ class _FakeCursor:
     async def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
         return copy.deepcopy(self._docs[: length])
 
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
+        for doc in copy.deepcopy(self._docs):
+            yield doc
+
 
 def _matches(doc: dict[str, Any], query: dict[str, Any]) -> bool:
     for key, expected in query.items():
@@ -98,6 +105,57 @@ class FakeAsyncCollection:
             deleted_count = deleted
 
         return _Result()
+
+    async def update_one(
+        self,
+        query: dict[str, Any],
+        update: dict[str, Any],
+        *,
+        upsert: bool = False,
+    ) -> Any:
+        _id = query.get("_id")
+        doc = self._docs.get(_id)
+        matched = doc is not None
+        if doc is None:
+            if not upsert:
+                class _NoMatch:
+                    matched_count = 0
+                    modified_count = 0
+                    upserted_id = None
+
+                return _NoMatch()
+            doc = {"_id": _id, **{k: v for k, v in query.items() if k != "_id"}}
+        else:
+            doc = copy.deepcopy(doc)
+
+        if not matched:
+            for field, value in update.get("$setOnInsert", {}).items():
+                doc[field] = value
+        for field, value in update.get("$set", {}).items():
+            doc[field] = value
+        for field, amount in update.get("$inc", {}).items():
+            doc[field] = doc.get(field, 0) + amount
+        self._docs[_id] = copy.deepcopy(doc)
+
+        class _Result:
+            matched_count = 1 if matched else 0
+            modified_count = 1
+            upserted_id = None if matched else _id
+
+        return _Result()
+
+    async def find_one_and_delete(self, query: dict[str, Any]) -> dict[str, Any] | None:
+        _id = query.get("_id")
+        doc = self._docs.get(_id) if _id is not None else None
+        if doc is None:
+            for key, candidate in list(self._docs.items()):
+                if _matches(candidate, query):
+                    doc = candidate
+                    del self._docs[key]
+                    return copy.deepcopy(doc)
+            return None
+        del self._docs[_id]
+        return copy.deepcopy(doc)
 
     async def create_index(self, *args: Any, **kwargs: Any) -> None:
         return None

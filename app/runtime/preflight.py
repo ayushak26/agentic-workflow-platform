@@ -867,20 +867,65 @@ def _validate_typed_router(
         )
 
 
+def _multi_router_ids(spec: WorkflowSpec) -> set[str]:
+    """RouterAgent nodes configured for Multi-Route (selection="multi") —
+    their branches are OPTIONAL (any subset may fire), not EXCLUSIVE (exactly
+    one fires), so they must never enter the mutual-exclusivity analysis
+    below (that would either miss a real deadlock or misreport its cause).
+    See MULTIROUTE_ANDJOIN_MAY_NOT_FIRE for their own, separate check.
+    """
+    out: set[str] = set()
+    for node in spec.nodes:
+        if node.type != "RouterAgent":
+            continue
+        if (node.effective_config() or {}).get("selection", "single") == "multi":
+            out.add(node.id)
+    return out
+
+
+def _plain_targets(spec: WorkflowSpec) -> dict[str, list[str]]:
+    """Every target reached by a plain (non-HITL, non-router) edge, mapped
+    to its declared predecessors — mirrors app/runtime/compiler.py's
+    _wire_edges step 3 exactly, which is what actually decides which
+    predecessors get combined into one add_edge([...], target) AND-join.
+    Shared by _validate_fanin_reachability and _validate_multiroute_andjoin
+    so the two checks can never drift apart on what counts as a fan-in.
+    """
+    hitl_ids = {n.id for n in spec.nodes if n.type == "HumanInLoopAgent"}
+    plain_targets: dict[str, list[str]] = {}
+    for edge in spec.edges:
+        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
+            continue
+        if edge.condition and edge.branches:
+            continue
+        targets = edge.to if isinstance(edge.to, list) else ([edge.to] if edge.to else [])
+        for target in targets:
+            plain_targets.setdefault(target, []).append(edge.from_)
+    return plain_targets
+
+
 def _exclusive_branch_groups(
     spec: WorkflowSpec, forward: dict[str, set[str]]
 ) -> list[list[set[str]]]:
-    """For each router (condition+branches) edge with 2+ distinct targets,
-    the node sets exclusively reachable via each individual branch target
-    (i.e. reachable via THAT target but not via any OTHER target of the
-    SAME router). One entry per router edge; each entry is the list of that
-    router's per-branch exclusive sets. Used by _mutually_exclusive below
-    to detect a fan-in target whose declared predecessors can never all
-    fire together — see FANIN_UNREACHABLE_ANDJOIN.
+    """For each SINGLE-selection router (condition+branches) edge with 2+
+    distinct targets, the node sets exclusively reachable via each
+    individual branch target (i.e. reachable via THAT target but not via
+    any OTHER target of the SAME router). One entry per router edge; each
+    entry is the list of that router's per-branch exclusive sets. Used by
+    _mutually_exclusive below to detect a fan-in target whose declared
+    predecessors can never all fire together — see FANIN_UNREACHABLE_ANDJOIN.
+
+    Multi-Route edges are excluded (see _multi_router_ids) — the entire
+    premise here, "exactly one branch fires so these sets can never overlap
+    in one run", is false for a router that may select several branches at
+    once.
     """
+    multi_ids = _multi_router_ids(spec)
     per_router: list[list[set[str]]] = []
     for edge in spec.edges:
         if not (edge.condition and edge.branches):
+            continue
+        if edge.from_ in multi_ids:
             continue
         targets = list(dict.fromkeys(edge.branches.values()))
         if len(targets) < 2:
@@ -936,16 +981,7 @@ def _validate_fanin_reachability(
     manifest as a "Template path not resolvable" KeyError at all -- the
     referencing node just never gets a chance to run its template.
     """
-    hitl_ids = {n.id for n in spec.nodes if n.type == "HumanInLoopAgent"}
-    plain_targets: dict[str, list[str]] = {}
-    for edge in spec.edges:
-        if edge.from_ in hitl_ids and not (edge.condition and edge.branches):
-            continue
-        if edge.condition and edge.branches:
-            continue
-        targets = edge.to if isinstance(edge.to, list) else ([edge.to] if edge.to else [])
-        for target in targets:
-            plain_targets.setdefault(target, []).append(edge.from_)
+    plain_targets = _plain_targets(spec)
 
     exclusive_groups = _exclusive_branch_groups(spec, forward)
     if not exclusive_groups:
@@ -976,6 +1012,133 @@ def _validate_fanin_reachability(
                     )
 
 
+def _multi_route_branch_sets(
+    spec: WorkflowSpec, forward: dict[str, set[str]]
+) -> list[tuple[str, dict[str, set[str]]]]:
+    """Per Multi-Route router edge: branch label -> nodes reachable ONLY via
+    that branch's own target (not via any of the router's OTHER branch
+    targets). Same set-arithmetic shape as _exclusive_branch_groups above,
+    kept separate because these branches are OPTIONAL (any subset may fire),
+    not EXCLUSIVE (exactly one fires) — see MULTIROUTE_ANDJOIN_MAY_NOT_FIRE.
+    """
+    multi_ids = _multi_router_ids(spec)
+    result: list[tuple[str, dict[str, set[str]]]] = []
+    for edge in spec.edges:
+        if not (edge.condition and edge.branches) or edge.from_ not in multi_ids:
+            continue
+        targets = list(dict.fromkeys(edge.branches.values()))
+        if len(targets) < 2:
+            continue
+        reach = {t: _reachable(t, forward) for t in targets}
+        per_label: dict[str, set[str]] = {}
+        for label, target in edge.branches.items():
+            others: set[str] = set()
+            for other_target in targets:
+                if other_target != target:
+                    others |= reach[other_target]
+            per_label[label] = reach[target] - others
+        result.append((edge.from_, per_label))
+    return result
+
+
+def _selection_deps(
+    node_id: str, branch_sets: list[tuple[str, dict[str, set[str]]]]
+) -> frozenset[tuple[str, str]]:
+    """Every (multi_router_id, branch_label) this node's execution is
+    conditioned on — a node exclusively reachable via one branch of a
+    Multi-Route router depends on that branch having been selected. A node
+    reachable via more than one branch of the SAME router carries no
+    dependency for that router (it does not need any one specific branch),
+    but by construction such a node is itself a fan-in point and gets
+    evaluated on its own terms below.
+    """
+    return frozenset(
+        (router_id, label)
+        for router_id, per_label in branch_sets
+        for label, nodes in per_label.items()
+        if node_id in nodes
+    )
+
+
+def _validate_multiroute_andjoin(
+    spec: WorkflowSpec,
+    report: WorkflowPreflightReport,
+    forward: dict[str, set[str]],
+) -> None:
+    """A fan-in target whose declared predecessors depend on DIFFERENT
+    Multi-Route selections can silently never fire, the same failure shape
+    FANIN_UNREACHABLE_ANDJOIN already catches for ordinary (single-select)
+    routers' mutually-exclusive branches — confirmed empirically against
+    real langgraph 1.2.9: a target dispatched to only a SUBSET of a
+    multi-router's own branches is never revisited for the branches that
+    weren't selected, so any node whose AND-join lists all of them hangs
+    forever on the ones that never ran. No exception, no timeout.
+    """
+    branch_sets = _multi_route_branch_sets(spec, forward)
+    if not branch_sets:
+        return  # no Multi-Route routers at all
+
+    multi_ids = {router_id for router_id, _ in branch_sets}
+    plain_targets = _plain_targets(spec)
+
+    # target -> list of (description, dependency set) contributors, mirroring
+    # every arrival group app/runtime/compiler.py's _wire_edges would give it.
+    contributors: dict[str, list[tuple[str, frozenset]]] = {}
+
+    for target, preds in plain_targets.items():
+        for source in dict.fromkeys(preds):
+            deps = _selection_deps(source, branch_sets)
+            contributors.setdefault(target, []).append((repr(source), deps))
+
+    for edge in spec.edges:
+        if not (edge.condition and edge.branches):
+            continue
+        is_multi = edge.from_ in multi_ids
+        base_deps = _selection_deps(edge.from_, branch_sets)
+        # Group by TARGET first: two labels of the SAME edge that both
+        # resolve to the same target are one arrival group (the compiler
+        # dedupes them into one dispatch destination — either label
+        # reaching it is sufficient), not two independent ones.
+        labels_by_target: dict[str, list[str]] = {}
+        for label, target in edge.branches.items():
+            labels_by_target.setdefault(target, []).append(label)
+        for target, labels in labels_by_target.items():
+            deps = base_deps | ({(edge.from_, label) for label in labels} if is_multi else set())
+            desc = f"branch {labels[0]!r} of {edge.from_!r}" if len(labels) == 1 else (
+                f"branches {labels!r} of {edge.from_!r}"
+            )
+            contributors.setdefault(target, []).append((desc, frozenset(deps)))
+
+    for target, entries in contributors.items():
+        distinct = {deps for _, deps in entries}
+        if len(distinct) < 2:
+            continue
+        desc_a = desc_b = None
+        for i in range(len(entries)):
+            for j in range(i + 1, len(entries)):
+                if entries[i][1] != entries[j][1]:
+                    desc_a, desc_b = entries[i][0], entries[j][0]
+                    break
+            if desc_a is not None:
+                break
+        _issue(
+            report,
+            "MULTIROUTE_ANDJOIN_MAY_NOT_FIRE",
+            f"Node {target!r} waits for BOTH {desc_a} and {desc_b} to "
+            "complete (a fan-in is an AND-join), but they depend on "
+            "different Multi-Route selections — a run that doesn't select "
+            f"all of them never reaches {target!r}, and never reports an "
+            "error.",
+            node_id=target,
+            suggestion=(
+                "A Join cannot wait for branches that may not run. Give "
+                "each Multi-Route branch its own downstream path and "
+                "collect whichever ran in the workflow's output section, "
+                "or switch this router back to single selection."
+            ),
+        )
+
+
 def _validate_graph(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
@@ -986,6 +1149,7 @@ def _validate_graph(
     entry = spec.entry or spec.nodes[0].id
     reachable = _reachable(entry, forward)
     _validate_fanin_reachability(spec, report, forward)
+    _validate_multiroute_andjoin(spec, report, forward)
 
     for node_id in sorted(set(forward) - reachable):
         _issue(
@@ -1812,6 +1976,27 @@ async def _probe_services(
                     suggestion=(
                         "Start MinIO and verify MINIO_ENDPOINT, network, "
                         "bucket, and credentials."
+                    ),
+                )
+
+    if "python_runner" in required:
+        runner = services.get("python_runner")
+        if runner is not None:
+            try:
+                await asyncio.wait_for(
+                    runner.probe(),
+                    timeout=settings.health_probe_timeout_seconds,
+                )
+            except Exception as exc:
+                _issue(
+                    report,
+                    "SNIPPET_RUNNER_UNAVAILABLE",
+                    f"The snippet-runner sidecar did not pass its health "
+                    f"probe: {type(exc).__name__}.",
+                    path="services.python_runner",
+                    suggestion=(
+                        "Start the snippet-runner sidecar container and "
+                        "verify the shared Unix socket volume is mounted."
                     ),
                 )
 

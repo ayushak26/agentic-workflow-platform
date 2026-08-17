@@ -139,6 +139,23 @@ def _finance_scm_spec(app_settings: Settings) -> StdioServerParameters:
     return StdioServerParameters(command="node", args=[str(entrypoint)], env=env)
 
 
+def _business_records_env(app_settings: Settings) -> dict[str, str]:
+    """Environment for the Business Records MCP subprocess.
+
+    Connection details come from the platform's own settings — a live MySQL
+    database, unlike the fixture-backed mocks above — and are handed to the
+    subprocess the same way Dynamics credentials are, never through workflow
+    YAML or the MCP protocol boundary.
+    """
+    env = dict(os.environ)
+    env["BUSINESS_RECORDS_MYSQL_HOST"] = app_settings.business_records_mysql_host
+    env["BUSINESS_RECORDS_MYSQL_PORT"] = str(app_settings.business_records_mysql_port)
+    env["BUSINESS_RECORDS_MYSQL_USER"] = app_settings.business_records_mysql_user
+    env["BUSINESS_RECORDS_MYSQL_PASSWORD"] = app_settings.business_records_mysql_password
+    env["BUSINESS_RECORDS_MYSQL_DATABASE"] = app_settings.business_records_mysql_database
+    return env
+
+
 def build_server_specs(
     app_settings: Settings = settings,
 ) -> dict[str, StdioServerParameters]:
@@ -160,6 +177,13 @@ def build_server_specs(
 
     if app_settings.fno_mcp_enabled:
         specs["dynamics365_finance_scm"] = _finance_scm_spec(app_settings)
+
+    if app_settings.business_records_mcp_enabled:
+        specs["business_records"] = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "app.mcp.business_records.server"],
+            env=_business_records_env(app_settings),
+        )
 
     # Servers declared through MCP_SERVERS join the same launch table, so a
     # third-party MCP server is configured exactly like a first-party one and

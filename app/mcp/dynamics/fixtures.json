@@ -97,12 +97,35 @@
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
     }
   ],
+  "quotations": [
+    {
+      "quoteid": "qt000000-0000-4000-8000-000000000001",
+      "quotation_number": "QUO-2026-0188",
+      "name": "Dura 25 replacement quotation",
+      "status": "open",
+      "totalamount": 21500.0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
+      "_opportunityid_value": "0pp00000-0000-4000-8000-000000000001"
+    },
+    {
+      "quoteid": "qt000000-0000-4000-8000-000000000002",
+      "quotation_number": "QUO-2026-0241",
+      "name": "Dosing skid upgrade quotation",
+      "status": "draft",
+      "totalamount": 112000.0,
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001",
+      "_opportunityid_value": "0pp00000-0000-4000-8000-000000000002"
+    }
+  ],
   "salesorders": [
     {
       "salesorderid": "0rd00000-0000-4000-8000-000000000001",
-      "ordernumber": "SO-2024-0881",
+      "order_number": "SO-2024-0881",
+      "purchase_order_number": null,
       "name": "Dura 25 peristaltic pump",
       "createdon": "2024-09-17T09:12:00Z",
+      "confirmed_date": "2024-09-18T11:20:00Z",
+      "status": "fulfilled",
       "totalamount": 18750.0,
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
       "products": [
@@ -122,9 +145,12 @@
     },
     {
       "salesorderid": "0rd00000-0000-4000-8000-000000000002",
-      "ordernumber": "SO-2023-0417",
+      "order_number": "SO-2023-0417",
+      "purchase_order_number": null,
       "name": "Dura 15 peristaltic pump",
       "createdon": "2023-04-02T13:40:00Z",
+      "confirmed_date": "2023-04-03T09:10:00Z",
+      "status": "fulfilled",
       "totalamount": 12400.0,
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001",
       "products": [
@@ -138,9 +164,12 @@
     },
     {
       "salesorderid": "0rd00000-0000-4000-8000-000000000003",
-      "ordernumber": "SO-2025-0290",
+      "order_number": "SO-2025-0290",
+      "purchase_order_number": null,
       "name": "Spare hose kit",
       "createdon": "2025-06-11T08:05:00Z",
+      "confirmed_date": "2025-06-11T13:30:00Z",
+      "status": "fulfilled",
       "totalamount": 1180.0,
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
       "products": [
@@ -153,23 +182,107 @@
       ]
     }
   ],
+  "shipments": [
+    {
+      "shipmentid": "sh000000-0000-4000-8000-000000000001",
+      "shipment_number": "SHIP-2024-0881",
+      "status": "delivered",
+      "shipped_date": "2024-09-23T07:30:00Z",
+      "delivered_date": "2024-09-25T13:15:00Z",
+      "_salesorderid_value": "0rd00000-0000-4000-8000-000000000001",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    },
+    {
+      "shipmentid": "sh000000-0000-4000-8000-000000000002",
+      "shipment_number": "SHIP-2023-0417",
+      "status": "delivered",
+      "shipped_date": "2023-04-10T07:00:00Z",
+      "delivered_date": "2023-04-12T11:20:00Z",
+      "_salesorderid_value": "0rd00000-0000-4000-8000-000000000002",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001"
+    }
+  ],
+  "service_cases": [
+    {
+      "caseid": "cs000000-0000-4000-8000-000000000001",
+      "service_case_number": "CASE-2026-0147",
+      "title": "Dura 25 reduced flow",
+      "status": "open",
+      "priority": "high",
+      "serial_number": "VF-29831",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
+    },
+    {
+      "caseid": "cs000000-0000-4000-8000-000000000002",
+      "service_case_number": "CASE-2026-0098",
+      "title": "Dura 15 maintenance enquiry",
+      "status": "resolved",
+      "priority": "normal",
+      "serial_number": "VF-18402",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001"
+    }
+  ],
+  "contracts": [
+    {
+      "contractid": "crmctr0001",
+      "contract_number": "CTR-ABC-DE-2026",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
+      "name": "ABC Chemicals Germany service agreement",
+      "status": "Active"
+    },
+    {
+      "contractid": "crmctr0002",
+      "contract_number": "CTR-ABC-NL-2026",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001",
+      "name": "ABC Chemicals Netherlands account agreement",
+      "status": "Active"
+    }
+  ],
+  "installed_equipment": [
+    {
+      "equipmentid": "eq000001",
+      "serial_number": "VF-29831",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002",
+      "product_name": "Verderflex Dura 25",
+      "pump_model": "Verderflex Dura 25",
+      "existing_pump_manufacturer": "Verder",
+      "site_or_location": "Düsseldorf",
+      "existing_pump_performance": "Previously commissioned and in service"
+    },
+    {
+      "equipmentid": "eq000002",
+      "serial_number": "VF-18402",
+      "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001",
+      "product_name": "Verderflex Dura 15",
+      "pump_model": "Verderflex Dura 15",
+      "existing_pump_manufacturer": "Verder",
+      "site_or_location": "Rotterdam",
+      "existing_pump_performance": "Installed and previously serviced"
+    }
+  ],
   "products": [
     {
       "productid": "p0000000-0000-4000-8000-000000000001",
-      "name": "Verderflex Dura 25",
+      "product_name": "Verderflex Dura 25",
       "productnumber": "VF-DURA-25",
+      "pump_model": "Verderflex Dura 25",
+      "product_family": "Peristaltic hose pump",
       "description": "Peristaltic hose pump, 25 mm bore, up to 8 m³/h."
     },
     {
       "productid": "p0000000-0000-4000-8000-000000000002",
-      "name": "Verderflex Dura 15",
+      "product_name": "Verderflex Dura 15",
       "productnumber": "VF-DURA-15",
+      "pump_model": "Verderflex Dura 15",
+      "product_family": "Peristaltic hose pump",
       "description": "Peristaltic hose pump, 15 mm bore, up to 2.6 m³/h."
     },
     {
       "productid": "p0000000-0000-4000-8000-000000000003",
-      "name": "Dura 25 hose set (NR)",
+      "product_name": "Dura 25 hose set (NR)",
       "productnumber": "VF-DURA-25-HOSE",
+      "pump_model": "Dura 25 hose set (NR)",
+      "product_family": "Peristaltic hose pump",
       "description": "Natural rubber hose element for Dura 25."
     }
   ],
@@ -200,11 +313,5 @@
     }
   ],
   "leads": [],
-  "tasks": [],
-  "systemusers": [
-    {
-      "systemuserid": "00000000-0000-4000-8000-000000000001",
-      "fullname": "Demo Integration User"
-    }
-  ]
+  "tasks": []
 }

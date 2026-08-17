@@ -563,7 +563,7 @@ async def test_an_order_is_found_by_the_customers_own_po_reference():
     assert result["status"] == "completed"
     outputs = result["state"]["node_outputs"]
     assert "status_order_not_found" not in outputs
-    assert outputs["get_sales_order"]["first"]["sales_order_reference"] == "SO-2025-0977"
+    assert outputs["get_sales_order"]["first"]["order_number"] == "SO-2025-0977"
 
 
 # ── Accuracy guards: a missing or ambiguous fact is never treated as confirmed ──
@@ -1094,7 +1094,7 @@ async def test_an_unreadable_fulfilment_state_is_not_reported_as_normal():
 
     class _FulfilmentDown(D365FinanceFixtureClient):
         async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
-            if name == "get_order_fulfilment_status":
+            if name == "find_order_fulfilment_status":
                 raise MCPToolError("fulfilment: connection reset")
             return await super().call_tool_raw(
                 name, arguments, server=server, timeout_seconds=timeout_seconds
@@ -1131,7 +1131,7 @@ async def test_an_unreadable_credit_position_is_not_read_as_clear():
 
     class _CreditDown(D365FinanceFixtureClient):
         async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
-            if name == "get_credit_status":
+            if name == "find_credit_status":
                 raise MCPToolError("credit: service unavailable")
             return await super().call_tool_raw(
                 name, arguments, server=server, timeout_seconds=timeout_seconds
@@ -1169,7 +1169,7 @@ async def test_an_unreadable_production_state_does_not_default_to_not_started():
 
     class _OrderDownForChange(D365FinanceFixtureClient):
         async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
-            if name == "get_sales_order":
+            if name == "find_sales_order":
                 raise MCPToolError("order: gateway timeout")
             return await super().call_tool_raw(
                 name, arguments, server=server, timeout_seconds=timeout_seconds
@@ -1631,7 +1631,7 @@ async def test_an_unreadable_ownership_lookup_goes_to_routing_operations():
 
     class _OwnershipDown(D365FinanceFixtureClient):
         async def call_tool_raw(self, name, arguments, *, server, timeout_seconds=None):
-            if name == "get_account_ownership":
+            if name == "find_account_ownership":
                 raise MCPToolError("ownership: service unavailable")
             return await super().call_tool_raw(
                 name, arguments, server=server, timeout_seconds=timeout_seconds

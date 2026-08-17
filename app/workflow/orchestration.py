@@ -98,6 +98,7 @@ async def record_run_failure(
     run_id: str,
     session: str,
     error: BaseException | str,
+    services: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist an exception raised while executing/resuming a run.
 
@@ -121,6 +122,10 @@ async def record_run_failure(
             db, run_id=run_id, session_id=session, status="failed",
         )
     await _reconcile_pipeline_stage(db, run_id, session)
+    await _reconcile_subprocess_callback(
+        db, run_id, session, services,
+        status="failed", output=None, node_outputs={}, error=message,
+    )
     return {"status": "failed", "run_id": run_id, "error": message}
 
 
@@ -131,6 +136,7 @@ async def finalize_run_result(
     run_id: str,
     session: str,
     record_rejection_reason: bool = False,
+    services: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a terminal or re-paused outcome. Node hooks have already
     written every completed output, so this is a consistent full-state
@@ -142,9 +148,9 @@ async def finalize_run_result(
     path, but this extraction only moves code — it doesn't change behavior —
     so the difference is kept explicit rather than silently unified.
     """
+    run_status = result.get("status", "completed")
+    state = result.get("state", {})
     if db is not None:
-        state = result.get("state", {})
-        run_status = result.get("status", "completed")
         await upsert_run(
             db,
             run_id,
@@ -167,6 +173,13 @@ async def finalize_run_result(
             db, run_id=run_id, session_id=session, status=run_status,
         )
     await _reconcile_pipeline_stage(db, run_id, session)
+    await _reconcile_subprocess_callback(
+        db, run_id, session, services,
+        status=run_status,
+        output=result.get("output"),
+        node_outputs=state.get("node_outputs", {}),
+        error=result.get("reason") if record_rejection_reason else None,
+    )
     return result
 
 
@@ -177,6 +190,7 @@ async def run_and_finalize(
     run_id: str,
     session: str,
     record_rejection_reason: bool = False,
+    services: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Await one execution coroutine and persist its outcome end to end.
 
@@ -195,16 +209,21 @@ async def run_and_finalize(
         # longer does this, since BackgroundRunManager detaches execution
         # from the request task. Still record it rather than leaving the run
         # stuck "running" forever, then let the cancellation keep propagating.
-        await record_run_failure(db, run_id=run_id, session=session, error=e)
+        await record_run_failure(
+            db, run_id=run_id, session=session, error=e, services=services,
+        )
         raise
     except Exception as e:
-        return await record_run_failure(db, run_id=run_id, session=session, error=e)
+        return await record_run_failure(
+            db, run_id=run_id, session=session, error=e, services=services,
+        )
     return await finalize_run_result(
         result,
         db=db,
         run_id=run_id,
         session=session,
         record_rejection_reason=record_rejection_reason,
+        services=services,
     )
 
 
@@ -236,6 +255,7 @@ class BackgroundRunManager:
         run_id: str,
         session: str,
         record_rejection_reason: bool = False,
+        services: dict[str, Any] | None = None,
     ) -> None:
         task = asyncio.create_task(
             self._run_owned(
@@ -244,6 +264,7 @@ class BackgroundRunManager:
                 run_id=run_id,
                 session=session,
                 record_rejection_reason=record_rejection_reason,
+                services=services,
             ),
             name=f"workflow-run:{run_id}",
         )
@@ -271,6 +292,7 @@ class BackgroundRunManager:
         run_id: str,
         session: str,
         record_rejection_reason: bool,
+        services: dict[str, Any] | None = None,
     ) -> None:
         if self._redis is None:
             await run_and_finalize(
@@ -279,6 +301,7 @@ class BackgroundRunManager:
                 run_id=run_id,
                 session=session,
                 record_rejection_reason=record_rejection_reason,
+                services=services,
             )
             return
 
@@ -298,6 +321,7 @@ class BackgroundRunManager:
                 run_id=run_id,
                 session=session,
                 error=f"Distributed run ownership is unavailable: {exc}",
+                services=services,
             )
             log.error(
                 "background_run.lease_unavailable",
@@ -319,6 +343,7 @@ class BackgroundRunManager:
                 run_id=run_id,
                 session=session,
                 record_rejection_reason=record_rejection_reason,
+                services=services,
             )
         )
         heartbeat = asyncio.create_task(lease.keep_alive())
@@ -373,6 +398,42 @@ async def _reconcile_pipeline_stage(db: Any, run_id: str, session: str) -> None:
     except Exception as exc:
         log.error(
             "pipeline_stage_reconcile_failed",
+            error=str(exc),
+            run_id=run_id,
+        )
+
+
+async def _reconcile_subprocess_callback(
+    db: Any,
+    run_id: str,
+    session: str,
+    services: dict[str, Any] | None,
+    *,
+    status: str,
+    output: Any,
+    node_outputs: dict[str, Any],
+    error: str | None,
+) -> None:
+    """Best-effort: if this run_id is a Subprocess node's child, deliver its
+    result to the waiting parent (app.workflow.subprocess_callback).
+
+    Never allowed to break a plain workflow run — one cheap indexed Mongo
+    lookup either way, same contract as _reconcile_pipeline_stage above.
+    A child still "paused" (its own HITL gate, say) has not actually
+    finished, so this only fires on a genuinely terminal status.
+    """
+    if db is None or status not in ("completed", "rejected", "failed"):
+        return
+    try:
+        from app.workflow.subprocess_callback import deliver_by_child_run_id
+
+        await deliver_by_child_run_id(
+            db, services or {}, run_id,
+            status=status, output=output, node_outputs=node_outputs, error=error,
+        )
+    except Exception as exc:
+        log.error(
+            "subprocess_callback_reconcile_failed",
             error=str(exc),
             run_id=run_id,
         )

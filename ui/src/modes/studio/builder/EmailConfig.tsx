@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { api } from '../../../api/client';
 import type {
   ContractField,
   EmailConnectionInfo,
@@ -7,7 +8,9 @@ import type {
   OutputContract,
 } from '../../../api/types';
 import { FieldPicker } from './FieldPicker';
+import { OperationBadge } from './MCPToolConfig';
 import { PromptDraftAssistant } from '../PromptDraftAssistant';
+import { TemplateTextField } from './TemplateTextField';
 
 /**
  * The Email capability's configuration.
@@ -37,23 +40,136 @@ function recipientsOf(value: unknown): Recipient[] {
   return Array.isArray(value) ? (value as Recipient[]) : [];
 }
 
+/** Opens the provider's consent screen in a popup and calls `onComplete`
+ *  once the callback page (app/api/email_oauth.py) posts back — that page
+ *  has no other way to reach this window, since it's a plain server
+ *  response to the provider's own redirect, not part of the Builder's own
+ *  routing. */
+function useEmailOAuthPopup(onComplete: () => void) {
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.type === 'email-oauth-complete') onCompleteRef.current();
+    }
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  return (provider: 'microsoft' | 'gmail') => {
+    window.open(
+      api.emailConnectUrl(provider),
+      'email-oauth-connect',
+      'width=520,height=680,noopener=no',
+    );
+  };
+}
+
+function ConnectMailboxButtons({ onConnect }: { onConnect: (provider: 'microsoft' | 'gmail') => void }) {
+  return (
+    <div className="mt-2 flex gap-1.5">
+      <button
+        className="flex-1 rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] font-medium text-accent-700 hover:border-accent-600 hover:bg-accent-50"
+        onClick={() => onConnect('microsoft')}
+        type="button"
+      >
+        + Connect Outlook
+      </button>
+      <button
+        className="flex-1 rounded-md border border-dashed border-slate-300 py-1.5 text-[11px] font-medium text-accent-700 hover:border-accent-600 hover:bg-accent-50"
+        onClick={() => onConnect('gmail')}
+        type="button"
+      >
+        + Connect Gmail
+      </button>
+    </div>
+  );
+}
+
+function ConnectionManagement({
+  connection,
+  onConnectionsChanged,
+}: {
+  connection: EmailConnectionInfo;
+  onConnectionsChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<'allow' | 'disconnect' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const toggleAllowSend = () => {
+    setBusy('allow');
+    setError(null);
+    api.setEmailConnectionAllowSend(connection.id, !connection.allow_send)
+      .then(onConnectionsChanged)
+      .catch(reason => setError(
+        reason instanceof Error ? reason.message : String(reason),
+      ))
+      .finally(() => setBusy(null));
+  };
+
+  const disconnect = () => {
+    if (!window.confirm(`Disconnect ${connection.display_name}? Workflows using this connection will stop working until it's reconnected.`)) return;
+    setBusy('disconnect');
+    setError(null);
+    api.disconnectEmailConnection(connection.id)
+      .then(onConnectionsChanged)
+      .catch(reason => setError(
+        reason instanceof Error ? reason.message : String(reason),
+      ))
+      .finally(() => setBusy(null));
+  };
+
+  return (
+    <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+      <label className="flex items-center gap-1.5 text-[11px] text-ink-700">
+        <input
+          checked={connection.allow_send}
+          disabled={busy !== null}
+          onChange={toggleAllowSend}
+          type="checkbox"
+        />
+        Allow this connection to send
+      </label>
+      <button
+        className="text-[11px] font-medium text-bad hover:underline disabled:opacity-50"
+        disabled={busy !== null}
+        onClick={disconnect}
+        type="button"
+      >
+        {busy === 'disconnect' ? 'Disconnecting…' : 'Disconnect'}
+      </button>
+      {error && (
+        <p className="text-[10px] text-bad">
+          {error.includes('404') || error.toLowerCase().includes('no oauth')
+            ? "This connection isn't managed here — it's set in deployment configuration."
+            : error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function EmailConfig({
   config,
   connections,
   contract,
   onChange,
+  onConnectionsChanged,
   presets,
 }: {
   config: Config;
   connections: EmailConnectionInfo[];
   contract: OutputContract | null;
   onChange: (next: Config) => void;
+  onConnectionsChanged: () => void;
   presets: NodePreset[];
 }) {
   const operation = asString(config.operation, 'search');
   const connectionId = asString(config.connection);
   const connection = connections.find(item => item.id === connectionId);
   const set = (patch: Config) => onChange({ ...config, ...patch });
+  const openConnectPopup = useEmailOAuthPopup(onConnectionsChanged);
 
   return (
     <div>
@@ -61,8 +177,9 @@ export function EmailConfig({
         <div className="builder-panel-heading">Mailbox connection</div>
         {connections.length === 0 ? (
           <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] leading-4 text-amber-900">
-            No mailbox is configured for this deployment. A workflow can still be
-            built — preflight will block the run until a connection exists.
+            No mailbox is configured for this deployment. Connect one below,
+            or a workflow can still be built — preflight will block the run
+            until a connection exists.
             <input
               className="builder-field mt-2 font-mono"
               onChange={event => set({ connection: event.target.value })}
@@ -86,11 +203,15 @@ export function EmailConfig({
             ))}
           </select>
         )}
+        <ConnectMailboxButtons onConnect={openConnectPopup} />
         {connection && (
-          <p className="mt-1 text-[10px] text-ink-500">
-            Provider differences are handled below this step. Switching from
-            Gmail to Microsoft is a connection change, not a workflow change.
-          </p>
+          <>
+            <ConnectionManagement connection={connection} onConnectionsChanged={onConnectionsChanged} />
+            <p className="mt-1 text-[10px] text-ink-500">
+              Provider differences are handled below this step. Switching from
+              Gmail to Microsoft is a connection change, not a workflow change.
+            </p>
+          </>
         )}
       </section>
 
@@ -113,11 +234,7 @@ export function EmailConfig({
                   <span className="text-[11px] font-semibold text-ink-900">
                     {preset.label}
                   </span>
-                  {preset.external_action && (
-                    <span className="rounded bg-amber-100 px-1 text-[9px] text-amber-800">
-                      acts outside
-                    </span>
-                  )}
+                  <OperationBadge operation={WRITE_OPERATIONS.has(value) ? 'write' : 'read'} />
                 </div>
                 <div className="mt-0.5 text-[10px] leading-4 text-ink-500">
                   {preset.summary}
@@ -160,6 +277,7 @@ export function EmailConfig({
       {WRITE_OPERATIONS.has(operation) && (
         <MessageFields
           config={config}
+          contract={contract}
           onChange={onChange}
           showRecipients={operation !== 'reply'}
           typeName="EmailAgent"
@@ -285,6 +403,7 @@ function MessageReference({
         <div className="mt-2 rounded border border-slate-200 p-2">
           <FieldPicker
             contract={contract}
+            destinationKind="text"
             onPick={(field: ContractField) => {
               onChange({ ...config, message_id: field.reference });
               setPicking(false);
@@ -299,11 +418,13 @@ function MessageReference({
 
 function MessageFields({
   config,
+  contract,
   onChange,
   showRecipients,
   typeName,
 }: {
   config: Config;
+  contract: OutputContract | null;
   onChange: (next: Config) => void;
   showRecipients: boolean;
   typeName: string;
@@ -356,9 +477,11 @@ function MessageFields({
 
       <label className="block text-[11px] font-medium text-ink-700">
         Subject
-        <input
-          className="builder-field mt-1"
-          onChange={event => set({ subject: event.target.value })}
+        <TemplateTextField
+          aria-label="Subject"
+          contract={contract}
+          onChange={text => set({ subject: text })}
+          rows={1}
           value={asString(config.subject)}
         />
       </label>
@@ -373,9 +496,10 @@ function MessageFields({
           ✨ Draft Email
         </button>
       </div>
-      <textarea
-        className="builder-field mt-1"
-        onChange={event => set({ body: event.target.value })}
+      <TemplateTextField
+        aria-label="Body"
+        contract={contract}
+        onChange={text => set({ body: text })}
         placeholder="{{outputs.draft_reply.text}}"
         rows={6}
         value={asString(config.body)}

@@ -70,7 +70,7 @@ def as_field_router(spec: dict) -> dict:
     # genuinely enum-checkable.
     node(spec, "route_request")["config"] = {
         "mode": "field",
-        "route_field": "outputs.understand_request.result.urgency",
+        "route_field": "outputs.understand_request.parsed.urgency",
         "branches": {
             "low": "sales",
             "normal": "sales",
@@ -117,7 +117,7 @@ class TestFieldReferences:
         spec = copy.deepcopy(triage)
         rule(spec, "automation_safety", "stopped production")["when"]["conditions"][0][
             "field"
-        ] = "outputs.understand_request.result.production_stoped"
+        ] = "outputs.understand_request.parsed.production_stoped"
         report = report_for(spec)
         assert "UNKNOWN_FIELD_REFERENCE" in {issue.code for issue in report.issues}
         assert not report.valid
@@ -127,13 +127,13 @@ class TestFieldReferences:
         spec = copy.deepcopy(triage)
         rule(spec, "automation_safety", "stopped production")["when"]["conditions"][0][
             "field"
-        ] = "outputs.understand_request.result.nonsense"
+        ] = "outputs.understand_request.parsed.nonsense"
         message = next(
             issue.message
             for issue in report_for(spec).issues
             if issue.code == "UNKNOWN_FIELD_REFERENCE"
         )
-        assert "result.language" in message
+        assert "parsed.language" in message
 
     def test_a_reference_to_a_nonexistent_step_is_caught(self, triage):
         spec = copy.deepcopy(triage)
@@ -502,6 +502,77 @@ class TestMCPTools:
 
     def test_a_read_needs_no_review(self, crm):
         assert "EXTERNAL_ACTION_WITHOUT_REVIEW" not in codes(copy.deepcopy(crm))
+
+
+class TestExternalAction:
+    """ExternalActionAgent, checked the same way MCP's and Email's writes are:
+    the author states the safety class on the node itself (§48), and preflight
+    only has to read it and check whether a human review is guaranteed first.
+    """
+
+    def _spec(self, *, safety_class: str, allow_unattended_write: bool = False, reviewed: bool = False) -> dict:
+        nodes = [{"id": "start", "type": "Literal", "config": {"value": 1}}]
+        edges: list[dict] = []
+        upstream = "start"
+        if reviewed:
+            nodes.append({
+                "id": "review",
+                "type": "HumanInLoopAgent",
+                "config": {"question": "Approve this call?"},
+            })
+            edges.append({"from": "start", "to": "review"})
+            upstream = "review"
+        nodes.append({
+            "id": "call_api",
+            "type": "ExternalActionAgent",
+            "config": {
+                "action_type": "rest_api",
+                "safety_class": safety_class,
+                "method": "POST",
+                "url": "https://api.example.com/x",
+                "allow_unattended_write": allow_unattended_write,
+            },
+        })
+        edges.append({"from": upstream, "to": "call_api"})
+        return {
+            "name": "external-action-test",
+            "nodes": nodes,
+            "edges": edges,
+            "entry": "start",
+            "exit": "call_api",
+        }
+
+    def test_a_write_with_no_review_and_no_override_is_warned_about(self):
+        spec = self._spec(safety_class="write")
+        report = report_for(spec)
+        issue = next(
+            i for i in report.issues if i.code == "EXTERNAL_ACTION_WITHOUT_REVIEW"
+        )
+        assert issue.severity.value == "warning"
+        assert report.valid
+
+    def test_an_external_action_class_is_warned_about_the_same_way(self):
+        assert "EXTERNAL_ACTION_WITHOUT_REVIEW" in codes(
+            self._spec(safety_class="external_action")
+        )
+
+    def test_declaring_the_call_unattended_silences_the_warning(self):
+        spec = self._spec(safety_class="write", allow_unattended_write=True)
+        assert "EXTERNAL_ACTION_WITHOUT_REVIEW" not in codes(spec)
+
+    def test_a_human_review_upstream_silences_the_warning(self):
+        spec = self._spec(safety_class="write", reviewed=True)
+        assert "EXTERNAL_ACTION_WITHOUT_REVIEW" not in codes(spec)
+
+    def test_a_read_needs_no_review(self):
+        assert "EXTERNAL_ACTION_WITHOUT_REVIEW" not in codes(
+            self._spec(safety_class="read")
+        )
+
+    def test_the_workflow_declares_the_external_action_service(self):
+        assert "external_action" in report_for(
+            self._spec(safety_class="read")
+        ).required_services
 
 
 class TestRobustness:

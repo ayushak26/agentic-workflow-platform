@@ -24,6 +24,13 @@ const CATEGORY_ORDER = [
   'Other',
 ];
 
+// Deprecated in favor of TransformAgent (see app/nodes/ai_task.py and
+// app/nodes/data_transform.py). Hidden from the palette so authors can't
+// start a new node with either; both types stay registered so any
+// already-saved instance still opens and configures normally in the
+// Inspector.
+const HIDDEN_FROM_PALETTE = new Set(['AITaskAgent', 'DataTransformAgent']);
+
 // Business-language names for the core primitives. The registry key is the
 // technical contract (and stays visible in the inspector); the palette is where
 // a non-technical author decides what to drag, so it reads as the capability
@@ -34,9 +41,11 @@ const PALETTE_LABELS: Record<string, string> = {
   DecisionAgent: 'Decision',
   RouterAgent: 'Router',
   DataTransformAgent: 'Transform',
+  TransformAgent: 'Transform',
   HumanInLoopAgent: 'Human Review',
   EmailAgent: 'Email',
   MCPToolAgent: 'MCP Tool',
+  TextAssemblerAgent: 'Join',
 };
 
 function groupByCategory(types: NodeTypeManifest[]): [string, NodeTypeManifest[]][] {
@@ -125,7 +134,10 @@ export function NodePalette({
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(
-    () => types.filter(t => matchesQuery(t, query.trim().toLowerCase())),
+    () =>
+      types
+        .filter(t => !HIDDEN_FROM_PALETTE.has(t.type_name))
+        .filter(t => matchesQuery(t, query.trim().toLowerCase())),
     [types, query],
   );
   const groups = useMemo(() => groupByCategory(filtered), [filtered]);

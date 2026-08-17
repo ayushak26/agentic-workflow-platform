@@ -501,7 +501,7 @@ def test_a_record_lookup_is_only_offered_for_a_tool_this_workflow_uses():
 
     lookups = [a for r in projection.related_records for a in r.actions
                if a.type.value == "related_record_lookup"]
-    assert [a.params["tool"] for a in lookups] == ["get_sales_order"]
+    assert [a.params["tool"] for a in lookups] == ["find_sales_order"]
     assert lookups[0].params["server_id"] == "dynamics365_finance_scm"
 
 

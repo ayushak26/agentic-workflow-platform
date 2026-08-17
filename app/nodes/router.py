@@ -1,10 +1,11 @@
 """RouterAgent: the workflow's branching primitive.
 
-The compiler's conditional edge reads ``node_outputs[router_id]["route"]``.
-This node's job is to write that field correctly, and — just as importantly —
-to record *why* it chose that value.
+The compiler's conditional edge reads ``node_outputs[router_id]["route"]``
+(single selection) or ``["routes"]`` (multi selection). This node's job is to
+write those fields correctly, and — just as importantly — to record *why* it
+chose them.
 
-Four modes, one node type:
+Four modes, one node type — *how* a branch is decided:
 
     field        route on the value of one field, with a branch per value
                  (the common case: intent → department)
@@ -17,6 +18,23 @@ Four modes, one node type:
 `field` and `conditions` are deterministic, cost nothing, and produce an
 explanation the Builder renders directly. A new department, label, or threshold
 is a configuration change in any of them — never a new node type.
+
+Orthogonal to `mode` is `selection` — *how many* branches fire:
+
+    single (default)   choose exactly one — everything above describes this.
+    multi               Multi-Route: choose one or more from the same
+                         evaluation, and execute all of them in parallel.
+                         Supported by field, conditions, and llm mode (not
+                         rule, which stays first-match-wins). A Multi-Route's
+                         selected branches must each run to their own
+                         terminal — nothing may reconverge downstream of two
+                         or more of them, since a branch that wasn't selected
+                         never runs and a hard join waiting on it would never
+                         fire. Preflight's MULTIROUTE_ANDJOIN_MAY_NOT_FIRE
+                         check rejects that shape before it can be saved;
+                         aggregate results in the workflow's `output:`
+                         section instead, which already tolerates a branch
+                         that didn't run.
 """
 from __future__ import annotations
 
@@ -70,6 +88,15 @@ class RouterConfig(BaseModel):
         default="rule",
         description="How this step decides a branch: field (map a value to a branch), conditions (first matching rule group), rule (legacy expressions), or llm (ask a model).",
     )
+    #: Orthogonal to `mode` — `mode` is *how* a branch is decided, `selection`
+    #: is *how many* fire. Default "single" keeps every existing workflow
+    #: byte-identical. "multi" is Multi-Route: several relevant branches
+    #: (e.g. Sales AND Engineering AND Supply Chain) selected from one
+    #: evaluation and executed in parallel, instead of exactly one.
+    selection: Literal["single", "multi"] = Field(
+        default="single",
+        description="How many branches this step can take at once: single (choose one, the default) or multi (choose one or more — Multi-Route).",
+    )
 
     # field mode
     #: The value to branch on, e.g. "outputs.understand.result.intent".
@@ -119,6 +146,19 @@ class RouterConfig(BaseModel):
             raise ValueError(f"{self.mode} mode needs at least one rule")
         return self
 
+    @model_validator(mode="after")
+    def multi_selection_not_supported_in_rule_mode(self) -> "RouterConfig":
+        # `rule` is legacy string-expression matching, kept as-is for existing
+        # workflows — its first-match-wins loop (_route_by_rule) is not worth
+        # the risk of changing to accumulate. field/conditions/llm all have a
+        # well-defined "evaluate everything, collect every match" reading.
+        if self.selection == "multi" and self.mode == "rule":
+            raise ValueError(
+                "multi selection is not supported in rule mode — use field, "
+                "conditions, or llm mode for Multi-Route"
+            )
+        return self
+
     def route_names(self) -> list[str]:
         """Every route this router can emit — read by preflight to compare
         against the edge's declared branches, and by the Builder to draw them."""
@@ -135,7 +175,17 @@ class RouterConfig(BaseModel):
 
 
 class RouterOutput(BaseModel):
-    route: str
+    #: In single selection: the one branch taken. In multi selection: the
+    #: first selected branch, kept populated so anything reading `.route`
+    #: (Business View, ExplanationView, a `{{router.route}}` reference
+    #: written before Multi-Route existed) still renders something
+    #: meaningful — `.route` is display-only in multi mode, `.routes` is
+    #: authoritative there.
+    route: str = ""
+    #: Every branch selected — always exactly one entry in single selection
+    #: (mirroring `route`), the full selection in multi. This is the field
+    #: the compiler's multi-route dispatch actually reads.
+    routes: list[str] = Field(default_factory=list)
     reason: str | None = None
     #: The value the decision was based on, in `field` mode. Shown in the run
     #: trace so "why Technical Support?" is answerable without re-reading state.
@@ -174,15 +224,17 @@ class RouterAgent(NodeType):
     execution_kind: ClassVar[str] = "deterministic"
     about: ClassVar[dict[str, Any]] = {
         "what": (
-            "Chooses one outgoing branch. In field mode it maps one value to a "
-            "branch; in conditions mode the first matching rule group wins."
+            "Chooses one outgoing branch (or, in Multi-Route selection, "
+            "every branch that applies). In field mode it maps a value to a "
+            "branch; in conditions mode each matching rule group's branch "
+            "is taken."
         ),
         "why": (
             "Routing is where a business process becomes visible. Branch labels "
             "appear on the canvas edges, and the chosen branch carries its reason."
         ),
         "receives": "A classified value or business facts from upstream nodes.",
-        "produces": "route (the branch taken), the value behind it, and the matched conditions.",
+        "produces": "route/routes (the branch(es) taken), the value behind it, and the matched conditions.",
         "uses_ai": False,
         "external_action": False,
         "presets": [
@@ -204,6 +256,12 @@ class RouterAgent(NodeType):
                 "summary": "Only for genuinely fuzzy routing; costs tokens.",
                 "config": {"mode": "llm"},
             },
+            {
+                "id": "multi_routing",
+                "label": "Multi-Route: several branches at once",
+                "summary": "Select every relevant branch (e.g. Sales AND Engineering AND Supply Chain) from one evaluation.",
+                "config": {"mode": "conditions", "selection": "multi"},
+            },
         ],
     }
 
@@ -215,13 +273,26 @@ class RouterAgent(NodeType):
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = RouterConfig(**resolved_config)
+        if cfg.selection == "multi":
+            if cfg.mode == "field":
+                return self._route_by_field_multi(cfg, state)
+            if cfg.mode == "conditions":
+                return self._route_by_conditions_multi(cfg, state)
+            return await self._route_by_llm_multi(cfg)
+
         if cfg.mode == "field":
-            return self._route_by_field(cfg, state)
-        if cfg.mode == "conditions":
-            return self._route_by_conditions(cfg, state)
-        if cfg.mode == "rule":
-            return self._route_by_rule(cfg, state)
-        return await self._route_by_llm(cfg)
+            result = self._route_by_field(cfg, state)
+        elif cfg.mode == "conditions":
+            result = self._route_by_conditions(cfg, state)
+        elif cfg.mode == "rule":
+            result = self._route_by_rule(cfg, state)
+        else:
+            result = await self._route_by_llm(cfg)
+        # Single selection always populates `routes` too, so the compiler's
+        # multi-route dispatch and anything else reading `.routes` sees a
+        # consistent shape regardless of which selection mode produced it.
+        result.setdefault("routes", [result["route"]])
+        return result
 
     # -- deterministic: one field, one branch per value -----------------
 
@@ -282,6 +353,75 @@ class RouterAgent(NodeType):
             "used_fallback": True,
         }
 
+    def _route_by_field_multi(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+        """Multi-Route, field mode: `route_field` resolves to a *list* of
+        values (e.g. a Transform's classified `needs: [...]`), each mapped
+        through `branches` the same way single-selection does — every match
+        fires, not just the first."""
+        raw = resolve_path(dict(state), cfg.route_field or "")
+        values = raw if isinstance(raw, list) else ([raw] if raw is not None else [])
+        lookup = {name.strip().lower(): route for name, route in cfg.branches.items()}
+
+        routes: list[str] = []
+        explanation: list[dict[str, Any]] = []
+        matched_conditions: list[str] = []
+        for value in values:
+            key = _branch_key(value)
+            route = lookup.get(key.strip().lower()) if key else None
+            if route is None:
+                continue
+            if route not in routes:
+                routes.append(route)
+            matched_conditions.append(f"{cfg.route_field} = {value!r}")
+            explanation.append({
+                "field": cfg.route_field,
+                "operator": "equals",
+                "expected": key,
+                "actual": value,
+                "matched": True,
+                "summary": f"{cfg.route_field} = {value!r} → {route}",
+            })
+
+        if routes:
+            return {
+                "route": routes[0],
+                "routes": routes,
+                "reason": f"{cfg.route_field} = {raw!r}",
+                "route_value": raw,
+                "explanation": explanation,
+                "matched_conditions": matched_conditions,
+                "used_fallback": False,
+            }
+
+        if not cfg.fallback:
+            raise ValueError(
+                f"Router {self.node_id}: {cfg.route_field} = {raw!r} matches no "
+                f"branch ({sorted(cfg.branches)}) and no fallback branch is "
+                "configured"
+            )
+        return {
+            "route": cfg.fallback,
+            "routes": [cfg.fallback],
+            "reason": (
+                f"{cfg.route_field} = {raw!r} matched no branch; used the "
+                f"fallback branch"
+            ),
+            "route_value": raw,
+            "explanation": [{
+                "field": cfg.route_field,
+                "operator": "in",
+                "expected": sorted(cfg.branches),
+                "actual": raw,
+                "matched": False,
+                "summary": (
+                    f"{cfg.route_field} = {raw!r} matched no declared branch "
+                    f"value → {cfg.fallback}"
+                ),
+            }],
+            "matched_conditions": [],
+            "used_fallback": True,
+        }
+
     # -- deterministic: first matching condition group ------------------
 
     def _route_by_conditions(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
@@ -308,6 +448,53 @@ class RouterAgent(NodeType):
             )
         return {
             "route": cfg.fallback,
+            "reason": "no case matched; used the fallback branch",
+            "route_value": None,
+            "explanation": traces,
+            "matched_conditions": [],
+            "used_fallback": True,
+        }
+
+    def _route_by_conditions_multi(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+        """Multi-Route, conditions mode: every case is evaluated (never stop
+        at the first match) and every matching route is collected — business
+        policy here is additive, the same reasoning DecisionAgent's rule
+        engine already applies (app/runtime/rules.py)."""
+        context = dict(state)
+        traces: list[dict[str, Any]] = []
+        routes: list[str] = []
+        matched_conditions: list[str] = []
+        reasons: list[str] = []
+        for case in cfg.cases:
+            trace = evaluate_group(case.when, context)  # type: ignore[arg-type]
+            traces.append({"route": case.route, **trace.model_dump()})
+            if not trace.matched:
+                continue
+            if case.route not in routes:
+                routes.append(case.route)
+            matched = _matched_summaries(trace)
+            matched_conditions.extend(matched)
+            reasons.append(case.description or "; ".join(matched) or case.route)
+
+        if routes:
+            return {
+                "route": routes[0],
+                "routes": routes,
+                "reason": "; ".join(dict.fromkeys(reasons)),
+                "route_value": None,
+                "explanation": traces,
+                "matched_conditions": matched_conditions,
+                "used_fallback": False,
+            }
+
+        if not cfg.fallback:
+            raise ValueError(
+                f"Router {self.node_id}: no case matched and no fallback branch "
+                "is configured"
+            )
+        return {
+            "route": cfg.fallback,
+            "routes": [cfg.fallback],
             "reason": "no case matched; used the fallback branch",
             "route_value": None,
             "explanation": traces,
@@ -412,6 +599,50 @@ class RouterAgent(NodeType):
                     }
             raise ValueError(f"LLM returned unknown route: {choice!r}")
         return {"route": choice, "reason": "LLM judgment"}
+
+    async def _route_by_llm_multi(self, cfg: RouterConfig) -> dict[str, Any]:
+        """Multi-Route, llm mode: ask the model to choose all routes that
+        apply and parse a comma-separated list back — for genuinely fuzzy
+        "which of these departments does this enquiry touch" judgment."""
+        llm = self.services["llm"]
+        route_names = [r.name for r in cfg.rules]
+        prompt = (
+            f"{cfg.prompt}\n\nContext:\n{cfg.context}\n\n"
+            f"Choose EVERY route that applies, from: {route_names}\n"
+            "Respond with only the matching route names, comma-separated, "
+            "nothing else. If none apply, respond with an empty line."
+        )
+        response = await llm.complete(
+            model=cfg.model or "claude-sonnet-4-5",
+            system=(
+                "Route the supplied context to every route that genuinely "
+                "applies — zero, one, or several. Return only a "
+                "comma-separated list of route names, nothing else."
+            ),
+            user=prompt,
+            temperature=0.0,
+            max_tokens=64,
+        )
+        raw = response.text
+        candidates = [item.strip().strip('"').strip("'") for item in raw.split(",")]
+        routes = [name for name in dict.fromkeys(candidates) if name in route_names]
+
+        if routes:
+            return {
+                "route": routes[0],
+                "routes": routes,
+                "reason": "LLM judgment",
+                "used_fallback": False,
+            }
+        for rule in cfg.rules:
+            if rule.default:
+                return {
+                    "route": rule.name,
+                    "routes": [rule.name],
+                    "reason": f"LLM selected no valid route from {raw!r}, defaulted",
+                    "used_fallback": True,
+                }
+        raise ValueError(f"LLM selected no valid route from response: {raw!r}")
 
 
 def _branch_key(value: Any) -> str:

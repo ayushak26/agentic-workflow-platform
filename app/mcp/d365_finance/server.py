@@ -38,7 +38,7 @@ from mcp.server.stdio import stdio_server  # noqa: E402
 
 from app.mcp.dynamics.client import DynamicsBackend, DynamicsError, FixtureBackend  # noqa: E402
 from app.mcp.d365_finance.handlers import HANDLERS  # noqa: E402
-from app.mcp.d365_finance.tools import TOOL_BY_NAME, TOOL_DEFINITIONS  # noqa: E402
+from app.mcp.d365_finance.tools import TOOL_DEFINITIONS, TOOLS_BY_NAME  # noqa: E402
 from app.observability.logging import get_logger  # noqa: E402
 
 log = get_logger(__name__)
@@ -81,13 +81,13 @@ async def list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
-    definition = TOOL_BY_NAME.get(name)
+    definition = TOOLS_BY_NAME.get(name)
     handler = HANDLERS.get(name)
     if definition is None or handler is None:
         return _error_result(
             {
                 "code": "MCP_UNKNOWN_TOOL",
-                "message": f"Unknown tool {name!r}. Available: {sorted(TOOL_BY_NAME)}.",
+                "message": f"Unknown tool {name!r}. Available: {sorted(TOOLS_BY_NAME)}.",
                 "retryable": False,
                 "suggested_action": "Pick a tool from the discovered list.",
             }

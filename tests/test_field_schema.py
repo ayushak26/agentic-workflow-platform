@@ -147,6 +147,112 @@ class TestNesting:
             )
 
 
+class TestListOfEnum:
+    """List<Enum> — a list field whose items are drawn from a closed set,
+    e.g. `responsibilities: List<Enum>`. Distinct from a plain `enum` field:
+    the allowed values live in `item_enum_values`, not `enum_values`."""
+
+    def test_list_of_enum_compiles_and_enforces_closed_values(self):
+        model = build_response_model(
+            rows(
+                {
+                    "name": "responsibilities",
+                    "type": "list",
+                    "item_type": "enum",
+                    "item_enum_values": [
+                        "pump_application_selection",
+                        "quotation_management",
+                    ],
+                }
+            )
+        )
+        instance = model(
+            responsibilities=["pump_application_selection", "quotation_management"]
+        )
+        assert instance.responsibilities == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+        with pytest.raises(ValidationError):
+            model(responsibilities=["random_nonexistent_responsibility"])
+
+    def test_list_of_enum_without_item_enum_values_is_rejected(self):
+        """Pins the exact failure from the bug report: a list-of-enum row
+        with nothing in item_enum_values must not silently compile."""
+        with pytest.raises(ValidationError, match="item_enum_values"):
+            FieldSpec(name="responsibilities", type="list", item_type="enum")
+
+    def test_legacy_enum_values_key_is_migrated_to_item_enum_values(self):
+        """Two sources produce this shape: an older saved workflow from
+        before item_enum_values existed, and an AI-drafted suggestion whose
+        model reached for the field-level `enum_values` key instead of the
+        list-item-specific one. Both must be recovered automatically rather
+        than failing with the FieldSpec validation error from the bug report."""
+        field = FieldSpec(
+            name="responsibilities",
+            type="list",
+            item_type="enum",
+            enum_values=["pump_application_selection", "quotation_management"],
+        )
+        assert field.item_enum_values == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+
+    def test_migration_does_not_touch_a_single_enum_field(self):
+        """Only a list-of-enum row is ambiguous. A plain enum field's
+        enum_values must never be reinterpreted as list item values."""
+        field = FieldSpec(
+            name="category",
+            type="enum",
+            enum_values=["technical_support", "complaint", "unknown"],
+        )
+        assert field.enum_values == ["technical_support", "complaint", "unknown"]
+        assert field.item_enum_values == []
+
+    def test_migration_does_not_override_explicit_item_enum_values(self):
+        field = FieldSpec(
+            name="responsibilities",
+            type="list",
+            item_type="enum",
+            enum_values=["stale_value"],
+            item_enum_values=["pump_application_selection"],
+        )
+        assert field.item_enum_values == ["pump_application_selection"]
+
+    def test_stale_item_enum_values_are_ignored_once_item_type_changes(self):
+        """Changing a list's item type away from enum (e.g. back to string)
+        must not let a leftover item_enum_values list constrain the schema."""
+        model = build_response_model(
+            rows(
+                {
+                    "name": "tags",
+                    "type": "list",
+                    "item_type": "string",
+                    "item_enum_values": ["stale_a", "stale_b"],
+                }
+            )
+        )
+        instance = model(tags=["anything_not_in_the_stale_list"])
+        assert instance.tags == ["anything_not_in_the_stale_list"]
+
+    def test_list_of_enum_values_reach_the_path_index(self):
+        paths = field_paths(
+            rows(
+                {
+                    "name": "responsibilities",
+                    "type": "list",
+                    "item_type": "enum",
+                    "item_enum_values": ["pump_application_selection", "quotation_management"],
+                }
+            )
+        )
+        assert paths[0].enum_values == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+
+
 class TestAuthoringErrors:
     """Errors the row editor can produce, caught with a message that names the
     row rather than surfacing a Pydantic internal."""

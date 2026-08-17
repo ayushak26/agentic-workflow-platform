@@ -154,4 +154,5 @@ def build_email_service(
         adapters=adapters,
         connections=connections if connections is not None else load_connections(),
         ledger=EmailOperationLedger(db),
+        db=db,
     )

@@ -168,6 +168,8 @@ export function AITaskConfig({
           <div className="mt-2 rounded border border-slate-200 p-2">
             <FieldPicker
               contract={contract}
+              destinationKind="text"
+              destinationLabel="Content this step reads"
               onPick={(field: ContractField) => {
                 set({ input: field.reference });
                 setPickingInput(false);

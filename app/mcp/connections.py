@@ -13,6 +13,7 @@ from typing import Any
 
 from app.config import Settings, settings
 from app.integrations.operations import ExternalOperationLedger
+from app.mcp.business_records.tools import TOOL_DEFINITIONS as BUSINESS_RECORDS_TOOL_DEFINITIONS
 from app.mcp.d365_finance.tools import TOOL_DEFINITIONS as FNO_MOCK_TOOL_DEFINITIONS
 from app.mcp.dynamics.tools import READ_ONLY_TOOLS, TOOL_DEFINITIONS
 from app.mcp.registry import (
@@ -199,6 +200,47 @@ def finance_scm_connection(app_settings: Settings = settings) -> MCPServerConnec
     )
 
 
+def business_records_connection(app_settings: Settings = settings) -> MCPServerConnection:
+    """A real, persistent MySQL database — genuine Lookup/Create/Update tools.
+
+    Unlike the fixture-backed mocks above, this connection's backend is a
+    live database (seeded from both `d365_finance` and `dynamics` fixture
+    data via `app.mcp.business_records.seed`), so a customer_search here
+    reflects whatever create_case/create_order calls have actually run
+    against it, not a static JSON snapshot. Writes still require a human
+    review, exactly like every other write-capable connection.
+    """
+    return MCPServerConnection(
+        id="business_records",
+        display_name="Business Records",
+        description=(
+            "Customers, orders, quotes, products and support cases — a "
+            "shared read/write store seeded from Finance & Operations and "
+            "CRM data, for cases where a workflow needs to look up or "
+            "record business objects directly."
+        ),
+        transport="stdio",
+        command="python",
+        args=["-m", "app.mcp.business_records.server"],
+        environment={
+            "BUSINESS_RECORDS_MYSQL_HOST": app_settings.business_records_mysql_host,
+            "BUSINESS_RECORDS_MYSQL_PORT": str(app_settings.business_records_mysql_port),
+            "BUSINESS_RECORDS_MYSQL_USER": app_settings.business_records_mysql_user,
+            "BUSINESS_RECORDS_MYSQL_PASSWORD": app_settings.business_records_mysql_password,
+            "BUSINESS_RECORDS_MYSQL_DATABASE": app_settings.business_records_mysql_database,
+        },
+        tool_allowlist=[],
+        write_policy="require_approval",
+        tool_policies={
+            definition["name"]: MCPToolPolicy(operation=definition["operation"])
+            for definition in BUSINESS_RECORDS_TOOL_DEFINITIONS
+        },
+        environment_label="Live database",
+        is_mock=False,
+        timeout_seconds=45.0,
+    )
+
+
 def build_registry(app_settings: Settings = settings) -> MCPServerRegistry:
     """Assemble every configured connection.
 
@@ -224,6 +266,9 @@ def build_registry(app_settings: Settings = settings) -> MCPServerRegistry:
 
     if app_settings.fno_mcp_enabled:
         registry.add(finance_scm_connection(app_settings))
+
+    if app_settings.business_records_mcp_enabled:
+        registry.add(business_records_connection(app_settings))
 
     if app_settings.paper_search_mcp_enabled:
         registry.add(

@@ -72,7 +72,7 @@ function ActionEditor({
           value={action.operation ?? 'set'}
         >
           <option value="set">to</option>
-          <option value="append">append</option>
+          <option value="merge">merge</option>
           <option value="increase">increase by</option>
           <option value="decrease">decrease by</option>
         </select>

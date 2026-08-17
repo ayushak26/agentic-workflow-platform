@@ -155,6 +155,12 @@ curl -s localhost:8000/health | jq '{status, ready}'
 Sign in with the development bypass account (see `app/config.py`), then open **Library**, pick a
 workflow, and press **Prepare and run**.
 
+> **Troubleshooting — "run store unavailable" (503)** — The API opens its MongoDB connection once,
+> during FastAPI startup ([`app/main.py`](app/main.py)); if `uvicorn` starts before `mongo` reports
+> healthy, that connection attempt fails silently and every runs endpoint 503s for the rest of the
+> process's life. Fix: confirm Mongo is healthy first (`docker compose ps mongo`), then restart
+> `uvicorn` — bringing Mongo up afterward is not enough on its own.
+
 > **Note** — Guided Run and Cockpit attach a run through in-app navigation. Reaching them by pasting a
 > URL will not carry the workflow YAML into navigation state; go via **Run history → select a run →
 > Open in Guided / Open in Cockpit**.

@@ -18,6 +18,10 @@ export const TYPE_LABELS: Record<string, string> = {
   HumanInLoopAgent: 'Human Review',
   EmailAgent: 'Email',
   MCPToolAgent: 'MCP Tool',
+  ExternalActionAgent: 'External Action',
+  SubprocessAgent: 'Subprocess',
+  SQLQueryAgent: 'SQL Query',
+  PythonSnippetAgent: 'Code Snippet',
 };
 
 /**
@@ -26,7 +30,9 @@ export const TYPE_LABELS: Record<string, string> = {
  * Dynamics CRM" is the useful subtitle.
  */
 export function nodeTypeLabel(typeName: string, config: Record<string, unknown>): string {
-  const base = TYPE_LABELS[typeName] ?? typeName;
+  const base = typeName === 'RouterAgent' && config.selection === 'multi'
+    ? 'Multi-Route'
+    : TYPE_LABELS[typeName] ?? typeName;
   const serverId = typeof config.server_id === 'string' ? config.server_id : '';
   return serverId ? `${base} · ${serverId}` : base;
 }

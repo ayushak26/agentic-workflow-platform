@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { api } from '../../../api/client';
 import type { FieldKind, FieldSpec, SchemaPreview } from '../../../api/types';
@@ -38,6 +38,19 @@ export function newField(name = ''): FieldSpec {
   return { name, type: 'string', description: '', required: true, nullable: false };
 }
 
+/** A blank-named field compiles fine in this editor (nothing here enforces
+ *  identifiers as you type) but fails at the API boundary with a raw
+ *  pydantic "field name cannot be empty" error the moment it's sent
+ *  anywhere — schema-preview, node-test, a real run. Auto-naming new rows
+ *  the same way "+ Add Input" already does removes that whole failure mode
+ *  rather than reporting it better after the fact. */
+function nextFieldName(existing: FieldSpec[]): string {
+  const taken = new Set(existing.map(field => field.name));
+  let number = existing.length + 1;
+  while (taken.has(`field_${number}`)) number += 1;
+  return `field_${number}`;
+}
+
 /** Defaults a type change needs to stay valid.
  *  Switching to `enum` without values, or `list` without an item type, produces
  *  a row the compiler rejects — so the switch supplies the missing part rather
@@ -73,6 +86,7 @@ function FieldRow({
   onMove,
   isFirst,
   isLast,
+  topLevelExtra,
 }: {
   field: FieldSpec;
   depth: number;
@@ -81,6 +95,11 @@ function FieldRow({
   onMove: (direction: -1 | 1) => void;
   isFirst: boolean;
   isLast: boolean;
+  /** Rendered inside the expanded row, but only at depth 0 — for callers
+   *  (e.g. an incoming-input editor) that attach a property to the
+   *  top-level field only, such as where its value comes from. A nested
+   *  object/list-item field describes shape only, never a separate source. */
+  topLevelExtra?: (field: FieldSpec, onChange: (next: FieldSpec) => void) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState(depth === 0);
   const hasChildren = field.type === 'object'
@@ -160,6 +179,8 @@ function FieldRow({
 
       {expanded && (
         <div className="space-y-2 border-t border-slate-100 px-3 py-2">
+          {depth === 0 && topLevelExtra?.(field, onChange)}
+
           <label className="block text-[11px] font-medium text-ink-700">
             What this field means
             <textarea
@@ -192,12 +213,16 @@ function FieldRow({
               This list holds
               <select
                 className="builder-field mt-1"
-                onChange={event => onChange(
-                  coerceForType(
-                    { ...field, item_type: event.target.value as FieldKind },
-                    'list',
-                  ),
-                )}
+                onChange={event => {
+                  const itemType = event.target.value as FieldKind;
+                  const next = coerceForType({ ...field, item_type: itemType }, 'list');
+                  // A stale allowed-values list from a previous "enum" choice
+                  // must not linger once the item type no longer is one — it
+                  // would otherwise sit unused but confusing if the author
+                  // switches back and forth.
+                  if (itemType !== 'enum') next.item_enum_values = [];
+                  onChange(next);
+                }}
                 value={field.item_type ?? 'string'}
               >
                 {ITEM_KINDS.map(kind => (
@@ -208,7 +233,11 @@ function FieldRow({
           )}
 
           {showEnum && (
-            <EnumEditor values={enumValues} onChange={setEnumValues} />
+            <EnumEditor
+              isList={field.type === 'list'}
+              values={enumValues}
+              onChange={setEnumValues}
+            />
           )}
 
           {(field.type === 'number' || field.type === 'integer') && (
@@ -261,10 +290,17 @@ function FieldRow({
 function EnumEditor({
   values,
   onChange,
+  isList = false,
 }: {
   values: string[];
   onChange: (values: string[]) => void;
+  isList?: boolean;
 }) {
+  // Caught client-side, immediately, rather than waiting on the debounced
+  // /builder/schema-preview round trip to report the same thing the backend
+  // would reject with anyway (`FieldSpec` requires item_enum_values for a
+  // list of enums).
+  const hasValue = values.some(value => value.trim().length > 0);
   return (
     <div>
       <div className="text-[11px] font-medium text-ink-700">Allowed values</div>
@@ -272,6 +308,13 @@ function EnumEditor({
         The model can only return one of these. Include a catch-all such as
         &ldquo;other&rdquo; so an unusual case has somewhere to go.
       </p>
+      {!hasValue && (
+        <p className="mt-1 text-[10px] font-medium text-red-600">
+          {isList
+            ? 'Add at least one allowed value for this list.'
+            : 'Add at least one allowed value.'}
+        </p>
+      )}
       <div className="mt-1 space-y-1">
         {values.map((value, index) => (
           <div className="flex gap-1" key={index}>
@@ -309,10 +352,12 @@ function FieldList({
   fields,
   depth,
   onChange,
+  topLevelExtra,
 }: {
   fields: FieldSpec[];
   depth: number;
   onChange: (fields: FieldSpec[]) => void;
+  topLevelExtra?: (field: FieldSpec, onChange: (next: FieldSpec) => void) => ReactNode;
 }) {
   const replace = (index: number, next: FieldSpec) => {
     const copy = [...fields];
@@ -339,11 +384,12 @@ function FieldList({
           onChange={next => replace(index, next)}
           onMove={direction => move(index, direction)}
           onRemove={() => onChange(fields.filter((_, position) => position !== index))}
+          topLevelExtra={topLevelExtra}
         />
       ))}
       <button
         className="w-full rounded border border-dashed border-slate-300 py-1.5 text-[11px] font-medium text-accent-700 hover:border-accent-600 hover:bg-accent-50"
-        onClick={() => onChange([...fields, newField()])}
+        onClick={() => onChange([...fields, newField(nextFieldName(fields))])}
         type="button"
       >
         + Add field
@@ -356,12 +402,24 @@ export function SchemaBuilder({
   fields,
   onChange,
   sampleContent,
+  title = 'Structured output',
+  helperText = 'What this step must return. The platform turns these rows into the '
+    + 'schema the model is constrained by — you never write JSON Schema.',
+  topLevelExtra,
 }: {
   fields: FieldSpec[];
   onChange: (fields: FieldSpec[]) => void;
   /** Passed to the AI schema assistant so a suggestion is grounded in a real
    *  example of the content rather than in the description alone. */
   sampleContent?: string;
+  /** Lets a non-output caller (e.g. an incoming-input editor) relabel the
+   *  same row editor for its own context, without forking the component. */
+  title?: string;
+  helperText?: string;
+  /** Rendered inside each top-level row's expanded section — e.g. where an
+   *  incoming input's value comes from, which has no equivalent for an
+   *  AI-produced output field. */
+  topLevelExtra?: (field: FieldSpec, onChange: (next: FieldSpec) => void) => ReactNode;
 }) {
   const [preview, setPreview] = useState<SchemaPreview | null>(null);
   const [compileError, setCompileError] = useState<string | null>(null);
@@ -402,7 +460,7 @@ export function SchemaBuilder({
   return (
     <section className="mt-4">
       <div className="flex items-center justify-between">
-        <div className="builder-panel-heading">Structured output</div>
+        <div className="builder-panel-heading">{title}</div>
         <button
           className="text-[11px] font-medium text-accent-700 hover:underline"
           onClick={() => setAskOpen(true)}
@@ -412,12 +470,11 @@ export function SchemaBuilder({
         </button>
       </div>
       <p className="mt-1 text-[11px] leading-4 text-ink-500">
-        What this step must return. The platform turns these rows into the
-        schema the model is constrained by — you never write JSON Schema.
+        {helperText}
       </p>
 
       <div className="mt-3">
-        <FieldList depth={0} fields={fields} onChange={onChange} />
+        <FieldList depth={0} fields={fields} onChange={onChange} topLevelExtra={topLevelExtra} />
       </div>
 
       {compileError && (
@@ -568,10 +625,17 @@ function SchemaAssistant({
               {proposal.map(field => (
                 <li className="font-mono" key={field.name}>
                   {field.name}
-                  <span className="ml-2 text-ink-500">{field.type}</span>
+                  <span className="ml-2 text-ink-500">
+                    {field.type === 'list' ? `list of ${field.item_type}` : field.type}
+                  </span>
                   {field.enum_values && field.enum_values.length > 0 && (
                     <span className="ml-2 text-ink-500">
                       ({field.enum_values.join(', ')})
+                    </span>
+                  )}
+                  {field.item_enum_values && field.item_enum_values.length > 0 && (
+                    <span className="ml-2 text-ink-500">
+                      ({field.item_enum_values.join(', ')})
                     </span>
                   )}
                 </li>

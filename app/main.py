@@ -70,6 +70,7 @@ from app.api import run_chat as run_chat_api
 from app.api import node_types_chat as node_types_chat_api
 from app.api import workflow_generation as workflow_generation_api
 from app.api import builder as builder_api
+from app.api import email_oauth as email_oauth_api
 from app.api import entity_registry as entity_registry_api
 from app.api import knowledge as knowledge_api
 from app.api import retrieval as retrieval_api
@@ -281,16 +282,52 @@ async def lifespan(app: FastAPI):
     logger.info("image_generator.ready")
     logger.info("kimi_vision.ready")
 
+    # ── External Action ───────────────────────────────────────────────────────
+    # ExternalActionAgent's outbound REST/webhook calls, gated by the same
+    # idempotency ledger MCP and Email already use. Always constructed —
+    # there is no credential to be missing, since the author supplies the URL.
+    from app.integrations.external_action import ExternalActionService
+
+    services["external_action"] = ExternalActionService(db=services.get("audit_db"))
+    logger.info("external_action.ready")
+
+    # ── Snippet runner ────────────────────────────────────────────────────────
+    # PythonSnippetAgent's isolated executor — a network-isolated sidecar
+    # container reached over a Unix socket (docker-compose.yml's
+    # `snippet-runner` service). Registered only when enabled: an unconfigured
+    # deployment should see REQUIRED_SERVICE_MISSING at preflight for any
+    # workflow using this node, not a runtime surprise mid-run.
+    if settings.snippet_runner_enabled:
+        from app.runtime.snippet_client import SnippetRunnerClient
+
+        services["python_runner"] = SnippetRunnerClient(settings.snippet_runner_socket_path)
+        logger.info("snippet_runner.ready", socket=settings.snippet_runner_socket_path)
+
     # ── Email integration ─────────────────────────────────────────────────────
-    # One capability, adapters per provider. Connections come from configuration
-    # (EMAIL_CONNECTIONS), never from workflow YAML, so a workflow references a
-    # mailbox by name and can be exported without leaking access. Always
-    # constructed: with no connections configured, a workflow using EmailAgent
-    # is blocked by preflight with the missing connection named, rather than the
-    # API failing to start.
+    # One capability, adapters per provider. Static connections come from
+    # configuration (EMAIL_CONNECTIONS); OAuth-connected mailboxes (someone
+    # clicked "Connect Outlook"/"Connect Gmail" in the Builder — see
+    # app/api/email_oauth.py) are loaded from Mongo and merged in here, so
+    # they survive a restart without needing to be redeclared as env-var
+    # config. A workflow references a mailbox by name either way, and can be
+    # exported without leaking access. Always constructed: with no
+    # connections configured, a workflow using EmailAgent is blocked by
+    # preflight with the missing connection named, rather than the API
+    # failing to start.
     from app.integrations.email import build_email_service
+    from app.integrations.email.connections_store import load_dynamic_connections
 
     services["email"] = build_email_service(db=services.get("audit_db"))
+    if services.get("audit_db") is not None:
+        from app.api.email_oauth import ensure_indexes as ensure_email_oauth_indexes
+
+        try:
+            dynamic = await load_dynamic_connections(services["audit_db"])
+            for connection in dynamic.values():
+                services["email"].add_connection(connection)
+            await ensure_email_oauth_indexes(services["audit_db"])
+        except Exception as error:
+            logger.warning("email.dynamic_connections_load_failed", error=str(error))
     logger.info(
         "email.ready",
         connection_count=len(services["email"].connections),
@@ -467,6 +504,20 @@ async def lifespan(app: FastAPI):
     services["sse_heartbeat_seconds"] = settings.sse_heartbeat_seconds
     logger.info("event_bus.ready")
 
+    # ── Subprocess launch correlation ────────────────────────────────────────
+    # SubprocessAgent's parent<->child correlation collection (see
+    # app/workflow/subprocess_launches.py) — TTL-indexed the same way the
+    # email-OAuth pending-state collection is, so an abandoned or never-
+    # called-back launch ages out on its own.
+    if services.get("audit_db") is not None:
+        from app.workflow.subprocess_launches import ensure_indexes as ensure_subprocess_indexes
+
+        try:
+            await ensure_subprocess_indexes(services["audit_db"])
+            logger.info("subprocess_launches.ready")
+        except Exception as error:
+            logger.warning("subprocess_launches.index_setup_failed", error=str(error))
+
     # ── Stale-run auto-cleanup ──────────────────────────────────────────────────
     # Every worker has a timer so leadership can move after a worker exits, but
     # only the worker holding the renewable Redis lease performs a sweep.
@@ -630,6 +681,7 @@ app.include_router(node_types_chat_api.router)
 app.include_router(workflow_generation_api.router)
 app.include_router(entity_registry_api.router)
 app.include_router(builder_api.router)
+app.include_router(email_oauth_api.router)
 app.include_router(knowledge_api.router)
 app.include_router(retrieval_api.router)
 app.include_router(rag_agents_api.router)

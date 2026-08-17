@@ -122,12 +122,18 @@ nodes:
       expected_output: The subject, message body and sender address.
       failure_message: No message text arrived. Paste a customer message and run again.
   - id: understand_request
-    type: AITaskAgent
+    type: TransformAgent
     config:
-      task: extract
       model: auto
       fail_on_error: false
-      instruction: >-
+      instructions: >-
+        Extract structured information from the customer's message. Return only the fields defined
+        by the output schema below, and never invent a value.
+
+        The customer may write in any language. Detect it, understand the request in its original
+        language, and write every text output field in English, except where a field is explicitly
+        meant to preserve the original wording (e.g. an exact quote or model designation).
+
         Understand the incoming customer communication and extract the information described by the
         output schema.
 
@@ -179,16 +185,19 @@ nodes:
 
         suggested_actions are your advisory recommendations in business language. The workflow's own
         rules decide what actually happens — these are suggestions, not commitments.
-      input: '{{outputs.incoming_request.data.message}}'
-      context:
-        Subject: '{{outputs.incoming_request.data.subject}}'
-        Sender: '{{outputs.incoming_request.data.sender_email}}'
-      language:
-        input_language: auto
-        process_in_original_language: true
-        output_language: en
-        preserve_original: true
-      include_confidence: true
+      input_fields:
+        - name: message
+          description: Full body of the incoming customer communication, in its original language.
+          type: string
+          value: '{{outputs.incoming_request.data.message}}'
+        - name: subject
+          description: Subject line of the incoming communication.
+          type: string
+          value: '{{outputs.incoming_request.data.subject}}'
+        - name: sender
+          description: Sender email address.
+          type: string
+          value: '{{outputs.incoming_request.data.sender_email}}'
       output_fields:
         - name: language
           type: string
@@ -363,6 +372,18 @@ nodes:
           description: >-
             Advisory recommendations for what should happen next, in business language. The
             workflow's own rules decide the actual routing.
+        - name: confidence
+          type: number
+          required: true
+          minimum: 0.0
+          maximum: 1.0
+          description: >-
+            How certain you are about this result, 0.0 to 1.0. Lower it when the content is
+            ambiguous, incomplete, or outside your competence.
+        - name: reasoning
+          type: text
+          required: false
+          description: One or two sentences on how you reached this result, and what made you uncertain.
     selected_model: auto
     model_routing:
       accuracy_priority: maximum
@@ -380,7 +401,7 @@ nodes:
       tool: find_account
       fail_on_error: false
       arguments:
-        company_name: '{{outputs.understand_request.result.organization}}'
+        company_name: '{{outputs.understand_request.parsed.organization}}'
         limit: 3
     experience:
       display_name: Find CRM Account
@@ -440,7 +461,7 @@ nodes:
               - field: outputs.understand_request.status
                 operator: not_equals
                 value: ok
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: does_not_exist
           then:
             - field: human_review
@@ -451,7 +472,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.confidence
+              - field: outputs.understand_request.parsed.confidence
                 operator: less_than
                 value: 0.8
           then:
@@ -463,7 +484,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: order_status
           then:
@@ -473,7 +494,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: quotation_request
           then:
@@ -483,7 +504,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: spare_part_request
           then:
@@ -493,7 +514,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: technical_support
           then:
@@ -503,7 +524,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: complaint
           then:
@@ -513,7 +534,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.hazardous_area
+              - field: outputs.understand_request.parsed.hazardous_area
                 operator: is_true
           then:
             - field: complexity
@@ -528,7 +549,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.requires_custom_design
+              - field: outputs.understand_request.parsed.requires_custom_design
                 operator: is_true
           then:
             - field: complexity
@@ -547,11 +568,11 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.temperature
+              - field: outputs.understand_request.parsed.temperature
                 operator: is_not_empty
-              - field: outputs.understand_request.result.pressure
+              - field: outputs.understand_request.parsed.pressure
                 operator: is_not_empty
-              - field: outputs.understand_request.result.viscosity
+              - field: outputs.understand_request.parsed.viscosity
                 operator: is_not_empty
           then:
             - field: complexity
@@ -566,7 +587,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: technical_support
               - field: decisions.complexity
@@ -626,7 +647,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.refers_to_previous_purchase
+              - field: outputs.understand_request.parsed.refers_to_previous_purchase
                 operator: is_true
               - field: outputs.crm_order_history.found
                 operator: is_false
@@ -649,7 +670,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.refers_to_previous_purchase
+              - field: outputs.understand_request.parsed.refers_to_previous_purchase
                 operator: is_true
               - field: outputs.crm_order_history.count
                 operator: greater_than
@@ -670,7 +691,7 @@ nodes:
               - field: decisions.primary_intent
                 operator: equals
                 value: spare_part_request
-              - field: outputs.understand_request.result.product_model
+              - field: outputs.understand_request.parsed.product_model
                 operator: is_empty
               - field: outputs.crm_order_history.found
                 operator: is_false
@@ -697,7 +718,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.production_stopped
+              - field: outputs.understand_request.parsed.production_stopped
                 operator: is_true
           then:
             - field: urgency
@@ -791,14 +812,14 @@ nodes:
           default: none
         - target: quantity
           operation: copy
-          source: outputs.understand_request.result.quantity
+          source: outputs.understand_request.parsed.quantity
           default: not stated
         - target: detected_intents
           operation: copy
-          source: outputs.understand_request.result.request_types
+          source: outputs.understand_request.parsed.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
         - target: urgency
           operation: copy
           source: outputs.assess_request.decisions.urgency
@@ -815,8 +836,8 @@ nodes:
     type: RAGAgent
     config:
       query: >-
-        {{outputs.understand_request.result.product_model}}
-        {{outputs.understand_request.result.requested_action}}
+        {{outputs.understand_request.parsed.product_model}}
+        {{outputs.understand_request.parsed.requested_action}}
       top_k_candidates: 15
       top_n_final: 5
       rerank: true
@@ -837,8 +858,8 @@ nodes:
     type: RAGAgent
     config:
       query: >-
-        {{outputs.understand_request.result.product_model}}
-        {{outputs.understand_request.result.requested_action}}
+        {{outputs.understand_request.parsed.product_model}}
+        {{outputs.understand_request.parsed.requested_action}}
       top_k_candidates: 15
       top_n_final: 5
       rerank: true
@@ -867,18 +888,18 @@ nodes:
         - target: model
           operation: coalesce
           sources:
-            - outputs.understand_request.result.product_model
+            - outputs.understand_request.parsed.product_model
             - outputs.crm_order_history.first.products.0.name
           default: not identified
         - target: serial_number
           operation: coalesce
           sources:
-            - outputs.understand_request.result.serial_number
+            - outputs.understand_request.parsed.serial_number
             - outputs.crm_order_history.first.products.0.serial_number
           default: not identified
         - target: production_stopped
           operation: boolean
-          source: outputs.understand_request.result.production_stopped
+          source: outputs.understand_request.parsed.production_stopped
         - target: urgency
           operation: copy
           source: outputs.assess_request.decisions.urgency
@@ -887,10 +908,10 @@ nodes:
           source: outputs.assess_request.decisions.complexity
         - target: detected_intents
           operation: copy
-          source: outputs.understand_request.result.request_types
+          source: outputs.understand_request.parsed.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
         - target: technical_answer
           operation: copy
           source: outputs.product_knowledge_support.answer
@@ -921,28 +942,28 @@ nodes:
         - target: model
           operation: coalesce
           sources:
-            - outputs.understand_request.result.product_model
+            - outputs.understand_request.parsed.product_model
             - outputs.crm_order_history.first.products.0.name
           default: not identified
         - target: serial_number
           operation: coalesce
           sources:
-            - outputs.understand_request.result.serial_number
+            - outputs.understand_request.parsed.serial_number
             - outputs.crm_order_history.first.products.0.serial_number
           default: not identified
         - target: quantity
           operation: copy
-          source: outputs.understand_request.result.quantity
+          source: outputs.understand_request.parsed.quantity
           default: not stated
         - target: previous_orders
           operation: count
           source: outputs.crm_order_history.data.orders
         - target: detected_intents
           operation: copy
-          source: outputs.understand_request.result.request_types
+          source: outputs.understand_request.parsed.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
         - target: complexity
           operation: copy
           source: outputs.assess_request.decisions.complexity
@@ -976,29 +997,29 @@ nodes:
         - reject
       context_fields:
         - outputs.incoming_request.data.message
-        - outputs.understand_request.result
+        - outputs.understand_request.parsed
         - outputs.find_crm_account.data
         - outputs.assess_request.decisions
-      editable_content_field: outputs.understand_request.result
+      editable_content_field: outputs.understand_request.parsed
       review_panels:
         - label: Original communication
           field: outputs.incoming_request.data.message
           hint: Exactly as the customer wrote it, untranslated.
         - label: What the AI understood
-          field: outputs.understand_request.result
+          field: outputs.understand_request.parsed
           hint: Correct anything wrong before approving.
           editable: true
         - label: Confidence
-          field: outputs.understand_request.confidence
+          field: outputs.understand_request.parsed.confidence
           hint: Below 0.80 the workflow does not act automatically.
         - label: Blocking information
-          field: outputs.understand_request.result.blocking_missing_information
+          field: outputs.understand_request.parsed.blocking_missing_information
           hint: Without these, this request cannot be handled with any confidence.
         - label: Ambiguities
-          field: outputs.understand_request.result.ambiguities
+          field: outputs.understand_request.parsed.ambiguities
           hint: Phrases that need interpretation rather than information that is simply missing.
         - label: Suggested actions
-          field: outputs.understand_request.result.suggested_actions
+          field: outputs.understand_request.parsed.suggested_actions
           hint: The AI's advisory recommendation. It does not decide the route — you do.
         - label: CRM account
           field: outputs.find_crm_account.data

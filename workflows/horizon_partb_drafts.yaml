@@ -88,17 +88,47 @@ nodes:
     config:
       model: gpt-5.6-sol
       max_tokens: 16000
-      prompt_template: |
+      input_fields:
+        - name: specific_objectives_table
+          description: >-
+            The blueprint's specific-objectives table (columns: SO | Specific
+            objective | Target outcome | KPI | Baseline | Target value |
+            Verification | Call requirement).
+          type: string
+          value: "{{inputs.proposal_blueprint.specific_objectives_table}}"
+        - name: ambitions
+          description: >-
+            The blueprint's stated project ambitions, used to compare the
+            project against the state of the art.
+          type: string
+          value: "{{inputs.proposal_blueprint.ambitions}}"
+        - name: proposal_blueprint
+          description: The locked proposal blueprint — the single source of truth every draft must agree with.
+          type: string
+          value: "{{inputs.proposal_blueprint}}"
+        - name: truth_graph
+          description: The approved truth graph — the only source of external factual drafting authority.
+          type: string
+          value: "{{inputs.truth_graph.truth_graph}}"
+        - name: verified_evidence
+          description: The verified-evidence, citation-ready narrative.
+          type: string
+          value: "{{inputs.verify_evidence.proposal_ready_cited_markdown}}"
+        - name: citation_registry
+          description: The registry of verified citation IDs allowed for use.
+          type: string
+          value: "{{inputs.verify_evidence.citation_registry}}"
+      instructions: |
         Draft only official subsection "1.1 Objectives and ambition" in polished
         proposal-ready Markdown, targeting 4 pages. Define measurable,
         verifiable and realistically achievable objectives and show their
         pertinence to the topic. Build the objective table directly from
-        {{inputs.proposal_blueprint.specific_objectives_table}} (columns: SO |
+        the specific_objectives_table input (columns: SO |
         Specific objective | Target outcome | KPI | Baseline | Target value |
         Verification | Call requirement) — one row per approved objective;
         never force the count to match blank SO1-SO5 placeholders in any
         supplied template. Compare the project with the state of the art and
-        available solutions using {{inputs.proposal_blueprint.ambitions}},
+        available solutions using the ambitions input,
         identify the precise advance and ambition, and
         state R&I maturity or start/end TRLs only when grounded. Use only
         verified citation IDs. Preserve missing facts as
@@ -109,21 +139,15 @@ nodes:
         [[IMAGE PROMPT: Figure 1 - Objective-Result-Outcome-Impact Chain]]
         Do not draw or describe the diagram yourself; do not omit the marker.
 
-        BLUEPRINT:
-        {{inputs.proposal_blueprint}}
+        Use the proposal_blueprint input as the locked single source of
+        truth for all facts.
 
-        APPROVED TRUTH GRAPH:
-        {{inputs.truth_graph.truth_graph}}
+        Use external factual claims only when they are present in the
+        truth_graph input. Preserve qualifications. Raw research dossiers
+        are not drafting inputs.
 
-        Use external factual claims only when they are present in the truth
-        graph. Preserve qualifications. Raw research dossiers are not
-        drafting inputs.
-
-        VERIFIED EVIDENCE:
-        {{inputs.verify_evidence.proposal_ready_cited_markdown}}
-
-        CITATION REGISTRY:
-        {{inputs.verify_evidence.citation_registry}}
+        Ground the narrative in the verified_evidence input, and use only
+        citation IDs present in the citation_registry input.
 
   - id: draft_1_2_methodology
     type: TransformAgent
@@ -137,7 +161,44 @@ nodes:
     config:
       model: gpt-5.6-sol
       max_tokens: 32000
-      prompt_template: |
+      input_fields:
+        - name: linked_research_activities
+          description: The blueprint's linked research activities, grounding 1.2.4.
+          type: string
+          value: "{{inputs.proposal_blueprint.linked_research_activities}}"
+        - name: ssh_integration
+          description: The blueprint's SSH (social sciences and humanities) integration content, grounding 1.2.5.
+          type: string
+          value: "{{inputs.proposal_blueprint.ssh_integration}}"
+        - name: gender_dimension
+          description: The blueprint's gender-dimension-in-research-content record, grounding 1.2.6.
+          type: string
+          value: "{{inputs.proposal_blueprint.gender_dimension}}"
+        - name: data_management_open_science
+          description: The blueprint's data-management and open-science plan, grounding 1.2.7.
+          type: string
+          value: "{{inputs.proposal_blueprint.data_management_open_science}}"
+        - name: method_cards
+          description: The Method Cards approved at Human Gate 4, grounding 1.2.3's overall methodology and approach.
+          type: string
+          value: "{{inputs.methodology_engineering.method_cards}}"
+        - name: proposal_blueprint
+          description: The locked proposal blueprint — the single source of truth every draft must agree with.
+          type: string
+          value: "{{inputs.proposal_blueprint}}"
+        - name: truth_graph
+          description: The approved truth graph — the only source of external factual drafting authority.
+          type: string
+          value: "{{inputs.truth_graph.truth_graph}}"
+        - name: verified_evidence
+          description: The verified-evidence, citation-ready narrative.
+          type: string
+          value: "{{inputs.verify_evidence.proposal_ready_cited_markdown}}"
+        - name: citation_registry
+          description: The registry of verified citation IDs allowed for use.
+          type: string
+          value: "{{inputs.verify_evidence.citation_registry}}"
+      instructions: |
         Draft only official subsection "1.2 Methodology" in proposal-ready
         Markdown, targeting 13 pages. Present the overall methodology as a
         coherent narrative, not a repetition of work packages. Explain
@@ -147,19 +208,16 @@ nodes:
         integration where required; the gender dimension in R&I content; open
         science, FAIR research-output management and stakeholder/end-user
         engagement. Integrate the multi-actor approach where the call requires
-        it. Base 1.2.4-1.2.7 on
-        {{inputs.proposal_blueprint.linked_research_activities}},
-        {{inputs.proposal_blueprint.ssh_integration}},
-        {{inputs.proposal_blueprint.gender_dimension}} and
-        {{inputs.proposal_blueprint.data_management_open_science}}
-        respectively. Treat the gender dimension as research-content
+        it. Base 1.2.4-1.2.7 on the linked_research_activities,
+        ssh_integration, gender_dimension and data_management_open_science
+        inputs respectively. Treat the gender dimension as research-content
         relevance (variables, disaggregation, bias controls) — a separate
         topic from workforce or team gender balance. Use only verified
         citations and supplied facts. Preserve missing details as
         [INPUT NEEDED: exact item].
 
-        Ground 1.2.3's overall methodology and approach in METHOD CARDS
-        below (approved at Human Gate 4): open with a narrative synthesis,
+        Ground 1.2.3's overall methodology and approach in the method_cards
+        input (approved at Human Gate 4): open with a narrative synthesis,
         then include one Markdown table, one row per Method Card (columns:
         Method ID | Objective | Method | Baseline/comparator | Validation |
         Uncertainty handling | Failure condition), built directly from the
@@ -173,24 +231,15 @@ nodes:
         [[IMAGE PROMPT: Figure 4 - Methodology Architecture]]
         Do not draw or describe the diagram yourself; do not omit the marker.
 
-        METHOD CARDS:
-        {{inputs.methodology_engineering.method_cards}}
+        Use the proposal_blueprint input as the locked single source of
+        truth for all facts.
 
-        BLUEPRINT:
-        {{inputs.proposal_blueprint}}
+        Use external factual claims only when they are present in the
+        truth_graph input. Preserve qualifications. Raw research dossiers
+        are not drafting inputs.
 
-        APPROVED TRUTH GRAPH:
-        {{inputs.truth_graph.truth_graph}}
-
-        Use external factual claims only when they are present in the truth
-        graph. Preserve qualifications. Raw research dossiers are not
-        drafting inputs.
-
-        VERIFIED EVIDENCE:
-        {{inputs.verify_evidence.proposal_ready_cited_markdown}}
-
-        CITATION REGISTRY:
-        {{inputs.verify_evidence.citation_registry}}
+        Ground the narrative in the verified_evidence input, and use only
+        citation IDs present in the citation_registry input.
 
   - id: draft_2_1_pathways
     type: TransformAgent
@@ -204,15 +253,38 @@ nodes:
     config:
       model: gpt-5.6-sol
       max_tokens: 16000
-      prompt_template: |
+      input_fields:
+        - name: pestel_analysis
+          description: >-
+            The blueprint's six-category PESTEL record (political, economic,
+            social, technological, environmental, legal), grounding the
+            barriers subsection.
+          type: string
+          value: "{{inputs.proposal_blueprint.pestel_analysis}}"
+        - name: proposal_blueprint
+          description: The locked proposal blueprint — the single source of truth every draft must agree with.
+          type: string
+          value: "{{inputs.proposal_blueprint}}"
+        - name: truth_graph
+          description: The approved truth graph — the only source of external factual drafting authority.
+          type: string
+          value: "{{inputs.truth_graph.truth_graph}}"
+        - name: expected_outcomes
+          description: The call's expected topic outcomes this draft's impact pathways must reach.
+          type: string
+          value: "{{inputs.call_intelligence.expected_outcomes}}"
+        - name: verified_evidence
+          description: The verified-evidence, citation-ready narrative.
+          type: string
+          value: "{{inputs.verify_evidence.proposal_ready_cited_markdown}}"
+      instructions: |
         Draft only official subsection "2.1 Project's pathways towards impact"
         in proposal-ready Markdown, targeting 3 pages. Give a concise causal
         narrative from specific needs through project results, target groups and
         uptake mechanisms to every expected topic outcome and wider destination
         impact. Provide quantified estimates only when meaningful and grounded.
-        Ground the barriers subsection in
-        {{inputs.proposal_blueprint.pestel_analysis}} (the six-category
-        PESTEL record: political, economic, social, technological,
+        Ground the barriers subsection in the pestel_analysis input (the
+        six-category PESTEL record: political, economic, social, technological,
         environmental, legal) — identify external requirements, assumptions
         and barriers, how they may evolve, and mitigation within or beyond
         the project. These are external conditions only; never restate one
@@ -226,21 +298,15 @@ nodes:
         [[IMAGE PROMPT: Figure 2 - Impact Pathways]]
         Do not draw or describe the diagram yourself; do not omit the marker.
 
-        BLUEPRINT:
-        {{inputs.proposal_blueprint}}
+        Use the proposal_blueprint input as the locked single source of
+        truth for all facts.
 
-        APPROVED TRUTH GRAPH:
-        {{inputs.truth_graph.truth_graph}}
+        Use external factual claims only when they are present in the
+        truth_graph input. Preserve qualifications. Raw research dossiers
+        are not drafting inputs.
 
-        Use external factual claims only when they are present in the truth
-        graph. Preserve qualifications. Raw research dossiers are not
-        drafting inputs.
-
-        CALL OUTCOMES:
-        {{inputs.call_intelligence.expected_outcomes}}
-
-        VERIFIED EVIDENCE:
-        {{inputs.verify_evidence.proposal_ready_cited_markdown}}
+        Ground every expected topic outcome in the expected_outcomes input,
+        and ground the narrative in the verified_evidence input.
 
   - id: draft_2_2_measures_and_2_3_summary
     type: TransformAgent
@@ -254,7 +320,24 @@ nodes:
     config:
       model: gpt-5.6-sol
       max_tokens: 16000
-      prompt_template: |
+      input_fields:
+        - name: exploitation_strategy
+          description: The blueprint's key exploitable results (KERs), grounding 2.2.4 exploitation.
+          type: string
+          value: "{{inputs.proposal_blueprint.exploitation_strategy}}"
+        - name: call_checklist
+          description: The call intelligence checklist for this topic.
+          type: string
+          value: "{{inputs.call_intelligence}}"
+        - name: proposal_blueprint
+          description: The locked proposal blueprint — the single source of truth every draft must agree with.
+          type: string
+          value: "{{inputs.proposal_blueprint}}"
+        - name: truth_graph
+          description: The approved truth graph — the only source of external factual drafting authority.
+          type: string
+          value: "{{inputs.truth_graph.truth_graph}}"
+      instructions: |
         Draft official subsection "2.2 Measures to maximise impact –
         Dissemination, exploitation and communication" in proposal-ready
         Markdown, targeting 3 pages. Provide the first plan for dissemination,
@@ -265,7 +348,7 @@ nodes:
         open-science methodology with communication.
 
         For 2.2.4 exploitation, give each key exploitable result (KER) in
-        {{inputs.proposal_blueprint.exploitation_strategy}} its own owner,
+        the exploitation_strategy input its own owner,
         target users, value proposition, protection/IPR route and
         exploitation route — do not describe exploitation only in general
         terms.
@@ -277,18 +360,11 @@ nodes:
         target, omit it completely. Preserve missing facts as
         [INPUT NEEDED: exact item].
 
-        CALL CHECKLIST:
-        {{inputs.call_intelligence}}
-
-        BLUEPRINT:
-        {{inputs.proposal_blueprint}}
-
-        APPROVED TRUTH GRAPH:
-        {{inputs.truth_graph.truth_graph}}
-
-        Use external factual claims only when they are present in the truth
-        graph. Preserve qualifications. Raw research dossiers are not
-        drafting inputs.
+        Use the call_checklist input for call requirements, the
+        proposal_blueprint input as the locked single source of truth for
+        all facts, and the truth_graph input for external factual claims —
+        use them only when present there. Preserve qualifications. Raw
+        research dossiers are not drafting inputs.
 
         APPROVED PROJECT FACTS:
         Use only the blueprint and approved truth graph above. Stage 1 should
@@ -308,7 +384,16 @@ nodes:
     config:
       model: gpt-5.6-sol
       max_tokens: 32000
-      prompt_template: |
+      input_fields:
+        - name: proposal_blueprint
+          description: The locked proposal blueprint — the single source of truth every draft must agree with.
+          type: string
+          value: "{{inputs.proposal_blueprint}}"
+        - name: truth_graph
+          description: The approved truth graph — the only source of external factual drafting authority.
+          type: string
+          value: "{{inputs.truth_graph.truth_graph}}"
+      instructions: |
         Draft only official subsection "3.1 Work plan and resources" in
         proposal-ready Markdown, targeting 16 pages including all tables.
         Include: work-plan logic; timing; a Gantt placeholder; a PERT/dependency
@@ -334,15 +419,12 @@ nodes:
         [[IMAGE PROMPT: Figure 3 - Work Package Structure]]
         Do not draw or describe the diagram yourself; do not omit the marker.
 
-        BLUEPRINT:
-        {{inputs.proposal_blueprint}}
+        Use the proposal_blueprint input as the locked single source of
+        truth for all facts.
 
-        APPROVED TRUTH GRAPH:
-        {{inputs.truth_graph.truth_graph}}
-
-        Use external factual claims only when they are present in the truth
-        graph. Preserve qualifications. Raw research dossiers are not
-        drafting inputs.
+        Use external factual claims only when they are present in the
+        truth_graph input. Preserve qualifications. Raw research dossiers
+        are not drafting inputs.
 
         APPROVED PROJECT FACTS:
         Use only the blueprint and approved truth graph above. Stage 1 should
@@ -362,7 +444,16 @@ nodes:
     config:
       model: gpt-5.6-sol
       max_tokens: 16000
-      prompt_template: |
+      input_fields:
+        - name: proposal_blueprint
+          description: The locked proposal blueprint — the single source of truth every draft must agree with.
+          type: string
+          value: "{{inputs.proposal_blueprint}}"
+        - name: truth_graph
+          description: The approved truth graph — the only source of external factual drafting authority.
+          type: string
+          value: "{{inputs.truth_graph.truth_graph}}"
+      instructions: |
         Draft only official subsection "3.2 Capacity of participants and
         consortium as a whole" in proposal-ready Markdown, targeting 3 pages.
         Do not repeat the Part A organisation descriptions. Demonstrate how the
@@ -375,15 +466,12 @@ nodes:
         capacity when required by the call. Preserve absent partner or facility
         facts as [INPUT NEEDED: exact item].
 
-        BLUEPRINT:
-        {{inputs.proposal_blueprint}}
+        Use the proposal_blueprint input as the locked single source of
+        truth for all facts.
 
-        APPROVED TRUTH GRAPH:
-        {{inputs.truth_graph.truth_graph}}
-
-        Use external factual claims only when they are present in the truth
-        graph. Preserve qualifications. Raw research dossiers are not
-        drafting inputs.
+        Use external factual claims only when they are present in the
+        truth_graph input. Preserve qualifications. Raw research dossiers
+        are not drafting inputs.
 
         APPROVED PROJECT FACTS:
         Use only the blueprint and approved truth graph above. Stage 1 should

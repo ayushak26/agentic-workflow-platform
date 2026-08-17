@@ -364,15 +364,15 @@ class TestRuleEvaluation:
         )
         assert evaluation.values["route"] == "sales"
 
-    def test_append_and_increase_operations(self):
+    def test_merge_and_increase_operations(self):
         evaluation = evaluate_rules(
             [
                 Rule(
                     name="collect",
                     default=True,
                     then=[
-                        Action(field="reasons", operation="append", value="one"),
-                        Action(field="reasons", operation="append", value="two"),
+                        Action(field="reasons", operation="merge", value="one"),
+                        Action(field="reasons", operation="merge", value="two"),
                         Action(field="score", operation="increase", value=2),
                     ],
                 )
@@ -381,6 +381,13 @@ class TestRuleEvaluation:
         )
         assert evaluation.values["reasons"] == ["one", "two"]
         assert evaluation.values["score"] == 2
+
+    def test_legacy_append_operation_is_renamed_to_merge(self):
+        """`append` was `merge`'s name before the rename — an already-saved
+        workflow's rule must keep behaving exactly as before rather than
+        fail to load."""
+        action = Action(field="reasons", operation="append", value="one")
+        assert action.operation == "merge"
 
     def test_rule_without_conditions_or_default_is_rejected(self):
         with pytest.raises(ValidationError, match="default: true"):

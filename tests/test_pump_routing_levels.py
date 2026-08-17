@@ -323,7 +323,7 @@ def test_no_level_lets_the_model_choose_the_department():
     schema contains no department, team or owner field."""
     for spec in (LEVEL_1, LEVEL_2, LEVEL_3):
         understand = next(node for node in spec.nodes if node.id == "understand_message")
-        fields = set(understand.config["output_schema"])
+        fields = {field["name"] for field in understand.config["output_fields"]}
         assert not fields & {"department", "sub_team", "owner", "owner_name", "team", "route"}
 
 

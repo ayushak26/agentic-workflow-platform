@@ -104,12 +104,18 @@ nodes:
       expected_output: The subject, message body and sender address.
       failure_message: No message text arrived. Paste a customer message and run again.
   - id: understand_request
-    type: AITaskAgent
+    type: TransformAgent
     config:
-      task: extract
       model: auto
       fail_on_error: false
-      instruction: >-
+      instructions: >-
+        Extract structured information from the customer's message. Return only the fields defined
+        by the output schema below, and never invent a value.
+
+        The customer may write in any language. Detect it, understand the request in its original
+        language, and write every text output field in English, except where a field is explicitly
+        meant to preserve the original wording (e.g. an exact quote or model designation).
+
         Understand the incoming customer communication and extract the information described by the
         output schema.
 
@@ -143,15 +149,15 @@ nodes:
         suggested_actions are your recommendations for what should happen next, in business
         language. They are advisory only — the workflow's own rules decide what actually happens, so
         never assume a suggested action will be carried out.
-      input: '{{outputs.incoming_request.data.message}}'
-      context:
-        Subject: '{{outputs.incoming_request.data.subject}}'
-      language:
-        input_language: auto
-        process_in_original_language: true
-        output_language: en
-        preserve_original: true
-      include_confidence: true
+      input_fields:
+        - name: message
+          description: Full body of the incoming customer communication, in its original language.
+          type: string
+          value: '{{outputs.incoming_request.data.message}}'
+        - name: subject
+          description: Subject line of the incoming communication.
+          type: string
+          value: '{{outputs.incoming_request.data.subject}}'
       output_fields:
         - name: language
           type: string
@@ -281,6 +287,18 @@ nodes:
             "Create an urgent technical support case", "Start a quotation for two replacement
             pumps"). The workflow's own rules decide the actual routing — these are suggestions, not
             commitments.
+        - name: confidence
+          type: number
+          required: true
+          minimum: 0.0
+          maximum: 1.0
+          description: >-
+            How certain you are about this result, 0.0 to 1.0. Lower it when the content is
+            ambiguous, incomplete, or outside your competence.
+        - name: reasoning
+          type: text
+          required: false
+          description: One or two sentences on how you reached this result, and what made you uncertain.
     selected_model: auto
     model_routing:
       accuracy_priority: balanced
@@ -316,7 +334,7 @@ nodes:
               - field: outputs.understand_request.status
                 operator: not_equals
                 value: ok
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: does_not_exist
           then:
             - field: human_review
@@ -330,7 +348,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.confidence
+              - field: outputs.understand_request.parsed.confidence
                 operator: less_than
                 value: 0.8
           then:
@@ -350,7 +368,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: order_status
           then:
@@ -360,7 +378,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: quotation_request
           then:
@@ -370,7 +388,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: general_inquiry
           then:
@@ -380,7 +398,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: spare_part_request
           then:
@@ -393,7 +411,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: technical_support
           then:
@@ -403,7 +421,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.request_types
+              - field: outputs.understand_request.parsed.request_types
                 operator: contains
                 value: complaint
           then:
@@ -426,7 +444,7 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.production_stopped
+              - field: outputs.understand_request.parsed.production_stopped
                 operator: is_true
           then:
             - field: urgency
@@ -436,15 +454,15 @@ nodes:
           when:
             operator: or
             conditions:
-              - field: outputs.understand_request.result.urgency
+              - field: outputs.understand_request.parsed.urgency
                 operator: equals
                 value: critical
               - operator: and
                 conditions:
-                  - field: outputs.understand_request.result.urgency
+                  - field: outputs.understand_request.parsed.urgency
                     operator: equals
                     value: high
-                  - field: outputs.understand_request.result.serial_number
+                  - field: outputs.understand_request.parsed.serial_number
                     operator: is_not_empty
           then:
             - field: urgency
@@ -456,7 +474,7 @@ nodes:
               - field: decisions.primary_intent
                 operator: equals
                 value: spare_part_request
-              - field: outputs.understand_request.result.blocking_missing_information
+              - field: outputs.understand_request.parsed.blocking_missing_information
                 operator: contains
                 value: product_model
           then:
@@ -475,9 +493,9 @@ nodes:
           when:
             operator: and
             conditions:
-              - field: outputs.understand_request.result.ambiguities
+              - field: outputs.understand_request.parsed.ambiguities
                 operator: is_not_empty
-              - field: outputs.understand_request.result.blocking_missing_information
+              - field: outputs.understand_request.parsed.blocking_missing_information
                 operator: is_not_empty
           then:
             - field: human_review
@@ -558,35 +576,35 @@ nodes:
           operation: format
           value: >-
             [{{outputs.automation_safety.decisions.urgency}}]
-            {{outputs.understand_request.result.requested_action}}
+            {{outputs.understand_request.parsed.requested_action}}
         - target: company
           operation: coalesce
           sources:
-            - outputs.understand_request.result.organization
+            - outputs.understand_request.parsed.organization
             - outputs.incoming_request.data.customer_email
           default: unknown
         - target: contact_email
           operation: coalesce
           sources:
-            - outputs.understand_request.result.requestor.email
+            - outputs.understand_request.parsed.requestor.email
             - outputs.incoming_request.data.customer_email
           default: unknown
         - target: quantity
           operation: copy
-          source: outputs.understand_request.result.quantity
+          source: outputs.understand_request.parsed.quantity
           default: not stated
         - target: detected_intents
           operation: copy
-          source: outputs.understand_request.result.request_types
+          source: outputs.understand_request.parsed.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
         - target: needs_clarification
           operation: boolean
           source: outputs.automation_safety.decisions.clarification_required
         - target: original_language
           operation: copy
-          source: outputs.understand_request.result.language
+          source: outputs.understand_request.parsed.language
     experience:
       display_name: Sales
       purpose: Hand a structured commercial request to Sales.
@@ -604,34 +622,34 @@ nodes:
           operation: format
           value: >-
             [{{outputs.automation_safety.decisions.urgency}}]
-            {{outputs.understand_request.result.product_model}} —
-            {{outputs.understand_request.result.requested_action}}
+            {{outputs.understand_request.parsed.product_model}} —
+            {{outputs.understand_request.parsed.requested_action}}
         - target: model
           operation: copy
-          source: outputs.understand_request.result.product_model
+          source: outputs.understand_request.parsed.product_model
           default: not stated
         - target: serial_number
           operation: copy
-          source: outputs.understand_request.result.serial_number
+          source: outputs.understand_request.parsed.serial_number
           default: not stated
         - target: production_stopped
           operation: boolean
-          source: outputs.understand_request.result.production_stopped
+          source: outputs.understand_request.parsed.production_stopped
         - target: urgency
           operation: copy
           source: outputs.automation_safety.decisions.urgency
         - target: detected_intents
           operation: copy
-          source: outputs.understand_request.result.request_types
+          source: outputs.understand_request.parsed.request_types
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
         - target: missing_information
           operation: copy
-          source: outputs.understand_request.result.missing_information
+          source: outputs.understand_request.parsed.missing_information
         - target: blocking_missing_information
           operation: copy
-          source: outputs.understand_request.result.blocking_missing_information
+          source: outputs.understand_request.parsed.blocking_missing_information
     experience:
       display_name: Technical Support
       purpose: Hand a structured technical case to Support.
@@ -647,28 +665,28 @@ nodes:
           value: Service / Spare Parts
         - target: model
           operation: copy
-          source: outputs.understand_request.result.product_model
+          source: outputs.understand_request.parsed.product_model
           default: not stated
         - target: serial_number
           operation: copy
-          source: outputs.understand_request.result.serial_number
+          source: outputs.understand_request.parsed.serial_number
           default: not stated
         - target: quantity
           operation: copy
-          source: outputs.understand_request.result.quantity
+          source: outputs.understand_request.parsed.quantity
           default: not stated
         - target: clarification_required
           operation: boolean
           source: outputs.automation_safety.decisions.clarification_required
         - target: missing_information
           operation: copy
-          source: outputs.understand_request.result.missing_information
+          source: outputs.understand_request.parsed.missing_information
         - target: blocking_missing_information
           operation: copy
-          source: outputs.understand_request.result.blocking_missing_information
+          source: outputs.understand_request.parsed.blocking_missing_information
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
     experience:
       display_name: Service and Spare Parts
       purpose: Hand a structured parts request to Service.
@@ -684,7 +702,7 @@ nodes:
           value: Customer Service
         - target: summary
           operation: copy
-          source: outputs.understand_request.result.request_summary
+          source: outputs.understand_request.parsed.request_summary
         - target: original_message
           operation: copy
           source: outputs.incoming_request.data.message
@@ -713,34 +731,34 @@ nodes:
         - reject
       context_fields:
         - outputs.incoming_request.data.message
-        - outputs.understand_request.result
+        - outputs.understand_request.parsed
         - outputs.automation_safety.decisions
-      editable_content_field: outputs.understand_request.result
+      editable_content_field: outputs.understand_request.parsed
       review_panels:
         - label: Original communication
           field: outputs.incoming_request.data.message
           hint: Exactly as the customer wrote it, untranslated.
         - label: Extracted information
-          field: outputs.understand_request.result
+          field: outputs.understand_request.parsed
           hint: What the AI understood. Correct anything wrong before approving.
           editable: true
         - label: Confidence
-          field: outputs.understand_request.confidence
+          field: outputs.understand_request.parsed.confidence
           hint: Below 0.80 the workflow does not act automatically.
         - label: Missing information
-          field: outputs.understand_request.result.missing_information
+          field: outputs.understand_request.parsed.missing_information
           hint: What a colleague would still need to act on this. Blocking items are listed separately below.
         - label: Blocking information
-          field: outputs.understand_request.result.blocking_missing_information
+          field: outputs.understand_request.parsed.blocking_missing_information
           hint: Without these, this request cannot be handled with any confidence.
         - label: Ambiguities
-          field: outputs.understand_request.result.ambiguities
+          field: outputs.understand_request.parsed.ambiguities
           hint: Phrases that need interpretation rather than information that is simply missing.
         - label: Suggested actions
-          field: outputs.understand_request.result.suggested_actions
+          field: outputs.understand_request.parsed.suggested_actions
           hint: The AI's advisory recommendation. It does not decide the route — you do.
         - label: Detected requests
-          field: outputs.understand_request.result.request_types
+          field: outputs.understand_request.parsed.request_types
           hint: Every distinct thing the customer asked for, most important first.
         - label: Suggested route
           field: outputs.automation_safety.decisions.primary_intent

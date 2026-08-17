@@ -30,7 +30,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.llm.model_catalog import AUTO_MODEL
 from app.nodes.registry import NodeRegistry
@@ -75,6 +75,25 @@ SIMULATION_TIMEOUT_SECONDS = 180
 
 def _services(request: Request) -> dict[str, Any]:
     return getattr(request.app.state, "services", {}) or {}
+
+
+def _friendly_validation_message(error: ValidationError) -> str:
+    """One line per Pydantic error, without the "N validation errors for
+    ModelName" header or the errors.pydantic.dev URL — those name an internal
+    class the Builder never shows the author, and would otherwise leak
+    straight into the Test tab's error banner verbatim.
+    """
+    lines: list[str] = []
+    for item in error.errors():
+        loc = ".".join(str(part) for part in item["loc"])
+        message = item["msg"]
+        # Pydantic prefixes a custom @model_validator/@field_validator's
+        # message with "Value error, " — redundant once it's attributed to a
+        # specific field below.
+        if message.startswith("Value error, "):
+            message = message[len("Value error, "):]
+        lines.append(f"{loc}: {message}" if loc else message)
+    return "; ".join(lines) or str(error)
 
 
 # --------------------------------------------------------------------------
@@ -331,6 +350,11 @@ async def node_test(
     started = time.perf_counter()
     try:
         instance = node_class(body.node_id, body.config, services=services)
+    except ValidationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={"stage": "config", "message": _friendly_validation_message(error)},
+        ) from error
     except Exception as error:
         raise HTTPException(
             status_code=422,
@@ -829,6 +853,11 @@ async def assist_schema(
         "- Types available: string, text, number, integer, boolean, enum, "
         "object, list, date. A list must declare item_type. An object must "
         "declare its child fields.\n"
+        "- A plain enum field's allowed values go in `enum_values`. A list "
+        "whose item_type is 'enum' (the field can hold more than one of the "
+        "allowed values at once) must instead put its allowed values in "
+        "`item_enum_values`, and must leave `enum_values` empty — these two "
+        "keys are never both populated on the same field.\n"
         "- Do not add a confidence field; the platform adds one."
     )
     user_prompt = f"# What to extract\n{body.description.strip()}"
@@ -929,7 +958,7 @@ async def assist_rules(
         "Rule shape:\n"
         '{"name": str, "description": str,\n'
         ' "when": {"operator": "and"|"or"|"not", "conditions": [ ... ]},\n'
-        ' "then": [{"field": str, "operation": "set"|"append"|"increase"|'
+        ' "then": [{"field": str, "operation": "set"|"merge"|"increase"|'
         '"decrease", "value": any}]}\n\n'
         "A condition is {\"field\": <path>, \"operator\": <operator>, "
         '"value": <value>}. A condition group may nest inside conditions.\n\n'

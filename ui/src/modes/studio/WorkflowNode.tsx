@@ -59,13 +59,27 @@ export const WorkflowNode = memo(function WorkflowNode({
     />
   );
 
+  const deleteButton = (
+    <button
+      aria-label="Delete step"
+      className="nodrag absolute -left-2 -top-2 z-10 hidden h-5 w-5 items-center justify-center rounded-full border border-red-300 bg-white text-[11px] font-semibold leading-none text-red-600 shadow-sm hover:bg-red-50 group-hover:flex"
+      onClick={event => {
+        event.stopPropagation();
+        data.onNodeDelete?.();
+      }}
+      title="Delete this step"
+      type="button"
+    >×</button>
+  );
+
   if (data.compact) {
     return (
       <div
-        className={`flex min-h-[76px] min-w-[230px] flex-col justify-center rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${border} ${
+        className={`group relative flex min-h-[76px] min-w-[230px] flex-col justify-center rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${border} ${
           data.faded ? 'opacity-40' : 'opacity-100'
         }`}
       >
+        {deleteButton}
         {targetHandle}
         <div className="truncate text-[19px] font-semibold leading-tight text-ink-900">
           {businessLabel || data.nodeId}
@@ -81,10 +95,11 @@ export const WorkflowNode = memo(function WorkflowNode({
 
   return (
     <div
-      className={`min-w-[230px] rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${border} ${
+      className={`group relative min-w-[230px] rounded-md border-2 bg-white px-4 py-3 shadow-sm transition-opacity ${border} ${
         data.faded ? 'opacity-40' : 'opacity-100'
       }`}
     >
+      {deleteButton}
       {targetHandle}
 
       <div className="flex items-start justify-between gap-2">

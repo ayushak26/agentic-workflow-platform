@@ -28,11 +28,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mysql:
+        condition: service_healthy
       opa:
         condition: service_started
+      snippet-runner:
+        condition: service_healthy
     volumes:
       - ./app:/app/app
       - ./workflows:/app/workflows
+      - snippet-runner-socket:/run/snippet-runner
     extra_hosts:
       # Lets the API container reach vLLM/SGLang running on the host on Linux.
       # Docker Desktop provides the same hostname on macOS and Windows.
@@ -140,6 +145,84 @@ services:
     networks:
       - eurskem-net
 
+  # Business Records — a real, persistent MySQL database backing
+  # app/mcp/business_records (seeded from both app/mcp/d365_finance/fixtures.json
+  # and app/mcp/dynamics/fixtures.json via `python -m app.mcp.business_records.seed`),
+  # unlike the other MCP connectors in this repo which serve fixture data
+  # in-process with no database of their own.
+  mysql:
+    image: mysql:8.4
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${BUSINESS_RECORDS_MYSQL_ROOT_PASSWORD:-eurskem-local-dev-root}
+      MYSQL_DATABASE: ${BUSINESS_RECORDS_MYSQL_DATABASE:-business_records}
+      MYSQL_USER: ${BUSINESS_RECORDS_MYSQL_USER:-eurskem-app}
+      MYSQL_PASSWORD: ${BUSINESS_RECORDS_MYSQL_PASSWORD:-eurskem-local-dev}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'mysqladmin ping -h 127.0.0.1 -u "$$MYSQL_USER" --password="$$MYSQL_PASSWORD" --silent',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - eurskem-net
+
+  # snippet-runner — the isolated executor for PythonSnippetAgent
+  # (app/nodes/python_snippet.py). Reused build/image as `app` (same repo,
+  # same Python) so no second Dockerfile to maintain, but a completely
+  # different runtime posture: no network at all, read-only root
+  # filesystem, no capabilities, a non-root numeric uid, and a process
+  # limit — none of which the main app container can afford, since it
+  # legitimately needs to reach Mongo/MySQL/the model APIs. Reached over a
+  # Unix socket on a shared volume, never a port — there is no network to
+  # publish one on.
+  snippet-runner:
+    build:
+      context: .
+      args:
+        SCIENTIFIC_SKILLS_REF: ${SCIENTIFIC_SKILLS_REF:-v2.59.0}
+    command: ["python", "-m", "app.runtime.snippet_daemon"]
+    environment:
+      SNIPPET_RUNNER_SOCKET_PATH: /run/snippet-runner/snippet-runner.sock
+    volumes:
+      - ./app:/app/app:ro
+      - snippet-runner-socket:/run/snippet-runner
+    # No `networks:` — network_mode: none is the actual containment for
+    # every snippet this daemon ever runs, independent of anything the
+    # snippet itself imports or tries.
+    network_mode: "none"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 768m
+    # No explicit `user:` override — inherits the image's own non-root
+    # `app` (uid 10001), the same uid the Dockerfile already gives
+    # /run/snippet-runner ownership to. Container isolation, not a
+    # different uid number, is what actually separates this from the main
+    # app container.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python", "-c",
+          "import socket; s = socket.socket(socket.AF_UNIX); s.settimeout(2); s.connect('/run/snippet-runner/snippet-runner.sock')",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
   # OPA (Open Policy Agent) — policy-as-code decision point for the data-classification/
   # ZDR routing policy (app/security/llm_policy.py). Not exposed publicly.
   opa:
@@ -218,6 +301,8 @@ volumes:
   weaviate-data:
   minio-data:
   redis-data:
+  mysql-data:
+  snippet-runner-socket:
 
 networks:
   eurskem-net:

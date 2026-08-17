@@ -11,6 +11,20 @@ export type WorkflowInputSpec = {
   max_files?: number;
 };
 
+// Mirrors app/runtime/schema.py's FILE_INPUT_CATEGORIES — shared by
+// WorkflowInputsPanel (the workflow-level input editor) and any per-node
+// editor (e.g. PromptTemplateConfig's Inputs section) that declares a new
+// file-typed input and needs the same accepted-category list.
+export const FILE_CATEGORIES = [
+  ['pdf', 'PDF'],
+  ['document', 'Documents'],
+  ['markdown', 'Markdown'],
+  ['presentation', 'Presentations'],
+  ['spreadsheet', 'Spreadsheets'],
+  ['code', 'Code files'],
+  ['image', 'Images'],
+] as const;
+
 // Values copied from Run History's "Copy run as workflow inputs" (or a
 // pipeline stage's auto-matched output) often carry the TransformAgent
 // envelope ({ raw, parsed }) rather than the bare structured value a `json`
@@ -89,6 +103,23 @@ export type YamlWorkflowNode = {
   selected_model?: string | null;
   model_routing?: ModelRoutingPolicy;
   experience?: NodeExperienceSpec;
+  // Per-node override of the workflow/platform-wide PII entity-protection
+  // mode (app/runtime/schema.py's NodeSpec.data_protection_mode) — e.g. lets
+  // a literature/database-lookup node opt out of tokenization so its search
+  // queries keep the real author/organisation name. Absent means "inherit",
+  // so it must round-trip untouched rather than being silently dropped.
+  data_protection_mode?: string | null;
+};
+
+// A personal sticky note on the canvas — never sent to the runtime, never
+// part of the graph. Round-trips through the workflow YAML as a top-level
+// `notes:` key (Pydantic's default extra="ignore" on WorkflowSpec means the
+// backend silently ignores it) so it survives save/reload the same as any
+// other workflow content, purely for the author's own benefit.
+export type NoteSpec = {
+  id: string;
+  text: string;
+  position: { x: number; y: number };
 };
 
 export type YamlWorkflow = {
@@ -109,6 +140,7 @@ export type YamlWorkflow = {
   entry?: string;
   exit?: string | string[];
   output?: Record<string, unknown>;
+  notes?: NoteSpec[];
 };
 
 // Custom data we hang on each React Flow node
@@ -120,6 +152,7 @@ export type WorkflowNodeData = {
   selectedModel?: string | null;
   modelRouting?: ModelRoutingPolicy;
   experience?: NodeExperienceSpec;
+  dataProtectionMode?: string | null;
   downstreamCount?: number;
   hasIssue?: boolean;
   faded?: boolean;
@@ -145,6 +178,15 @@ export type WorkflowNodeData = {
   compact?: boolean;
   // Which way the graph flows, so the node puts its handles on the right edges.
   flowDirection?: 'LR' | 'TB';
+  // Injected by the Builder (never persisted) so the card's own delete icon
+  // can remove just this step without requiring select-then-Delete-key.
+  onNodeDelete?: () => void;
+  // Set only on a canvas Note (react-flow type `'note'`, id prefixed
+  // NOTE_ID_PREFIX) — a personal annotation, not a workflow step. See
+  // Builder.tsx's note handling and builder/NoteNode.tsx.
+  noteText?: string;
+  onNoteChange?: (text: string) => void;
+  onNoteDelete?: () => void;
 };
 
 export type WorkflowEdgeData = {
@@ -181,6 +223,7 @@ export function yamlToReactFlow(
       selectedModel: n.selected_model,
       modelRouting: n.model_routing,
       experience: n.experience,
+      dataProtectionMode: n.data_protection_mode,
     },
   }));
 
@@ -259,6 +302,9 @@ export function reactFlowToYaml(
       : {}),
     ...(n.data.experience
       ? { experience: n.data.experience }
+      : {}),
+    ...(n.data.dataProtectionMode
+      ? { data_protection_mode: n.data.dataProtectionMode }
       : {}),
   }));
 

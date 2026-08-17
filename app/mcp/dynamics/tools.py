@@ -3,7 +3,7 @@
 Deliberately a *business* vocabulary, not a Web API wrapper. Each tool answers a
 question someone in the business would ask ("is this company already a
 customer?", "what have we sold them?"), with a narrow schema that shows exactly
-what it reads and exactly what it may write.
+what it reads and exactly what it may write. Tools return CRM facts only; the UI/workflow layer assembles business context and makes responsibility, department, role, and routing decisions.
 
 Two things the reference implementation
 (`srikanth-paladugula/mcp-dynamics365-server`) does that are not repeated here:
@@ -72,6 +72,18 @@ def _account_summary() -> dict[str, Any]:
             "telephone": {"type": ["string", "null"], "description": "Main telephone."},
             "website": {"type": ["string", "null"], "description": "Website URL."},
             "status": _string("active or inactive."),
+            "customer_type": {
+                "type": ["string", "null"],
+                "description": "Business classification used during enquiry routing, e.g. existing or internal_demo.",
+            },
+            "key_account": {
+                "type": ["boolean", "null"],
+                "description": "Whether the account is managed as a key account.",
+            },
+            "account_owner": {
+                "type": ["string", "null"],
+                "description": "System user GUID of the account owner, when assigned.",
+            },
         },
         "required": ["account_id", "account_name", "status"],
     }
@@ -134,6 +146,14 @@ def _order_summary() -> dict[str, Any]:
             "order_number": _string("Order number."),
             "name": {"type": ["string", "null"], "description": "Order name."},
             "ordered_on": {"type": ["string", "null"], "description": "Order date, ISO 8601."},
+            "status": {
+                "type": ["string", "null"],
+                "description": "Current business status of the sales order.",
+            },
+            "confirmed_date": {
+                "type": ["string", "null"],
+                "description": "Date/time the order was confirmed, ISO 8601.",
+            },
             "total_amount": {"type": ["number", "null"], "description": "Order total."},
             "products": {
                 "type": "array",
@@ -165,6 +185,71 @@ def _activity_summary() -> dict[str, Any]:
             "status": {"type": ["string", "null"], "description": "Activity status."},
         },
         "required": ["activity_id", "subject"],
+    }
+
+
+
+def _owner_summary() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "user_id": _string("Dynamics system user GUID."),
+            "full_name": _string("Owner display name."),
+            "role": {"type": ["string", "null"], "description": "Business role."},
+            "department": {"type": ["string", "null"], "description": "Business department."},
+        },
+        "required": ["user_id", "full_name"],
+    }
+
+
+def _quote_summary() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "quote_id": _string("Dynamics quote GUID."),
+            "quote_number": _string("Customer-facing quotation number."),
+            "name": {"type": ["string", "null"], "description": "Quotation name."},
+            "status": {"type": ["string", "null"], "description": "Current quotation status."},
+            "total_amount": {"type": ["number", "null"], "description": "Quotation total."},
+            "account_id": {"type": ["string", "null"], "description": "Owning customer account GUID."},
+        },
+        "required": ["quote_id", "quote_number"],
+    }
+
+
+def _shipment_summary() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "shipment_id": _string("Shipment GUID."),
+            "shipment_number": _string("Shipment reference."),
+            "status": {"type": ["string", "null"], "description": "Current shipment status."},
+            "shipped_date": {"type": ["string", "null"], "description": "Shipment dispatch date."},
+            "delivered_date": {"type": ["string", "null"], "description": "Delivery date, when delivered."},
+            "order_id": {"type": ["string", "null"], "description": "Related sales-order GUID."},
+            "account_id": {"type": ["string", "null"], "description": "Related customer account GUID."},
+        },
+        "required": ["shipment_id", "shipment_number"],
+    }
+
+
+def _service_case_summary() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "case_id": _string("Service-case GUID."),
+            "case_number": _string("Customer-facing service-case number."),
+            "title": {"type": ["string", "null"], "description": "Service-case title."},
+            "status": {"type": ["string", "null"], "description": "Current service-case status."},
+            "priority": {"type": ["string", "null"], "description": "Service-case priority."},
+            "serial_number": {"type": ["string", "null"], "description": "Related equipment serial number."},
+            "account_id": {"type": ["string", "null"], "description": "Related customer account GUID."},
+            "current_owner": {
+                "anyOf": [_owner_summary(), {"type": "null"}],
+                "description": "Current owner of the case, resolved to business role and department when possible.",
+            },
+        },
+        "required": ["case_id", "case_number"],
     }
 
 
@@ -252,7 +337,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "typical_uses": [
             "Decide whether an enquiry is from an existing customer",
             "Resolve a company name from an email signature to a CRM account",
-            "Route known customers differently from new prospects",
+            "Expose whether the company already exists as a CRM account",
         ],
     },
     {
@@ -375,6 +460,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "default": 10,
                     "description": "Maximum orders to return, newest first.",
                 },
+                "serial_number": _string(
+                    "Optional serial number to filter by. Returns only orders containing this serial number.",
+                    maxLength=100
+                ),
+                "order_number": _string(
+                    "Optional order number to filter by. Returns only orders containing this order number.",
+                    maxLength=100
+                ),
+                "purchase_order_number": _string(
+                    "Optional purchase order number to filter by. Returns only orders containing this purchase order number.",
+                    maxLength=100
+                ),
             },
             "required": ["account_id"],
         },
@@ -383,6 +480,241 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "Resolve \"the same as last time\" to an actual product",
             "Find the serial number of equipment a customer already owns",
             "Check what a customer has bought before quoting",
+        ],
+    },
+    {
+        "name": "get_quotations_for_account",
+        "title": "Get Quotations For Account",
+        "description": (
+            "List quotations belonging to a CRM account. Returns stored quotation "
+            "facts only, including status and amount."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": _string("Dynamics account GUID."),
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 20,
+                    "description": "Maximum quotations to return.",
+                },
+            },
+            "required": ["account_id"],
+        },
+        "output_schema": _collection(_quote_summary(), "quotations"),
+        "typical_uses": [
+            "Check whether a customer already has a quotation",
+            "Read quotation status and amount for an account",
+        ],
+    },
+    {
+        "name": "find_quotation",
+        "title": "Find Quotation",
+        "description": (
+            "Find a quotation by its customer-facing quotation number. "
+            "Optionally scope the lookup to a known customer account."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "quote_number": _string("Customer-facing quotation number.", minLength=1, maxLength=100),
+                "account_id": _string("Optional Dynamics account GUID used to scope the lookup."),
+            },
+            "required": ["quote_number"],
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "quotation": {
+                    "anyOf": [
+                        _quote_summary(),
+                        {"type": "null"},
+                    ]
+                },
+                "found": {"type": "boolean"},
+            },
+            "required": ["quotation", "found"],
+        },
+        "typical_uses": [
+            "Resolve a quotation number extracted from a customer enquiry",
+            "Read the stored quotation status",
+        ],
+    },
+    {
+        "name": "find_order",
+        "title": "Find Sales Order",
+        "description": (
+            "Find a sales order using an order number or an equipment serial number. "
+            "Optionally scope the lookup to a known customer account."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_number": _string("Customer-facing sales-order number.", maxLength=100),
+                "serial_number": _string("Equipment serial number recorded on an order line.", maxLength=100),
+                "account_id": _string("Optional Dynamics account GUID used to scope the lookup."),
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["order_number"]},
+                {"required": ["serial_number"]},
+            ],
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "order": {
+                    "anyOf": [
+                        _order_summary(),
+                        {"type": "null"},
+                    ]
+                },
+                "found": {"type": "boolean"},
+            },
+            "required": ["order", "found"],
+        },
+        "typical_uses": [
+            "Resolve an order number extracted from a customer enquiry",
+            "Find the order containing a referenced equipment serial number",
+        ],
+    },
+    {
+        "name": "get_shipments_for_account",
+        "title": "Get Shipments For Account",
+        "description": (
+            "List shipment records belonging to a CRM account. Returns stored "
+            "shipment facts only."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": _string("Dynamics account GUID."),
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 20,
+                    "description": "Maximum shipment records to return.",
+                },
+            },
+            "required": ["account_id"],
+        },
+        "output_schema": _collection(_shipment_summary(), "shipments"),
+        "typical_uses": [
+            "Read shipment history for a customer",
+            "Check stored shipment statuses",
+        ],
+    },
+    {
+        "name": "find_shipment",
+        "title": "Find Shipment",
+        "description": (
+            "Find a shipment by shipment number or related sales-order identifier. "
+            "Optionally scope the lookup to a known customer account."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "shipment_number": _string("Customer-facing shipment number.", maxLength=100),
+                "order_id": _string("Related Dynamics sales-order GUID."),
+                "account_id": _string("Optional Dynamics account GUID used to scope the lookup."),
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["shipment_number"]},
+                {"required": ["order_id"]},
+            ],
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "shipment": {
+                    "anyOf": [
+                        _shipment_summary(),
+                        {"type": "null"},
+                    ]
+                },
+                "found": {"type": "boolean"},
+            },
+            "required": ["shipment", "found"],
+        },
+        "typical_uses": [
+            "Resolve a shipment number extracted from a customer enquiry",
+            "Find the shipment connected to a known sales order",
+        ],
+    },
+    {
+        "name": "get_service_cases_for_account",
+        "title": "Get Service Cases For Account",
+        "description": (
+            "List service cases belonging to a CRM account. Returns stored case "
+            "status, priority, equipment reference, and current owner identifier."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "account_id": _string("Dynamics account GUID."),
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 50,
+                    "default": 20,
+                    "description": "Maximum service cases to return.",
+                },
+            },
+            "required": ["account_id"],
+        },
+        "output_schema": _collection(_service_case_summary(), "service_cases"),
+        "typical_uses": [
+            "See whether a customer already has a service case",
+            "Read the existing case status and current owner identifier",
+        ],
+    },
+    {
+        "name": "find_service_case",
+        "title": "Find Service Case",
+        "description": (
+            "Find a service case by case number or equipment serial number. "
+            "Optionally scope the lookup to a known customer account."
+        ),
+        "operation": "read",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "service_case_number": _string("Customer-facing service-case number.", maxLength=100),
+                "serial_number": _string("Equipment serial number recorded on the case.", maxLength=100),
+                "account_id": _string("Optional Dynamics account GUID used to scope the lookup."),
+            },
+            "required": [],
+            "anyOf": [
+                {"required": ["service_case_number"]},
+                {"required": ["serial_number"]},
+            ],
+        },
+        "output_schema": {
+            "type": "object",
+            "properties": {
+                "service_case": {
+                    "anyOf": [
+                        _service_case_summary(),
+                        {"type": "null"},
+                    ]
+                },
+                "found": {"type": "boolean"},
+            },
+            "required": ["service_case", "found"],
+        },
+        "typical_uses": [
+            "Resolve a service-case number extracted from an enquiry",
+            "Find service history connected to an equipment serial number",
         ],
     },
     {

@@ -84,23 +84,32 @@ def _manifest_entry(klass: Type[NodeType]) -> dict:
     # fill in whatever it didn't declare, so every node type gets a usable
     # About tab without a second hand-authored description.
     about = {**synthesize_about(klass), **(getattr(klass, "about", {}) or {})}
+    # A class's *own* declaration wins; the lookup table covers the node
+    # types that predate the ClassVar. `klass.__dict__` rather than getattr,
+    # because NodeType declares a documented default every subclass
+    # inherits — getattr would return the base default and the table would
+    # never be consulted.
+    execution_kind = (
+        klass.__dict__.get("execution_kind")
+        or execution_kind_for(klass.type_name, uses_llm=uses_llm)
+    )
     return {
         "type_name": klass.type_name,
         "description": klass.description,
         "category": category_for(klass.type_name),
         "icon": icon_for(klass.type_name),
-        # A class's *own* declaration wins; the lookup tables cover the node
-        # types that predate the ClassVars. `klass.__dict__` rather than
-        # getattr, because NodeType declares documented defaults that every
-        # subclass inherits — getattr would return the base default and the
-        # table would never be consulted.
         "family": klass.__dict__.get("family") or family_for(klass.type_name),
-        "execution_kind": (
-            klass.__dict__.get("execution_kind")
-            or execution_kind_for(klass.type_name, uses_llm=uses_llm)
-        ),
+        "execution_kind": execution_kind,
         "uses_ai": bool(about.get("uses_ai", uses_llm)),
-        "external_action": bool(about.get("external_action", False)),
+        # Falls back to execution_kind rather than hard-defaulting to False:
+        # a node type whose own execution_kind is already "external" (e.g.
+        # WebSearchAgent, MCPAgent) acts outside the platform by definition,
+        # whether or not it also hand-authors an `about["external_action"]`
+        # override. Without this fallback, any node type that predates this
+        # ClassVar, or simply never declared it, reported "acts outside: No"
+        # in the About tab despite its own badge saying "external" right
+        # next to it — a real, shipped inconsistency this closes.
+        "external_action": bool(about.get("external_action", execution_kind == "external")),
         "about": about,
         "presets": about.get("presets") or [],
         "input_schema": getattr(

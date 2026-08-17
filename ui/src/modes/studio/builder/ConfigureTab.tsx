@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '../../../api/client';
 import type {
@@ -11,13 +11,38 @@ import type {
   OutputContract,
 } from '../../../api/types';
 import { SchemaForm } from '../SchemaForm';
-import type { WorkflowNodeData } from '../yaml-bridge';
+import type { WorkflowInputSpec, WorkflowNodeData, YamlWorkflow } from '../yaml-bridge';
 import { AITaskConfig } from './AITaskConfig';
 import { DataTransformConfig } from './DataTransformConfig';
 import { EmailConfig } from './EmailConfig';
+import { ExternalActionConfig } from './ExternalActionConfig';
+import { JoinConfig } from './JoinConfig';
 import { MCPToolConfig } from './MCPToolConfig';
-import { RouterEditor } from './RouterEditor';
+import { PromptTemplateConfig } from './PromptTemplateConfig';
+import { PythonSnippetConfig } from './PythonSnippetConfig';
+import { ModeCard, RouterEditor } from './RouterEditor';
 import { RuleBuilder } from './RuleBuilder';
+import { WorkflowInputAgentConfig } from './WorkflowInputAgentConfig';
+import { SQLQueryConfig } from './SQLQueryConfig';
+
+function asNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/** A TransformAgent node authored the old way (hand-written prompt_template/
+ *  system_prompt/output_schema) keeps rendering through the generic
+ *  SchemaForm, unchanged — only a brand-new node gets the Inputs/
+ *  Instructions/Outputs editor. Mirrors the backend's `is_new_style` check
+ *  (app/nodes/transform.py) so a node never shows a blank editor over data
+ *  that's actually there. */
+function isLegacyTransform(config: Record<string, unknown>): boolean {
+  return !asNonEmptyString(config.instructions)
+    && (
+      asNonEmptyString(config.prompt_template)
+      || asNonEmptyString(config.system_prompt)
+      || Object.keys((config.output_schema as Record<string, unknown> | undefined) ?? {}).length > 0
+    );
+}
 
 /**
  * The Configure tab.
@@ -40,8 +65,11 @@ export function ConfigureTab({
   manifest,
   onConfigChange,
   onIdChange,
+  onInputsChange,
   operators,
+  refetchEmailConnections,
   selected,
+  workflow,
 }: {
   contract: OutputContract | null;
   emailConnections: EmailConnectionInfo[];
@@ -49,11 +77,21 @@ export function ConfigureTab({
   manifest: NodeTypeManifest | undefined;
   onConfigChange: (next: Record<string, unknown>) => void;
   onIdChange: (nextId: string) => void;
+  onInputsChange: (inputs: Record<string, WorkflowInputSpec>) => void;
   operators: OperatorCatalog | null;
+  refetchEmailConnections: () => void;
   selected: { id: string; data: WorkflowNodeData };
+  workflow: YamlWorkflow;
 }) {
   const config = selected.data.config;
   const typeName = selected.data.typeName;
+  // TransformAgent converges AI work and DataTransformAgent's deterministic
+  // work on one node type — `mode` picks which. Absent `mode` (every node
+  // saved before this converged) behaves exactly as before: "ai".
+  const transformMode = typeName === 'TransformAgent'
+    ? (config.mode === 'deterministic' ? 'deterministic' : 'ai')
+    : null;
+  const useNewPromptTemplateEditor = transformMode === 'ai' && !isLegacyTransform(config);
 
   return (
     <div className="builder-inspector-scroll p-4">
@@ -72,13 +110,28 @@ export function ConfigureTab({
 
       <div className="mt-4">
         {typeName === 'AITaskAgent' && (
-          <AITaskConfig
+          <>
+            <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+              AITaskAgent is deprecated — TransformAgent's Inputs/Instructions/
+              Outputs editor now covers the same ground plus a fail_on_error
+              escape hatch. Use TransformAgent for new steps.
+            </div>
+            <AITaskConfig
+              config={config}
+              contract={contract}
+              llmModels={llmModels}
+              onChange={onConfigChange}
+              presets={manifest?.presets ?? []}
+              typeName={typeName}
+            />
+          </>
+        )}
+
+        {typeName === 'WorkflowInputAgent' && (
+          <WorkflowInputAgentConfig
             config={config}
-            contract={contract}
-            llmModels={llmModels}
             onChange={onConfigChange}
             presets={manifest?.presets ?? []}
-            typeName={typeName}
           />
         )}
 
@@ -107,6 +160,7 @@ export function ConfigureTab({
             connections={emailConnections}
             contract={contract}
             onChange={onConfigChange}
+            onConnectionsChanged={refetchEmailConnections}
             presets={manifest?.presets ?? []}
           />
         )}
@@ -119,7 +173,71 @@ export function ConfigureTab({
           />
         )}
 
+        {typeName === 'ExternalActionAgent' && (
+          <ExternalActionConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {typeName === 'PythonSnippetAgent' && (
+          <PythonSnippetConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {typeName === 'SQLQueryAgent' && (
+          <SQLQueryConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {typeName === 'TextAssemblerAgent' && (
+          <JoinConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+          />
+        )}
+
         {typeName === 'DataTransformAgent' && (
+          <>
+            <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">
+              DataTransformAgent is deprecated — TransformAgent's Deterministic
+              mode now covers the same operations. Use TransformAgent for new
+              steps.
+            </div>
+            <DataTransformConfig
+              config={config}
+              contract={contract}
+              onChange={onConfigChange}
+            />
+          </>
+        )}
+
+        {typeName === 'TransformAgent' && (
+          <div className="mb-3 grid grid-cols-2 gap-1.5">
+            <ModeCard
+              active={transformMode === 'ai'}
+              description="Send content to a model — extract, classify, summarize, draft."
+              label="AI"
+              onSelect={() => onConfigChange({ ...config, mode: 'ai' })}
+            />
+            <ModeCard
+              active={transformMode === 'deterministic'}
+              description="Reshape data with no model call — copy, format, join, coalesce."
+              label="Deterministic"
+              onSelect={() => onConfigChange({ ...config, mode: 'deterministic' })}
+            />
+          </div>
+        )}
+
+        {transformMode === 'deterministic' && (
           <DataTransformConfig
             config={config}
             contract={contract}
@@ -127,9 +245,32 @@ export function ConfigureTab({
           />
         )}
 
-        {!['AITaskAgent', 'DecisionAgent', 'RouterAgent', 'EmailAgent', 'MCPToolAgent', 'DataTransformAgent'].includes(typeName)
+        {useNewPromptTemplateEditor && (
+          <PromptTemplateConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+            onWorkflowInputsChange={onInputsChange}
+            workflowInputs={workflow.inputs ?? {}}
+          />
+        )}
+
+        {!['AITaskAgent', 'DecisionAgent', 'RouterAgent', 'EmailAgent', 'MCPToolAgent', 'DataTransformAgent', 'TextAssemblerAgent', 'ExternalActionAgent', 'PythonSnippetAgent', 'SQLQueryAgent', 'WorkflowInputAgent'].includes(typeName)
+          && !useNewPromptTemplateEditor
+          && transformMode !== 'deterministic'
           && (manifest ? (
             <SchemaForm
+              hiddenFields={
+                // input_fields/instructions/output_fields only exist for the
+                // new Inputs/Instructions/Outputs editor (PromptTemplateConfig);
+                // mode/operations/omit_empty only exist for Deterministic mode
+                // (DataTransformConfig, rendered separately above) — a legacy
+                // AI-mode TransformAgent node uses neither, so don't clutter
+                // its raw editor with empty boxes for fields it doesn't have.
+                typeName === 'TransformAgent'
+                  ? ['input_fields', 'instructions', 'output_fields', 'mode', 'operations', 'omit_empty']
+                  : []
+              }
               onChange={onConfigChange}
               schema={manifest.config_schema}
               typeName={typeName}
@@ -218,7 +359,7 @@ function DecisionConfig({
   );
 }
 
-function DefaultsEditor({
+export function DefaultsEditor({
   defaults,
   onChange,
 }: {
@@ -291,11 +432,16 @@ export function useAuthoringContext(workflowYaml: string, nodeId: string | null)
   const [contract, setContract] = useState<OutputContract | null>(null);
   const [emailConnections, setEmailConnections] = useState<EmailConnectionInfo[]>([]);
 
-  useEffect(() => {
-    api.operatorCatalog().then(setOperators).catch(() => setOperators(null));
+  const refetchEmailConnections = useCallback(() => {
     api.emailConnections()
       .then(result => setEmailConnections(result.connections))
       .catch(() => setEmailConnections([]));
+  }, []);
+
+  useEffect(() => {
+    api.operatorCatalog().then(setOperators).catch(() => setOperators(null));
+    refetchEmailConnections();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -317,7 +463,7 @@ export function useAuthoringContext(workflowYaml: string, nodeId: string | null)
     };
   }, [nodeId, workflowYaml]);
 
-  return { contract, emailConnections, operators };
+  return { contract, emailConnections, operators, refetchEmailConnections };
 }
 
 export type { FieldSpec };

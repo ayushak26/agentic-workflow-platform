@@ -101,7 +101,7 @@ function ValueInput({
     return (
       <select
         aria-label="Value"
-        className="builder-field w-44 flex-none"
+        className="builder-field min-w-0 flex-1"
         onChange={event => onChange(event.target.value)}
         value={String(value ?? '')}
       >
@@ -130,7 +130,7 @@ function ValueInput({
   return (
     <input
       aria-label="Value"
-      className="builder-field w-44 flex-none"
+      className="builder-field min-w-0 flex-1"
       onChange={event => onChange(
         arity === 'many'
           ? event.target.value.split(',').map(part => part.trim()).filter(Boolean)
@@ -169,22 +169,29 @@ function ConditionEditor({
 
   return (
     <div className="rounded-md border border-slate-200 bg-white p-2">
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <button
-            className="w-full truncate rounded border border-slate-200 px-2 py-1 text-left font-mono text-[11px] text-ink-800 hover:border-accent-600"
-            onClick={() => setPicking(value => !value)}
-            type="button"
-          >
-            {condition.field || 'Choose a field…'}
-          </button>
-          {field && (
-            <div className="mt-0.5 text-[10px] text-ink-500">
-              {field.type}
-              {field.may_be_unavailable && ' · may be empty at run time'}
-            </div>
-          )}
+      <div className="flex items-center gap-2">
+        <button
+          className="min-w-0 flex-1 truncate rounded border border-slate-200 px-2 py-1 text-left font-mono text-[11px] text-ink-800 hover:border-accent-600"
+          onClick={() => setPicking(value => !value)}
+          type="button"
+        >
+          {condition.field || 'Choose a field…'}
+        </button>
+        <button
+          aria-label="Remove condition"
+          className="flex-none px-1 text-ink-400 hover:text-red-600"
+          onClick={onRemove}
+          type="button"
+        >×</button>
+      </div>
+      {field && (
+        <div className="mt-0.5 text-[10px] text-ink-500">
+          {field.type}
+          {field.may_be_unavailable && ' · may be empty at run time'}
         </div>
+      )}
+
+      <div className="mt-1.5 flex items-center gap-2">
         <select
           aria-label="Operator"
           className="builder-field w-40 flex-none"
@@ -205,12 +212,6 @@ function ConditionEditor({
             value={condition.value}
           />
         )}
-        <button
-          aria-label="Remove condition"
-          className="flex-none px-1 text-ink-400 hover:text-red-600"
-          onClick={onRemove}
-          type="button"
-        >×</button>
       </div>
 
       {picking && (

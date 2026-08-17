@@ -35,7 +35,8 @@ export type IconName =
   | 'collapse'
   | 'columns'
   | 'flow-vertical'
-  | 'flow-horizontal';
+  | 'flow-horizontal'
+  | 'note';
 
 function IconPath({ name }: { name: IconName }) {
   switch (name) {
@@ -163,6 +164,13 @@ function IconPath({ name }: { name: IconName }) {
         <>
           <circle cx="10.5" cy="10.5" r="6.5" />
           <line x1="15.3" y1="15.3" x2="20.5" y2="20.5" />
+        </>
+      );
+    case 'note':
+      return (
+        <>
+          <path d="M4 4h12l4 4v12H4Z" />
+          <path d="M16 4v4h4" />
         </>
       );
     case 'filter':

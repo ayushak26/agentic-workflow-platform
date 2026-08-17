@@ -219,6 +219,7 @@ async def _run_stage(
         db=db,
         run_id=run_id,
         session=session,
+        services=services,
     )
     # run_and_finalize already reconciled pipeline_runs (it's the shared
     # finalize path every run goes through) — re-read so the response

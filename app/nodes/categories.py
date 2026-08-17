@@ -19,6 +19,7 @@ NODE_CATEGORIES: dict[str, str] = {
     "HumanInLoopAgent": "Core Building Blocks",
     "EmailAgent": "Core Building Blocks",
     "MCPToolAgent": "Core Building Blocks",
+    "ExternalActionAgent": "Core Building Blocks",
 
     # Control & Flow — routing, transforms, plain I/O
     "Literal": "Control & Flow",
@@ -26,6 +27,7 @@ NODE_CATEGORIES: dict[str, str] = {
     "TransformAgent": "Control & Flow",
     "WorkflowFileLoader": "Control & Flow",
     "TextAssemblerAgent": "Control & Flow",
+    "SubprocessAgent": "Control & Flow",
 
     # Research & Discovery — finding candidate sources and papers
     "BoundedDeepResearchAgent": "Research & Discovery",
@@ -36,6 +38,7 @@ NODE_CATEGORIES: dict[str, str] = {
 
     # Evidence & Retrieval — pulling and verifying evidence for claims
     "RAGAgent": "Evidence & Retrieval",
+    "KnowledgeRetrieval": "Evidence & Retrieval",
     "InternalProjectEvidenceRetrieverAgent": "Evidence & Retrieval",
     "PriorProjectRetrieverAgent": "Evidence & Retrieval",
     "StructuredDatasetRetrieverAgent": "Evidence & Retrieval",
@@ -74,6 +77,8 @@ NODE_CATEGORIES: dict[str, str] = {
     # Integrations — external tool/skill protocols
     "MCPAgent": "Integrations",
     "ScientificSkillAgent": "Integrations",
+    "SQLQueryAgent": "Integrations",
+    "PythonSnippetAgent": "Integrations",
 }
 
 # Any type_name not listed above (including future node types) falls back to

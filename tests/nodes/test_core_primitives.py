@@ -19,7 +19,8 @@ from app.nodes.ai_task import AITaskAgent, effective_fields
 from app.nodes.data_transform import DataTransformAgent
 from app.nodes.decision import DecisionAgent
 from app.nodes.router import RouterAgent
-from app.nodes.workflow_input import WorkflowInputAgent
+from app.nodes.workflow_input import WorkflowInputAgent, WorkflowInputConfig
+from app.runtime.field_schema import field_paths
 
 
 class ScriptedStructuredLLM:
@@ -968,6 +969,124 @@ class TestWorkflowInput:
         assert "data.message" in fields
 
 
+class TestWorkflowInputListOfEnum:
+    """An incoming input can declare `List<Enum>` — the same closed-set-of-
+    values-in-an-array shape as a structured output field — so a value
+    mapped straight from an upstream AI step's output is held to the same
+    contract on the way in as it was on the way out."""
+
+    RESPONSIBILITIES_FIELD = {
+        "name": "responsibilities",
+        "type": "list",
+        "item_type": "enum",
+        "item_enum_values": ["pump_application_selection", "quotation_management"],
+        "required": True,
+    }
+
+    @pytest.mark.asyncio
+    async def test_a_valid_list_of_enum_value_passes_through_as_an_array(self):
+        node = WorkflowInputAgent("intake", {"fields": [self.RESPONSIBILITIES_FIELD]})
+        output = await run(
+            node,
+            {
+                "inputs": {
+                    "responsibilities": [
+                        "pump_application_selection",
+                        "quotation_management",
+                    ]
+                },
+                "node_outputs": {},
+            },
+        )
+        # Direct path resolution, not string interpolation — the array must
+        # survive as an array, not be joined, truncated, or stringified.
+        assert output["data"]["responsibilities"] == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+        assert isinstance(output["data"]["responsibilities"], list)
+
+    @pytest.mark.asyncio
+    async def test_a_value_outside_the_allowed_set_is_rejected_before_downstream_runs(self):
+        node = WorkflowInputAgent("intake", {"fields": [self.RESPONSIBILITIES_FIELD]})
+        with pytest.raises(ValueError, match="declared shape"):
+            await run(
+                node,
+                {
+                    "inputs": {"responsibilities": ["some_random_value"]},
+                    "node_outputs": {},
+                },
+            )
+
+    def test_preflight_exposes_the_allowed_values(self):
+        """What lets the mapping picker and rule editor offer the closed set
+        instead of a free-text box for an incoming List<Enum> input."""
+        specs = WorkflowInputConfig(fields=[self.RESPONSIBILITIES_FIELD]).as_field_specs()
+        paths = {item.path: item for item in field_paths(specs)}
+        assert paths["responsibilities"].item_type == "enum"
+        assert paths["responsibilities"].enum_values == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+
+    def test_legacy_list_binding_without_item_type_degrades_instead_of_crashing(self):
+        """A binding saved before item_type existed on this model must still
+        load — degraded to a plain scalar — rather than fail to open the
+        workflow at all."""
+        cfg = WorkflowInputConfig(fields=[{"name": "tags", "type": "list"}])
+        assert cfg.fields[0].type == "list"
+        assert cfg.fields[0].item_type == "string"
+
+    @pytest.mark.asyncio
+    async def test_structured_output_list_of_enum_maps_straight_into_a_declared_input(self):
+        """The acceptance scenario end to end: an upstream AI step's
+        `responsibilities: List<Enum>` structured output, mapped directly
+        into a downstream input declaring the same shape — no string
+        conversion, no join, no dropped values, no FieldSpec error."""
+        node = WorkflowInputAgent(
+            "next_node_input",
+            {
+                "fields": [
+                    {
+                        **self.RESPONSIBILITIES_FIELD,
+                        "source": "outputs.llm2.data.responsibilities",
+                    }
+                ]
+            },
+        )
+        state = {
+            "inputs": {},
+            "node_outputs": {
+                "llm2": {
+                    "data": {
+                        "responsibilities": [
+                            "pump_application_selection",
+                            "quotation_management",
+                        ]
+                    }
+                }
+            },
+        }
+        output = await run(node, state)
+        assert output["data"]["responsibilities"] == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+        assert output["missing"] == []
+
+    def test_save_reload_round_trip_preserves_allowed_values(self):
+        """Configure once, dump to the wire format a saved workflow uses,
+        reload — no allowed value may disappear."""
+        cfg = WorkflowInputConfig(fields=[self.RESPONSIBILITIES_FIELD])
+        dumped = cfg.model_dump(mode="json")
+        reloaded = WorkflowInputConfig.model_validate(dumped)
+        assert reloaded.fields[0].item_enum_values == [
+            "pump_application_selection",
+            "quotation_management",
+        ]
+        assert reloaded.fields[0].required is True
+
+
 # --------------------------------------------------------------------------
 # Palette metadata — what the Builder shows
 # --------------------------------------------------------------------------
@@ -990,6 +1109,8 @@ class TestPaletteMetadata:
             "HumanInLoopAgent",
             "EmailAgent",
             "MCPToolAgent",
+            "TextAssemblerAgent",
+            "ExternalActionAgent",
         }
 
     def test_execution_kind_makes_the_automation_boundary_visible(self):

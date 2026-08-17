@@ -50,11 +50,13 @@ def _validate_saved_decision(
     checkpoint: dict[str, Any],
     decision: dict[str, Any],
 ) -> None:
-    if checkpoint.get("pause_kind") == "user_requested":
-        # A cooperative pause requested from run history, not a HITL gate —
-        # any resume payload just continues execution past it. There is no
-        # allowed_actions list to validate against because the paused node
-        # need not be a HumanInLoopAgent at all.
+    if checkpoint.get("pause_kind") in ("user_requested", "subprocess"):
+        # Neither is a HITL gate: "user_requested" is a cooperative pause
+        # requested from run history, and "subprocess" is a Subprocess node
+        # waiting on its child run's callback. Either way, any resume payload
+        # just continues execution past it — there is no allowed_actions
+        # list to validate against because the paused node need not be a
+        # HumanInLoopAgent at all.
         return
     action = decision.get("decision")
     paused_node_id = checkpoint.get("paused_node_id")

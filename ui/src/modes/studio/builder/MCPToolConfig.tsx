@@ -31,21 +31,29 @@ const OPERATION_STYLES: Record<MCPOperationClass, string> = {
   write: 'border-amber-200 bg-amber-50 text-amber-800',
   destructive: 'border-red-200 bg-red-50 text-red-700',
   unknown: 'border-slate-200 bg-slate-50 text-ink-600',
+  external_action: 'border-sky-200 bg-sky-50 text-sky-700',
 };
 
+const OPERATION_TITLES: Record<MCPOperationClass, string> = {
+  read: 'Reads data. Changes nothing.',
+  write: 'Changes data in the connected system.',
+  destructive: 'Deletes or irreversibly changes data in the connected system.',
+  unknown: 'Unclassified — treated as a write.',
+  external_action: 'Triggers an action outside the platform — not a simple read or write.',
+};
+
+/** Shared safety-classification badge — one visual language for every node
+ *  that touches something outside the platform, not just MCP tools. Used
+ *  by MCPToolConfig (its original home), EmailConfig, ExternalActionConfig
+ *  and SQLQueryConfig, so an author (and, on the canvas/Cockpit, a
+ *  reader) sees the same badge regardless of which node type produced it. */
 export function OperationBadge({ operation }: { operation: MCPOperationClass }) {
   return (
     <span
       className={`inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
         OPERATION_STYLES[operation] ?? OPERATION_STYLES.unknown
       }`}
-      title={
-        operation === 'read'
-          ? 'Reads data. Changes nothing.'
-          : operation === 'unknown'
-            ? 'Unclassified — treated as a write.'
-            : 'Changes data in the connected system.'
-      }
+      title={OPERATION_TITLES[operation] ?? OPERATION_TITLES.unknown}
     >
       {operation}
     </span>
@@ -495,11 +503,19 @@ function ToolForm({
           const value = argumentValues[name];
           const isRequired = required.includes(name);
           const kind = primitiveType(property);
+          const label = name.replace(/_/g, ' ');
+          const destinationKind = kind === 'string'
+            ? 'text'
+            : kind === 'integer' || kind === 'number'
+              ? 'number'
+              : kind === 'boolean'
+                ? 'boolean'
+                : 'any';
           return (
             <div key={name}>
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-medium text-ink-700">
-                  {name.replace(/_/g, ' ')}
+                  {label}
                   {isRequired && <span className="ml-1 text-red-500">*</span>}
                   <span className="ml-1 text-[10px] font-normal text-ink-500">
                     {kind}
@@ -570,6 +586,9 @@ function ToolForm({
                 <div className="mt-2 rounded border border-slate-200 p-2">
                   <FieldPicker
                     contract={contract}
+                    destinationHint={property.description}
+                    destinationKind={destinationKind}
+                    destinationLabel={label}
                     onPick={(field: ContractField) => {
                       // Optional-reference form for anything that can legitimately
                       // be absent: a CRM lookup that found nothing has no id, and

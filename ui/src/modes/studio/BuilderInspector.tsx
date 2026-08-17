@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { Edge, Node } from 'reactflow';
 import type {
   LLMModelInfo,
@@ -8,6 +9,7 @@ import { AboutPanel } from './builder/AboutPanel';
 import { ConfigureTab, useAuthoringContext } from './builder/ConfigureTab';
 import { NodeTestPanel } from './builder/NodeTestPanel';
 import { OutputsPanel } from './builder/OutputsPanel';
+import { buildPreviewValues } from './builder/previewValues';
 import { SimulatorPanel } from './builder/SimulatorPanel';
 import { DataMappingPanel } from './DataMappingPanel';
 import { GuidedExperiencePanel } from './GuidedExperiencePanel';
@@ -69,6 +71,8 @@ export function BuilderInspector({
   onLaunchTest,
   onModelRoutingChange,
   onModelSelectionChange,
+  onNodeRunOutput,
+  nodeRunOutputs,
   onRunWorkflow,
   onSelectNode,
   onTabChange,
@@ -100,6 +104,9 @@ export function BuilderInspector({
   onLaunchTest: (workflow: YamlWorkflow, title: string) => void;
   onModelRoutingChange: (next: ModelRoutingPolicy | undefined) => void;
   onModelSelectionChange: (next: string | null) => void;
+  /** Records a step's last real output, e.g. from Node Testing or a Simulate run — feeds Inputs-tab value previews. */
+  onNodeRunOutput: (nodeId: string, output: Record<string, unknown> | null | undefined) => void;
+  nodeRunOutputs: Record<string, Record<string, unknown>>;
   onRunWorkflow: () => void;
   onSelectNode: (nodeId: string) => void;
   onTabChange: (tab: BuilderInspectorTab) => void;
@@ -123,7 +130,9 @@ export function BuilderInspector({
   // The typed authoring context: which operators exist, what this step can read,
   // which mailboxes are configured. Shared by the config editors so they all
   // agree with the backend and with each other.
-  const { contract, emailConnections, operators } = useAuthoringContext(
+  const previewValues = useMemo(() => buildPreviewValues(nodeRunOutputs), [nodeRunOutputs]);
+
+  const { contract, emailConnections, operators, refetchEmailConnections } = useAuthoringContext(
     workflowYaml,
     selected?.id ?? null,
   );
@@ -246,8 +255,11 @@ export function BuilderInspector({
                   manifest={manifest}
                   onConfigChange={onConfigChange}
                   onIdChange={onIdChange}
+                  refetchEmailConnections={refetchEmailConnections}
+                  onInputsChange={onInputsChange}
                   operators={operators}
                   selected={selected}
+                  workflow={workflow}
                 />
               ) : (
                 <EmptyState message="Select a step to configure it, or drag one from the library." />
@@ -261,6 +273,7 @@ export function BuilderInspector({
                 manifests={manifests}
                 nodes={nodes}
                 onConfigChange={onConfigChange}
+                previewValues={previewValues}
                 selected={selected}
                 workflow={workflow}
               />
@@ -276,9 +289,12 @@ export function BuilderInspector({
 
             {tab === 'test' && (
               <NodeTestPanel
+                contract={contract}
                 edges={edges}
+                llmModels={llmModels}
                 manifest={manifest}
                 onLaunchTest={onLaunchTest}
+                onNodeRunOutput={onNodeRunOutput}
                 selected={selected}
                 workflow={workflow}
               />
@@ -287,6 +303,7 @@ export function BuilderInspector({
             {tab === 'simulate' && (
               <SimulatorPanel
                 onHighlightPath={onHighlightPath}
+                onNodeRunOutput={onNodeRunOutput}
                 onSelectNode={onSelectNode}
                 workflow={workflow}
                 workflowYaml={workflowYaml}

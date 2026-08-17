@@ -37,6 +37,38 @@ ACKNOWLEDGED_NODE_TYPES: frozenset[str] = frozenset({
     "EmailAgent",
     "MCPToolAgent",
     "WorkflowInputAgent",
+    #   ExternalActionAgent  — required_services {external_action}; no
+    #                          preflight_output_fields override needed —
+    #                          response_body is a static output_schema field,
+    #                          not a dynamic sub-schema (unlike MCP's data.*).
+    "ExternalActionAgent",
+    #   SubprocessAgent      — required_services {audit_db,
+    #                          background_run_manager}; preflight_output_fields
+    #                          left at the default (result is a static
+    #                          output_schema field) — its dynamic sub-shape is
+    #                          exposed instead via the subprocess_output_paths
+    #                          typed-output builder (logic_preflight.py),
+    #                          enriching the field index without marking the
+    #                          node closed-world (same principle as MCP's own
+    #                          data.*/first.* handling).
+    "SubprocessAgent",
+    #   SQLQueryAgent        — required_services {mcp}; preflight_output_fields
+    #                          overridden to the static envelope only —
+    #                          rows/first hold whatever columns the author's
+    #                          own SELECT names, never knowable statically
+    #                          (unlike a classified MCP tool's fixed
+    #                          output_schema), so they stay untyped rather
+    #                          than guessed at.
+    "SQLQueryAgent",
+    #   PythonSnippetAgent   — required_services {python_runner};
+    #                          preflight_static_output_values reports
+    #                          result: {} when no output_fields are
+    #                          declared (mirrors TransformAgent's own
+    #                          no-schema case) — the dynamic sub-shape
+    #                          (when output_fields IS declared) is exposed
+    #                          via the python_snippet_paths typed-output
+    #                          builder instead.
+    "PythonSnippetAgent",
 
     "BoundedDeepResearchAgent",
     "CallCoverageMatrixAgent",

@@ -1,0 +1,21 @@
+name: Generation Coverage - SubprocessAgent
+description: >-
+  Smallest valid workflow exercising SubprocessAgent — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: run_lookup_subprocess
+    type: SubprocessAgent
+    config:
+      workflow: database_lookup_smoke_test
+      inputs: {}
+      result_from: workflow_output
+  - id: summarize
+    type: Echo
+    config:
+      template: "Subprocess finished: {{run_lookup_subprocess.status}}"
+edges:
+  - from: run_lookup_subprocess
+    to: summarize
+entry: run_lookup_subprocess
+exit: summarize

@@ -1,16 +1,7 @@
 import { useState } from 'react';
 
+import { FILE_CATEGORIES } from './yaml-bridge';
 import type { WorkflowInputSpec } from './yaml-bridge';
-
-const FILE_CATEGORIES = [
-  ['pdf', 'PDF'],
-  ['document', 'Documents'],
-  ['markdown', 'Markdown'],
-  ['presentation', 'Presentations'],
-  ['spreadsheet', 'Spreadsheets'],
-  ['code', 'Code files'],
-  ['image', 'Images'],
-] as const;
 
 function nextInputName(inputs: Record<string, WorkflowInputSpec>): string {
   let number = Object.keys(inputs).length + 1;
