@@ -1,0 +1,21 @@
+name: Generation Coverage - WebSearchAgent
+description: >-
+  Smallest valid workflow exercising WebSearchAgent — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: search_web
+    type: WebSearchAgent
+    config:
+      query: "recent pricing changes for a named competitor"
+      provider: auto
+      top_k: 5
+  - id: summarize
+    type: Echo
+    config:
+      template: "Found {{search_web.result_count}} results."
+edges:
+  - from: search_web
+    to: summarize
+entry: search_web
+exit: summarize

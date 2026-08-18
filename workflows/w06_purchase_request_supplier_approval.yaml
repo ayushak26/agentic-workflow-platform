@@ -1,0 +1,318 @@
+name: W06 — Purchase Request and Supplier Approval
+description: >-
+  An employee submits a purchase request. Manager approval always happens —
+  it's not conditional, so it's wired directly rather than through a router.
+  Procurement review and Finance approval are the genuinely conditional
+  escalations, and either or both can apply to the same request, so they're
+  Multi-Route, each ending on its own approval record.
+
+  Note: this platform's connected business systems (see
+  docs/workflow_examples_10/INTEGRATION_COVERAGE.md) have no supplier-master
+  lookup tool — there is no suppliers table in the seeded schema at all.
+  Supplier and policy knowledge here comes from RAG/KnowledgeRetrieval
+  instead of a fabricated MCP tool.
+version: "1.0"
+use_case: procurement_operations
+library:
+  title: W06 — Purchase Request and Supplier Approval
+  summary: Route a purchase request through mandatory manager approval, plus Procurement and/or Finance when required.
+  purpose:
+    - Demonstrate a mandatory approval step wired directly (not through a
+      router, since it's not conditional) alongside genuinely conditional Multi-Route escalations
+    - Ground supplier/policy questions in internal knowledge rather than inventing a business-system tool
+  suitable_for:
+    - Any internal purchase request needing manager sign-off, with escalation for high-risk or high-value cases
+  not_suitable_for:
+    - Purchases against an already-approved blanket PO — this is for new requests
+  outputs:
+    - A manager-approved (and, where required, Procurement- and/or Finance-approved) purchase decision
+  input_types:
+    - A purchase request form
+  human_reviews:
+    count: 3
+    labels:
+      - Manager Approval
+      - Procurement Review
+      - Finance Approval
+  visibility_status: draft
+
+entry: start
+exit:
+  - end_manager_only
+  - end_procurement_approved
+  - end_finance_approved
+
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: input_form
+      title: Purchase Request
+      fields:
+        - name: requester_name
+          label: Requester
+          type: string
+          required: true
+        - name: department
+          label: Department
+          type: enum
+          required: true
+          widget: dropdown
+          enum_values: [ENGINEERING, OPERATIONS, SALES, IT, FINANCE, HR]
+        - name: supplier_name
+          label: Supplier
+          type: string
+          required: true
+        - name: purchase_category
+          label: Purchase Category
+          type: enum
+          required: true
+          widget: dropdown
+          enum_values: [OFFICE_SUPPLIES, IT_EQUIPMENT, PROFESSIONAL_SERVICES, RAW_MATERIALS, CAPITAL_EQUIPMENT]
+        - name: items_description
+          label: Items
+          type: text
+          required: true
+        - name: estimated_amount
+          label: Estimated Amount
+          type: number
+          required: true
+          format: currency
+        - name: required_date
+          label: Required Date
+          type: date
+          required: false
+        - name: business_justification
+          label: Business Justification
+          type: text
+          required: true
+        - name: attachments
+          label: Quotes / Attachments
+          type: object
+          required: false
+    experience:
+      display_name: Purchase Request
+      purpose: Capture what's being bought, from whom, and why.
+      contribution: One entry point for every purchase request, regardless of size.
+      expected_output: A supplier, category, amount, and business justification.
+      failure_message: The purchase request could not be read.
+
+  - id: policy_check
+    type: KnowledgeRetrieval
+    config:
+      collection_id: procurement-policy
+      retrieval_profile_id: default
+      query: "{{outputs.start.data.purchase_category}} purchase approval policy"
+    experience:
+      display_name: Check Procurement Policy
+      purpose: See whether internal policy documentation covers this category at all.
+      contribution: A cheap signal of how well-documented this category's policy is.
+      expected_output: Retrieved chunks and how many were found.
+      failure_message: The policy knowledge base could not be searched.
+
+  - id: policy_answer
+    type: RAGAgent
+    config:
+      query: "What is the approval policy for a {{outputs.start.data.purchase_category}} purchase of {{outputs.start.data.estimated_amount}}?"
+    experience:
+      display_name: Answer From Policy
+      purpose: Give the manager a cited summary of the actual policy for this category.
+      contribution: Every claim is cited back to a real internal policy document.
+      expected_output: A cited answer, or an honest "policy doesn't say."
+      failure_message: The policy question could not be answered.
+
+  - id: manager_review
+    type: HumanInLoopAgent
+    config:
+      question: Approve this purchase request?
+      review_purpose: Every purchase request needs a manager's sign-off — this is not conditional.
+      review_panels:
+        - label: Supplier
+          field: start.data.supplier_name
+        - label: Amount
+          field: start.data.estimated_amount
+        - label: Justification
+          field: start.data.business_justification
+        - label: Relevant Policy
+          field: policy_answer.answer
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Manager Approval
+      purpose: Get the requester's manager to approve before anything else happens.
+      contribution: Always required — wired directly, not through a router, because it's never conditional.
+      expected_output: Approve or reject.
+      failure_message: The approval could not be recorded.
+
+  - id: decide_escalation
+    type: DecisionAgent
+    config:
+      defaults:
+        needs_procurement_review: false
+        needs_finance_approval: false
+      rules:
+        - name: Capital equipment needs Procurement review
+          when:
+            operator: and
+            conditions:
+              - field: start.data.purchase_category
+                operator: equals
+                value: CAPITAL_EQUIPMENT
+          then:
+            - field: needs_procurement_review
+              value: true
+        - name: A large amount needs Finance approval
+          when:
+            operator: and
+            conditions:
+              - field: start.data.estimated_amount
+                operator: greater_than
+                value: 25000
+          then:
+            - field: needs_finance_approval
+              value: true
+    experience:
+      display_name: Decide Escalation
+      purpose: Decide which additional approvals this specific request needs, beyond the manager.
+      contribution: The same thresholds every time — a capital purchase and a large purchase can both need escalation.
+      expected_output: Whether Procurement and/or Finance need to review.
+      failure_message: The escalation requirement could not be assessed.
+
+  - id: escalation_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      selection: multi
+      cases:
+        - route: PROCUREMENT
+          description: Capital equipment needs a Procurement specialist's review.
+          when:
+            operator: and
+            conditions:
+              - field: decide_escalation.decisions.needs_procurement_review
+                operator: is_true
+        - route: FINANCE
+          description: The amount exceeds standard manager authority.
+          when:
+            operator: and
+            conditions:
+              - field: decide_escalation.decisions.needs_finance_approval
+                operator: is_true
+      fallback: NONE
+    experience:
+      display_name: Route For Escalation
+      purpose: Send the request to every additional approver it actually needs — possibly more than one, possibly none.
+      contribution: A capital purchase over budget gets both reviews, each on its own track.
+      expected_output: One or both escalation routes, or NONE.
+      failure_message: The request could not be routed for escalation.
+
+  - id: end_manager_only
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: approval
+          value_from: manager_approved_only
+        - key: manager_decision
+          value_from: "{{outputs.manager_review.decision}}"
+    experience:
+      display_name: Manager-Only Outcome
+      purpose: Return the outcome when no further escalation was needed.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The manager's decision.
+      failure_message: The result could not be produced.
+
+  - id: procurement_review
+    type: HumanInLoopAgent
+    config:
+      question: This is a capital equipment purchase. Approve it from a Procurement standpoint?
+      review_purpose: Capital equipment has supplier and lifecycle implications a manager's approval alone doesn't cover.
+      review_panels:
+        - label: Supplier
+          field: start.data.supplier_name
+        - label: Items
+          field: start.data.items_description
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Procurement Review
+      purpose: Let Procurement approve or reject the capital purchase.
+      contribution: Nothing capital-equipment-classified proceeds without this review.
+      expected_output: Approve or reject.
+      failure_message: The review could not be recorded.
+
+  - id: end_procurement_approved
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: approval
+          value_from: procurement_approved
+        - key: procurement_decision
+          value_from: "{{outputs.procurement_review.decision}}"
+    experience:
+      display_name: Procurement-Approved Outcome
+      purpose: Return the Procurement review outcome.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The Procurement decision.
+      failure_message: The result could not be produced.
+
+  - id: finance_review
+    type: HumanInLoopAgent
+    config:
+      question: This purchase exceeds standard manager authority. Approve it from Finance?
+      review_purpose: An amount this size needs budget-level sign-off, not just the requester's manager.
+      review_panels:
+        - label: Amount
+          field: start.data.estimated_amount
+        - label: Department
+          field: start.data.department
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Finance Approval
+      purpose: Let Finance approve or reject the high-value purchase.
+      contribution: Nothing over the threshold proceeds without this sign-off.
+      expected_output: Approve or reject.
+      failure_message: The approval could not be recorded.
+
+  - id: end_finance_approved
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: approval
+          value_from: finance_approved
+        - key: finance_decision
+          value_from: "{{outputs.finance_review.decision}}"
+    experience:
+      display_name: Finance-Approved Outcome
+      purpose: Return the Finance approval outcome.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The Finance decision.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: start
+    to: [policy_check, policy_answer]
+  - from: policy_check
+    to: manager_review
+  - from: policy_answer
+    to: manager_review
+  - from: manager_review
+    to: decide_escalation
+  - from: decide_escalation
+    to: escalation_router
+  - from: escalation_router
+    condition: route
+    branches:
+      NONE: end_manager_only
+      PROCUREMENT: procurement_review
+      FINANCE: finance_review
+  - from: procurement_review
+    to: end_procurement_approved
+  - from: finance_review
+    to: end_finance_approved

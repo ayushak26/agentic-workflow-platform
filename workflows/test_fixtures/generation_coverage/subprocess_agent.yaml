@@ -7,7 +7,7 @@ nodes:
   - id: run_lookup_subprocess
     type: SubprocessAgent
     config:
-      workflow: database_lookup_smoke_test
+      workflow: pump
       inputs: {}
       result_from: workflow_output
   - id: summarize

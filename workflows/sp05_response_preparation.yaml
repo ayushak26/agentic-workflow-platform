@@ -1,0 +1,192 @@
+name: SP05 — Response Preparation
+description: >-
+  Reusable subprocess. Drafts a customer response from a case context, then
+  either sends it straight away or holds it for human review first —
+  each path ending in its OWN Email + End pair rather than reconverging
+  onto one shared node. Deliberately not merged into a single email step:
+  a Router's branches are mutually exclusive by construction, so a
+  reject-capable review path and a skip-review path can never safely share
+  one downstream AND-join (see SP02's note, and
+  docs/workflow_examples_10/NODE_COVERAGE_MATRIX.md).
+  Called via SubprocessAgent from Workflow 01, Workflow 03, and Workflow 04.
+version: "1.0"
+use_case: shared_subprocess
+library:
+  title: SP05 — Response Preparation
+  summary: Draft a customer response, review it when required, then send it.
+  purpose:
+    - Reuse one drafting + optional-review + send pattern across every
+      customer-facing workflow instead of copy-pasting it
+  suitable_for:
+    - Called as a SubprocessAgent step whenever a workflow needs to draft and
+      send a customer communication, with or without a review gate
+  not_suitable_for:
+    - Direct end-user invocation — this has no Start node, it's a subprocess
+  outputs:
+    - Whether the email was sent directly or after review, and its draft id
+  input_types:
+    - Case context, the customer's email address, and whether review can be skipped
+  human_reviews:
+    count: 1
+    labels:
+      - Response Review
+  visibility_status: draft
+
+inputs:
+  case_context:
+    type: text
+    required: true
+    description: A summary of the case, for the draft to be grounded in.
+  customer_email:
+    type: text
+    required: true
+    description: The customer's email address.
+  skip_review:
+    type: json
+    required: false
+    description: "true if this case is routine enough to send without a human reading it first."
+
+entry: draft
+exit:
+  - end_sent_direct
+  - end_sent_after_review
+
+nodes:
+  - id: draft
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0.2
+      input_fields:
+        - name: case_context
+          type: string
+          value: "{{inputs.case_context}}"
+      instructions: |-
+        Draft a short, professional customer response grounded only in the
+        case context provided. Do not invent facts not present in the context.
+    experience:
+      display_name: Draft Response
+      purpose: Draft a response grounded in the case's actual facts.
+      contribution: A consistent, professional starting point — never a blank page.
+      expected_output: A draft response.
+      failure_message: The response could not be drafted.
+
+  - id: route_review
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: SKIP
+          description: The case is routine enough to send without a human reading it first.
+          when:
+            operator: and
+            conditions:
+              - field: inputs.skip_review
+                operator: is_true
+      fallback: REVIEW
+    experience:
+      display_name: Does This Need Review?
+      purpose: Decide whether a human should read the draft before it goes out.
+      contribution: The default is always REVIEW — SKIP has to be explicitly requested.
+      expected_output: SKIP or REVIEW.
+      failure_message: This case could not be routed.
+
+  - id: send_email_direct
+    type: EmailAgent
+    config:
+      connection: default
+      operation: create_draft
+      to:
+        - email: "{{inputs.customer_email}}"
+      subject: Response to your inquiry
+      body: "{{outputs.draft.raw}}"
+    experience:
+      display_name: Draft Email (No Review)
+      purpose: Prepare the response for sending without a review step.
+      contribution: Only reached when the case was explicitly marked routine.
+      expected_output: A drafted email, ready to send.
+      failure_message: The email draft could not be created.
+
+  - id: end_sent_direct
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: outcome
+          value_from: sent_without_review
+        - key: draft_id
+          value_from: "{{outputs.send_email_direct.draft_id}}"
+    experience:
+      display_name: Response Result (Direct)
+      purpose: Return the outcome to the calling workflow.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: An outcome and the drafted email's id.
+      failure_message: The result could not be produced.
+
+  - id: review
+    type: HumanInLoopAgent
+    config:
+      question: Approve this drafted response before it is sent?
+      review_purpose: Customer-facing communication should be read by a person before it goes out.
+      review_panels:
+        - label: Case Context
+          field: inputs.case_context
+        - label: Drafted Response
+          field: draft.raw
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Review Response
+      purpose: Let a person approve or reject the drafted response.
+      contribution: Nothing customer-facing goes out without a person having read it.
+      expected_output: Approve or reject.
+      failure_message: The review could not be recorded.
+
+  - id: send_email_after_review
+    type: EmailAgent
+    config:
+      connection: default
+      operation: create_draft
+      to:
+        - email: "{{inputs.customer_email}}"
+      subject: Response to your inquiry
+      body: "{{outputs.draft.raw}}"
+    experience:
+      display_name: Draft Email (After Review)
+      purpose: Prepare the reviewed response for sending.
+      contribution: Only reached after a person has approved it — never on reject.
+      expected_output: A drafted email, ready to send.
+      failure_message: The email draft could not be created.
+
+  - id: end_sent_after_review
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: outcome
+          value_from: sent_after_review
+        - key: draft_id
+          value_from: "{{outputs.send_email_after_review.draft_id}}"
+    experience:
+      display_name: Response Result (After Review)
+      purpose: Return the outcome to the calling workflow.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: An outcome and the drafted email's id.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: draft
+    to: route_review
+  - from: route_review
+    condition: route
+    branches:
+      SKIP: send_email_direct
+      REVIEW: review
+  - from: send_email_direct
+    to: end_sent_direct
+  - from: review
+    to: send_email_after_review
+  - from: send_email_after_review
+    to: end_sent_after_review

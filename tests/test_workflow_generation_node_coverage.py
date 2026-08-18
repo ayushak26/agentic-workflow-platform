@@ -63,7 +63,7 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "BoundedDeepResearchAgent": GenerationFixture(
         "Run a bounded deep research job with a web-search tool-calling loop to build research dossiers.",
-        "workflows/concept_note_to_10-page_methodology_section1.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "CallCoverageMatrixAgent": GenerationFixture(
         "Build a deterministic requirement-by-requirement call coverage matrix for the submission gate.",
@@ -103,7 +103,7 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "DynamicFigureAgent": GenerationFixture(
         "Generate a diagram image for every image prompt marker and embed it in the document.",
-        "workflows/concept_note_to_10-page_methodology_section1.yaml",
+        "workflows/horizon_v4.yaml",
     ),
     "Echo": GenerationFixture(
         "Render a template string with the drafted values.",
@@ -127,11 +127,11 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "GraphNormalizer": GenerationFixture(
         "Run the graph normalizer to clean up and validate the evidence graph structure.",
-        "workflows/database_lookup_smoke_test.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "HorizonDOCXProposalRenderer": GenerationFixture(
         "Convert the Horizon Europe Part B proposal markdown into an editable citation-aware docx with a table of contents.",
-        "workflows/concept_note_to_10-page_methodology_section1.yaml",
+        "workflows/horizon_v4.yaml",
     ),
     "HorizonEvaluationAgent": GenerationFixture(
         "Score Excellence, Impact, and Implementation with independent cross-provider evaluators.",
@@ -139,19 +139,23 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "HorizonHTMLProposalRenderer": GenerationFixture(
         "Convert the Horizon Europe Part B proposal into a citation-aware pdf with cover and table of contents.",
-        "workflows/call_documents_to_pdf1.yaml",
+        "workflows/horizon_partb_drafts_to_docx.yaml",
     ),
     "HumanInLoopAgent": GenerationFixture(
         "Pause the workflow and wait for a human to approve the drafted response.",
-        "workflows/hitl_editor_demo.yaml",
+        "workflows/pump_manufacturer_case_routing.yaml",
+    ),
+    "IntegrationAgent": GenerationFixture(
+        "Browse a shared Google Drive folder to find the customer's uploaded documents.",
+        "workflows/test_fixtures/generation_coverage/integration_agent.yaml",
     ),
     "InternalProjectEvidenceRetrieverAgent": GenerationFixture(
         "Retrieve internal partner, pilot, and budget facts requiring an exact source passage and human approval.",
-        "workflows/internal_evidence_lookup_smoke_test.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "KimiVisionAgent": GenerationFixture(
         "Analyse an uploaded image with Kimi K3 vision.",
-        "workflows/kimi_vision_agent_demo.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "KnowledgeRetrieval": GenerationFixture(
         "Retrieve secured knowledge through a saved retrieval profile without generating an answer.",
@@ -191,7 +195,7 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "PaperQAEvidenceSynthesizerAgent": GenerationFixture(
         "Run PaperQA2 over already-acquired full-text documents for gap-aware literature synthesis.",
-        "workflows/literature_review_synthesis.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "PowerPointProposalSlides": GenerationFixture(
         "Build a PowerPoint deck from the proposal sections.",
@@ -199,7 +203,7 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "PriorProjectRetrieverAgent": GenerationFixture(
         "Search official CORDIS, LIFE and EIP-AGRI project records for precedents and synergies.",
-        "workflows/research_lookup_smoke_test.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "ProposalEvidenceFactoryAgent": GenerationFixture(
         "Verify proposal claims against immutable full-text pages and build an auditable citation registry.",
@@ -219,19 +223,19 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "ResearchSourceAcquirer": GenerationFixture(
         "Resolve and store bounded deep research citations as immutable source versions.",
-        "workflows/abm_playbook.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "RouterAgent": GenerationFixture(
         "Branch the workflow based on the customer's category into the right team.",
-        "workflows/lead_enrichment_qualification.yaml",
+        "workflows/pump_routing_level_1.yaml",
     ),
     "ScholarlyCandidateDiscoveryAgent": GenerationFixture(
         "Find scholarly candidate records with multi-query and contradiction searches.",
-        "workflows/literature_review_synthesis.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "ScientificResearchPlannerAgent": GenerationFixture(
         "Turn the call and selected concept into several bounded research briefs routed through approved skills.",
-        "workflows/concept_note_to_10-page_methodology_section1.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "ScientificSkillAgent": GenerationFixture(
         "Perform scientific synthesis guided by an approved Agent Skill.",
@@ -239,7 +243,7 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "StructuredDatasetRetrieverAgent": GenerationFixture(
         "Retrieve bounded Eurostat structured data with explicit filters and auditable provenance.",
-        "workflows/database_lookup_smoke_test.yaml",
+        "workflows/horizon_partb_evidence.yaml",
     ),
     "SubprocessAgent": GenerationFixture(
         "Run another saved workflow as a reusable business subprocess and wait for it to finish.",
@@ -255,15 +259,15 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
     ),
     "TextAssemblerAgent": GenerationFixture(
         "Deterministically join pre-rendered text parts with a separator to assemble the final document.",
-        "workflows/concept_note_to_10-page_methodology_section1.yaml",
+        "workflows/pump.yaml",
     ),
     "TransformAgent": GenerationFixture(
         "Summarize and rewrite the extracted text with a pure LLM transform.",
-        "workflows/local_llm_smoke.yaml",
+        "workflows/pump.yaml",
     ),
     "WebSearchAgent": GenerationFixture(
         "Search the live public web for a competitor's recent pricing changes.",
-        "workflows/personalized_outbound_campaigning.yaml",
+        "workflows/test_fixtures/generation_coverage/web_search_agent.yaml",
     ),
     "WorkflowFileLoader": GenerationFixture(
         "Load an uploaded workflow file and extract its text content.",

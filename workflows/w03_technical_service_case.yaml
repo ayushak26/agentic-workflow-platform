@@ -1,0 +1,264 @@
+name: W03 — Existing Customer Technical Service Case
+description: >-
+  An existing customer reports an equipment problem through the support
+  chatbot. The workflow understands the message, resolves the customer's
+  identity, identifies the specific installed unit by serial number, checks
+  the service manual for grounded troubleshooting guidance, and decides
+  deterministically whether this is routine, critical (production stopped),
+  or blocked on identifying the equipment at all — replying in the chat
+  either way.
+version: "1.0"
+use_case: customer_operations
+library:
+  title: W03 — Existing Customer Technical Service Case
+  summary: Resolve an equipment problem reported via chat, grounded in real records and the service manual.
+  purpose:
+    - Demonstrate chatbot Start paired with a chat_response End, end to end
+    - Keep "is this critical" a deterministic rule, never a model's impression
+  suitable_for:
+    - Existing customers reporting an equipment problem through a support chatbot
+  not_suitable_for:
+    - New customers with no installed equipment on record — see Workflow 02
+  outputs:
+    - A chat reply, plus a case classification (routine/critical/needs identification)
+  input_types:
+    - A free-text chat message
+  human_reviews:
+    count: 1
+    labels:
+      - Critical Case Review
+  visibility_status: draft
+
+entry: start
+exit:
+  - end_normal
+  - end_critical
+  - end_needs_identification
+
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+      chatbot_name: Service Support
+      welcome_message: Tell me what's happening with your equipment and I'll get it to the right person.
+      allow_attachments: true
+      suggested_questions:
+        - My pump is making an unusual noise
+        - I need a replacement part
+    experience:
+      display_name: Service Support Chat
+      purpose: Let the customer describe the problem in their own words.
+      contribution: The same entry point regardless of what's actually wrong.
+      expected_output: A free-text message, and any attached photos.
+      failure_message: The message could not be read.
+
+  - id: understand
+    type: SubprocessAgent
+    config:
+      workflow: sp01_multilingual_message_understanding
+      inputs:
+        message: "{{outputs.start.message}}"
+      result_from: workflow_output
+    experience:
+      display_name: Understand The Report
+      purpose: Detect language, translate, and extract the facts with an honest certainty status.
+      contribution: The serial number, issue, and urgency are read, never guessed.
+      expected_output: A translated message and six status-tagged facts.
+      failure_message: The report could not be understood.
+
+  - id: resolve_identity
+    type: SubprocessAgent
+    config:
+      workflow: sp02_customer_identity_resolution
+      inputs:
+        stated_company_name: "{{outputs.understand.result.company_name.value}}"
+        order_reference: "{{outputs.understand.result.order_reference.value}}"
+      result_from: workflow_output
+    experience:
+      display_name: Resolve Customer Identity
+      purpose: Confirm who this customer actually is against real Finance & SCM records.
+      contribution: The stated company name is never silently replaced by what the system found.
+      expected_output: A resolution status, plus the stated and resolved company name.
+      failure_message: The customer's identity could not be resolved.
+
+  - id: find_equipment
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_installed_unit
+      fail_on_error: false
+      arguments:
+        serial_number: "{{outputs.understand.result.serial_number.value?}}"
+        account_id: "{{outputs.resolve_identity.result.resolved_customer_id?}}"
+    experience:
+      display_name: Identify The Equipment
+      purpose: Confirm the exact installed unit this report concerns.
+      contribution: Nothing about a unit is disclosed unless the serial genuinely matches this customer.
+      expected_output: The matching installed unit, if the serial was given and matches.
+      failure_message: The equipment could not be looked up.
+
+  - id: service_manual
+    type: RAGAgent
+    config:
+      query: "Troubleshooting steps for {{outputs.find_equipment.first.pump_model}}: {{outputs.understand.result.issue.value}}"
+    experience:
+      display_name: Check Service Manual
+      purpose: Ground the response in the actual service manual, not a guess.
+      contribution: Every claim is cited back to a real internal document.
+      expected_output: A cited troubleshooting answer, or an honest "the manual doesn't say."
+      failure_message: The service manual could not be searched.
+
+  - id: assess_severity
+    type: DecisionAgent
+    config:
+      defaults:
+        case_type: NORMAL_SERVICE
+      rules:
+        - name: Stopped production is critical
+          when:
+            operator: and
+            conditions:
+              - field: understand.result.issue.value
+                operator: contains
+                value: production
+          then:
+            - field: case_type
+              value: CRITICAL
+        - name: Unidentified equipment blocks everything else
+          when:
+            operator: and
+            conditions:
+              - field: find_equipment.found
+                operator: is_false
+          then:
+            - field: case_type
+              value: NEEDS_IDENTIFICATION
+    experience:
+      display_name: Assess Severity
+      purpose: Decide, deterministically, whether this is routine, critical, or blocked on identification.
+      contribution: The same classification every time on the same facts — never a model's impression.
+      expected_output: NORMAL_SERVICE, CRITICAL, or NEEDS_IDENTIFICATION.
+      failure_message: The severity could not be assessed.
+
+  - id: severity_router
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: assess_severity.decisions.case_type
+      branches:
+        NORMAL_SERVICE: NORMAL
+        CRITICAL: CRITICAL
+        NEEDS_IDENTIFICATION: NEEDS_ID
+      fallback: NORMAL
+    experience:
+      display_name: Route The Case
+      purpose: Send the case down the path that matches its actual severity.
+      contribution: Three separate destinations — none of them share a downstream step.
+      expected_output: One of the three routes.
+      failure_message: The case could not be routed.
+
+  - id: build_normal_case
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: case_type
+          operation: constant
+          value: NORMAL_SERVICE
+        - target: pump_model
+          operation: copy
+          source: find_equipment.first.pump_model
+          default: unknown
+    experience:
+      display_name: Build Service Case
+      purpose: Package a routine case for Service.
+      contribution: A clean case record, not the raw chat transcript.
+      expected_output: A routine service case.
+      failure_message: The case could not be built.
+
+  - id: end_normal
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: "{{outputs.service_manual.answer}}"
+      outcome: reply
+    experience:
+      display_name: Routine Reply
+      purpose: Reply in the chat with the grounded troubleshooting answer.
+      contribution: The customer gets an answer immediately, cited to the real manual.
+      expected_output: A chat reply.
+      failure_message: The reply could not be sent.
+
+  - id: critical_review
+    type: HumanInLoopAgent
+    config:
+      question: Production is reported stopped. Confirm this should be escalated as a critical case.
+      review_purpose: A critical, production-stopping case needs a person's judgment on priority, not just a keyword match.
+      review_panels:
+        - label: Reported Issue
+          field: understand.result.issue.value
+        - label: Equipment
+          field: find_equipment.first.pump_model
+        - label: Warranty Active?
+          field: find_equipment.first.warranty_active
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Critical Case Review
+      purpose: Let a person confirm the escalation before it interrupts a technician's schedule.
+      contribution: Keeps a false "production stopped" keyword match from paging someone unnecessarily.
+      expected_output: Approve or reject.
+      failure_message: The review could not be recorded.
+
+  - id: end_critical
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: This has been escalated to a service engineer as a critical case. Someone will contact you shortly.
+      outcome: escalate
+      route_to: service_engineering_queue
+    experience:
+      display_name: Critical Reply
+      purpose: Confirm the escalation to the customer.
+      contribution: The customer knows a person is now on this, not a bot.
+      expected_output: A chat reply confirming escalation.
+      failure_message: The reply could not be sent.
+
+  - id: end_needs_identification
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: I couldn't find that equipment on your account — could you confirm the serial number on the unit's nameplate?
+      outcome: reply
+    experience:
+      display_name: Needs-Identification Reply
+      purpose: Ask for the one piece of information actually blocking everything else.
+      contribution: Never guesses which unit this is about.
+      expected_output: A chat reply asking for the serial number.
+      failure_message: The reply could not be sent.
+
+edges:
+  - from: start
+    to: understand
+  - from: understand
+    to: resolve_identity
+  - from: resolve_identity
+    to: find_equipment
+  - from: find_equipment
+    to: service_manual
+  - from: service_manual
+    to: assess_severity
+  - from: assess_severity
+    to: severity_router
+  - from: severity_router
+    condition: route
+    branches:
+      NORMAL: build_normal_case
+      CRITICAL: critical_review
+      NEEDS_ID: end_needs_identification
+  - from: build_normal_case
+    to: end_normal
+  - from: critical_review
+    to: end_critical

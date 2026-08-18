@@ -1,0 +1,326 @@
+name: W08 — Employee Onboarding Orchestration
+description: >-
+  HR starts onboarding for a new employee. Five independent workstreams —
+  HR setup, IT provisioning, equipment, manager preparation, and
+  facilities — all always apply to every onboarding, so they run as a
+  genuinely unconditional parallel fan-out and join safely into one
+  readiness summary. HR Setup and IT Account are reusable subprocesses,
+  callable from other onboarding-shaped workflows; the other three are
+  inline here since they're specific to this process.
+version: "1.0"
+use_case: hr_operations
+library:
+  title: W08 — Employee Onboarding Orchestration
+  summary: Run five onboarding workstreams in parallel and join them into one readiness decision.
+  purpose:
+    - Demonstrate subprocess reuse alongside inline parallel work in the same fan-out
+    - Keep "is this employee actually ready to start" a deterministic check
+      over five real, always-run workstreams
+  suitable_for:
+    - Any new-employee onboarding once HR has the basic details
+  not_suitable_for:
+    - Contractor/vendor onboarding with a materially different checklist
+  outputs:
+    - A readiness decision, direct or after HR review, with all five workstream results
+  input_types:
+    - A new-employee onboarding form
+  human_reviews:
+    count: 1
+    labels:
+      - Final Onboarding Review
+  visibility_status: draft
+
+entry: start
+exit:
+  - end_ready
+  - end_reviewed
+
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: input_form
+      title: New Employee Onboarding
+      fields:
+        - name: employee_name
+          label: Employee Name
+          type: string
+          required: true
+        - name: employee_email
+          label: Employee Email
+          type: string
+          required: true
+          format: email
+        - name: department
+          label: Department
+          type: enum
+          required: true
+          widget: dropdown
+          enum_values: [ENGINEERING, OPERATIONS, SALES, IT, FINANCE, HR]
+        - name: manager_name
+          label: Manager
+          type: string
+          required: true
+        - name: manager_email
+          label: Manager Email
+          type: string
+          required: true
+          format: email
+        - name: job_title
+          label: Job Title
+          type: string
+          required: true
+        - name: start_date
+          label: Start Date
+          type: date
+          required: true
+        - name: location
+          label: Location
+          type: string
+          required: false
+          preset: country
+        - name: employment_type
+          label: Employment Type
+          type: enum
+          required: true
+          widget: dropdown
+          enum_values: [FULL_TIME, CONTRACTOR, INTERN]
+        - name: equipment_requirements
+          label: Equipment Requirements
+          type: text
+          required: false
+        - name: system_access_requirements
+          label: System Access Requirements
+          type: text
+          required: false
+    experience:
+      display_name: New Employee Onboarding
+      purpose: Capture everything the five onboarding workstreams below need.
+      contribution: One form, one entry point, for every new employee.
+      expected_output: Employee, manager, role, and requirement details.
+      failure_message: The onboarding request could not be read.
+
+  # Unconditional fan-out — all five workstreams below always run for every
+  # onboarding, regardless of department or role. Safe join shape: nothing
+  # here is conditionally selected.
+  - id: hr_setup
+    type: SubprocessAgent
+    config:
+      workflow: w08sub_hr_setup
+      inputs:
+        employee_name: "{{outputs.start.data.employee_name}}"
+        department: "{{outputs.start.data.department}}"
+        start_date: "{{outputs.start.data.start_date}}"
+        employment_type: "{{outputs.start.data.employment_type}}"
+      result_from: workflow_output
+    experience:
+      display_name: HR Setup
+      purpose: Prepare the contract and payroll registration.
+      contribution: Reuses the same HR checklist logic any onboarding-shaped workflow can call.
+      expected_output: An HR setup checklist.
+      failure_message: HR setup could not be completed.
+
+  - id: it_account
+    type: SubprocessAgent
+    config:
+      workflow: w08sub_it_account
+      inputs:
+        employee_name: "{{outputs.start.data.employee_name}}"
+        employee_email: "{{outputs.start.data.employee_email}}"
+        department: "{{outputs.start.data.department}}"
+        system_access_requirements: "{{outputs.start.data.system_access_requirements}}"
+      result_from: workflow_output
+    experience:
+      display_name: IT Account Provisioning
+      purpose: Provision the account and mailbox, and flag sensitive access for review.
+      contribution: Reuses the same provisioning logic Workflow 09's access requests could call too.
+      expected_output: A provisioning checklist.
+      failure_message: The IT account could not be provisioned.
+
+  - id: equipment_prep
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: equipment_requirements
+          operation: copy
+          source: start.data.equipment_requirements
+          default: "standard laptop and desk setup"
+        - target: status
+          operation: constant
+          value: ORDERED
+    experience:
+      display_name: Equipment Preparation
+      purpose: Record what equipment has been ordered for day one.
+      contribution: Specific to this process, so it's inline rather than a subprocess.
+      expected_output: An equipment order status.
+      failure_message: Equipment could not be prepared.
+
+  - id: manager_notification
+    type: EmailAgent
+    config:
+      connection: default
+      operation: create_draft
+      to:
+        - email: "{{outputs.start.data.manager_email}}"
+      subject: "{{outputs.start.data.employee_name}} starts {{outputs.start.data.start_date}}"
+      body: "{{outputs.start.data.employee_name}} joins {{outputs.start.data.department}} as {{outputs.start.data.job_title}} on {{outputs.start.data.start_date}}. Please prepare a first-week plan."
+    experience:
+      display_name: Manager Preparation
+      purpose: Give the manager enough notice to plan the first week.
+      contribution: The manager hears about this well before day one, not on it.
+      expected_output: A drafted notification to the manager.
+      failure_message: The manager could not be notified.
+
+  - id: facilities_setup
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: location
+          operation: copy
+          source: start.data.location
+          default: "not specified"
+        - target: desk_assigned
+          operation: constant
+          value: true
+    experience:
+      display_name: Facilities Setup
+      purpose: Confirm a desk/workspace is assigned before day one.
+      contribution: Specific to this process, so it's inline rather than a subprocess.
+      expected_output: A facilities assignment status.
+      failure_message: Facilities could not be set up.
+
+  - id: join_readiness_summary
+    type: TextAssemblerAgent
+    config:
+      separator: "\n"
+      parts:
+        - "HR: {{outputs.hr_setup.result.status}}"
+        - "IT: {{outputs.it_account.result.status}} (security review needed: {{outputs.it_account.result.requires_security_review}})"
+        - "Equipment: {{outputs.equipment_prep.data.status}}"
+        - "Facilities: desk assigned = {{outputs.facilities_setup.data.desk_assigned}}"
+    experience:
+      display_name: Join Onboarding Workstreams
+      purpose: Combine all five workstreams above into one readiness summary.
+      contribution: Every workstream above always ran, so this always has all of them to combine.
+      expected_output: One combined onboarding readiness summary.
+      failure_message: The readiness summary could not be assembled.
+
+  - id: decide_readiness
+    type: DecisionAgent
+    config:
+      defaults:
+        needs_final_review: false
+      rules:
+        - name: A security review on IT access needs HR sign-off before day one
+          when:
+            operator: and
+            conditions:
+              - field: it_account.result.requires_security_review
+                operator: is_true
+          then:
+            - field: needs_final_review
+              value: true
+    experience:
+      display_name: Decide Readiness
+      purpose: Decide, deterministically, whether this onboarding needs a final HR review.
+      contribution: The same rule every time — never a judgment call on whether to check.
+      expected_output: Whether a final review is required.
+      failure_message: Readiness could not be assessed.
+
+  - id: readiness_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: REVIEW
+          when:
+            operator: and
+            conditions:
+              - field: decide_readiness.decisions.needs_final_review
+                operator: is_true
+      fallback: READY
+    experience:
+      display_name: Ready Or Needs Review?
+      purpose: Only stop for HR when the access sensitivity check actually flagged something.
+      contribution: A standard onboarding completes immediately — nothing waits unnecessarily.
+      expected_output: READY or REVIEW.
+      failure_message: This onboarding could not be routed.
+
+  - id: end_ready
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: outcome
+          value_from: ready
+        - key: summary
+          value_from: "{{outputs.join_readiness_summary.text}}"
+    experience:
+      display_name: Ready Outcome
+      purpose: Return the completed onboarding summary.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The onboarding readiness summary.
+      failure_message: The result could not be produced.
+
+  - id: final_review
+    type: HumanInLoopAgent
+    config:
+      question: This onboarding involves sensitive system access. Confirm readiness for day one?
+      review_purpose: Sensitive access should have a person's sign-off before it's provisioned for day one.
+      review_panels:
+        - label: Onboarding Summary
+          field: join_readiness_summary.text
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Final Onboarding Review
+      purpose: Let HR confirm before a sensitive-access onboarding is marked ready.
+      contribution: Nothing security-flagged is marked ready without a person's confirmation.
+      expected_output: Approve or reject.
+      failure_message: The review could not be recorded.
+
+  - id: end_reviewed
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: outcome
+          value_from: reviewed
+        - key: summary
+          value_from: "{{outputs.join_readiness_summary.text}}"
+        - key: review_decision
+          value_from: "{{outputs.final_review.decision}}"
+    experience:
+      display_name: Reviewed Outcome
+      purpose: Return the reviewed onboarding summary.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The onboarding summary and the reviewer's decision.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: start
+    to: [hr_setup, it_account, equipment_prep, manager_notification, facilities_setup]
+  - from: hr_setup
+    to: join_readiness_summary
+  - from: it_account
+    to: join_readiness_summary
+  - from: equipment_prep
+    to: join_readiness_summary
+  - from: manager_notification
+    to: join_readiness_summary
+  - from: facilities_setup
+    to: join_readiness_summary
+  - from: join_readiness_summary
+    to: decide_readiness
+  - from: decide_readiness
+    to: readiness_router
+  - from: readiness_router
+    condition: route
+    branches:
+      READY: end_ready
+      REVIEW: final_review
+  - from: final_review
+    to: end_reviewed

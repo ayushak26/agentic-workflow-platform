@@ -1,0 +1,90 @@
+name: SP04 — Approval Gate
+description: >-
+  Reusable subprocess. A generic human approval gate — the caller supplies a
+  pre-formatted context summary (a subprocess's Human Review panels can only
+  reference its own inputs, never the parent workflow's node outputs, so the
+  parent formats the context before calling this). Returns approve/reject/edit
+  plainly, for the parent to act on.
+  Called via SubprocessAgent wherever a workflow needs a plain yes/no/edit
+  human gate without a full custom HumanInLoopAgent block.
+version: "1.0"
+use_case: shared_subprocess
+library:
+  title: SP04 — Approval Gate
+  summary: A generic, reusable human approve/edit/reject gate.
+  purpose:
+    - Avoid copy-pasting the same HumanInLoopAgent shape into every workflow
+      that just needs a plain approval decision
+  suitable_for:
+    - Called as a SubprocessAgent step for high-value approvals, exceptional
+      decisions, or any point where a workflow should stop for a person
+  not_suitable_for:
+    - Direct end-user invocation — this has no Start node, it's a subprocess
+    - Reviews needing several distinct labelled panels — author a dedicated
+      HumanInLoopAgent node directly in the parent workflow for that instead,
+      so each panel can reference the parent's own node outputs
+  outputs:
+    - The reviewer's decision, reason, and any edited content
+  input_types:
+    - A question and a pre-formatted context summary
+  human_reviews:
+    count: 1
+    labels:
+      - Approval Gate
+  visibility_status: draft
+
+inputs:
+  question:
+    type: text
+    required: true
+    description: The question shown to the reviewer.
+  context_summary:
+    type: text
+    required: true
+    description: Pre-formatted context for the reviewer, assembled by the calling workflow.
+
+entry: review
+exit:
+  - end_decision
+
+nodes:
+  - id: review
+    type: HumanInLoopAgent
+    config:
+      question: "{{inputs.question}}"
+      review_purpose: A business decision that should not be made automatically.
+      review_panels:
+        - label: Context
+          field: inputs.context_summary
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+    experience:
+      display_name: Approval Gate
+      purpose: Let a person approve, edit, or reject before this proceeds.
+      contribution: Stops an exceptional or high-value case from proceeding on a guess.
+      expected_output: A decision — approve, reject, or edit.
+      failure_message: The review could not be recorded.
+
+  - id: end_decision
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: decision
+          value_from: "{{outputs.review.decision}}"
+        - key: reason
+          value_from: "{{outputs.review.reason}}"
+        - key: edited_content
+          value_from: "{{outputs.review.edited_content}}"
+    experience:
+      display_name: Approval Result
+      purpose: Return the reviewer's decision to the calling workflow.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: A decision, an optional reason, and any edited content.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: review
+    to: end_decision

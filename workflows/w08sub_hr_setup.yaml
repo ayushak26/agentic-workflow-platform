@@ -1,0 +1,99 @@
+name: W08 Subprocess — HR Setup
+description: >-
+  Reusable subprocess. Builds the HR-side onboarding checklist for a new
+  employee — contract type, start date, and department on record. Called
+  via SubprocessAgent from Workflow 08 (Employee Onboarding Orchestration);
+  reusable from any future onboarding-shaped workflow (contractor intake,
+  transfer processing) that needs the same HR checklist step.
+version: "1.0"
+use_case: shared_subprocess
+library:
+  title: W08 Subprocess — HR Setup
+  summary: Build the HR onboarding checklist for a new employee.
+  purpose:
+    - Keep the HR checklist logic in one place, callable from any onboarding-shaped workflow
+  suitable_for:
+    - Called as a SubprocessAgent step whenever a new person needs an HR record set up
+  not_suitable_for:
+    - Direct end-user invocation — this has no Start node, it's a subprocess
+  outputs:
+    - The HR setup checklist and its status
+  input_types:
+    - Employee name, department, start date, and employment type
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+
+inputs:
+  employee_name:
+    type: text
+    required: true
+  department:
+    type: text
+    required: true
+  start_date:
+    type: text
+    required: true
+  employment_type:
+    type: text
+    required: true
+
+entry: build_checklist
+exit:
+  - end_hr_setup
+
+nodes:
+  - id: build_checklist
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: employee_name
+          operation: copy
+          source: inputs.employee_name
+        - target: department
+          operation: copy
+          source: inputs.department
+        - target: start_date
+          operation: copy
+          source: inputs.start_date
+        - target: contract_prepared
+          operation: constant
+          value: true
+        - target: payroll_registered
+          operation: constant
+          value: true
+        - target: status
+          operation: constant
+          value: COMPLETE
+    experience:
+      display_name: Build HR Checklist
+      purpose: Record that contract and payroll setup are in hand for this start date.
+      contribution: A concrete checklist, not just "HR notified."
+      expected_output: An HR setup checklist marked complete.
+      failure_message: The HR checklist could not be built.
+
+  - id: end_hr_setup
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: status
+          value_from: "{{outputs.build_checklist.data.status}}"
+        - key: employee_name
+          value_from: "{{outputs.build_checklist.data.employee_name}}"
+        - key: contract_prepared
+          value_from: "{{outputs.build_checklist.data.contract_prepared}}"
+        - key: payroll_registered
+          value_from: "{{outputs.build_checklist.data.payroll_registered}}"
+    experience:
+      display_name: HR Setup Result
+      purpose: Return the HR checklist to the calling workflow.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The HR checklist and its status.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: build_checklist
+    to: end_hr_setup

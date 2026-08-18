@@ -110,12 +110,3 @@ def test_pre_existing_undeclared_structured_field_check_still_works():
     codes = [issue.code for issue in report.errors]
     assert "TEMPLATE_UNKNOWN_STRUCTURED_FIELD" in codes
     assert "TEMPLATE_STATICALLY_EMPTY_FIELD" not in codes
-
-
-def test_call_documents_to_pdf1_workflow_now_passes():
-    from pathlib import Path
-
-    report = preflight_workflow_yaml(
-        Path("workflows/call_documents_to_pdf1.yaml").read_text()
-    )
-    assert report.valid, [i.message for i in report.errors]

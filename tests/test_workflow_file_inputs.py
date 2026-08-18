@@ -263,8 +263,49 @@ def test_file_input_demo_compiles_with_templated_file_references():
     compile_workflow(workflow, services={})
 
 
+_HITL_DOCUMENT_OVERRIDE_YAML = """
+name: Human Review Editor Demo
+description: >
+  Demonstrates editable HITL content, rich-text review, and document override.
+  Saved edits replace draft.value before the downstream node runs.
+version: "1.0"
+use_case: generic
+inputs: {}
+nodes:
+  - id: draft
+    type: Literal
+    config:
+      value: "Project concept\\n\\nThis is the initial draft."
+  - id: human_review
+    type: HumanInLoopAgent
+    config:
+      question: Review and approve the project concept.
+      context_fields:
+        - draft.value
+      editable_content_field: draft.value
+      allow_document_override: true
+      max_edit_chars: 1000000
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+  - id: use_reviewed_content
+    type: Echo
+    config:
+      template: "{{draft.value}}"
+edges:
+  - from: draft
+    to: human_review
+  - from: human_review
+    to: use_reviewed_content
+entry: draft
+exit: use_reviewed_content
+"""
+
+
 def test_hitl_editor_demo_compiles():
-    workflow = load_workflow_from_string(
-        Path("workflows/hitl_editor_demo.yaml").read_text()
-    )
+    # Inlined rather than read from workflows/hitl_editor_demo.yaml (removed) —
+    # this is what that fixture demonstrated: a HITL node with
+    # allow_document_override enabled, compiling cleanly.
+    workflow = load_workflow_from_string(_HITL_DOCUMENT_OVERRIDE_YAML)
     compile_workflow(workflow, services={})

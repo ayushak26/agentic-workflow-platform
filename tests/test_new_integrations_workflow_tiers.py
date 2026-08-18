@@ -26,8 +26,7 @@ from app.runtime.preflight import preflight_workflow_yaml
 # ---- simple: one new integration alone -------------------------------------
 
 SIMPLE_WORKFLOWS = [
-    Path("workflows/kimi_vision_agent_demo.yaml"),
-    Path("workflows/integration_agent_demo.yaml"),
+    Path("workflows/test_fixtures/generation_coverage/integration_agent.yaml"),
 ]
 
 

@@ -1,0 +1,21 @@
+name: Generation Coverage - IntegrationAgent
+description: >-
+  Smallest valid workflow exercising IntegrationAgent — used by
+  tests/test_workflow_generation_node_coverage.py, not run in production.
+version: "1.0"
+nodes:
+  - id: browse_folder
+    type: IntegrationAgent
+    config:
+      provider: google_drive
+      connection: shared_drive
+      operation: list_folder
+  - id: summarize
+    type: Echo
+    config:
+      template: "Found {{browse_folder.count}} files."
+edges:
+  - from: browse_folder
+    to: summarize
+entry: browse_folder
+exit: summarize

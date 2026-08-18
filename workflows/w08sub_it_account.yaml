@@ -1,0 +1,122 @@
+name: W08 Subprocess — IT Account Provisioning
+description: >-
+  Reusable subprocess. Builds the IT provisioning checklist for a new
+  employee based on their stated system-access requirements. Called via
+  SubprocessAgent from Workflow 08; reusable from Workflow 09's access-
+  request flow or any future onboarding-shaped workflow needing the same
+  provisioning checklist step.
+version: "1.0"
+use_case: shared_subprocess
+library:
+  title: W08 Subprocess — IT Account Provisioning
+  summary: Build the IT account provisioning checklist for a new employee.
+  purpose:
+    - Keep IT provisioning logic in one place, callable from onboarding or access-request workflows
+  suitable_for:
+    - Called as a SubprocessAgent step whenever a new account needs to be provisioned
+  not_suitable_for:
+    - Direct end-user invocation — this has no Start node, it's a subprocess
+  outputs:
+    - The IT provisioning checklist and its status
+  input_types:
+    - Employee name, email, department, and requested system access
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+
+inputs:
+  employee_name:
+    type: text
+    required: true
+  employee_email:
+    type: text
+    required: true
+  department:
+    type: text
+    required: true
+  system_access_requirements:
+    type: text
+    required: false
+
+entry: assess_access
+exit:
+  - end_it_account
+
+nodes:
+  - id: assess_access
+    type: DecisionAgent
+    config:
+      defaults:
+        requires_security_review: false
+      rules:
+        - name: Finance or HR systems access needs a security review
+          when:
+            operator: or
+            conditions:
+              - field: inputs.system_access_requirements
+                operator: contains
+                value: finance
+              - field: inputs.system_access_requirements
+                operator: contains
+                value: payroll
+          then:
+            - field: requires_security_review
+              value: true
+    experience:
+      display_name: Assess Access Sensitivity
+      purpose: Decide whether the requested access is sensitive enough to need a security review.
+      contribution: The same rule every time — never a judgment call buried in a provisioning script.
+      expected_output: Whether a security review is required.
+      failure_message: The access request could not be assessed.
+
+  - id: build_checklist
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: employee_name
+          operation: copy
+          source: inputs.employee_name
+        - target: employee_email
+          operation: copy
+          source: inputs.employee_email
+        - target: account_created
+          operation: constant
+          value: true
+        - target: mailbox_provisioned
+          operation: constant
+          value: true
+        - target: status
+          operation: constant
+          value: COMPLETE
+    experience:
+      display_name: Build Provisioning Checklist
+      purpose: Record that the account and mailbox are provisioned.
+      contribution: A concrete checklist, not just "IT notified."
+      expected_output: An IT provisioning checklist marked complete.
+      failure_message: The provisioning checklist could not be built.
+
+  - id: end_it_account
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: status
+          value_from: "{{outputs.build_checklist.data.status}}"
+        - key: account_created
+          value_from: "{{outputs.build_checklist.data.account_created}}"
+        - key: requires_security_review
+          value_from: "{{outputs.assess_access.decisions.requires_security_review}}"
+    experience:
+      display_name: IT Account Result
+      purpose: Return the provisioning checklist to the calling workflow.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The provisioning checklist and whether a security review is needed.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: assess_access
+    to: build_checklist
+  - from: build_checklist
+    to: end_it_account

@@ -24,7 +24,6 @@ FILES = [
     "ui/src/modes/studio/HITLPanel.tsx",
     "ui/src/modes/studio/RichTextEditor.tsx",
     "ui/src/modes/studio/RunDialog.tsx",
-    "workflows/hitl_editor_demo.yaml",
 ]
 
 LANGUAGE = {

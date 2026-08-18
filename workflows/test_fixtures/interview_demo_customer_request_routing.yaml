@@ -1,0 +1,432 @@
+name: Interview Demo — Customer Request Routing
+description: >-
+  Companion workflow for docs/workflow_ui_builder/INTERVIEW_WORKFLOW_UI_BUILDER_GUIDE.md.
+  Built entirely from Core Building Blocks (Start, Transform, MCP Tool, Decision,
+  Router, Human Review, Email, End) to demonstrate the platform's generic
+  business-automation pattern live, in an interview. Not run in production —
+  a hand-authored teaching companion to the guide's §4 drag/drop build.
+version: "1.0"
+use_case: industrial_customer_operations
+library:
+  title: Interview Demo — Customer Request Routing
+  summary: >-
+    Understand a customer message, look the customer up in a connected
+    business system, apply deterministic department rules, and route the
+    case — escalating to a human first when the system is unsure.
+  purpose:
+    - Demonstrate Start, Transform (both modes), MCP Tool, Decision, Router,
+      Human Review, Email, and End live, in the order the interview guide builds them
+    - Show a human-review gate wired to the Router's escalation branch, with an
+      external action (Email) only firing after approval
+  suitable_for:
+    - A live "build a workflow" interview walkthrough
+    - Learning the platform's Core Building Blocks before touching the
+      specialized proposal-drafting node families
+  not_suitable_for:
+    - Production use — the MCP connection referenced here is illustrative
+  outputs:
+    - The owning department and a structured hand-off packet
+    - An escalation outcome when the case could not be routed automatically
+  input_types:
+    - Customer message text, submitted through a form
+  human_reviews:
+    count: 1
+    labels:
+      - Needs Review
+  visibility_status: draft
+
+inputs:
+  message:
+    type: text
+    required: true
+    description: The customer's message.
+  subject:
+    type: text
+    required: false
+    description: Subject line, when the channel provides one.
+  customer_name:
+    type: text
+    required: false
+    description: The customer's name or company, if given.
+
+entry: start
+exit:
+  - end_sales
+  - end_engineering
+  - end_support
+  - end_escalated
+
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: input_form
+      title: Customer Request
+      fields:
+        - name: message
+          label: Customer Message
+          type: text
+          required: true
+        - name: subject
+          label: Subject
+          type: string
+          required: false
+        - name: customer_name
+          label: Customer Name
+          type: string
+          required: false
+        - name: customer_email
+          label: Customer Email
+          type: string
+          format: email
+          required: false
+    experience:
+      display_name: Customer Request
+      purpose: Take in the customer's message, in their own words.
+      contribution: Everything downstream addresses this one typed entry point.
+      expected_output: A message, an optional subject, and an optional customer name.
+      failure_message: The request could not be read.
+
+  - id: understand_message
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0
+      max_tokens: 2048
+      input_fields:
+        - name: subject
+          description: Subject line, when the channel provides one.
+          type: string
+          value: "{{outputs.start.data.subject}}"
+        - name: message
+          description: The customer's message, in their own words.
+          type: string
+          value: "{{outputs.start.data.message}}"
+      instructions: |-
+        Read the customer's message and extract what it is asking for. Never
+        invent a fact — if the message does not say something, return an
+        empty string or UNKNOWN.
+      output_fields:
+        - name: intent
+          type: enum
+          description: The ONE thing this message is mainly asking for.
+          enum_values:
+            - NEW_ORDER
+            - TECHNICAL_ISSUE
+            - BILLING_QUESTION
+            - GENERAL_INQUIRY
+        - name: summary
+          type: string
+          description: One sentence on what the customer wants.
+        - name: confidence
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: How confident you are in this extraction, 0.0-1.0.
+    experience:
+      display_name: Understand Message
+      purpose: Read the customer's message and say what it is asking for.
+      contribution: The rules below decide from these facts, never from the raw text.
+      expected_output: An intent, a one-sentence summary, and a confidence score.
+      failure_message: The message could not be read well enough to extract anything from.
+
+  - id: find_customer
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_customer
+      fail_on_error: false
+      arguments:
+        customer_name: "{{outputs.start.data.customer_name}}"
+    experience:
+      display_name: Look Up Customer
+      purpose: Check whether this customer is already known to the business system.
+      contribution: Gives the rules below a real fact instead of assuming the customer exists.
+      expected_output: Whether the customer was found, and their record if so.
+      failure_message: The customer lookup could not be completed.
+
+  - id: business_rules
+    type: DecisionAgent
+    config:
+      defaults:
+        department: SUPPORT
+      rules:
+        - name: New orders go to Sales
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: NEW_ORDER
+          then:
+            - field: department
+              value: SALES
+        - name: Technical issues go to Engineering
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: TECHNICAL_ISSUE
+          then:
+            - field: department
+              value: ENGINEERING
+        - name: Billing questions go to Support
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.intent
+                operator: equals
+                value: BILLING_QUESTION
+          then:
+            - field: department
+              value: SUPPORT
+        - name: Unrecognized customer needs a human
+          when:
+            operator: and
+            conditions:
+              - field: find_customer.found
+                operator: is_false
+          then:
+            - field: department
+              value: NEEDS_REVIEW
+        - name: Low-confidence extraction needs a human
+          when:
+            operator: and
+            conditions:
+              - field: understand_message.parsed.confidence
+                operator: less_than
+                value: 0.6
+          then:
+            - field: department
+              value: NEEDS_REVIEW
+    experience:
+      display_name: Business Rules
+      purpose: Decide which department handles this request, from the facts above.
+      contribution: >-
+        Every rule is readable, testable and the same every time. The two escalation
+        rules run last on purpose, so an unrecognized customer or a low-confidence
+        extraction always overrides whatever department the intent alone would pick.
+      expected_output: A department — SALES, ENGINEERING, SUPPORT, or NEEDS_REVIEW.
+      failure_message: The routing rules could not be evaluated.
+
+  - id: department_router
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: business_rules.decisions.department
+      branches:
+        SALES: SALES
+        ENGINEERING: ENGINEERING
+        SUPPORT: SUPPORT
+        NEEDS_REVIEW: NEEDS_REVIEW
+      fallback: SUPPORT
+    experience:
+      display_name: Route to Department
+      purpose: Send the case to the department the rules chose.
+      contribution: The canvas shows the four destinations this business actually has.
+      expected_output: One department branch.
+      failure_message: The case could not be routed.
+
+  - id: sales_case
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: department
+          operation: constant
+          value: SALES
+        - target: case_summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: next_action
+          operation: constant
+          value: Qualify the request and prepare a quotation.
+    experience:
+      display_name: Sales Hand-off
+      purpose: Build a clean hand-off packet for Sales.
+      contribution: Sales receives a structured case instead of a forwarded message.
+      expected_output: A department, a summary, and a next action.
+      failure_message: The Sales hand-off could not be built.
+
+  - id: engineering_case
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: department
+          operation: constant
+          value: ENGINEERING
+        - target: case_summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: next_action
+          operation: constant
+          value: Identify the unit and arrange a technician callback.
+    experience:
+      display_name: Engineering Hand-off
+      purpose: Build a clean hand-off packet for Engineering.
+      contribution: Engineering receives a structured case instead of a forwarded message.
+      expected_output: A department, a summary, and a next action.
+      failure_message: The Engineering hand-off could not be built.
+
+  - id: support_case
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: department
+          operation: constant
+          value: SUPPORT
+        - target: case_summary
+          operation: copy
+          source: understand_message.parsed.summary
+        - target: next_action
+          operation: constant
+          value: Answer the question or find out who can.
+    experience:
+      display_name: Support Hand-off
+      purpose: Build a clean hand-off packet for Customer Support.
+      contribution: Support receives a structured case instead of a forwarded message.
+      expected_output: A department, a summary, and a next action.
+      failure_message: The Support hand-off could not be built.
+
+  - id: human_review_gate
+    type: HumanInLoopAgent
+    config:
+      question: This case could not be routed automatically. Read it and decide.
+      review_purpose: >-
+        Either the customer isn't recognized in the business system, or the
+        extraction confidence was too low to act on. Guessing here is worse
+        than asking — a case in the wrong queue is usually noticed late.
+      allowed_actions:
+        - approve
+        - reject
+      review_panels:
+        - label: Customer's message
+          field: understand_message.parsed.summary
+        - label: Customer found?
+          field: find_customer.found
+        - label: Extraction confidence
+          field: understand_message.parsed.confidence
+    experience:
+      display_name: Needs Review
+      purpose: Let a person decide what an automated rule could not.
+      contribution: Stops a guess from silently becoming the wrong department.
+      expected_output: Approve or reject the escalation.
+      failure_message: The review could not be recorded.
+
+  - id: notify_customer
+    type: EmailAgent
+    config:
+      connection: default
+      operation: create_draft
+      to:
+        - email: "{{outputs.start.data.customer_email}}"
+          name: "{{outputs.start.data.customer_name}}"
+      subject: We're looking into your request
+      body: "{{outputs.understand_message.parsed.summary}}"
+    experience:
+      display_name: Draft Acknowledgement
+      purpose: Draft an acknowledgement once a person has approved the escalation.
+      contribution: Only runs after approval — never on a rejected case.
+      expected_output: A draft email, ready for a person to send.
+      failure_message: The acknowledgement draft could not be created.
+
+  - id: end_sales
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: department
+          value_from: "{{outputs.sales_case.data.department}}"
+        - key: case_summary
+          value_from: "{{outputs.sales_case.data.case_summary}}"
+        - key: next_action
+          value_from: "{{outputs.sales_case.data.next_action}}"
+    experience:
+      display_name: Sales Outcome
+      purpose: Return the Sales hand-off packet as the run's result.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: Department, summary, and next action.
+      failure_message: The result could not be produced.
+
+  - id: end_engineering
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: department
+          value_from: "{{outputs.engineering_case.data.department}}"
+        - key: case_summary
+          value_from: "{{outputs.engineering_case.data.case_summary}}"
+        - key: next_action
+          value_from: "{{outputs.engineering_case.data.next_action}}"
+    experience:
+      display_name: Engineering Outcome
+      purpose: Return the Engineering hand-off packet as the run's result.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: Department, summary, and next action.
+      failure_message: The result could not be produced.
+
+  - id: end_support
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: department
+          value_from: "{{outputs.support_case.data.department}}"
+        - key: case_summary
+          value_from: "{{outputs.support_case.data.case_summary}}"
+        - key: next_action
+          value_from: "{{outputs.support_case.data.next_action}}"
+    experience:
+      display_name: Support Outcome
+      purpose: Return the Support hand-off packet as the run's result.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: Department, summary, and next action.
+      failure_message: The result could not be produced.
+
+  - id: end_escalated
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: department
+          value_from: NEEDS_REVIEW
+        - key: draft_id
+          value_from: "{{outputs.notify_customer.draft_id}}"
+    experience:
+      display_name: Escalated Outcome
+      purpose: Return the escalation's outcome as the run's result.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: Department and the drafted acknowledgement's id.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: start
+    to: understand_message
+  - from: understand_message
+    to: find_customer
+  - from: find_customer
+    to: business_rules
+  - from: business_rules
+    to: department_router
+  - from: department_router
+    condition: route
+    branches:
+      SALES: sales_case
+      ENGINEERING: engineering_case
+      SUPPORT: support_case
+      NEEDS_REVIEW: human_review_gate
+  - from: sales_case
+    to: end_sales
+  - from: engineering_case
+    to: end_engineering
+  - from: support_case
+    to: end_support
+  - from: human_review_gate
+    to: notify_customer
+  - from: notify_customer
+    to: end_escalated

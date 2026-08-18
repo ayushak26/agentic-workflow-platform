@@ -1,0 +1,288 @@
+name: W09 — Internal IT Helpdesk and Access Request
+description: >-
+  An employee describes an IT problem or asks for access, without
+  necessarily knowing which of those it is. The workflow checks internal
+  knowledge first — most requests are answerable from documentation alone —
+  and only escalates when the knowledge base genuinely has nothing, the
+  request is a system-access request needing investigation, or it's
+  security-sensitive enough to need a mandatory review.
+version: "1.0"
+use_case: it_operations
+library:
+  title: W09 — Internal IT Helpdesk and Access Request
+  summary: Answer from internal knowledge first, escalate to IT, investigation, or security review only when genuinely needed.
+  purpose:
+    - Reuse SP03's internal-knowledge-answer pattern rather than a bespoke RAG step
+    - Give MCPAgent a genuinely bounded job — investigating existing access —
+      rather than forcing it in without a real fit
+  suitable_for:
+    - Any employee IT question or access request submitted through a chatbot
+  not_suitable_for:
+    - Customer-facing support — this is for internal employees only
+  outputs:
+    - A chat reply — answered directly, escalated to IT, investigated for
+      access history, or held for security review
+  input_types:
+    - A free-text chat message
+  human_reviews:
+    count: 1
+    labels:
+      - Security Review
+  visibility_status: draft
+
+entry: start
+exit:
+  - end_answered
+  - end_it_support
+  - end_access_request
+  - end_security_review
+
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+      chatbot_name: IT Helpdesk
+      welcome_message: Describe your issue or what access you need, and I'll get you sorted or route it to the right person.
+      allow_attachments: false
+      suggested_questions:
+        - I forgot my password
+        - I need access to the finance system
+    experience:
+      display_name: IT Helpdesk Chat
+      purpose: Let the employee describe the problem or request in their own words.
+      contribution: One entry point, regardless of what kind of IT request this turns out to be.
+      expected_output: A free-text message.
+      failure_message: The request could not be read.
+
+  - id: classify
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0
+      input_fields:
+        - name: message
+          type: string
+          value: "{{outputs.start.message}}"
+      instructions: |-
+        Classify this IT helpdesk message into exactly one category.
+      output_fields:
+        - name: request_type
+          type: enum
+          enum_values: [PASSWORD_HELP, APPLICATION_SUPPORT, HARDWARE_SUPPORT, NEW_SOFTWARE_REQUEST, SYSTEM_ACCESS_REQUEST, SECURITY_REVIEW]
+    experience:
+      display_name: Classify Request
+      purpose: Say what kind of request this actually is.
+      contribution: The classification only sorts the request — it never decides whether to escalate.
+      expected_output: One of six request categories.
+      failure_message: The request could not be classified.
+
+  - id: knowledge_answer
+    type: SubprocessAgent
+    config:
+      workflow: sp03_internal_knowledge_answer
+      inputs:
+        question: "{{outputs.start.message}}"
+      result_from: workflow_output
+    experience:
+      display_name: Check Internal Knowledge
+      purpose: See whether IT's own documentation already answers this.
+      contribution: Most helpdesk requests are answerable from documentation alone.
+      expected_output: A cited answer and an evidence status.
+      failure_message: The knowledge base could not be searched.
+
+  - id: decide_path
+    type: DecisionAgent
+    config:
+      defaults:
+        path: ANSWERED
+      rules:
+        - name: No internal evidence needs a person
+          when:
+            operator: and
+            conditions:
+              - field: knowledge_answer.result.evidence_status
+                operator: equals
+                value: NO_INTERNAL_EVIDENCE
+          then:
+            - field: path
+              value: IT_SUPPORT
+        - name: A system access request needs investigation, not just an answer
+          when:
+            operator: and
+            conditions:
+              - field: classify.parsed.request_type
+                operator: equals
+                value: SYSTEM_ACCESS_REQUEST
+          then:
+            - field: path
+              value: ACCESS_REQUEST
+        - name: A security review request always needs a person
+          when:
+            operator: and
+            conditions:
+              - field: classify.parsed.request_type
+                operator: equals
+                value: SECURITY_REVIEW
+          then:
+            - field: path
+              value: SECURITY_REVIEW
+    experience:
+      display_name: Decide Path
+      purpose: Decide, deterministically, whether the knowledge answer is enough or this needs a person.
+      contribution: The same rule every time — knowledge answers everything it genuinely can, nothing more.
+      expected_output: ANSWERED, IT_SUPPORT, ACCESS_REQUEST, or SECURITY_REVIEW.
+      failure_message: The request could not be routed.
+
+  - id: path_router
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: decide_path.decisions.path
+      branches:
+        ANSWERED: ANSWERED
+        IT_SUPPORT: IT_SUPPORT
+        ACCESS_REQUEST: ACCESS_REQUEST
+        SECURITY_REVIEW: SECURITY_REVIEW
+      fallback: IT_SUPPORT
+    experience:
+      display_name: Route The Request
+      purpose: Send the request down the one path that actually matches it.
+      contribution: Four separate destinations — none of them share a downstream step.
+      expected_output: One of the four routes.
+      failure_message: The request could not be routed.
+
+  - id: end_answered
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: "{{outputs.knowledge_answer.result.answer}}"
+      outcome: reply
+    experience:
+      display_name: Answered Reply
+      purpose: Reply with the cited answer from internal documentation.
+      contribution: The employee gets an answer immediately, cited to a real document.
+      expected_output: A chat reply.
+      failure_message: The reply could not be sent.
+
+  - id: end_it_support
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: I've passed this to IT Support since it's not covered by our documentation. Someone will follow up.
+      outcome: escalate
+      route_to: it_support_queue
+    experience:
+      display_name: IT Support Escalation
+      purpose: Escalate to a person when the knowledge base genuinely has nothing.
+      contribution: Never leaves the employee with a confident-sounding non-answer.
+      expected_output: A chat reply confirming escalation.
+      failure_message: The reply could not be sent.
+
+  - id: investigate_access
+    type: MCPAgent
+    config:
+      model: claude-sonnet-4-5
+      objective: >-
+        Look up whether this employee already has an existing account or
+        access record, to help decide whether their system-access request is
+        a duplicate of something already granted or a genuinely new request.
+        Use only the read-only query tool available to you.
+      allowed_tools:
+        - query_readonly
+      max_iterations: 3
+    experience:
+      display_name: Investigate Existing Access
+      purpose: Check for existing access before treating this as a brand-new request.
+      contribution: Bounded to one read-only tool — the model chooses the queries, never a write action.
+      expected_output: A summary of what, if anything, already exists.
+      failure_message: The access investigation could not be completed.
+
+  - id: access_review
+    type: HumanInLoopAgent
+    config:
+      question: Approve provisioning this system access?
+      review_purpose: Granting system access is a person's decision, informed by — but never made by — the investigation above.
+      review_panels:
+        - label: Requested Access
+          field: start.message
+        - label: Investigation Findings
+          field: investigate_access.answer
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Access Approval
+      purpose: Let a person approve or reject the access request.
+      contribution: Nothing is provisioned without this sign-off, regardless of what the investigation found.
+      expected_output: Approve or reject.
+      failure_message: The approval could not be recorded.
+
+  - id: end_access_request
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: "{{outputs.access_review.decision}}"
+      outcome: reply
+    experience:
+      display_name: Access Request Reply
+      purpose: Reply with the access decision.
+      contribution: A clear, final answer — approved or not — not a pending silence.
+      expected_output: A chat reply with the access decision.
+      failure_message: The reply could not be sent.
+
+  - id: security_review
+    type: HumanInLoopAgent
+    config:
+      question: This request is flagged as security-sensitive. Review before any reply is sent.
+      review_purpose: A security-sensitive request should never get an automatic reply, even a correct-sounding one.
+      review_panels:
+        - label: Request
+          field: start.message
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Security Review
+      purpose: Let security review the request before anything is said back to the employee.
+      contribution: Nothing security-flagged gets an automated reply, ever.
+      expected_output: Approve or reject.
+      failure_message: The review could not be recorded.
+
+  - id: end_security_review
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: This has been passed to the Security team for review. They'll be in touch directly.
+      outcome: escalate
+      route_to: security_review_queue
+    experience:
+      display_name: Security Review Reply
+      purpose: Confirm the security escalation to the employee.
+      contribution: The employee knows this is being handled by a person, not answered automatically.
+      expected_output: A chat reply confirming escalation.
+      failure_message: The reply could not be sent.
+
+edges:
+  - from: start
+    to: [classify, knowledge_answer]
+  - from: classify
+    to: decide_path
+  - from: knowledge_answer
+    to: decide_path
+  - from: decide_path
+    to: path_router
+  - from: path_router
+    condition: route
+    branches:
+      ANSWERED: end_answered
+      IT_SUPPORT: end_it_support
+      ACCESS_REQUEST: investigate_access
+      SECURITY_REVIEW: security_review
+  - from: investigate_access
+    to: access_review
+  - from: access_review
+    to: end_access_request
+  - from: security_review
+    to: end_security_review

@@ -1,0 +1,342 @@
+name: W07 — Invoice Exception Verification
+description: >-
+  Finance uploads an invoice. The workflow extracts its fields, checks it
+  against the invoice, order, and customer records already in Finance &
+  SCM in parallel, and joins those three independent checks into one
+  deterministic exception decision.
+
+  Adaptation note: the platform's seeded schema (see
+  docs/workflow_examples_10/INTEGRATION_COVERAGE.md) models the sales side
+  (orders/invoices to customers) with no purchase-order or goods-receipt
+  data at all — there's no real three-way AP match available. This verifies
+  an uploaded invoice against the system's own recorded invoice and the
+  order it references instead, which is the closest real, honest match to
+  the original AP three-way-match business problem using tools that
+  actually exist.
+version: "1.0"
+use_case: finance_operations
+library:
+  title: W07 — Invoice Exception Verification
+  summary: Verify an uploaded invoice's fields against the invoice, order, and customer records already on file.
+  purpose:
+    - Demonstrate file upload, extraction, and a genuinely deterministic
+      exact-value comparison feeding a Decision
+    - Keep "does this amount match" a Python-exact comparison, never an AI judgment call
+  suitable_for:
+    - Verifying an incoming invoice document against Finance & SCM records
+  not_suitable_for:
+    - A true purchase-order three-way match — this schema has no PO/goods-receipt data
+  outputs:
+    - An auto-processed or exception-flagged invoice verification result
+  input_types:
+    - An uploaded invoice document
+  human_reviews:
+    count: 1
+    labels:
+      - Invoice Exception Review
+  visibility_status: draft
+
+entry: start
+exit:
+  - end_auto_processed
+  - end_exception_resolved
+
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: input_form
+      title: Upload Invoice
+      fields:
+        - name: invoice_file
+          label: Invoice Document
+          type: object
+          required: true
+        - name: notes
+          label: Notes
+          type: text
+          required: false
+    experience:
+      display_name: Upload Invoice
+      purpose: Take in the invoice document to be verified.
+      contribution: One entry point regardless of the invoice's original format.
+      expected_output: An uploaded invoice file.
+      failure_message: The invoice could not be read.
+
+  - id: extract_invoice_text
+    type: WorkflowFileLoader
+    config:
+      files: "{{outputs.start.data.invoice_file}}"
+      fail_on_unreadable: false
+    experience:
+      display_name: Extract Invoice Text
+      purpose: Turn the uploaded document into readable text.
+      contribution: Works whether the invoice arrived as a PDF, DOCX, or scanned text export.
+      expected_output: The invoice's extracted text.
+      failure_message: The invoice document could not be read.
+
+  - id: extract_invoice_fields
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0
+      input_fields:
+        - name: invoice_text
+          type: string
+          value: "{{outputs.extract_invoice_text.text}}"
+      instructions: |-
+        Extract the invoice number, the order number it references, the
+        customer/company name, and the total amount, exactly as printed.
+        Never invent a value not present in the text.
+      output_fields:
+        - name: invoice_number
+          type: string
+        - name: order_number
+          type: string
+        - name: customer_name
+          type: string
+        - name: total_amount
+          type: number
+    experience:
+      display_name: Extract Invoice Fields
+      purpose: Turn the invoice text into the fields the checks below need.
+      contribution: The model only reads what's printed — it never decides whether the invoice is valid.
+      expected_output: An invoice number, order number, customer name, and total amount.
+      failure_message: The invoice fields could not be extracted.
+
+  # Unconditional fan-out — all three checks below always run for every
+  # uploaded invoice, regardless of what any of them finds. Safe join shape:
+  # nothing here is conditionally selected.
+  - id: find_invoice_record
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_invoice
+      fail_on_error: false
+      arguments:
+        invoice_number: "{{outputs.extract_invoice_fields.parsed.invoice_number?}}"
+    experience:
+      display_name: Find Recorded Invoice
+      purpose: Check whether this invoice is already on file, and what the system recorded for it.
+      contribution: The system's own recorded amount is what actually gets compared, not a re-typed guess.
+      expected_output: The recorded invoice, if one exists with this number.
+      failure_message: The invoice record could not be looked up.
+
+  - id: find_order_record
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_sales_order
+      fail_on_error: false
+      arguments:
+        order_number: "{{outputs.extract_invoice_fields.parsed.order_number?}}"
+    experience:
+      display_name: Find Referenced Order
+      purpose: Confirm the order this invoice bills against actually exists.
+      contribution: An invoice referencing a non-existent order is caught here, not assumed valid.
+      expected_output: The referenced order, if it exists.
+      failure_message: The order record could not be looked up.
+
+  - id: find_customer_record
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_customer
+      fail_on_error: false
+      arguments:
+        customer_name: "{{outputs.extract_invoice_fields.parsed.customer_name}}"
+    experience:
+      display_name: Find Customer Record
+      purpose: Confirm the invoiced customer is a real, known account.
+      contribution: An invoice for an unrecognized customer is caught here, not processed blind.
+      expected_output: The matching customer record, if one exists.
+      failure_message: The customer record could not be looked up.
+
+  - id: join_verification_summary
+    type: TextAssemblerAgent
+    config:
+      separator: "\n"
+      parts:
+        - "Invoice {{outputs.extract_invoice_fields.parsed.invoice_number}}: on file = {{outputs.find_invoice_record.found}}"
+        - "Order {{outputs.extract_invoice_fields.parsed.order_number}}: found = {{outputs.find_order_record.found}}, status = {{outputs.find_order_record.first.order_status}}"
+        - "Customer {{outputs.extract_invoice_fields.parsed.customer_name}}: found = {{outputs.find_customer_record.found}}"
+    experience:
+      display_name: Join Verification Checks
+      purpose: Combine the three independent checks above into one readable summary.
+      contribution: Every branch above always ran, so this always has all three to combine.
+      expected_output: One combined verification summary.
+      failure_message: The verification summary could not be assembled.
+
+  - id: compare_amounts
+    type: PythonSnippetAgent
+    config:
+      code: |
+        extracted = inputs.get("extracted")
+        recorded = inputs.get("recorded")
+        matches = (
+            extracted is not None
+            and recorded is not None
+            and round(float(extracted), 2) == round(float(recorded), 2)
+        )
+        output = {"amounts_match": bool(matches)}
+      input_fields:
+        extracted: "{{outputs.extract_invoice_fields.parsed.total_amount}}"
+        recorded: "{{outputs.find_invoice_record.first.total_amount}}"
+      output_fields:
+        - name: amounts_match
+          type: boolean
+    experience:
+      display_name: Compare Invoice Amounts
+      purpose: Decide, exactly, whether the extracted amount matches the recorded amount.
+      contribution: An exact numeric comparison, not a model's approximation of "close enough."
+      expected_output: Whether the two amounts match exactly.
+      failure_message: The amounts could not be compared.
+
+  - id: decide_exception
+    type: DecisionAgent
+    config:
+      defaults:
+        exception: false
+        exception_reason: ""
+      rules:
+        - name: The invoice is not on file
+          when:
+            operator: and
+            conditions:
+              - field: find_invoice_record.found
+                operator: is_false
+          then:
+            - field: exception
+              value: true
+            - field: exception_reason
+              value: INVOICE_NOT_ON_FILE
+        - name: The referenced order does not exist
+          when:
+            operator: and
+            conditions:
+              - field: find_order_record.found
+                operator: is_false
+          then:
+            - field: exception
+              value: true
+            - field: exception_reason
+              value: ORDER_NOT_FOUND
+        - name: The amount does not match what was recorded
+          when:
+            operator: and
+            conditions:
+              - field: compare_amounts.result.amounts_match
+                operator: is_false
+          then:
+            - field: exception
+              value: true
+            - field: exception_reason
+              value: AMOUNT_MISMATCH
+    experience:
+      display_name: Decide Exception
+      purpose: Decide, deterministically, whether this invoice needs a person to look at it.
+      contribution: The same checks every time — never a model's impression of whether it "looks fine."
+      expected_output: Whether this is an exception, and why.
+      failure_message: The exception status could not be decided.
+
+  - id: exception_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: EXCEPTION
+          when:
+            operator: and
+            conditions:
+              - field: decide_exception.decisions.exception
+                operator: is_true
+      fallback: AUTO_PROCESS
+    experience:
+      display_name: Route The Invoice
+      purpose: Only stop for a person when a real check actually failed.
+      contribution: A clean invoice processes immediately — nothing waits unnecessarily.
+      expected_output: EXCEPTION or AUTO_PROCESS.
+      failure_message: The invoice could not be routed.
+
+  - id: end_auto_processed
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: status
+          value_from: auto_processed
+        - key: summary
+          value_from: "{{outputs.join_verification_summary.text}}"
+    experience:
+      display_name: Auto-Processed Outcome
+      purpose: Return the clean-invoice outcome.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The verification summary.
+      failure_message: The result could not be produced.
+
+  - id: exception_review
+    type: HumanInLoopAgent
+    config:
+      question: This invoice has an exception. Review and decide how to proceed.
+      review_purpose: An amount mismatch, a missing order, or an unrecorded invoice needs a person's judgment, not an automatic pass.
+      review_panels:
+        - label: Exception Reason
+          field: decide_exception.decisions.exception_reason
+        - label: Verification Summary
+          field: join_verification_summary.text
+      allowed_actions:
+        - approve
+        - reject
+        - edit
+    experience:
+      display_name: Invoice Exception Review
+      purpose: Let Finance decide how to resolve the exception.
+      contribution: Nothing with a real mismatch is processed without a person's decision.
+      expected_output: Approve, reject, or edit.
+      failure_message: The review could not be recorded.
+
+  - id: end_exception_resolved
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: status
+          value_from: exception_reviewed
+        - key: exception_reason
+          value_from: "{{outputs.decide_exception.decisions.exception_reason}}"
+        - key: review_decision
+          value_from: "{{outputs.exception_review.decision}}"
+    experience:
+      display_name: Exception-Resolved Outcome
+      purpose: Return the reviewed exception outcome.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: The exception reason and the reviewer's decision.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: start
+    to: extract_invoice_text
+  - from: extract_invoice_text
+    to: extract_invoice_fields
+  - from: extract_invoice_fields
+    to: [find_invoice_record, find_order_record, find_customer_record]
+  - from: find_invoice_record
+    to: [join_verification_summary, compare_amounts]
+  - from: find_order_record
+    to: join_verification_summary
+  - from: find_customer_record
+    to: join_verification_summary
+  - from: join_verification_summary
+    to: decide_exception
+  - from: compare_amounts
+    to: decide_exception
+  - from: decide_exception
+    to: exception_router
+  - from: exception_router
+    condition: route
+    branches:
+      AUTO_PROCESS: end_auto_processed
+      EXCEPTION: exception_review
+  - from: exception_review
+    to: end_exception_resolved

@@ -1,0 +1,195 @@
+name: SP01 — Multilingual Message Understanding
+description: >-
+  Reusable subprocess. Detects language, translates to English, and extracts
+  the core business facts from a customer message — each fact tagged
+  KNOWN / INFERRED / MISSING / AMBIGUOUS / CONFLICTING rather than guessed.
+  Called via SubprocessAgent from Workflow 01 (Intelligent Customer Inquiry
+  Resolution), Workflow 03 (Technical Service Case), and Workflow 04
+  (Order Status and Delivery Exception Management).
+version: "1.0"
+use_case: shared_subprocess
+library:
+  title: SP01 — Multilingual Message Understanding
+  summary: Detect language, translate, and extract facts with explicit certainty status.
+  purpose:
+    - Never let the model invent a missing business fact
+    - Give every extracted field an auditable KNOWN/INFERRED/MISSING/AMBIGUOUS/CONFLICTING status
+  suitable_for:
+    - Called as a SubprocessAgent step from any workflow reading a free-text customer message
+  not_suitable_for:
+    - Direct end-user invocation — this has no Start node, it's a subprocess
+  outputs:
+    - Detected language, an English translation, and six status-tagged facts
+  input_types:
+    - A customer message and optional subject line
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+
+inputs:
+  message:
+    type: text
+    required: true
+    description: The customer's message, in its original language.
+  subject:
+    type: text
+    required: false
+    description: Subject line, when the channel provides one.
+
+entry: extract
+exit:
+  - end_understanding
+
+nodes:
+  - id: extract
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0
+      input_fields:
+        - name: subject
+          type: string
+          value: "{{inputs.subject}}"
+        - name: message
+          type: string
+          value: "{{inputs.message}}"
+      instructions: |-
+        Read the customer's message in whatever language it arrives in.
+
+        1. Detect the language and translate the message to English.
+        2. Extract company_name, order_reference, issue, requested_action,
+           serial_number, and urgency. For EACH of these six facts, report a status:
+           - KNOWN: the customer stated it plainly.
+           - INFERRED: implied but not stated outright (give your evidence).
+           - MISSING: the message does not address it at all.
+           - AMBIGUOUS: the message could mean more than one thing.
+           Never invent a value the message does not support — if unsure,
+           use MISSING or AMBIGUOUS rather than guessing. (CONFLICTING is
+           reserved for a later step that checks the value against business
+           records — do not use it here.)
+      output_fields:
+        - name: detected_language
+          type: string
+          description: ISO 639-1 code of the language the message was written in.
+        - name: translated_message
+          type: string
+          description: The message translated into English, preserving identifiers verbatim.
+        - name: company_name
+          type: object
+          fields:
+            - name: value
+              type: string
+              required: false
+              nullable: true
+            - name: status
+              type: enum
+              enum_values: [KNOWN, INFERRED, MISSING, AMBIGUOUS]
+            - name: evidence
+              type: string
+              required: false
+        - name: order_reference
+          type: object
+          fields:
+            - name: value
+              type: string
+              required: false
+              nullable: true
+            - name: status
+              type: enum
+              enum_values: [KNOWN, INFERRED, MISSING, AMBIGUOUS]
+            - name: evidence
+              type: string
+              required: false
+        - name: issue
+          type: object
+          fields:
+            - name: value
+              type: string
+              required: false
+              nullable: true
+            - name: status
+              type: enum
+              enum_values: [KNOWN, INFERRED, MISSING, AMBIGUOUS]
+            - name: evidence
+              type: string
+              required: false
+        - name: requested_action
+          type: object
+          fields:
+            - name: value
+              type: string
+              required: false
+              nullable: true
+            - name: status
+              type: enum
+              enum_values: [KNOWN, INFERRED, MISSING, AMBIGUOUS]
+            - name: evidence
+              type: string
+              required: false
+        - name: serial_number
+          type: object
+          fields:
+            - name: value
+              type: string
+              required: false
+              nullable: true
+            - name: status
+              type: enum
+              enum_values: [KNOWN, INFERRED, MISSING, AMBIGUOUS]
+            - name: evidence
+              type: string
+              required: false
+        - name: urgency
+          type: object
+          fields:
+            - name: value
+              type: enum
+              enum_values: [low, normal, high]
+              required: false
+              nullable: true
+            - name: status
+              type: enum
+              enum_values: [KNOWN, INFERRED, MISSING, AMBIGUOUS]
+            - name: evidence
+              type: string
+              required: false
+    experience:
+      display_name: Understand Message
+      purpose: Read the message in its own language and extract the facts it actually contains.
+      contribution: Every downstream rule reads a status-tagged fact, never a raw guess.
+      expected_output: Detected language, an English translation, and six status-tagged facts.
+      failure_message: The message could not be read well enough to extract anything from.
+
+  - id: end_understanding
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: detected_language
+          value_from: "{{outputs.extract.parsed.detected_language}}"
+        - key: translated_message
+          value_from: "{{outputs.extract.parsed.translated_message}}"
+        - key: company_name
+          value_from: "{{outputs.extract.parsed.company_name}}"
+        - key: order_reference
+          value_from: "{{outputs.extract.parsed.order_reference}}"
+        - key: issue
+          value_from: "{{outputs.extract.parsed.issue}}"
+        - key: requested_action
+          value_from: "{{outputs.extract.parsed.requested_action}}"
+        - key: serial_number
+          value_from: "{{outputs.extract.parsed.serial_number}}"
+        - key: urgency
+          value_from: "{{outputs.extract.parsed.urgency}}"
+    experience:
+      display_name: Understanding Result
+      purpose: Return the extracted, status-tagged understanding to the calling workflow.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: Language, translation, and six status-tagged facts.
+      failure_message: The result could not be produced.
+
+edges:
+  - from: extract
+    to: end_understanding
