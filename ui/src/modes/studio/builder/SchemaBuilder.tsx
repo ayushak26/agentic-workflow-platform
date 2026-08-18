@@ -84,6 +84,7 @@ function FieldRow({
   onChange,
   onRemove,
   onMove,
+  onDuplicate,
   isFirst,
   isLast,
   topLevelExtra,
@@ -93,6 +94,7 @@ function FieldRow({
   onChange: (next: FieldSpec) => void;
   onRemove: () => void;
   onMove: (direction: -1 | 1) => void;
+  onDuplicate?: () => void;
   isFirst: boolean;
   isLast: boolean;
   /** Rendered inside the expanded row, but only at depth 0 — for callers
@@ -168,6 +170,15 @@ function FieldRow({
             onClick={() => onMove(1)}
             type="button"
           >↓</button>
+          {onDuplicate && (
+            <button
+              aria-label={`Duplicate ${field.name || 'field'}`}
+              className="px-1 text-[10px] text-ink-400 hover:text-ink-800"
+              onClick={onDuplicate}
+              title="Duplicate"
+              type="button"
+            >⧉</button>
+          )}
           <button
             aria-label={`Remove ${field.name || 'field'}`}
             className="px-1 text-ink-400 hover:text-red-600"
@@ -371,6 +382,11 @@ function FieldList({
     [copy[index], copy[target]] = [copy[target], copy[index]];
     onChange(copy);
   };
+  const duplicate = (index: number) => {
+    const copy = [...fields];
+    copy.splice(index + 1, 0, { ...fields[index], name: nextFieldName(fields) });
+    onChange(copy);
+  };
 
   return (
     <div className="space-y-1.5">
@@ -382,6 +398,7 @@ function FieldList({
           isLast={index === fields.length - 1}
           key={index}
           onChange={next => replace(index, next)}
+          onDuplicate={() => duplicate(index)}
           onMove={direction => move(index, direction)}
           onRemove={() => onChange(fields.filter((_, position) => position !== index))}
           topLevelExtra={topLevelExtra}

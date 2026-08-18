@@ -1,12 +1,32 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { api } from '../../api/client';
 import type { WorkflowFileReference } from '../../api/types';
+import { isRequired, StartFormRenderer, type StartFormField } from '../../components/forms/StartFormRenderer';
+import { evaluateConditionGroup, validateFieldConstraints } from './builder/formConditions';
 import type { CockpitNavState } from './cockpit/useCockpitRun';
 import { FileInputField } from './FileInputField';
 import { FALLBACK_FILE_CAPABILITIES, fileReferencesFrom } from './fileInputUtils';
-import { valueForJsonInput, type WorkflowInputSpec } from './yaml-bridge';
+import { parseYaml, valueForJsonInput, type WorkflowInputSpec } from './yaml-bridge';
+
+/** Fields declared directly on a Start node in `input_form` mode — read from
+ * the workflow YAML itself rather than the lossy, collapsed `inputs:` block
+ * (every non-file Start field flattens to `type: "json"` there), so the rich
+ * widgets (email/currency/date-range/repeating-group/conditional visibility)
+ * are actually renderable here rather than falling back to a JSON textarea. */
+function startFormFieldsFrom(workflowYaml: string): StartFormField[] {
+  try {
+    const parsed = parseYaml(workflowYaml);
+    const node = parsed.nodes.find(candidate => candidate.type === 'StartAgent');
+    if (!node) return [];
+    const config = node.config ?? {};
+    if ((config.mode ?? 'input_form') === 'chatbot') return [];
+    return (config.fields as StartFormField[] | undefined) ?? [];
+  } catch {
+    return [];
+  }
+}
 
 // Only set when this Run is launched from the Builder — carries the
 // context Cockpit needs to offer "Back to Builder" and to label a node/
@@ -30,7 +50,11 @@ export function RunDialog({
   launchContext?: RunLaunchContext;
 }) {
   const navigate = useNavigate();
+  const startFields = useMemo(() => startFormFieldsFrom(workflowYaml), [workflowYaml]);
+  const startFieldNames = useMemo(() => new Set(startFields.map(field => field.name)), [startFields]);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [startValues, setStartValues] = useState<Record<string, unknown>>({});
+  const [startErrors, setStartErrors] = useState<Record<string, string>>({});
   const [fileValues, setFileValues] = useState<Record<string, File[]>>({});
   const [fileRefValues, setFileRefValues] = useState<
     Record<string, WorkflowFileReference[]>
@@ -53,7 +77,7 @@ export function RunDialog({
       });
   }, []);
 
-  const keys = Object.keys(inputs);
+  const keys = Object.keys(inputs).filter(key => !startFieldNames.has(key));
 
   function applyImportedJson(raw: string) {
     let parsed: unknown;
@@ -135,7 +159,22 @@ export function RunDialog({
 
   async function launch() {
     const nextErrors: Record<string, string> = {};
+    const nextStartErrors: Record<string, string> = {};
     const runInputs: Record<string, unknown> = {};
+
+    const visibleStartFields = startFields.filter(
+      field => !field.visible_when || evaluateConditionGroup(field.visible_when, startValues),
+    );
+    for (const field of visibleStartFields) {
+      const value = startValues[field.name];
+      const empty = value == null || value === '' || (Array.isArray(value) && value.length === 0);
+      if (isRequired(field, startValues) && empty) {
+        nextStartErrors[field.name] = 'This field is required.';
+        continue;
+      }
+      if (!empty) runInputs[field.name] = value;
+    }
+    Object.assign(nextStartErrors, validateFieldConstraints(visibleStartFields, startValues));
 
     for (const key of keys) {
       const spec = inputs[key];
@@ -164,8 +203,9 @@ export function RunDialog({
       }
     }
 
-    if (Object.keys(nextErrors).length > 0) {
-      setErrors(nextErrors);
+    setErrors(nextErrors);
+    setStartErrors(nextStartErrors);
+    if (Object.keys(nextErrors).length > 0 || Object.keys(nextStartErrors).length > 0) {
       return;
     }
 
@@ -268,10 +308,28 @@ export function RunDialog({
         </div>
 
         <div className="px-6 py-5 space-y-5">
-          {keys.length === 0 && (
+          {keys.length === 0 && startFields.length === 0 && (
             <div className="text-sm text-ink-500">
               This workflow declares no inputs.
             </div>
+          )}
+
+          {startFields.length > 0 && (
+            <StartFormRenderer
+              errors={startErrors}
+              fields={startFields}
+              fileFields={[]}
+              interactive
+              onChange={(name, value) => {
+                setStartValues(current => ({ ...current, [name]: value }));
+                setStartErrors(current => {
+                  const next = { ...current };
+                  delete next[name];
+                  return next;
+                });
+              }}
+              values={startValues}
+            />
           )}
 
           {keys.length > 0 && (

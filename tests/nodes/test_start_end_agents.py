@@ -404,3 +404,527 @@ exit: echo
     report = preflight_workflow_yaml(yaml_text)
     codes = {issue.code for issue in report.issues}
     assert not codes & {"START_HAS_INCOMING_EDGE", "END_HAS_OUTGOING_EDGE", "MULTIPLE_START_NODES"}
+
+
+# ---------------------------------------------------------------------------
+# Start — extended form field contract (format/widget/preset/conditional)
+# ---------------------------------------------------------------------------
+
+class TestStartFormatValidation:
+    @pytest.mark.asyncio
+    async def test_valid_email_passes(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "email", "label": "Email", "format": "email", "source": "inputs.email"},
+        ]})
+        output = await run(node, {"inputs": {"email": "john@example.com"}, "node_outputs": {}})
+        assert output["data"]["email"] == "john@example.com"
+
+    @pytest.mark.asyncio
+    async def test_invalid_email_is_rejected_with_a_friendly_message(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "email", "label": "Business Email", "format": "email", "source": "inputs.email"},
+        ]})
+        with pytest.raises(ValueError, match="valid email address for Business Email"):
+            await run(node, {"inputs": {"email": "not-an-email"}, "node_outputs": {}})
+
+    @pytest.mark.asyncio
+    async def test_invalid_url_is_rejected(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "site", "label": "Website", "format": "url", "source": "inputs.site"},
+        ]})
+        with pytest.raises(ValueError, match="valid website address"):
+            await run(node, {"inputs": {"site": "not a url"}, "node_outputs": {}})
+
+    @pytest.mark.asyncio
+    async def test_permissive_international_phone_is_accepted(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "phone", "label": "Phone", "format": "phone", "required": False, "source": "inputs.phone"},
+        ]})
+        output = await run(node, {"inputs": {"phone": "+31 6 1234 5678"}, "node_outputs": {}})
+        assert output["data"]["phone"] == "+31 6 1234 5678"
+
+
+class TestStartLengthAndPattern:
+    @pytest.mark.asyncio
+    async def test_min_length_rejects_a_too_short_value(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "company", "label": "Company Name", "min_length": 3, "source": "inputs.company"},
+        ]})
+        with pytest.raises(ValueError, match="at least 3 characters"):
+            await run(node, {"inputs": {"company": "AB"}, "node_outputs": {}})
+
+    @pytest.mark.asyncio
+    async def test_max_length_rejects_a_too_long_value(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "reference", "label": "Reference", "max_length": 5, "source": "inputs.reference"},
+        ]})
+        with pytest.raises(ValueError, match="at most 5 characters"):
+            await run(node, {"inputs": {"reference": "TOO-LONG-REF"}, "node_outputs": {}})
+
+    @pytest.mark.asyncio
+    async def test_pattern_rejects_a_non_matching_value(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "order", "label": "Order Number", "pattern": r"^SO-\d+$", "source": "inputs.order"},
+        ]})
+        with pytest.raises(ValueError, match="not in the expected format"):
+            await run(node, {"inputs": {"order": "12345"}, "node_outputs": {}})
+        ok = await run(node, {"inputs": {"order": "SO-45882"}, "node_outputs": {}})
+        assert ok["data"]["order"] == "SO-45882"
+
+
+class TestStartPercentage:
+    @pytest.mark.asyncio
+    async def test_default_range_is_zero_to_a_hundred(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "discount", "label": "Discount", "type": "number", "format": "percentage", "source": "inputs.discount"},
+        ]})
+        with pytest.raises(ValueError, match="between 0 and 100"):
+            await run(node, {"inputs": {"discount": 150}, "node_outputs": {}})
+        ok = await run(node, {"inputs": {"discount": 8.5}, "node_outputs": {}})
+        assert ok["data"]["discount"] == 8.5
+
+    @pytest.mark.asyncio
+    async def test_configured_range_overrides_default(self):
+        node = StartAgent("begin", {"fields": [
+            {
+                "name": "priority", "label": "Priority", "type": "number", "format": "percentage",
+                "minimum": 1, "maximum": 10, "source": "inputs.priority",
+            },
+        ]})
+        with pytest.raises(ValueError, match="between 1 and 10"):
+            await run(node, {"inputs": {"priority": 50}, "node_outputs": {}})
+
+
+class TestStartCompoundPresets:
+    def _object_field(self, name, label, preset, children, units=None):
+        return {
+            "name": name, "label": label, "type": "object", "preset": preset,
+            "source": f"inputs.{name}", "units": units,
+            "fields": children,
+        }
+
+    @pytest.mark.asyncio
+    async def test_currency_resolves_as_amount_and_currency(self):
+        node = StartAgent("begin", {"fields": [self._object_field(
+            "budget", "Estimated Budget", "currency",
+            [
+                {"name": "amount", "type": "number"},
+                {"name": "currency", "type": "enum", "enum_values": ["EUR", "USD"]},
+            ],
+            units=["EUR", "USD"],
+        )]})
+        output = await run(node, {
+            "inputs": {"budget": {"amount": 25000, "currency": "EUR"}}, "node_outputs": {},
+        })
+        assert output["data"]["budget"] == {"amount": 25000, "currency": "EUR"}
+
+    @pytest.mark.asyncio
+    async def test_currency_outside_the_allowed_list_is_rejected(self):
+        node = StartAgent("begin", {"fields": [self._object_field(
+            "budget", "Estimated Budget", "currency",
+            [
+                {"name": "amount", "type": "number"},
+                {"name": "currency", "type": "string"},
+            ],
+            units=["EUR", "USD"],
+        )]})
+        with pytest.raises(ValueError, match="not an allowed currency"):
+            await run(node, {
+                "inputs": {"budget": {"amount": 100, "currency": "GBP"}}, "node_outputs": {},
+            })
+
+    @pytest.mark.asyncio
+    async def test_number_unit_resolves_value_and_unit(self):
+        node = StartAgent("begin", {"fields": [self._object_field(
+            "flow_rate", "Flow Rate", "number_unit",
+            [
+                {"name": "value", "type": "number"},
+                {"name": "unit", "type": "enum", "enum_values": ["m3/h", "l/min"]},
+            ],
+            units=["m3/h", "l/min"],
+        )]})
+        output = await run(node, {
+            "inputs": {"flow_rate": {"value": 120, "unit": "m3/h"}}, "node_outputs": {},
+        })
+        assert output["data"]["flow_rate"] == {"value": 120, "unit": "m3/h"}
+
+    @pytest.mark.asyncio
+    async def test_date_range_requires_end_on_or_after_start(self):
+        node = StartAgent("begin", {"fields": [self._object_field(
+            "period", "Required Period", "date_range",
+            [
+                {"name": "start", "type": "date"},
+                {"name": "end", "type": "date"},
+            ],
+        )]})
+        with pytest.raises(ValueError, match="end date must be on or after"):
+            await run(node, {
+                "inputs": {"period": {"start": "2026-09-15", "end": "2026-09-01"}}, "node_outputs": {},
+            })
+        ok = await run(node, {
+            "inputs": {"period": {"start": "2026-09-01", "end": "2026-09-15"}}, "node_outputs": {},
+        })
+        assert ok["data"]["period"] == {"start": "2026-09-01", "end": "2026-09-15"}
+
+    @pytest.mark.asyncio
+    async def test_duration_resolves_value_and_unit(self):
+        node = StartAgent("begin", {"fields": [self._object_field(
+            "downtime", "Estimated Downtime", "duration",
+            [
+                {"name": "value", "type": "number"},
+                {"name": "unit", "type": "enum", "enum_values": ["hours", "days"]},
+            ],
+            units=["hours", "days"],
+        )]})
+        output = await run(node, {
+            "inputs": {"downtime": {"value": 4, "unit": "hours"}}, "node_outputs": {},
+        })
+        assert output["data"]["downtime"] == {"value": 4, "unit": "hours"}
+
+    @pytest.mark.asyncio
+    async def test_address_resolves_as_one_structured_value(self):
+        node = StartAgent("begin", {"fields": [self._object_field(
+            "address", "Address", "address",
+            [
+                {"name": "street", "type": "string"},
+                {"name": "house_number", "type": "string"},
+                {"name": "postal_code", "type": "string"},
+                {"name": "city", "type": "string"},
+                {"name": "country", "type": "string"},
+            ],
+        )]})
+        value = {
+            "street": "Main St", "house_number": "12", "postal_code": "1234AB",
+            "city": "Utrecht", "country": "NL",
+        }
+        output = await run(node, {"inputs": {"address": value}, "node_outputs": {}})
+        assert output["data"]["address"] == value
+
+
+class TestStartRepeatingGroup:
+    @pytest.mark.asyncio
+    async def test_a_list_of_objects_resolves_as_typed_rows(self):
+        node = StartAgent("begin", {"fields": [{
+            "name": "products", "label": "Products Requested", "type": "list", "item_type": "object",
+            "display": "table", "source": "inputs.products",
+            "fields": [
+                {"name": "product", "type": "string"},
+                {"name": "quantity", "type": "integer"},
+                {"name": "required_date", "type": "date"},
+            ],
+        }]})
+        rows = [
+            {"product": "Pump A", "quantity": 5, "required_date": "2026-08-30"},
+            {"product": "Pump B", "quantity": 2, "required_date": "2026-09-05"},
+        ]
+        output = await run(node, {"inputs": {"products": rows}, "node_outputs": {}})
+        assert output["data"]["products"] == rows
+
+
+class TestStartInfoAndReadonlyFields:
+    @pytest.mark.asyncio
+    async def test_an_info_field_contributes_nothing_to_data(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "service_info", "label": "Service Information", "kind": "info",
+             "description": "Please provide the serial number.", "required": False},
+            {"name": "serial", "label": "Serial Number", "source": "inputs.serial"},
+        ]})
+        output = await run(node, {"inputs": {"serial": "SN-1"}, "node_outputs": {}})
+        assert "service_info" not in output["data"]
+        assert output["data"]["serial"] == "SN-1"
+
+    def test_an_info_field_is_authorised_without_needing_a_value(self):
+        fields = StartAgent.preflight_output_fields({
+            "mode": "input_form",
+            "fields": [{"name": "info_block", "kind": "info", "required": False}],
+        })
+        assert "data.info_block" not in fields
+
+    @pytest.mark.asyncio
+    async def test_a_readonly_field_resolves_like_a_normal_field(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "reference", "label": "Reference", "kind": "readonly", "source": "inputs.reference"},
+        ]})
+        output = await run(node, {"inputs": {"reference": "INQ-2026-00482"}, "node_outputs": {}})
+        assert output["data"]["reference"] == "INQ-2026-00482"
+
+
+class TestStartConditionalFields:
+    @pytest.mark.asyncio
+    async def test_a_hidden_field_is_dropped_and_never_required(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "inquiry_type", "label": "Inquiry Type", "type": "enum",
+             "enum_values": ["technical", "existing_order"], "source": "inputs.inquiry_type"},
+            {
+                "name": "order_number", "label": "Order Number", "required": True,
+                "source": "inputs.order_number",
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "inquiry_type", "operator": "equals", "value": "existing_order"},
+                ]},
+            },
+        ]})
+        output = await run(node, {
+            "inputs": {"inquiry_type": "technical", "order_number": "SO-1"}, "node_outputs": {},
+        })
+        assert "order_number" not in output["data"]
+        assert "order_number" not in output["missing"]
+
+    @pytest.mark.asyncio
+    async def test_a_matching_condition_keeps_the_field_visible(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "inquiry_type", "label": "Inquiry Type", "type": "enum",
+             "enum_values": ["technical", "existing_order"], "source": "inputs.inquiry_type"},
+            {
+                "name": "order_number", "label": "Order Number", "required": False,
+                "source": "inputs.order_number",
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "inquiry_type", "operator": "equals", "value": "existing_order"},
+                ]},
+            },
+        ]})
+        output = await run(node, {
+            "inputs": {"inquiry_type": "existing_order", "order_number": "SO-1"}, "node_outputs": {},
+        })
+        assert output["data"]["order_number"] == "SO-1"
+
+    @pytest.mark.asyncio
+    async def test_required_when_adds_a_missing_field_only_if_the_condition_holds(self):
+        node = StartAgent("begin", {"fields": [
+            {"name": "inquiry_type", "label": "Inquiry Type", "type": "enum",
+             "enum_values": ["technical", "existing_order"], "source": "inputs.inquiry_type"},
+            {
+                "name": "order_number", "label": "Order Number", "required": False,
+                "source": "inputs.order_number",
+                "required_when": {"operator": "and", "conditions": [
+                    {"field": "inquiry_type", "operator": "equals", "value": "existing_order"},
+                ]},
+            },
+        ]})
+        blocked = await run(node, {"inputs": {"inquiry_type": "existing_order"}, "node_outputs": {}})
+        assert "order_number" in blocked["missing"]
+
+        fine = await run(node, {"inputs": {"inquiry_type": "technical"}, "node_outputs": {}})
+        assert "order_number" not in fine["missing"]
+
+
+class TestStartCustomerInquiryReferenceForm:
+    """End-to-end capstone: the §32 Customer Inquiry form built from the full
+    catalog together (radio + multi-select + conditional fields per request
+    type + a repeating group), run through StartAgent.run() exactly as a real
+    submission would arrive. Stands in for the plan's manual browser
+    verification pass, which this session had no way to actually drive."""
+
+    def _fields(self):
+        return [
+            {"name": "company_name", "label": "Company Name", "required": True,
+             "source": "inputs.company_name"},
+            {"name": "contact_name", "label": "Contact Name", "required": True,
+             "source": "inputs.contact_name"},
+            {"name": "email", "label": "Email", "format": "email", "required": True,
+             "source": "inputs.email"},
+            {"name": "phone", "label": "Phone", "format": "phone", "required": False,
+             "source": "inputs.phone"},
+            {"name": "request_types", "label": "Request Types", "type": "list", "item_type": "enum",
+             "item_enum_values": ["existing_order", "service", "rfq", "complaint"],
+             "widget": "multi_select", "required": True, "source": "inputs.request_types"},
+            {
+                "name": "order_number", "label": "Order Number", "required": False,
+                "source": "inputs.order_number",
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "existing_order"},
+                ]},
+                "required_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "existing_order"},
+                ]},
+            },
+            {
+                "name": "service_product", "label": "Product", "required": False,
+                "source": "inputs.service_product",
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "service"},
+                ]},
+            },
+            {
+                "name": "service_stopped", "label": "Has it stopped working?", "type": "boolean",
+                "required": False, "source": "inputs.service_stopped",
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "service"},
+                ]},
+            },
+            {
+                "name": "rfq_line_items", "label": "Requested Products", "type": "list", "item_type": "object",
+                "display": "table", "required": False, "source": "inputs.rfq_line_items",
+                "fields": [
+                    {"name": "product", "type": "string"},
+                    {"name": "quantity", "type": "integer"},
+                ],
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "rfq"},
+                ]},
+            },
+            {
+                "name": "complaint_details", "label": "Complaint Details", "type": "text", "required": False,
+                "source": "inputs.complaint_details",
+                "visible_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "complaint"},
+                ]},
+                "required_when": {"operator": "and", "conditions": [
+                    {"field": "request_types", "operator": "contains", "value": "complaint"},
+                ]},
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_rfq_submission_keeps_only_rfq_fields_and_types_the_line_items(self):
+        node = StartAgent("begin", {"fields": self._fields()})
+        line_items = [{"product": "Pump A", "quantity": 3}, {"product": "Pump B", "quantity": 1}]
+        output = await run(node, {
+            "inputs": {
+                "company_name": "Acme BV", "contact_name": "Jan de Vries",
+                "email": "jan@acme.example", "phone": "+31 6 1234 5678",
+                "request_types": ["rfq"], "rfq_line_items": line_items,
+                # Leftover values from a request type the customer un-toggled —
+                # must be dropped, not validated, not sent through.
+                "order_number": "should-not-appear", "complaint_details": "should-not-appear",
+            },
+            "node_outputs": {},
+        })
+        assert output["data"]["rfq_line_items"] == line_items
+        assert "order_number" not in output["data"]
+        assert "complaint_details" not in output["data"]
+        assert "order_number" not in output["missing"]
+        assert output["missing"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_complaint_submission_requires_complaint_details(self):
+        node = StartAgent("begin", {"fields": self._fields()})
+        blocked = await run(node, {
+            "inputs": {
+                "company_name": "Acme BV", "contact_name": "Jan de Vries",
+                "email": "jan@acme.example", "request_types": ["complaint"],
+            },
+            "node_outputs": {},
+        })
+        assert "complaint_details" in blocked["missing"]
+
+        ok = await run(node, {
+            "inputs": {
+                "company_name": "Acme BV", "contact_name": "Jan de Vries",
+                "email": "jan@acme.example", "request_types": ["complaint"],
+                "complaint_details": "The unit is leaking at the flange.",
+            },
+            "node_outputs": {},
+        })
+        assert ok["data"]["complaint_details"] == "The unit is leaking at the flange."
+        assert "complaint_details" not in ok["missing"]
+
+    @pytest.mark.asyncio
+    async def test_an_invalid_email_is_rejected_with_a_friendly_message(self):
+        node = StartAgent("begin", {"fields": self._fields()})
+        with pytest.raises(ValueError, match="valid email"):
+            await run(node, {
+                "inputs": {
+                    "company_name": "Acme BV", "contact_name": "Jan de Vries",
+                    "email": "not-an-email", "request_types": ["rfq"],
+                },
+                "node_outputs": {},
+            })
+
+    @pytest.mark.asyncio
+    async def test_existing_order_and_service_toggled_together_shows_both_field_sets(self):
+        node = StartAgent("begin", {"fields": self._fields()})
+        output = await run(node, {
+            "inputs": {
+                "company_name": "Acme BV", "contact_name": "Jan de Vries",
+                "email": "jan@acme.example",
+                "request_types": ["existing_order", "service"],
+                "order_number": "SO-2026-042", "service_product": "Model X Pump",
+                "service_stopped": True,
+            },
+            "node_outputs": {},
+        })
+        assert output["data"]["order_number"] == "SO-2026-042"
+        assert output["data"]["service_product"] == "Model X Pump"
+        assert output["data"]["service_stopped"] is True
+        assert "rfq_line_items" not in output["data"]
+        assert "complaint_details" not in output["data"]
+
+
+# ---------------------------------------------------------------------------
+# Preflight — Start field-list validation
+# ---------------------------------------------------------------------------
+
+_START_FIELDS_YAML = """
+name: test
+nodes:
+  - id: begin
+    type: StartAgent
+    config:
+      fields:
+{fields}
+  - id: finish
+    type: EndAgent
+    config: {{}}
+edges:
+  - from: begin
+    to: finish
+entry: begin
+exit: finish
+"""
+
+
+def test_duplicate_field_key_is_flagged():
+    yaml_text = _START_FIELDS_YAML.format(fields=(
+        "        - name: question\n          label: Question\n"
+        "        - name: question\n          label: Question Again\n"
+    ))
+    report = preflight_workflow_yaml(yaml_text)
+    codes = {issue.code for issue in report.issues}
+    assert "START_DUPLICATE_FIELD_KEY" in codes
+
+
+def test_duplicate_option_value_is_flagged():
+    yaml_text = _START_FIELDS_YAML.format(fields=(
+        "        - name: request_type\n          label: Request Type\n          type: enum\n"
+        "          enum_values: [rfq, rfq, service]\n"
+    ))
+    report = preflight_workflow_yaml(yaml_text)
+    codes = {issue.code for issue in report.issues}
+    assert "START_DUPLICATE_OPTION_VALUE" in codes
+
+
+def test_condition_referencing_an_unknown_field_is_flagged():
+    yaml_text = _START_FIELDS_YAML.format(fields=(
+        "        - name: order_number\n          label: Order Number\n"
+        "          visible_when:\n            operator: and\n            conditions:\n"
+        "              - field: nonexistent_field\n                operator: equals\n                value: x\n"
+    ))
+    report = preflight_workflow_yaml(yaml_text)
+    codes = {issue.code for issue in report.issues}
+    assert "START_UNKNOWN_CONDITION_FIELD_REFERENCE" in codes
+
+
+def test_condition_referencing_a_later_field_is_flagged():
+    yaml_text = _START_FIELDS_YAML.format(fields=(
+        "        - name: order_number\n          label: Order Number\n"
+        "          visible_when:\n            operator: and\n            conditions:\n"
+        "              - field: inquiry_type\n                operator: equals\n                value: existing_order\n"
+        "        - name: inquiry_type\n          label: Inquiry Type\n          type: enum\n"
+        "          enum_values: [existing_order]\n"
+    ))
+    report = preflight_workflow_yaml(yaml_text)
+    codes = {issue.code for issue in report.issues}
+    assert "START_UNKNOWN_CONDITION_FIELD_REFERENCE" in codes
+
+
+def test_a_condition_referencing_an_earlier_field_is_not_flagged():
+    yaml_text = _START_FIELDS_YAML.format(fields=(
+        "        - name: inquiry_type\n          label: Inquiry Type\n          type: enum\n"
+        "          enum_values: [existing_order, technical]\n"
+        "        - name: order_number\n          label: Order Number\n"
+        "          visible_when:\n            operator: and\n            conditions:\n"
+        "              - field: inquiry_type\n                operator: equals\n                value: existing_order\n"
+    ))
+    report = preflight_workflow_yaml(yaml_text)
+    codes = {issue.code for issue in report.issues}
+    assert "START_UNKNOWN_CONDITION_FIELD_REFERENCE" not in codes

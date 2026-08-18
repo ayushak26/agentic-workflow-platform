@@ -24,9 +24,12 @@ from pydantic import BaseModel, Field
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.nodes.workflow_input import (
+    FORM_ONLY_ATTRS,
     InputFieldBinding,
+    apply_conditional_fields,
     reject_values_outside_declared_shape,
     resolve_field_bindings,
+    validate_field_constraints,
 )
 from app.runtime.field_schema import FieldSpec, field_paths
 from app.runtime.rules import resolve_path
@@ -169,6 +172,11 @@ class StartAgent(NodeType):
             }
 
         data, missing = resolve_field_bindings(cfg.fields, cfg.sample, state)
+        data, missing = apply_conditional_fields(cfg.fields, data, missing)
+        # Business-friendly checks first, so a percentage/email/length problem
+        # surfaces with its own clear message rather than the generic
+        # shape-compiler's raw Pydantic error winning the race.
+        validate_field_constraints(cfg.fields, data)
         reject_values_outside_declared_shape(_as_field_specs(cfg.fields), data)
 
         context = dict(state)
@@ -189,8 +197,9 @@ class StartAgent(NodeType):
 def _as_field_specs(fields: list[InputFieldBinding]) -> list[FieldSpec]:
     return [
         FieldSpec.model_validate({
-            **field.model_dump(exclude={"source", "example", "label", "placeholder"}),
+            **field.model_dump(exclude=FORM_ONLY_ATTRS),
             "nullable": field.nullable or not field.required,
         })
         for field in fields
+        if field.kind != "info"
     ]

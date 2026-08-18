@@ -26,6 +26,8 @@ from app.llm.openrouter_catalog import is_openrouter_model_id
 from app.llm.registry import resolve_model
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
+from app.nodes.workflow_input import InputFieldBinding
+from app.runtime.rules import collect_condition_fields
 from app.runtime.schema import (
     DEFAULT_LLM_MODELS,
     EdgeSpec,
@@ -1187,6 +1189,101 @@ def _validate_start_end_edges(
                 )
 
 
+def _validate_start_fields(
+    spec: WorkflowSpec,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Validates one Start node's own field/file_field list. Mirrors
+    RouterAgent's duplicate-rule-name check (ROUTER_DUPLICATE_RULE,
+    _validate_router_edges below) and logic_preflight.py's
+    _resolve_reference nearest-match idiom. Numeric range, enum-needs-values,
+    list-needs-item-type, and unknown `type` are already enforced for free by
+    FieldSpec's own validators and closed Literal at node-construction time
+    (NODE_CONFIG_INVALID) — nothing new is needed for those.
+    """
+    for node in spec.nodes:
+        if node.type != "StartAgent":
+            continue
+        config = node.effective_config()
+        if config.get("mode") == "chatbot":
+            continue
+        try:
+            fields = [
+                InputFieldBinding.model_validate(item)
+                for item in (config.get("fields") or [])
+            ]
+        except Exception:
+            continue  # Already reported elsewhere as NODE_CONFIG_INVALID.
+        file_field_names = [
+            item.get("name")
+            for item in (config.get("file_fields") or [])
+            if item.get("name")
+        ]
+
+        all_names = [binding.name for binding in fields] + file_field_names
+        duplicate_names = sorted({
+            name for name in all_names if all_names.count(name) > 1
+        })
+        if duplicate_names:
+            _issue(
+                report,
+                "START_DUPLICATE_FIELD_KEY",
+                f"Start node {node.id!r} declares duplicate field key(s): "
+                f"{duplicate_names}.",
+                node_id=node.id,
+                suggestion="Give each field a unique key — a duplicate silently drops one value.",
+            )
+
+        for binding in fields:
+            option_values = binding.enum_values or binding.item_enum_values
+            if not option_values:
+                continue
+            duplicate_options = sorted({
+                value for value in option_values if option_values.count(value) > 1
+            })
+            if duplicate_options:
+                _issue(
+                    report,
+                    "START_DUPLICATE_OPTION_VALUE",
+                    f"Field {binding.name!r} on Start node {node.id!r} has "
+                    f"duplicate option value(s): {duplicate_options}.",
+                    node_id=node.id,
+                    suggestion="Each option's value must be unique.",
+                )
+
+        # A visible_when/required_when may only reference an earlier field in
+        # the same list — enforced here, not just by the Builder UI, which
+        # also makes a circular dependency structurally impossible: a field
+        # can never (even transitively) depend on one declared after it.
+        declared_so_far: list[str] = []
+        later_names = {binding.name for binding in fields}
+        for binding in fields:
+            for group in (binding.visible_when, binding.required_when):
+                if group is None:
+                    continue
+                for field_ref in collect_condition_fields(group):
+                    if field_ref in declared_so_far:
+                        continue
+                    suggestion = None
+                    matches = get_close_matches(field_ref, declared_so_far, n=1)
+                    if matches:
+                        suggestion = f"Did you mean {matches[0]!r}?"
+                    elif field_ref in later_names:
+                        suggestion = (
+                            f"{field_ref!r} is declared later in this form — a "
+                            "condition can only reference an earlier field."
+                        )
+                    _issue(
+                        report,
+                        "START_UNKNOWN_CONDITION_FIELD_REFERENCE",
+                        f"Field {binding.name!r} on Start node {node.id!r} has a "
+                        f"condition referencing unknown field {field_ref!r}.",
+                        node_id=node.id,
+                        suggestion=suggestion,
+                    )
+            declared_so_far.append(binding.name)
+
+
 def _validate_graph(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
@@ -1194,6 +1291,7 @@ def _validate_graph(
     before = len(report.issues)
     _validate_router_edges(spec, report)
     _validate_start_end_edges(spec, report)
+    _validate_start_fields(spec, report)
     forward, reverse = _adjacency(spec)
     entry = spec.entry or spec.nodes[0].id
     reachable = _reachable(entry, forward)
