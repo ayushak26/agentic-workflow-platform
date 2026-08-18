@@ -1,10 +1,20 @@
 import { useMemo, useState } from 'react';
 import { api } from '../../../../api/client';
 import { CopyButton } from '../../../../components/CopyButton';
+import { RagAnswerView, type RagRelevantContextItemView, type RagSourceView } from '../../../../components/rag/RagAnswerView';
 import { artifactLabel } from '../../file-artifact';
 import type { NodeStatus } from '../../cockpit-state';
 import { JsonTree } from '../JsonTree';
 import { classifyArtifact, readableOutput } from '../node-render';
+
+type RagAgentOutput = {
+  query?: string;
+  answer: string;
+  sources?: RagSourceView[];
+  relevant_context?: RagRelevantContextItemView[];
+  answering_model?: string;
+  resolved_answering_model?: string;
+};
 
 function download(text: string, filename: string) {
   const blob = new Blob([text], { type: 'text/plain' });
@@ -18,11 +28,13 @@ function download(text: string, filename: string) {
 
 export function OutputTab({
   nodeId,
+  typeName,
   status,
   output,
   streamingPreview,
 }: {
   nodeId: string;
+  typeName?: string;
   status: NodeStatus;
   output: unknown;
   streamingPreview?: string;
@@ -109,7 +121,16 @@ export function OutputTab({
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {isStructured ? (
+        {typeName === 'RAGAgent' && isStructured ? (
+          <RagAnswerView
+            query={(output as RagAgentOutput).query}
+            answer={(output as RagAgentOutput).answer}
+            sources={(output as RagAgentOutput).sources ?? []}
+            relevantContext={(output as RagAgentOutput).relevant_context ?? []}
+            configuredModel={(output as RagAgentOutput).answering_model}
+            resolvedModel={(output as RagAgentOutput).resolved_answering_model}
+          />
+        ) : isStructured ? (
           <JsonTree value={output} searchable />
         ) : (
           <pre className="text-xs bg-slate-50 border border-slate-200 rounded-md p-3 whitespace-pre-wrap">

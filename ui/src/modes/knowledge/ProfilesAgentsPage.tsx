@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { knowledgeApi, type ProfileVersion, type RAGAgentDefinition, type RAGQueryResponse } from '../../api/knowledge';
+import { RagAnswerView } from '../../components/rag/RagAnswerView';
 import { ErrorNotice, ResourceId, Status } from './shared';
 import { useCollection } from './collectionStore';
 
@@ -109,12 +110,16 @@ export function ProfilesAgentsPage() {
       <textarea className="ui-input min-h-16 w-full" value={testQuery} onChange={event => setTestQuery(event.target.value)} placeholder="Ask the RAG Agent a question…" />
       <div className="flex justify-end"><button type="button" className="ui-button ui-button--primary" disabled={testing || !testQuery.trim()} onClick={() => void runTest()}>{testing ? 'Running…' : 'Run test query'}</button></div>
       {response && <div className="space-y-3 rounded-lg border border-slate-200 p-4">
-        <p className="whitespace-pre-wrap text-sm">{response.answer}</p>
+        <RagAnswerView
+          query={response.query}
+          answer={response.answer}
+          sources={response.sources}
+          relevantContext={response.relevant_context}
+          configuredModel={response.configured_answering_model}
+          resolvedModel={String(response.generation?.model ?? '')}
+          modelLabel={modelId => models.find(m => m.name === modelId)?.display_name ?? modelId}
+        />
         <div className="flex flex-wrap gap-2 text-xs text-ink-500"><ResourceId value={response.retrieval_trace_id} /><span>{response.candidate_count} candidates · {response.context_count} in context</span></div>
-        {response.citations.length > 0 && <div>
-          <div className="text-[10px] uppercase text-ink-400">Citations (retrieved, not independently verified)</div>
-          <div className="mt-2 space-y-1">{response.citations.map(c => <div key={`${c.label}:${c.chunk_id}`} className="rounded border border-slate-100 p-2 text-xs"><b>[{c.label}]</b> {c.filename} {c.page ? `p.${c.page}` : ''} — {c.snippet}</div>)}</div>
-        </div>}
       </div>}
     </section>}
   </div>;

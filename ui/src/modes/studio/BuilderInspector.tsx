@@ -6,6 +6,7 @@ import type {
   WorkflowPreflightReport,
 } from '../../api/types';
 import { AboutPanel } from './builder/AboutPanel';
+import { ChatPreviewPanel } from './builder/ChatPreviewPanel';
 import { ConfigureTab, useAuthoringContext } from './builder/ConfigureTab';
 import { NodeTestPanel } from './builder/NodeTestPanel';
 import { OutputsPanel } from './builder/OutputsPanel';
@@ -41,6 +42,7 @@ export type BuilderInspectorTab =
   | 'outputs'
   | 'test'
   | 'simulate'
+  | 'chat_preview'
   | 'advanced'
   | 'checks';
 
@@ -51,6 +53,7 @@ const TABS: Array<{ id: BuilderInspectorTab; label: string }> = [
   { id: 'outputs', label: 'Outputs' },
   { id: 'test', label: 'Test' },
   { id: 'simulate', label: 'Simulate' },
+  { id: 'chat_preview', label: 'Chat Preview' },
   { id: 'advanced', label: 'Advanced' },
   { id: 'checks', label: 'Checks' },
 ];
@@ -132,7 +135,14 @@ export function BuilderInspector({
   // agree with the backend and with each other.
   const previewValues = useMemo(() => buildPreviewValues(nodeRunOutputs), [nodeRunOutputs]);
 
-  const { contract, emailConnections, operators, refetchEmailConnections } = useAuthoringContext(
+  const {
+    contract,
+    emailConnections,
+    integrationConnections,
+    operators,
+    refetchEmailConnections,
+    refetchIntegrationConnections,
+  } = useAuthoringContext(
     workflowYaml,
     selected?.id ?? null,
   );
@@ -153,6 +163,13 @@ export function BuilderInspector({
     : [];
 
   const businessLabel = selected?.data.experience?.display_name ?? '';
+
+  // Chat Preview only makes sense once there's a chatbot-shaped entry point
+  // to actually try — hidden rather than shown-but-useless otherwise.
+  const hasChatbotStart = workflow.nodes.some(
+    node => node.type === 'StartAgent' && (node.config?.mode ?? 'input_form') === 'chatbot',
+  );
+  const visibleTabs = TABS.filter(item => item.id !== 'chat_preview' || hasChatbotStart);
 
   return (
     <div className="flex h-full flex-col">
@@ -209,7 +226,7 @@ export function BuilderInspector({
             className="flex flex-wrap border-b border-slate-200"
             role="tablist"
           >
-            {TABS.map(item => (
+            {visibleTabs.map(item => (
               <button
                 aria-selected={tab === item.id}
                 className={`flex-1 whitespace-nowrap px-2 py-2 text-[11px] font-semibold transition ${
@@ -251,11 +268,13 @@ export function BuilderInspector({
                 <ConfigureTab
                   contract={contract}
                   emailConnections={emailConnections}
+                  integrationConnections={integrationConnections}
                   llmModels={llmModels}
                   manifest={manifest}
                   onConfigChange={onConfigChange}
                   onIdChange={onIdChange}
                   refetchEmailConnections={refetchEmailConnections}
+                  refetchIntegrationConnections={refetchIntegrationConnections}
                   onInputsChange={onInputsChange}
                   operators={operators}
                   selected={selected}
@@ -308,6 +327,10 @@ export function BuilderInspector({
                 workflow={workflow}
                 workflowYaml={workflowYaml}
               />
+            )}
+
+            {tab === 'chat_preview' && (
+              <ChatPreviewPanel workflow={workflow} workflowYaml={workflowYaml} />
             )}
 
             {tab === 'advanced' && (

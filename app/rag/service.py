@@ -5,6 +5,8 @@ import re
 import time
 from typing import Any
 
+import json
+
 from app.knowledge.models import (
     GenerationProfileConfig,
     ProfileType,
@@ -13,12 +15,61 @@ from app.knowledge.models import (
     RetrievalRoutingProfileConfig,
 )
 from app.knowledge.repository import KnowledgeRepository
+from app.llm.model_catalog import AUTO_MODEL
 from app.observability.cost_ledger import CostLedger
 from app.rag.models import RAGCitation, RAGQueryResponse
 from app.retrieval.filters import coerce_metadata_filter_group
 from app.retrieval.models import MetadataFilterGroup, RetrievalFilters, RetrievalQuery
 
 CITATION_RE = re.compile(r"\[(\d+)\]")
+
+
+def _build_sources(
+    citations: list[RAGCitation], chunk_by_id: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Group citations into one entry per source document (§37 dedup shape).
+
+    Forwards whatever provenance a chunk's metadata dict already carries
+    (e.g. source_uri) verbatim — no per-connector field mapping here, so a
+    future knowledge source type needs no change in this function.
+    """
+    grouped: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for citation in citations:
+        key = citation.document_id or citation.filename
+        if key not in grouped:
+            order.append(key)
+            chunk = chunk_by_id.get(citation.chunk_id)
+            grouped[key] = {
+                "file_name": citation.filename,
+                "document_id": citation.document_id,
+                "source_id": citation.source_id,
+                "source_version_id": citation.source_version_id,
+                "metadata": dict(chunk.metadata) if chunk is not None else {},
+                "locations": [],
+            }
+        grouped[key]["locations"].append(
+            {"page": citation.page, "section": citation.section}
+        )
+    return [grouped[key] for key in order]
+
+
+def _build_relevant_context(chunks: list[Any]) -> list[dict[str, Any]]:
+    """One entry per retrieved chunk actually used to ground the answer."""
+    result = []
+    for chunk in chunks:
+        content = chunk.compressed_text or chunk.context_content or chunk.text
+        score = chunk.rerank_score if chunk.rerank_score is not None else chunk.hybrid_score
+        result.append(
+            {
+                "content": content,
+                "score": score,
+                "file_name": chunk.doc_title,
+                "page_no": chunk.page,
+                "section": chunk.section,
+            }
+        )
+    return result
 
 
 class RAGService:
@@ -48,8 +99,9 @@ class RAGService:
             if deterministic[0] > 0:
                 return deterministic[1], "deterministic_keyword"
         if config.mode in {"ai", "hybrid"}:
-            response = await llm.complete(
-                model="auto",
+            router_llm = llm.ensure_routed(node_type="RAGAgent") if hasattr(llm, "ensure_routed") else llm
+            response = await router_llm.complete(
+                model=AUTO_MODEL,
                 system=(
                     "Choose exactly one knowledge route for the question. Return only its "
                     "route_id. Routes: "
@@ -81,6 +133,7 @@ class RAGService:
         rag_agent_id: str,
         query: str,
         runtime_filters: dict[str, Any] | MetadataFilterGroup | None = None,
+        runtime_context: dict[str, Any] | None = None,
         llm: Any | None = None,
     ) -> RAGQueryResponse:
         agent = await self.repository.get_rag_agent(owner_scope_id, rag_agent_id)
@@ -154,10 +207,19 @@ class RAGService:
             else:
                 answer = "No supporting information was found in the selected knowledge collection."
         else:
-            response = await gateway.complete(
+            gen_gateway = (
+                gateway.ensure_routed(node_type="RAGAgent")
+                if generation.model == AUTO_MODEL and hasattr(gateway, "ensure_routed")
+                else gateway
+            )
+            user_prompt = f"QUESTION:\n{query}\n\n"
+            if runtime_context:
+                user_prompt += f"RUNTIME CONTEXT:\n{json.dumps(runtime_context)}\n\n"
+            user_prompt += f"SOURCES:\n{retrieval.final_context}"
+            response = await gen_gateway.complete(
                 model=generation.model,
                 system=generation.instruction,
-                user=f"QUESTION:\n{query}\n\nSOURCES:\n{retrieval.final_context}",
+                user=user_prompt,
                 temperature=generation.temperature,
                 stage="generation",
             )
@@ -243,6 +305,7 @@ class RAGService:
                     }
                 )
             await self.repository.save_trace(trace)
+        chunk_by_id = {chunk.chunk_id: chunk for chunk in retrieval.chunks}
         return RAGQueryResponse(
             request_id=retrieval.retrieval_request_id or "",
             rag_agent_id=agent.rag_agent_id,
@@ -252,8 +315,12 @@ class RAGService:
             retrieval_profile_version=retrieval_profile.version,
             generation_profile_id=generation_profile.profile_id,
             generation_profile_version=generation_profile.version,
+            query=query,
             answer=answer,
             citations=citations,
+            sources=_build_sources(citations, chunk_by_id),
+            relevant_context=_build_relevant_context(retrieval.chunks),
+            configured_answering_model=generation.model,
             retrieved_chunks=[chunk.model_dump(mode="json") for chunk in retrieval.chunks],
             final_context=retrieval.final_context,
             retrieval_trace_id=retrieval.retrieval_request_id or "",

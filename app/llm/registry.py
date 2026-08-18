@@ -660,6 +660,31 @@ class RegistryLLMGateway(LLMGateway):
         clone._call_seq = 0
         return clone
 
+    def ensure_routed(self, *, node_type: str | None = None) -> "RegistryLLMGateway":
+        """Return a gateway guaranteed to resolve AUTO_MODEL via ModelRouter.
+
+        _complete_impl only takes the deterministic-routing path when
+        event_bus or allowed_models is bound (see the fast-path check there).
+        A direct caller outside the node runtime — RAGService querying a
+        saved Generation Profile, a script — gets an unbound gateway and
+        silently falls back to a fixed provider-availability order instead of
+        real task-aware selection. Call this immediately before a completion
+        whose model may be "auto" to get the same routing a workflow node
+        already gets from the compiler. Already-bound gateways (event_bus or
+        allowed_models set) are returned unchanged — this never narrows a
+        workflow node's own allowed_models boundary.
+        """
+        if self._event_bus is not None or self._allowed_models is not None:
+            return self
+        return self.with_context(
+            run_id=self._run_id or "unbound",
+            session_id=self._session_id or "unbound",
+            node_id=self._node_id or "unbound",
+            ledger=self._ledger,
+            allowed_models=list(MODEL_PROFILE_BY_NAME.keys()),
+            node_type=node_type,
+        )
+
     # ---- Confidential entity protection (Phase 1) --------------------------
     # Tokenization runs OUTSIDE _complete_impl/_complete_structured_impl/
     # _chat_with_tools_impl — i.e. before the semantic cache is ever touched

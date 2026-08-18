@@ -144,6 +144,14 @@ export const WorkflowNode = memo(function WorkflowNode({
             {mcpOperation}
           </span>
         )}
+        {data.connectionIssue === 'reauth_required' && (
+          <span
+            className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-800"
+            title="This connection's access has expired or was revoked — reconnect it in the Configure tab."
+          >
+            Reauth
+          </span>
+        )}
         {typeof requestedModel === 'string' && requestedModel && (
           <span
             className={`inline-flex rounded-full px-2 py-0.5 text-[9px] ${

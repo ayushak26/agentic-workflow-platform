@@ -27,6 +27,7 @@ import 'reactflow/dist/style.css';
 
 import { api } from '../../api/client';
 import type {
+  IntegrationConnectionInfo,
   LLMModelInfo,
   NodeTypeManifest,
   WorkflowDraft,
@@ -198,6 +199,12 @@ export function Builder() {
   // without opening it — the classification lives on the server and in the
   // deployment's policy, so it cannot be derived in the browser.
   const [mcpOperations, setMcpOperations] = useState<Map<string, string>>(new Map());
+  // Whether any IntegrationAgent/EmailAgent connection on the canvas needs
+  // reauthorization — live account state, fetched independently of the
+  // node-type manifest (same reasoning as mcpOperations above: canvas badges
+  // and the config panel's own connection list are two different consumers
+  // of the same backend data, each fetching what it needs).
+  const [integrationConnections, setIntegrationConnections] = useState<IntegrationConnectionInfo[]>([]);
   // Last real output per node, from either single-step testing or a full
   // simulation run — lifted here (not into BuilderInspector) because the
   // inspector panel unmounts on close, which would otherwise throw a step's
@@ -996,6 +1003,12 @@ export function Builder() {
     return () => { cancelled = true; };
   }, [mcpServerIds]);
 
+  useEffect(() => {
+    api.integrationConnections()
+      .then(result => setIntegrationConnections(result.connections))
+      .catch(() => setIntegrationConnections([]));
+  }, []);
+
   // Everything the canvas knows about a step that the YAML does not: issue
   // state, execution kind, discovered MCP operation, simulation result. Kept
   // separate from the purely visual pass below so the image export can render
@@ -1013,6 +1026,10 @@ export function Builder() {
             `${String(node.data.config.server_id ?? '')}:${String(node.data.config.tool ?? '')}`,
           )
         : undefined,
+      connectionIssue: node.data.typeName === 'IntegrationAgent'
+        && integrationConnections.find(item => item.id === node.data.config.connection)?.needs_reauth
+        ? ('reauth_required' as const)
+        : undefined,
       simulationState: simulationWaiting.has(node.id)
         ? ('waiting' as const)
         : simulationPath.has(node.id)
@@ -1022,6 +1039,7 @@ export function Builder() {
   })), [
     edges,
     executionKinds,
+    integrationConnections,
     issueNodes,
     mcpOperations,
     nodes,

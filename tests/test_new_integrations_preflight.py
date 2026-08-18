@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.config import Settings
+from app.integrations.files.base import IntegrationConnection
+from app.integrations.files.service import IntegrationService
 from app.runtime.preflight import preflight_workflow_for_run
 from app.tools.image_io import OpenAIImageGenerationService
 from app.tools.vision_io import KimiVisionService
@@ -46,6 +48,17 @@ nodes:
     config:
       prompt: a diagram of a circular economy
       backend: disabled
+"""
+
+INTEGRATION_WORKFLOW = """
+name: integration test
+nodes:
+  - id: browse
+    type: IntegrationAgent
+    config:
+      provider: google_drive
+      connection: shared_drive
+      operation: list_folder
 """
 
 KIMI_VISION_WORKFLOW = """
@@ -113,6 +126,41 @@ async def test_image_generation_disabled_backend_needs_no_credentials():
         IMAGE_GENERATION_DISABLED_WORKFLOW,
         provided_inputs={},
         services={},
+        require_run_history=False,
+    )
+    assert report.valid, [i.message for i in report.errors]
+
+
+@pytest.mark.asyncio
+async def test_integration_agent_blocked_without_a_matching_connection():
+    service = IntegrationService(providers={}, connections={})
+    report = await preflight_workflow_for_run(
+        INTEGRATION_WORKFLOW,
+        provided_inputs={},
+        services={"files_integration": service},
+        require_run_history=False,
+    )
+    assert report.valid is False
+    assert any(
+        issue.code == "INTEGRATION_CONNECTION_UNAVAILABLE"
+        for issue in report.errors
+    )
+
+
+@pytest.mark.asyncio
+async def test_integration_agent_passes_once_the_connection_is_configured():
+    service = IntegrationService(
+        providers={},
+        connections={
+            "shared_drive": IntegrationConnection(
+                id="shared_drive", provider="google_drive", address="team@example.com"
+            )
+        },
+    )
+    report = await preflight_workflow_for_run(
+        INTEGRATION_WORKFLOW,
+        provided_inputs={},
+        services={"files_integration": service, "object_store": _working_object_store()},
         require_run_history=False,
     )
     assert report.valid, [i.message for i in report.errors]

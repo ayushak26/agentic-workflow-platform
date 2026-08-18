@@ -1139,12 +1139,61 @@ def _validate_multiroute_andjoin(
         )
 
 
+def _validate_start_end_edges(
+    spec: WorkflowSpec,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Start represents the beginning of execution and End its terminus —
+    enforce that structurally rather than treating them as decorative.
+    Legacy workflows with neither node type are unaffected (no Start/End
+    present means nothing here can fire)."""
+
+    start_ids = [node.id for node in spec.nodes if node.type == "StartAgent"]
+    end_ids = {node.id for node in spec.nodes if node.type == "EndAgent"}
+
+    if len(start_ids) > 1:
+        _issue(
+            report,
+            "MULTIPLE_START_NODES",
+            f"Workflow has {len(start_ids)} Start nodes; prefer exactly one so "
+            "execution stays easy to follow.",
+            severity=PreflightSeverity.WARNING,
+            suggestion="Combine into a single Start node, or branch immediately after it.",
+        )
+
+    start_id_set = set(start_ids)
+    for index, edge in enumerate(spec.edges):
+        edge_path = f"edges.{index}"
+        if edge.from_ in end_ids:
+            _issue(
+                report,
+                "END_HAS_OUTGOING_EDGE",
+                f"End node {edge.from_!r} has an outgoing edge; reaching End "
+                "should complete that execution path.",
+                path=edge_path,
+                node_id=edge.from_,
+                suggestion="Remove the edge, or route to a step before a separate End node instead.",
+            )
+        for target in _edge_targets(edge):
+            if target in start_id_set:
+                _issue(
+                    report,
+                    "START_HAS_INCOMING_EDGE",
+                    f"Start node {target!r} has an incoming edge from "
+                    f"{edge.from_!r}; Start must have no incoming connections.",
+                    path=edge_path,
+                    node_id=target,
+                    suggestion="Remove the edge — Start represents the beginning of execution.",
+                )
+
+
 def _validate_graph(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
 ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
     before = len(report.issues)
     _validate_router_edges(spec, report)
+    _validate_start_end_edges(spec, report)
     forward, reverse = _adjacency(spec)
     entry = spec.entry or spec.nodes[0].id
     reachable = _reachable(entry, forward)
@@ -2084,6 +2133,10 @@ async def _probe_services(
                     path=f"nodes.{node.id}.config.tool",
                 )
 
+    files_integration = services.get("files_integration")
+    if "files_integration" in required and files_integration is not None:
+        _probe_integration_nodes(spec, files_integration, report)
+
     web_search = services.get("web_search")
     if "web_search" in required and web_search is not None:
         _probe_web_search_nodes(spec, web_search, report)
@@ -2111,6 +2164,43 @@ async def _probe_services(
         "required_services",
         before,
         f"{len(required)} required service(s) checked without an LLM call.",
+    )
+
+
+def _probe_integration_nodes(
+    spec: WorkflowSpec,
+    service: Any,
+    report: WorkflowPreflightReport,
+) -> None:
+    """Zero-token: checks the referenced connection exists on the service —
+    no provider HTTP call, just a dict lookup. This is what makes a missing
+    Google Drive/OneDrive connection show up as a canvas issue for free,
+    exactly like EmailAgent's missing-connection case already does."""
+
+    before = len(report.issues)
+    for node in spec.nodes:
+        if node.type != "IntegrationAgent":
+            continue
+        connection_id = node.effective_config().get("connection")
+        if not connection_id or connection_id in service.connections:
+            continue
+        _issue(
+            report,
+            "INTEGRATION_CONNECTION_UNAVAILABLE",
+            f"IntegrationAgent {node.id!r} references connection "
+            f"{connection_id!r}, which is not configured.",
+            node_id=node.id,
+            path=f"nodes.{node.id}.config.connection",
+            suggestion=(
+                "Connect the provider from this node's configuration panel, "
+                "or fix the connection id."
+            ),
+        )
+    _add_check(
+        report,
+        "integration_connection",
+        before,
+        "Integration connection availability checked without a live request.",
     )
 
 

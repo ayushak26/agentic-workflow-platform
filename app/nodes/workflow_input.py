@@ -66,6 +66,14 @@ class InputFieldBinding(FieldSpec):
     # A workflow input is opt-in by default — unlike an AI-produced field,
     # nothing guarantees the caller supplied it.
     required: bool = False
+    #: Human-facing text shown on the field ("Customer Question") — kept
+    #: separate from `name` (the stable id downstream references, e.g.
+    #: "customer_question") so renaming the label never breaks a mapping.
+    #: Lives here, not on the shared FieldSpec, since an AI-produced output
+    #: field has no equivalent "what a human sees on a form" concept.
+    label: str = ""
+    #: Shown as the form field's placeholder text (input_form Start fields only).
+    placeholder: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -116,7 +124,7 @@ class WorkflowInputConfig(BaseModel):
         """
         return [
             FieldSpec.model_validate({
-                **binding.model_dump(exclude={"source", "example"}),
+                **binding.model_dump(exclude={"source", "example", "label", "placeholder"}),
                 "nullable": binding.nullable or not binding.required,
             })
             for binding in self.fields
@@ -197,22 +205,8 @@ class WorkflowInputAgent(NodeType):
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = WorkflowInputConfig(**resolved_config)
-        context = dict(state)
-        data: dict[str, Any] = {}
-        missing: list[str] = []
-
-        for binding in cfg.fields:
-            value = resolve_path(context, binding.resolved_source())
-            if value is None and binding.name in cfg.sample:
-                # The configured sample is a fallback, not an override: a real
-                # value always wins. This is what lets a half-built workflow run
-                # end-to-end in the Builder before its inputs are wired up.
-                value = cfg.sample[binding.name]
-            if value is None and binding.required:
-                missing.append(binding.name)
-            data[binding.name] = value
-
-        _reject_values_outside_declared_shape(cfg, data)
+        data, missing = resolve_field_bindings(cfg.fields, cfg.sample, state)
+        reject_values_outside_declared_shape(cfg.as_field_specs(), data)
 
         return {
             "data": data,
@@ -221,8 +215,35 @@ class WorkflowInputAgent(NodeType):
         }
 
 
-def _reject_values_outside_declared_shape(
-    cfg: WorkflowInputConfig, data: dict[str, Any]
+def resolve_field_bindings(
+    bindings: list[InputFieldBinding],
+    sample: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Resolve each declared field's source path against workflow state.
+
+    Shared by WorkflowInputAgent and StartAgent (its successor, app/nodes/start.py)
+    so both entry primitives resolve fields identically — one place to fix,
+    not two copies to keep in sync.
+    """
+    context = dict(state)
+    data: dict[str, Any] = {}
+    missing: list[str] = []
+    for binding in bindings:
+        value = resolve_path(context, binding.resolved_source())
+        if value is None and binding.name in sample:
+            # The configured sample is a fallback, not an override: a real
+            # value always wins. This is what lets a half-built workflow run
+            # end-to-end in the Builder before its inputs are wired up.
+            value = sample[binding.name]
+        if value is None and binding.required:
+            missing.append(binding.name)
+        data[binding.name] = value
+    return data, missing
+
+
+def reject_values_outside_declared_shape(
+    specs: list[FieldSpec], data: dict[str, Any]
 ) -> None:
     """Validate what actually arrived against the declared shape before any
     downstream node can read it — e.g. a `List<Enum>` field given a value
@@ -236,15 +257,15 @@ def _reject_values_outside_declared_shape(
     present = {name: value for name, value in data.items() if value is not None}
     if not present:
         return
-    specs = [spec for spec in cfg.as_field_specs() if spec.name in present]
-    if not specs:
+    present_specs = [spec for spec in specs if spec.name in present]
+    if not present_specs:
         return
     # Required/nullable are irrelevant here — presence and required-ness are
     # already handled above via `missing`; only the shape of what's actually
     # present is being checked.
     strict_specs = [
         spec.model_copy(update={"required": True, "nullable": False})
-        for spec in specs
+        for spec in present_specs
     ]
     model = build_response_model(strict_specs, model_name="WorkflowInputValues")
     try:

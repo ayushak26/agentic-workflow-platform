@@ -47,6 +47,15 @@ const CONFIGURE_TAB_OWNED_FIELDS: Record<string, string[]> = {
   RouterAgent: ['mode'],
   AITaskAgent: ['task', 'model'],
   EmailAgent: ['connection', 'operation'],
+  // model/generation_prompt are legacy raw-retrieval knobs, not shown anywhere
+  // for the saved-agent flow this node now leads with — see RAGAgentConfig.tsx.
+  RAGAgent: ['rag_agent_id', 'model', 'generation_prompt'],
+  // StartAgent/EndAgent's fields/outputs are structured rows (FieldSpec/
+  // EndOutputField lists), not free-typed strings — they don't pass
+  // acceptsText() anyway, but title/description/message are string-typed and
+  // already have their own guided editor in StartAgentConfig/EndAgentConfig.
+  StartAgent: ['title', 'description', 'chatbot_name', 'welcome_message', 'message_placeholder'],
+  EndAgent: ['title', 'message', 'chat_message', 'outcome', 'route_to', 'route_to_label', 'sources'],
 };
 
 function humanLabel(schema: PropertySchema, name: string): string {

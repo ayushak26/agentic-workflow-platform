@@ -28,6 +28,9 @@ const types = [
   manifest(),
   manifest({ type_name: 'AITaskAgent', category: 'Core Building Blocks', description: 'Deprecated.' }),
   manifest({ type_name: 'RouterAgent', category: 'Core Building Blocks' }),
+  manifest({ type_name: 'StartAgent', category: 'Core Building Blocks', description: 'How this workflow begins.' }),
+  manifest({ type_name: 'EndAgent', category: 'Core Building Blocks', description: 'What this workflow returns.' }),
+  manifest({ type_name: 'WorkflowInputAgent', category: 'Core Building Blocks', description: 'Deprecated.' }),
 ];
 
 describe('NodePalette', () => {
@@ -42,5 +45,16 @@ describe('NodePalette', () => {
     render(<NodePalette onAdd={vi.fn()} types={types} />);
     await user.type(screen.getByLabelText(/search node types/i), 'task');
     expect(screen.queryByText('AI Task')).not.toBeInTheDocument();
+  });
+
+  it('lists Start and End as business-language labels', () => {
+    render(<NodePalette onAdd={vi.fn()} types={types} />);
+    expect(screen.getByText('Start')).toBeInTheDocument();
+    expect(screen.getByText('End')).toBeInTheDocument();
+  });
+
+  it('never lists WorkflowInputAgent, deprecated in favor of Start', () => {
+    render(<NodePalette onAdd={vi.fn()} types={types} />);
+    expect(screen.queryByText('Input')).not.toBeInTheDocument();
   });
 });

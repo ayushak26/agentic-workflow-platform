@@ -1,0 +1,2347 @@
+name: pump_with_database
+description: ''
+version: '1.0'
+use_case: generic
+inputs:
+  Source:
+    type: text
+    required: false
+    description: Email, or Message or Contact Form
+  Subject:
+    type: text
+    required: false
+    description: The incoming customer enquiry
+  input_1:
+    type: text
+    required: false
+    description: ''
+  input_2:
+    type: text
+    required: false
+    description: ''
+  input_3:
+    type: text
+    required: false
+    description: ''
+  input_4:
+    type: text
+    required: false
+    description: ''
+static_variables: []
+nodes:
+  - id: understanding_message
+    type: TransformAgent
+    config:
+      model: claude-sonnet-4-5
+      prompt_template: null
+      input_fields:
+        - name: Subject
+          description: The incoming customer enquiry
+          type: string
+          value: '{{inputs.Subject}}'
+        - name: Source
+          description: Email, or Message or Contact Form
+          type: string
+          value: '{{inputs.Source}}'
+      instructions: >-
+        Use the incoming customer enquiry in Subject and, where relevant, its channel in Source.
+        Source indicates whether the enquiry came by Email, Message, or Contact Form; do not use the
+        channel to invent information or change the customer’s requested outcome.
+
+
+        Return exactly four logical outputs:
+
+
+        - Category
+
+        - Customer Problem
+
+        - Company Action Item(s)
+
+        - References
+
+
+        Return valid JSON only, using this structure:
+
+
+        {
+          "category": "",
+          "customer_problem": "",
+          "company_action_items": [],
+          "references": {}
+        }
+
+
+        Category
+
+
+        Select exactly one category from this controlled list:
+
+
+        - new_pump_quote_or_rfq
+
+        - existing_quote_enquiry
+
+        - product_selection_or_application
+
+        - product_information
+
+        - new_order_or_purchase
+
+        - existing_order_enquiry
+
+        - delivery_or_shipment_enquiry
+
+        - delivery_problem
+
+        - technical_support
+
+        - service_or_repair_request
+
+        - spare_parts_request
+
+        - replacement_pump_request
+
+        - warranty_enquiry
+
+        - invoice_or_billing_enquiry
+
+        - payment_or_credit_enquiry
+
+        - product_quality_issue
+
+        - return_request
+
+        - complaint
+
+        - contract_or_commercial_terms
+
+        - customer_account_or_master_data
+
+        - general_information
+
+        - unknown
+
+
+        Do not create new category names. Use unknown when the message cannot reasonably be matched
+        to one controlled category.
+
+
+        Choose the category that best describes the customer’s overall situation, not the department
+        or role that should handle it. If several situations appear, use the category representing
+        the main customer problem; use the more specific problem category when one clearly applies.
+        For example, a leaking pump with a request to inspect it is service_or_repair_request, even
+        if the customer also asks whether it is covered by warranty. Use warranty_enquiry when
+        warranty status or coverage is the main subject and no more specific service or repair
+        request is central.
+
+
+        Customer Problem
+
+
+        Describe what is happening to the customer in short, simple, factual business language.
+        State the customer’s need, issue, or request without adding assumptions.
+
+
+        Examples:
+
+
+        - The customer's Dura 35 pump is leaking again.
+
+        - The customer's shipment has not arrived.
+
+        - The customer needs a pump for a hydrochloric acid application.
+
+
+        Do not describe internal routing, departments, roles, or decisions about who should perform
+        the work.
+
+
+        Company Action Item(s)
+
+
+        Identify every distinct action the customer expects the company to perform. Use only these
+        controlled values:
+
+
+        - create_quote
+
+        - revise_quote
+
+        - select_pump
+
+        - provide_product_information
+
+        - check_order_status
+
+        - check_delivery_status
+
+        - expedite_delivery
+
+        - diagnose_problem
+
+        - schedule_service_visit
+
+        - check_warranty
+
+        - investigate_invoice
+
+        - send_invoice_copy
+
+        - identify_spare_part
+
+        - register_complaint
+
+        - manual_review
+
+
+        A message may contain multiple action items. List each applicable action once. Do not create
+        new action names or determine which department should perform an action.
+
+
+        Use these distinctions when they apply:
+
+
+        - Use create_quote for a new quotation or RFQ, including when pump selection is also
+        requested.
+
+        - Use revise_quote when the customer asks to change or update an existing quotation.
+
+        - Use select_pump when the customer needs help choosing a pump for an application.
+
+        - Use provide_product_information for a request for product details without a clear request
+        to select a pump.
+
+        - Use check_order_status for the status of an order.
+
+        - Use check_delivery_status for the status or expected arrival of a shipment or delivery.
+
+        - Use expedite_delivery when the customer asks the company to speed up or prioritize a
+        delivery.
+
+        - Use diagnose_problem when the customer asks what may be wrong with a product or system.
+
+        - Use schedule_service_visit when the customer asks for someone to inspect, repair, or visit
+        the site.
+
+        - Use check_warranty when the customer asks whether a product or problem is covered by
+        warranty.
+
+        - Use investigate_invoice for a disputed, incorrect, or unclear invoice.
+
+        - Use send_invoice_copy when the customer asks for a copy of an invoice.
+
+        - Use identify_spare_part when the customer needs help identifying a spare or replacement
+        part.
+
+        - Use register_complaint when the customer is making a complaint and expects it to be
+        formally recorded.
+
+        - Use manual_review when the requested work cannot be mapped to any other controlled action.
+
+
+        If the customer asks for work that cannot be mapped to one of these actions, use
+        manual_review rather than inventing an action.
+
+
+        Examples:
+
+
+        Customer:
+
+        "Our pump is leaking. Can you check the warranty and send someone to inspect it?"
+
+
+        Company Action Items:
+
+        - check_warranty
+
+        - schedule_service_visit
+
+
+        Customer:
+
+        "We need a pump for hydrochloric acid and would like a quotation."
+
+
+        Company Action Items:
+
+        - select_pump
+
+        - create_quote
+
+
+        References
+
+
+        Extract useful business references and technical specifications explicitly provided by the
+        customer. References may later be used for CRM, ERP, product, service, or other database
+        lookups.
+
+
+        Include only references actually found in the customer enquiry. Do not guess, infer
+        unsupported values, calculate engineering values, or add missing technical specifications.
+
+
+        Business references may include:
+
+
+        - customer_name
+
+        - company_name
+
+        - contact_name
+
+        - product_name
+
+        - pump_model
+
+        - product_family
+
+        - serial_number
+
+        - order_number
+
+        - purchase_order_number
+
+        - quotation_number
+
+        - invoice_number
+
+        - shipment_number
+
+        - service_case_number
+
+        - contract_number
+
+        - site_or_location
+
+        - quantity
+
+
+        Technical specifications must also be included in references when explicitly provided.
+        Relevant fields include:
+
+
+        - fluid
+
+        - chemical
+
+        - flow_rate
+
+        - pressure
+
+        - temperature
+
+        - viscosity
+
+        - density
+
+        - required_head
+
+        - suction_pressure
+
+        - discharge_pressure
+
+        - differential_pressure
+
+        - solids_content
+
+        - particle_size
+
+        - pipe_size
+
+        - connection_size
+
+        - connection_type
+
+        - motor_power
+
+        - motor_speed
+
+        - voltage
+
+        - frequency
+
+        - pump_speed
+
+        - required_capacity
+
+        - operating_hours
+
+        - duty_cycle
+
+        - material_requirement
+
+        - seal_requirement
+
+        - hose_requirement
+
+        - impeller_requirement
+
+        - hazardous_area_requirement
+
+        - atex_requirement
+
+        - installation_type
+
+        - indoor_or_outdoor
+
+        - existing_pump_model
+
+        - existing_pump_manufacturer
+
+        - existing_pump_performance
+
+
+        You may use a descriptive technical field name when the customer provides an important
+        technical specification that does not exactly match these examples. Preserve the customer’s
+        stated value and units where available. If a value is described as approximate, current,
+        expected, required, or normal, reflect that distinction in the field name or value rather
+        than presenting it as a different fact.
+
+
+        Example 1 — New Pump RFQ
+
+
+        Customer Message:
+
+        Please quote four pumps suitable for hydrochloric acid at 60°C.
+
+        We need approximately 20 m3/h at 5 bar.
+
+
+        Output:
+
+        {
+          "category": "new_pump_quote_or_rfq",
+          "customer_problem": "The customer needs four pumps for a hydrochloric acid application.",
+          "company_action_items": [
+            "select_pump",
+            "create_quote"
+          ],
+          "references": {
+            "quantity": 4,
+            "technical_specifications": {
+              "fluid": "hydrochloric acid",
+              "temperature": "60°C",
+              "flow_rate": "20 m3/h",
+              "pressure": "5 bar"
+            }
+          }
+        }
+
+
+        Example 2 — Delivery Enquiry
+
+
+        Customer Message:
+
+        PO 45882 still hasn't arrived.
+
+        Can you tell me when it will be delivered?
+
+
+        Output:
+
+        {
+          "category": "delivery_or_shipment_enquiry",
+          "customer_problem": "The customer's delivery has not arrived.",
+          "company_action_items": [
+            "check_delivery_status"
+          ],
+          "references": {
+            "purchase_order_number": "45882"
+          }
+        }
+
+
+        Example 3 — Technical Support
+
+
+        Customer Message:
+
+        Our Dura 35, serial D35-8821, is only producing 12 m3/h.
+
+        It normally operates at around 20 m3/h and 4 bar.
+
+        The fluid is sodium hydroxide at approximately 50°C.
+
+        Can you check what may be wrong?
+
+
+        Output:
+
+        {
+          "category": "technical_support",
+          "customer_problem": "The customer's Dura 35 pump is producing significantly less flow than expected.",
+          "company_action_items": [
+            "diagnose_problem"
+          ],
+          "references": {
+            "pump_model": "Dura 35",
+            "serial_number": "D35-8821",
+            "technical_specifications": {
+              "fluid": "sodium hydroxide",
+              "temperature": "50°C",
+              "current_flow_rate": "12 m3/h",
+              "expected_flow_rate": "20 m3/h",
+              "pressure": "4 bar"
+            }
+          }
+        }
+
+
+        Example 4 — Warranty + Service
+
+
+        Customer Message:
+
+        Our Dura 35 pump, serial D35-8821, is leaking again.
+
+        Can you check whether it is under warranty and arrange someone to inspect it?
+
+
+        Output:
+
+        {
+          "category": "service_or_repair_request",
+          "customer_problem": "The customer's Dura 35 pump is leaking again.",
+          "company_action_items": [
+            "check_warranty",
+            "schedule_service_visit"
+          ],
+          "references": {
+            "pump_model": "Dura 35",
+            "serial_number": "D35-8821"
+          }
+        }
+
+
+        Do not include explanatory text outside the JSON output.
+      output_fields:
+        - name: category
+          type: enum
+          description: >-
+            Select exactly one controlled category that best describes the customer's overall
+            enquiry; use unknown when it cannot reasonably be matched.
+          required: true
+          nullable: false
+          enum_values:
+            - new_pump_quote_or_rfq
+            - existing_quote_enquiry
+            - product_selection_or_application
+            - product_information
+            - new_order_or_purchase
+            - existing_order_enquiry
+            - delivery_or_shipment_enquiry
+            - delivery_problem
+            - technical_support
+            - service_or_repair_request
+            - spare_parts_request
+            - replacement_pump_request
+            - warranty_enquiry
+            - invoice_or_billing_enquiry
+            - payment_or_credit_enquiry
+            - product_quality_issue
+            - return_request
+            - complaint
+            - contract_or_commercial_terms
+            - customer_account_or_master_data
+            - general_information
+            - unknown
+          fields: []
+          item_type: null
+          item_enum_values: []
+          minimum: null
+          maximum: null
+        - name: customer_problem
+          type: text
+          description: >-
+            Summarise in short, factual business language what is happening to or needed by the
+            customer; do not describe internal routing or department decisions.
+          required: true
+          nullable: false
+          enum_values: []
+          fields: []
+          item_type: null
+          item_enum_values: []
+          minimum: null
+          maximum: null
+        - name: company_action_items
+          type: list
+          description: >-
+            Select every controlled action the customer expects the company to perform; use
+            manual_review when the requested work cannot be mapped to another controlled action.
+          required: true
+          nullable: false
+          enum_values: []
+          fields: []
+          item_type: enum
+          item_enum_values:
+            - create_quote
+            - revise_quote
+            - select_pump
+            - provide_product_information
+            - check_order_status
+            - check_delivery_status
+            - expedite_delivery
+            - diagnose_problem
+            - schedule_service_visit
+            - check_warranty
+            - investigate_invoice
+            - send_invoice_copy
+            - identify_spare_part
+            - register_complaint
+            - manual_review
+          minimum: null
+          maximum: null
+        - name: references
+          type: object
+          description: >-
+            Extract business references and technical specifications explicitly provided by the
+            customer for CRM, ERP, product, service, or other database lookups; leave unstated
+            values null.
+          required: true
+          nullable: false
+          enum_values: []
+          fields:
+            - name: customer_name
+              type: string
+              description: Record the customer's stated name when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: company_name
+              type: string
+              description: Record the customer's stated company name when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: contact_name
+              type: string
+              description: Record the named customer contact when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: product_name
+              type: string
+              description: Record the stated product name when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: pump_model
+              type: string
+              description: Record the stated pump model when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: product_family
+              type: string
+              description: Record the stated product family when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: serial_number
+              type: string
+              description: Record the stated equipment serial number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: order_number
+              type: string
+              description: Record the stated order number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: purchase_order_number
+              type: string
+              description: Record the stated purchase order number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: quotation_number
+              type: string
+              description: Record the stated quotation number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: invoice_number
+              type: string
+              description: Record the stated invoice number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: shipment_number
+              type: string
+              description: Record the stated shipment number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: service_case_number
+              type: string
+              description: Record the stated service case number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: contract_number
+              type: string
+              description: Record the stated contract number when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: site_or_location
+              type: string
+              description: >-
+                Record the stated installation, delivery, service, or customer site location when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: quantity
+              type: number
+              description: >-
+                Record the explicitly stated quantity of pumps, parts, or other products; do not
+                infer or calculate it.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: fluid
+              type: string
+              description: Record the stated fluid being handled when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: chemical
+              type: string
+              description: Record the stated chemical or chemical composition when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: flow_rate
+              type: string
+              description: Record the explicitly stated flow rate, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: pressure
+              type: string
+              description: >-
+                Record the explicitly stated pressure, including its unit and context, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: temperature
+              type: string
+              description: Record the explicitly stated temperature, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: viscosity
+              type: string
+              description: Record the explicitly stated viscosity, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: density
+              type: string
+              description: Record the explicitly stated fluid density, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: required_head
+              type: string
+              description: >-
+                Record the explicitly stated required pump head, including its unit, when provided;
+                do not calculate it.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: suction_pressure
+              type: string
+              description: Record the explicitly stated suction pressure, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: discharge_pressure
+              type: string
+              description: Record the explicitly stated discharge pressure, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: differential_pressure
+              type: string
+              description: >-
+                Record the explicitly stated differential pressure, including its unit, when
+                provided; do not calculate it.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: solids_content
+              type: string
+              description: >-
+                Record the explicitly stated solids content, including its unit or percentage, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: particle_size
+              type: string
+              description: Record the explicitly stated particle size, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: pipe_size
+              type: string
+              description: >-
+                Record the explicitly stated pipe size, including its unit or standard, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: connection_size
+              type: string
+              description: >-
+                Record the explicitly stated connection size, including its unit or standard, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: connection_type
+              type: string
+              description: Record the explicitly stated connection type or standard when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: motor_power
+              type: string
+              description: Record the explicitly stated motor power, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: motor_speed
+              type: string
+              description: Record the explicitly stated motor speed, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: voltage
+              type: string
+              description: Record the explicitly stated voltage, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: frequency
+              type: string
+              description: >-
+                Record the explicitly stated electrical frequency, including its unit, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: pump_speed
+              type: string
+              description: Record the explicitly stated pump speed, including its unit, when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: required_capacity
+              type: string
+              description: >-
+                Record the explicitly stated required pump capacity, including its unit, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: operating_hours
+              type: string
+              description: >-
+                Record the explicitly stated operating hours or runtime, including its period, when
+                provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: duty_cycle
+              type: string
+              description: Record the explicitly stated duty cycle or operating pattern when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: material_requirement
+              type: string
+              description: Record the explicitly stated pump material requirement when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: seal_requirement
+              type: string
+              description: Record the explicitly stated seal requirement when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: hose_requirement
+              type: string
+              description: Record the explicitly stated hose requirement when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: impeller_requirement
+              type: string
+              description: Record the explicitly stated impeller requirement when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: hazardous_area_requirement
+              type: string
+              description: Record the explicitly stated hazardous-area requirement when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: atex_requirement
+              type: string
+              description: Record the explicitly stated ATEX requirement or certification need when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: installation_type
+              type: string
+              description: Record the explicitly stated installation type when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: indoor_or_outdoor
+              type: enum
+              description: >-
+                Select the stated installation environment when provided; use other only when an
+                explicitly stated environment does not fit the listed values.
+              required: true
+              nullable: true
+              enum_values:
+                - indoor
+                - outdoor
+                - indoor_and_outdoor
+                - other
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: existing_pump_model
+              type: string
+              description: Record the stated model of the existing pump when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: existing_pump_manufacturer
+              type: string
+              description: Record the stated manufacturer of the existing pump when provided.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+            - name: existing_pump_performance
+              type: string
+              description: >-
+                Record the explicitly stated performance information for the existing pump when
+                provided; do not calculate missing values.
+              required: true
+              nullable: true
+              enum_values: []
+              fields: []
+              item_type: null
+              item_enum_values: []
+              minimum: null
+              maximum: null
+          item_type: null
+          item_enum_values: []
+          minimum: null
+          maximum: null
+      temperature: 0.2
+      max_tokens: 16384
+      max_retries: 1
+      fail_on_error: true
+    selected_model: auto
+    model_routing:
+      accuracy_priority: maximum
+      prefer_low_latency: false
+  - id: find_existing_customer
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: find_account
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        company_name: '{{outputs.understanding_message.parsed.references.company_name?}}'
+  - id: find_quototation_from_customer_inquiry_or_company_name
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_quote
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        quotation_number: '{{outputs.understanding_message.parsed.references.quotation_number?}}'
+        purchase_order_number: '{{outputs.understanding_message.parsed.references.purchase_order_number?}}'
+        account_id: '{{outputs.find_existing_customer.first.account_id?}}'
+  - id: existing_customer_info
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: get_account
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        account_id: '{{outputs.find_existing_customer.first.account_id?}}'
+  - id: past_orders_company
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: find_previous_orders
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        account_id: '{{outputs.existing_customer_info.first.account_id?}}'
+        serial_number: '{{outputs.understanding_message.parsed.references.serial_number?}}'
+        order_number: '{{outputs.understanding_message.parsed.references.order_number?}}'
+        purchase_order_number: '{{outputs.understanding_message.parsed.references.purchase_order_number?}}'
+  - id: find_shipment_details
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: find_shipment
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        order_id: '{{outputs.past_orders_company.first.order_id?}}'
+        account_id: '{{outputs.existing_customer_info.first.account_id?}}'
+  - id: find_service_cases_from_company_name
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: find_service_case
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        serial_number: '{{outputs.understanding_message.parsed.references.serial_number?}}'
+        account_id: '{{outputs.find_existing_customer.first.account_id?}}'
+  - id: past_conversations_from_company_name
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: get_recent_activities
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        account_id: '{{outputs.find_existing_customer.first.account_id?}}'
+  - id: services_cases
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: get_service_cases_for_account
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        account_id: '{{outputs.find_existing_customer.first.account_id?}}'
+  - id: product_information
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365
+      tool: find_product
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        search: '{{outputs.understanding_message.parsed.references.product_name?}}'
+  - id: inventory_check
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_inventory_availability
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        product_name: '{{outputs.product_information.first.name?}}'
+        pump_model: '{{outputs.understanding_message.parsed.references.existing_pump_model?}}'
+        product_family: '{{outputs.understanding_message.parsed.references.product_family?}}'
+  - id: find_installed_units
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_installed_unit
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        serial_number: '{{outputs.understanding_message.parsed.references.serial_number?}}'
+        existing_pump_model: '{{outputs.understanding_message.parsed.references.existing_pump_model?}}'
+        existing_pump_manufacturer: '{{outputs.understanding_message.parsed.references.existing_pump_manufacturer?}}'
+        site_or_location: '{{outputs.understanding_message.parsed.references.site_or_location?}}'
+        account_id: '{{outputs.find_existing_customer.first.customer_number?}}'
+  - id: Order_fulfilled
+    type: MCPToolAgent
+    config:
+      server_id: dynamics365_finance_scm
+      tool: find_order_fulfilment_status
+      fail_on_error: true
+      timeout_seconds: null
+      allow_unattended_write: false
+      max_read_retries: 1
+      arguments:
+        order_number: '{{outputs.understanding_message.parsed.references.order_number?}}'
+        purchase_order_number: '{{outputs.understanding_message.parsed.references.purchase_order_number?}}'
+  - id: business_context
+    type: TextAssemblerAgent
+    config:
+      parts:
+        - '{{outputs.find_existing_customer.text}}'
+        - '{{outputs.existing_customer_info.text}}'
+        - '{{outputs.past_orders_company.text}}'
+        - '{{outputs.find_shipment_details.text}}'
+        - '{{outputs.find_service_cases_from_company_name.text}}'
+        - '{{outputs.past_conversations_from_company_name.text}}'
+        - '{{outputs.product_information.text}}'
+        - '{{outputs.inventory_check.text}}'
+      separator: |+
+
+
+        ---
+
+  - id: work_responsibilities
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      prompt_template: null
+      system_prompt: null
+      input_fields:
+        - name: input_1
+          description: ''
+          type: string
+          value: '{{outputs.understanding_message.parsed.customer_problem}}'
+        - name: input_2
+          description: ''
+          type: string
+          value: '{{outputs.understanding_message.parsed.company_action_items}}'
+        - name: input_3
+          description: ''
+          type: string
+          value: '{{outputs.understanding_message.parsed.category}}'
+        - name: input_4
+          description: ''
+          type: string
+          value: '{{outputs.business_context.text}}'
+      instructions: >-
+        You are the Responsibility Resolver for an industrial B2B customer-enquiry workflow.
+
+
+        Your task is to determine which specialized business responsibilities are required to handle
+        a customer enquiry.
+
+
+        You receive two sources of information:
+
+
+        CUSTOMER CONTEXT
+
+        category
+
+        customer_problem
+
+        company_action_items
+
+
+        BUSINESS CONTEXT
+
+        customer state
+
+        quotation state
+
+        order state
+
+        shipment state
+
+        service-case state
+
+        existing ownership
+
+
+        Your job is ONLY to select one or more responsibilities from the controlled responsibility
+        catalogue.
+
+
+        Do not select:
+
+
+        department
+
+        role
+
+        employee
+
+        team
+
+        final owner
+
+
+        These are determined downstream.
+
+
+        Core decision principle
+
+
+        Determine responsibility from:
+
+
+        what the customer wants
+
+        +
+
+        what already exists in the business
+
+
+        Company action items identify the work that needs to happen.
+
+
+        Business context determines whether that work is:
+
+
+        new;
+
+        already in progress;
+
+        associated with an existing record;
+
+        missing a required business record;
+
+        or should continue with an existing process.
+
+        Important rules
+
+        Existing service case
+
+
+        If:
+
+
+        service_case.found = true
+
+        AND
+
+        service_case.status = open
+
+
+        and the customer asks for technical help related to that issue:
+
+
+        Prefer:
+
+
+        continue_existing_technical_case
+
+
+        instead of:
+
+
+        technical_diagnosis
+
+
+        when the work is already represented by the existing case.
+
+
+        For a requested service visit with an existing open case, prefer:
+
+
+        field_service_coordination
+
+
+        For a new request with no service case, use:
+
+
+        new_field_service_request
+
+        Existing quotation
+
+
+        If the customer requests:
+
+
+        revise_quote
+
+
+        and an existing quotation is found and still editable/open:
+
+
+        Use:
+
+
+        quotation_revision
+
+
+        If the quotation cannot be found:
+
+
+        Use:
+
+
+        quotation_identification
+
+
+        If the quotation is already accepted/confirmed and the customer requests a commercial
+        change:
+
+
+        Use:
+
+
+        commercial_change_review
+
+        New quotation
+
+
+        If:
+
+
+        create_quote
+
+
+        and the customer already exists:
+
+
+        Use:
+
+
+        quotation_management
+
+
+        If the customer does not exist:
+
+
+        Use:
+
+
+        new_customer_rfq_handling
+
+
+        or, when customer creation is independently required:
+
+
+        customer_identification_or_creation
+
+        Pump selection
+
+
+        For:
+
+
+        select_pump
+
+
+        use:
+
+
+        pump_application_selection
+
+
+        If the enquiry is specifically a replacement pump:
+
+
+        replacement_pump_selection
+
+
+        If quotation work is also requested, return the additional quotation responsibility.
+
+
+        Example:
+
+
+        select_pump
+
+        +
+
+        create_quote
+
+
+        may return:
+
+
+        pump_application_selection
+
+        quotation_management
+
+        Orders
+
+
+        For:
+
+
+        check_order_status
+
+
+        and an order exists:
+
+
+        order_status_information
+
+
+        If the order cannot be found:
+
+
+        order_identification
+
+
+        For a new order:
+
+
+        sales_order_processing
+
+
+        If customer creation/intake is required first:
+
+
+        customer_creation_and_order_intake
+
+        Delivery and shipment
+
+
+        For:
+
+
+        check_delivery_status
+
+
+        if an actual shipment exists:
+
+
+        shipment_tracking
+
+
+        If the order exists but no shipment exists yet:
+
+
+        delivery_schedule_information
+
+
+        If the customer asks to accelerate delivery:
+
+
+        delivery_escalation
+
+
+        For a shipment-related problem:
+
+
+        delivery_issue_investigation
+
+
+        For a fulfilment/production delay before shipment:
+
+
+        fulfilment_delay_investigation
+
+        Technical support
+
+
+        For:
+
+
+        diagnose_problem
+
+
+        with no relevant open service case:
+
+
+        technical_diagnosis
+
+
+        With an existing relevant open case:
+
+
+        continue_existing_technical_case
+
+        Spare parts
+
+
+        For:
+
+
+        identify_spare_part
+
+
+        use:
+
+
+        spare_part_identification
+
+        Warranty
+
+
+        For:
+
+
+        check_warranty
+
+
+        with no existing case:
+
+
+        warranty_verification
+
+
+        If there is an existing service case related to the issue:
+
+
+        warranty_case_review
+
+        Invoice
+
+
+        For:
+
+
+        investigate_invoice
+
+
+        use:
+
+
+        billing_investigation
+
+
+        For:
+
+
+        send_invoice_copy
+
+
+        use:
+
+
+        invoice_document_support
+
+        Complaint
+
+
+        For:
+
+
+        register_complaint
+
+
+        use:
+
+
+        complaint_management
+
+
+        Do not change the responsibility merely because the customer is a key account.
+
+
+        Key-account status may affect downstream ownership or notification, not the fundamental work
+        being performed.
+
+
+        Quality
+
+
+        For a product-quality issue use:
+
+
+        product_quality_investigation
+
+        Return
+
+
+        For a return request use:
+
+
+        return_authorization
+
+        Commercial terms
+
+
+        For contract or commercial-term questions use:
+
+
+        commercial_terms_management
+
+        Customer data
+
+
+        For customer-account or master-data work use:
+
+
+        customer_master_data_management
+
+        Unknown work
+
+
+        If the enquiry cannot be mapped safely to a controlled responsibility:
+
+
+        manual_customer_enquiry_triage
+
+
+        Never invent a new responsibility.
+
+
+        5. Multiple Responsibilities
+
+
+        A customer enquiry may legitimately require several responsibilities.
+
+
+        Example:
+
+
+        category: new_pump_quote_or_rfq
+
+
+        company_action_items:
+          - select_pump
+          - create_quote
+
+        Output:
+
+
+        {
+          "responsibilities": [
+            "pump_application_selection",
+            "quotation_management"
+          ],
+          "reasoning_summary": "The customer needs both technical pump selection and a commercial quotation."
+        }
+
+
+        Do not artificially force a multi-action enquiry into one responsibility.
+
+
+        6. Example: Existing Technical Case
+
+
+        Input:
+
+
+        customer_context:
+          category: technical_support
+
+          customer_problem:
+            Dura 25 pump is producing substantially less flow than expected.
+
+          company_action_items:
+            - diagnose_problem
+
+        business_context:
+          customer:
+            found: true
+            customer_id: ACC-1043
+            customer_type: existing
+            key_account: true
+            account_owner: Markus Weber
+
+          quotation:
+            found: false
+            status: null
+
+          order:
+            found: true
+            status: fulfilled
+            confirmed_date: 2024-09-18
+
+          shipment:
+            found: true
+            status: delivered
+
+          service_case:
+            found: true
+            status: open
+            current_owner: Peter Janssen
+
+        Output:
+
+
+        {
+          "responsibilities": [
+            "continue_existing_technical_case"
+          ],
+          "reasoning_summary": "The customer requires technical diagnosis and a relevant open service case already exists, so the existing technical case should be continued."
+        }
+
+        7. Example: New Technical Problem
+
+
+        Input:
+
+
+        customer_context:
+          category: technical_support
+
+          customer_problem:
+            Customer reports abnormal pump vibration.
+
+          company_action_items:
+            - diagnose_problem
+
+        business_context:
+          customer:
+            found: true
+
+          quotation:
+            found: false
+            status: null
+
+          order:
+            found: true
+            status: fulfilled
+            confirmed_date: 2025-04-20
+
+          shipment:
+            found: true
+            status: delivered
+
+          service_case:
+            found: false
+            status: null
+            current_owner: null
+
+        Output:
+
+
+        {
+          "responsibilities": [
+            "technical_diagnosis"
+          ],
+          "reasoning_summary": "The customer requires technical diagnosis and there is no existing service case for the issue."
+        }
+
+        8. Example: Delivery Question
+
+
+        Input:
+
+
+        customer_context:
+          category: delivery_or_shipment_enquiry
+
+          customer_problem:
+            Customer wants to know when the order will arrive.
+
+          company_action_items:
+            - check_delivery_status
+
+        business_context:
+          customer:
+            found: true
+
+          quotation:
+            found: true
+            status: accepted
+
+          order:
+            found: true
+            status: confirmed
+            confirmed_date: 2026-08-10
+
+          shipment:
+            found: false
+            status: null
+
+          service_case:
+            found: false
+            status: null
+            current_owner: null
+
+        Output:
+
+
+        {
+          "responsibilities": [
+            "delivery_schedule_information"
+          ],
+          "reasoning_summary": "The order exists but has not yet produced a shipment, so the required work is to provide delivery scheduling information."
+        }
+
+        9. Example: Shipment Tracking
+
+
+        Input:
+
+
+        customer_context:
+          category: delivery_or_shipment_enquiry
+
+          customer_problem:
+            Customer wants the current location of the dispatched order.
+
+          company_action_items:
+            - check_delivery_status
+
+        business_context:
+          order:
+            found: true
+            status: dispatched
+
+          shipment:
+            found: true
+            status: in_transit
+
+        Output:
+
+
+        {
+          "responsibilities": [
+            "shipment_tracking"
+          ],
+          "reasoning_summary": "A shipment already exists and is in transit, so the required work is shipment tracking."
+        }
+
+        10. Example: Pump Selection + Quote
+
+
+        Input:
+
+
+        customer_context:
+          category: new_pump_quote_or_rfq
+
+          customer_problem:
+            Customer needs a suitable pump and quotation for a new application.
+
+          company_action_items:
+            - select_pump
+            - create_quote
+
+        business_context:
+          customer:
+            found: true
+            customer_type: existing
+
+          quotation:
+            found: false
+
+        Output:
+
+
+        {
+          "responsibilities": [
+            "pump_application_selection",
+            "quotation_management"
+          ],
+          "reasoning_summary": "The enquiry requires both technical pump selection and creation of a new quotation for an existing customer."
+        }
+      output_fields:
+        - name: responsibilities
+          type: list
+          description: >-
+            Select every controlled specialized responsibility required to handle the customer's
+            requested work. Base the selection on the category, company action items, and available
+            business context. Do not select departments, roles, or employees.
+          required: true
+          nullable: false
+          enum_values: []
+          fields: []
+          item_type: enum
+          item_enum_values:
+            - new_customer_rfq_handling
+            - quotation_management
+            - quotation_revision
+            - quotation_identification
+            - commercial_change_review
+            - pump_application_selection
+            - technical_product_information
+            - sales_order_processing
+            - customer_creation_and_order_intake
+            - order_status_information
+            - order_identification
+            - delivery_schedule_information
+            - shipment_tracking
+            - delivery_escalation
+            - delivery_issue_investigation
+            - fulfilment_delay_investigation
+            - technical_diagnosis
+            - continue_existing_technical_case
+            - new_field_service_request
+            - field_service_coordination
+            - spare_part_identification
+            - replacement_pump_selection
+            - replacement_quotation
+            - warranty_verification
+            - warranty_case_review
+            - billing_investigation
+            - invoice_document_support
+            - payment_and_credit_management
+            - product_quality_investigation
+            - return_authorization
+            - complaint_management
+            - commercial_terms_management
+            - customer_master_data_management
+            - general_customer_support
+            - customer_identification_or_creation
+            - business_record_identification
+            - manual_customer_enquiry_triage
+            - reasoning_summary
+          minimum: null
+          maximum: null
+        - name: reasoning_summary
+          type: text
+          description: >-
+            Briefly explain which customer request and business facts caused the selected
+            responsibilities. Use factual business language, do not mention chain-of-thought,
+            probabilities, or internal model reasoning, and explain all selected responsibilities
+            when multiple responsibilities apply.
+          required: true
+          nullable: false
+          enum_values: []
+          fields: []
+          item_type: null
+          item_enum_values: []
+          minimum: null
+          maximum: null
+      language: null
+      temperature: 0.2
+      max_tokens: 16384
+      max_retries: 1
+      fail_on_error: true
+      operations: []
+      omit_empty: false
+    selected_model: auto
+    model_routing:
+      accuracy_priority: maximum
+      prefer_low_latency: false
+  - id: responsibilities_to_department_role
+    type: DecisionAgent
+    config:
+      rules:
+        - name: Rule 1
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: new_customer_rfq_handling
+          then:
+            - field: Department
+              operation: merge
+              value: Sales
+            - field: Role
+              operation: merge
+              value: Inside Sales
+        - name: ''
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: quotation_management
+          then:
+            - field: Department
+              operation: merge
+              value: Sales
+            - field: Role
+              operation: merge
+              value: Inside Sales
+        - name: Rule 3
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: pump_application_selection
+          then:
+            - field: Department
+              operation: merge
+              value: Sales Engineering
+            - field: Role
+              operation: merge
+              value: Application Engineer
+        - name: Rule 4
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: order_status_information
+          then:
+            - field: Department
+              operation: merge
+              value: Customer Service
+            - field: Role
+              operation: merge
+              value: Customer Support Executive
+        - name: Rule 5
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: shipment_tracking
+          then:
+            - field: Department
+              operation: merge
+              value: Supply Chain
+            - field: Role
+              operation: merge
+              value: Logistics Coordinator
+        - name: Rule 6
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: technical_diagnosis
+          then:
+            - field: Department
+              operation: merge
+              value: Service
+            - field: Role
+              operation: merge
+              value: Technical Support Engineer
+        - name: Rule 7
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: billing_investigation
+          then:
+            - field: Department
+              operation: merge
+              value: Finance
+            - field: Role
+              operation: merge
+              value: Accounts Receivable Specialist
+        - name: Rule 8
+          description: ''
+          when:
+            operator: and
+            conditions:
+              - field: outputs.work_responsibilities.parsed.responsibilities
+                operator: contains
+                value: spare_part_identification
+          then:
+            - field: Department
+              operation: set
+              value: Spare Parts and Product Service
+            - field: Role
+              operation: set
+              value: Spare Parts Specialist
+      declared_fields: []
+edges:
+  - from: understanding_message
+    to: find_existing_customer
+  - from: understanding_message
+    to: find_quototation_from_customer_inquiry_or_company_name
+  - from: find_existing_customer
+    to: existing_customer_info
+  - from: find_existing_customer
+    to: find_quototation_from_customer_inquiry_or_company_name
+  - from: existing_customer_info
+    to: past_orders_company
+  - from: existing_customer_info
+    to: find_shipment_details
+  - from: past_orders_company
+    to: find_shipment_details
+  - from: find_existing_customer
+    to: find_service_cases_from_company_name
+  - from: find_existing_customer
+    to: past_conversations_from_company_name
+  - from: find_service_cases_from_company_name
+    to: services_cases
+  - from: understanding_message
+    to: product_information
+  - from: product_information
+    to: inventory_check
+  - from: find_existing_customer
+    to: find_installed_units
+  - from: understanding_message
+    to: find_installed_units
+  - from: understanding_message
+    to: Order_fulfilled
+  - from: find_shipment_details
+    to: business_context
+  - from: services_cases
+    to: business_context
+  - from: past_orders_company
+    to: business_context
+  - from: past_conversations_from_company_name
+    to: business_context
+  - from: inventory_check
+    to: business_context
+  - from: business_context
+    to: work_responsibilities
+  - from: understanding_message
+    to: work_responsibilities
+  - from: work_responsibilities
+    to: responsibilities_to_department_role

@@ -9,9 +9,11 @@ import type {
   CostOverview,
   DraftCodeRequest,
   DraftInstructionsField,
+  CloudFileMeta,
   EmailConnectionInfo,
   FieldSpec,
   InfraAllocationEntry,
+  IntegrationConnectionInfo,
   MCPServerInfo,
   MCPToolInfo,
   MCPToolTestResult,
@@ -187,16 +189,27 @@ export async function login(username: string, password: string): Promise<{ usern
 
 // Recover the session from the HttpOnly cookie after a page refresh, when
 // _token is null but the cookie is still valid. Returns the user or null.
+// Concurrent callers (StrictMode's double-invoked mount effect, multiple
+// polling hooks recovering at once) share a single in-flight request instead
+// of each firing their own /auth/me call.
+let _rehydrateInFlight: Promise<{ username: string } | null> | null = null;
+
 export async function rehydrate(): Promise<{ username: string } | null> {
-  try {
-    const r = await afetch(`${BASE}/auth/me`);
-    if (!r.ok) return null;
-    const data = await r.json();
-    _username = data.username;
-    return { username: data.username };
-  } catch {
-    return null;
-  }
+  if (_rehydrateInFlight) return _rehydrateInFlight;
+  _rehydrateInFlight = (async () => {
+    try {
+      const r = await afetch(`${BASE}/auth/me`);
+      if (!r.ok) return null;
+      const data = await r.json();
+      _username = data.username;
+      return { username: data.username };
+    } catch {
+      return null;
+    } finally {
+      _rehydrateInFlight = null;
+    }
+  })();
+  return _rehydrateInFlight;
 }
 
 export async function logout(): Promise<void> {
@@ -306,16 +319,20 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     }).then(j<NodeTestResult>),
-  simulateWorkflow: (body: {
-    workflow_yaml: string;
-    inputs?: Record<string, unknown>;
-    stub_outputs?: Record<string, Record<string, unknown>>;
-    until_node?: string | null;
-  }) =>
+  simulateWorkflow: (
+    body: {
+      workflow_yaml: string;
+      inputs?: Record<string, unknown>;
+      stub_outputs?: Record<string, Record<string, unknown>>;
+      until_node?: string | null;
+    },
+    signal?: AbortSignal,
+  ) =>
     afetch(`${API}/builder/simulate`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
+      signal,
     }).then(j<SimulationResult>),
   /** AI proposes schema rows. The result is editable configuration, never an
    *  applied change — the author reviews it in the normal editor. */
@@ -369,6 +386,47 @@ export const api = {
       method: 'DELETE',
       headers: authHeaders(),
     }).then(j<{ id: string; removed: boolean }>),
+
+  // ---- Integrations: cloud storage (Google Drive / OneDrive) connections
+  integrationConnections: () =>
+    afetch(`${API}/builder/integrations/connections`, { headers: authHeaders() })
+      .then(j<{ connections: IntegrationConnectionInfo[]; configured: boolean }>),
+  /** Not a fetch — a real browser navigation URL (opened via window.open),
+   *  since the provider's own consent screen has to render in that window. */
+  integrationConnectUrl: (provider: 'google_drive' | 'onedrive') =>
+    `${API}/builder/integrations/connect/${provider}`,
+  disconnectIntegrationConnection: (connectionId: string) =>
+    afetch(`${API}/builder/integrations/connections/${encodeURIComponent(connectionId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(),
+    }).then(j<{ id: string; removed: boolean }>),
+  /** Live folder/search browsing for the node config panel's file picker —
+   *  not workflow execution, just a read-only proxy through the connected
+   *  account. Presence of `query` selects search vs. plain listing. */
+  browseIntegrationFiles: (
+    connectionId: string,
+    params: { folderId?: string; query?: string; pageSize?: number; pageToken?: string },
+  ) => {
+    const search = new URLSearchParams();
+    if (params.folderId) search.set('folder_id', params.folderId);
+    if (params.query) search.set('query', params.query);
+    if (params.pageSize) search.set('page_size', String(params.pageSize));
+    if (params.pageToken) search.set('page_token', params.pageToken);
+    return afetch(
+      `${API}/builder/integrations/connections/${encodeURIComponent(connectionId)}/files?${search.toString()}`,
+      { headers: authHeaders() },
+    ).then(j<{ files: CloudFileMeta[]; next_page_token?: string }>);
+  },
+  integrationFilePath: (connectionId: string, fileId: string) =>
+    afetch(
+      `${API}/builder/integrations/connections/${encodeURIComponent(connectionId)}/path/${encodeURIComponent(fileId)}`,
+      { headers: authHeaders() },
+    ).then(j<{ path: CloudFileMeta[] }>),
+  /** Not a fetch — a real browser navigation URL, so the download hits the
+   *  browser's native save flow. Auth travels via the same access_token
+   *  cookie login already sets, not a header this navigation could carry. */
+  downloadIntegrationFileUrl: (connectionId: string, fileId: string) =>
+    `${API}/builder/integrations/connections/${encodeURIComponent(connectionId)}/download/${encodeURIComponent(fileId)}`,
 
   // ---- MCP: business systems reached through configured servers
   mcpServers: () =>

@@ -425,3 +425,48 @@ class WorkflowSpec(BaseModel):
                     f"{unknown_node_stages}"
                 )
         return self
+
+    @model_validator(mode="after")
+    def derive_inputs_from_start_node(self) -> "WorkflowSpec":
+        """A Start node (app/nodes/start.py) is the single place a workflow
+        author declares what this workflow needs — this projects those
+        declarations into the existing `inputs:` contract so file-upload
+        validation and the "required input is missing" pre-execution check
+        (app/workflow/file_inputs.py's validate_workflow_inputs) apply to
+        them for free, with no new validator (§37/§38). Explicit `inputs:`
+        entries always win — this only fills in names not already declared
+        by hand, preserving legacy/hand-authored behavior untouched."""
+        start_nodes = [node for node in self.nodes if node.type == "StartAgent"]
+        if not start_nodes:
+            return self
+
+        derived: dict[str, WorkflowInputSpec] = {}
+        for node in start_nodes:
+            config = node.config
+            if config.get("mode") == "chatbot":
+                if config.get("allow_attachments", True):
+                    derived.setdefault(
+                        "attachments",
+                        WorkflowInputSpec(type="file", required=False, multiple=True),
+                    )
+                continue
+            for file_field in config.get("file_fields") or []:
+                name = file_field.get("name")
+                if not name:
+                    continue
+                multiple = bool(file_field.get("multiple", False))
+                derived[name] = WorkflowInputSpec(
+                    type="file",
+                    required=bool(file_field.get("required", False)),
+                    multiple=multiple,
+                    accept=list(file_field.get("accept") or FILE_INPUT_CATEGORIES),
+                    max_files=file_field.get("max_files") if multiple else None,
+                )
+            for field in config.get("fields") or []:
+                name = field.get("name")
+                if name and field.get("required"):
+                    derived[name] = WorkflowInputSpec(type="json", required=True)
+
+        for name, spec in derived.items():
+            self.inputs.setdefault(name, spec)
+        return self

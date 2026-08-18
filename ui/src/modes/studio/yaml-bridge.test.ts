@@ -197,6 +197,67 @@ describe('yaml-bridge round trip', () => {
     expect(result.nodes[1].data_protection_mode).toBeUndefined();
   });
 
+  it('derives a required Start file field into workflow.inputs', () => {
+    const workflow: YamlWorkflow = {
+      name: 'Start workflow',
+      version: '1.0',
+      nodes: [
+        {
+          id: 'begin',
+          type: 'StartAgent',
+          config: {
+            mode: 'input_form',
+            fields: [{ name: 'question', label: 'Question', type: 'string', required: true }],
+            file_fields: [{ name: 'spec_file', label: 'Specification', required: true, multiple: false }],
+          },
+        },
+        { id: 'finish', type: 'EndAgent', config: { mode: 'workflow_result', outputs: [] } },
+      ],
+      edges: [{ from: 'begin', to: 'finish' }],
+    };
+
+    const result = roundTrip(workflow);
+    expect(result.inputs?.question).toEqual({ type: 'json', required: true });
+    expect(result.inputs?.spec_file).toMatchObject({ type: 'file', required: true, multiple: false });
+  });
+
+  it('derives an attachments file input for a chatbot-mode Start node', () => {
+    const workflow: YamlWorkflow = {
+      name: 'Chatbot workflow',
+      version: '1.0',
+      nodes: [
+        { id: 'begin', type: 'StartAgent', config: { mode: 'chatbot', allow_attachments: true } },
+        { id: 'finish', type: 'EndAgent', config: { mode: 'chat_response' } },
+      ],
+      edges: [{ from: 'begin', to: 'finish' }],
+    };
+
+    const result = roundTrip(workflow);
+    expect(result.inputs?.attachments).toMatchObject({ type: 'file', multiple: true });
+  });
+
+  it('never overrides an explicitly declared workflow input with a derived one', () => {
+    const workflow: YamlWorkflow = {
+      name: 'Start workflow',
+      version: '1.0',
+      inputs: { question: { type: 'text', required: false } },
+      nodes: [
+        {
+          id: 'begin',
+          type: 'StartAgent',
+          config: {
+            fields: [{ name: 'question', label: 'Question', type: 'string', required: true }],
+          },
+        },
+        { id: 'finish', type: 'EndAgent', config: {} },
+      ],
+      edges: [{ from: 'begin', to: 'finish' }],
+    };
+
+    const result = roundTrip(workflow);
+    expect(result.inputs?.question).toEqual({ type: 'text', required: false });
+  });
+
   it('does not introduce an experience key for a legacy workflow that never had one', () => {
     const workflow: YamlWorkflow = {
       name: 'Legacy workflow',

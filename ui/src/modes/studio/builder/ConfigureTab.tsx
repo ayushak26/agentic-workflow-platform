@@ -5,6 +5,7 @@ import type {
   BusinessRule,
   EmailConnectionInfo,
   FieldSpec,
+  IntegrationConnectionInfo,
   LLMModelInfo,
   NodeTypeManifest,
   OperatorCatalog,
@@ -15,13 +16,17 @@ import type { WorkflowInputSpec, WorkflowNodeData, YamlWorkflow } from '../yaml-
 import { AITaskConfig } from './AITaskConfig';
 import { DataTransformConfig } from './DataTransformConfig';
 import { EmailConfig } from './EmailConfig';
+import { EndAgentConfig } from './EndAgentConfig';
 import { ExternalActionConfig } from './ExternalActionConfig';
+import { IntegrationConfig } from './IntegrationConfig';
 import { JoinConfig } from './JoinConfig';
 import { MCPToolConfig } from './MCPToolConfig';
 import { PromptTemplateConfig } from './PromptTemplateConfig';
 import { PythonSnippetConfig } from './PythonSnippetConfig';
+import { RAGAgentConfig } from './RAGAgentConfig';
 import { ModeCard, RouterEditor } from './RouterEditor';
 import { RuleBuilder } from './RuleBuilder';
+import { StartAgentConfig } from './StartAgentConfig';
 import { WorkflowInputAgentConfig } from './WorkflowInputAgentConfig';
 import { SQLQueryConfig } from './SQLQueryConfig';
 
@@ -61,6 +66,7 @@ function isLegacyTransform(config: Record<string, unknown>): boolean {
 export function ConfigureTab({
   contract,
   emailConnections,
+  integrationConnections,
   llmModels,
   manifest,
   onConfigChange,
@@ -68,11 +74,13 @@ export function ConfigureTab({
   onInputsChange,
   operators,
   refetchEmailConnections,
+  refetchIntegrationConnections,
   selected,
   workflow,
 }: {
   contract: OutputContract | null;
   emailConnections: EmailConnectionInfo[];
+  integrationConnections: IntegrationConnectionInfo[];
   llmModels: LLMModelInfo[];
   manifest: NodeTypeManifest | undefined;
   onConfigChange: (next: Record<string, unknown>) => void;
@@ -80,6 +88,7 @@ export function ConfigureTab({
   onInputsChange: (inputs: Record<string, WorkflowInputSpec>) => void;
   operators: OperatorCatalog | null;
   refetchEmailConnections: () => void;
+  refetchIntegrationConnections: () => void;
   selected: { id: string; data: WorkflowNodeData };
   workflow: YamlWorkflow;
 }) {
@@ -165,6 +174,17 @@ export function ConfigureTab({
           />
         )}
 
+        {typeName === 'IntegrationAgent' && (
+          <IntegrationConfig
+            config={config}
+            connections={integrationConnections}
+            contract={contract}
+            onChange={onConfigChange}
+            onConnectionsChanged={refetchIntegrationConnections}
+            presets={manifest?.presets ?? []}
+          />
+        )}
+
         {typeName === 'MCPToolAgent' && (
           <MCPToolConfig
             config={config}
@@ -191,6 +211,30 @@ export function ConfigureTab({
 
         {typeName === 'SQLQueryAgent' && (
           <SQLQueryConfig
+            config={config}
+            contract={contract}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {typeName === 'RAGAgent' && (
+          <RAGAgentConfig
+            config={config}
+            contract={contract}
+            llmModels={llmModels}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {typeName === 'StartAgent' && (
+          <StartAgentConfig
+            config={config}
+            onChange={onConfigChange}
+          />
+        )}
+
+        {typeName === 'EndAgent' && (
+          <EndAgentConfig
             config={config}
             contract={contract}
             onChange={onConfigChange}
@@ -255,7 +299,7 @@ export function ConfigureTab({
           />
         )}
 
-        {!['AITaskAgent', 'DecisionAgent', 'RouterAgent', 'EmailAgent', 'MCPToolAgent', 'DataTransformAgent', 'TextAssemblerAgent', 'ExternalActionAgent', 'PythonSnippetAgent', 'SQLQueryAgent', 'WorkflowInputAgent'].includes(typeName)
+        {!['AITaskAgent', 'DecisionAgent', 'RouterAgent', 'EmailAgent', 'IntegrationAgent', 'MCPToolAgent', 'DataTransformAgent', 'TextAssemblerAgent', 'ExternalActionAgent', 'PythonSnippetAgent', 'SQLQueryAgent', 'WorkflowInputAgent', 'RAGAgent', 'StartAgent', 'EndAgent'].includes(typeName)
           && !useNewPromptTemplateEditor
           && transformMode !== 'deterministic'
           && (manifest ? (
@@ -431,6 +475,7 @@ export function useAuthoringContext(workflowYaml: string, nodeId: string | null)
   const [operators, setOperators] = useState<OperatorCatalog | null>(null);
   const [contract, setContract] = useState<OutputContract | null>(null);
   const [emailConnections, setEmailConnections] = useState<EmailConnectionInfo[]>([]);
+  const [integrationConnections, setIntegrationConnections] = useState<IntegrationConnectionInfo[]>([]);
 
   const refetchEmailConnections = useCallback(() => {
     api.emailConnections()
@@ -438,9 +483,16 @@ export function useAuthoringContext(workflowYaml: string, nodeId: string | null)
       .catch(() => setEmailConnections([]));
   }, []);
 
+  const refetchIntegrationConnections = useCallback(() => {
+    api.integrationConnections()
+      .then(result => setIntegrationConnections(result.connections))
+      .catch(() => setIntegrationConnections([]));
+  }, []);
+
   useEffect(() => {
     api.operatorCatalog().then(setOperators).catch(() => setOperators(null));
     refetchEmailConnections();
+    refetchIntegrationConnections();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -463,7 +515,14 @@ export function useAuthoringContext(workflowYaml: string, nodeId: string | null)
     };
   }, [nodeId, workflowYaml]);
 
-  return { contract, emailConnections, operators, refetchEmailConnections };
+  return {
+    contract,
+    emailConnections,
+    integrationConnections,
+    operators,
+    refetchEmailConnections,
+    refetchIntegrationConnections,
+  };
 }
 
 export type { FieldSpec };

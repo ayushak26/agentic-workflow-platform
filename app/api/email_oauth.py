@@ -35,6 +35,7 @@ from app.integrations.email.oauth import OAuthConfigurationError, OAuthExchangeE
 from app.integrations.email.token_vault import TokenVault
 from app.observability.logging import get_logger
 from app.security.dependencies import CurrentUser, require_consultant
+from app.security.entity_protection_errors import VaultKeyMisconfiguredError
 
 log = get_logger(__name__)
 
@@ -179,12 +180,16 @@ async def oauth_callback(
         return _html_result(ok=False, message=f"Could not finish connecting: {error}")
 
     connection_id = _connection_id(provider, profile.address)
-    await TokenVault(db).store(
-        connection_id,
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
-        expires_in_seconds=tokens.expires_in_seconds,
-    )
+    try:
+        await TokenVault(db).store(
+            connection_id,
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            expires_in_seconds=tokens.expires_in_seconds,
+        )
+    except VaultKeyMisconfiguredError as error:
+        log.error("email.oauth_vault_misconfigured", provider=provider, error=str(error))
+        return _html_result(ok=False, message=f"Could not finish connecting: {error}")
     await save_connection_record(
         db,
         connection_id=connection_id,

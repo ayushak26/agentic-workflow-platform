@@ -1,0 +1,24 @@
+name: Integration Node Demo
+description: List a Google Drive folder through a connected account, with no file content ever entering workflow state.
+version: "1.0"
+use_case: generic
+
+inputs: {}
+
+nodes:
+  - id: browse_folder
+    type: IntegrationAgent
+    config:
+      provider: google_drive
+      connection: shared_drive
+      operation: list_folder
+
+edges: []
+entry: browse_folder
+exit: browse_folder
+
+output:
+  include_input: false
+  nodes:
+    - node_id: browse_folder
+      flatten: true

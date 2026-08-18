@@ -127,6 +127,23 @@ export type RAGCitation = {
   evidence_status: string;
 };
 
+export type RAGSource = {
+  file_name: string;
+  document_id: string | null;
+  source_id: string | null;
+  source_version_id: string | null;
+  metadata: Record<string, unknown>;
+  locations: Array<{ page: number | null; section: string | null }>;
+};
+
+export type RAGRelevantContextItem = {
+  content: string;
+  score: number | null;
+  file_name: string;
+  page_no: number | null;
+  section: string | null;
+};
+
 export type RAGQueryResponse = {
   request_id: string;
   rag_agent_id: string;
@@ -134,8 +151,12 @@ export type RAGQueryResponse = {
   index_id: string;
   retrieval_profile_id: string;
   generation_profile_id: string;
+  query: string;
   answer: string;
   citations: RAGCitation[];
+  sources: RAGSource[];
+  relevant_context: RAGRelevantContextItem[];
+  configured_answering_model: string;
   retrieved_chunks: Array<Record<string, unknown>>;
   retrieval_trace_id: string;
   candidate_count: number;
@@ -359,14 +380,20 @@ export const knowledgeApi = {
       method: 'POST', headers: jsonHeaders(), body: JSON.stringify(payload),
     }).then(r => j<RAGAgentDefinition>(r)),
 
-  listRagAgents: (): Promise<RAGAgentDefinition[]> =>
-    afetch(`${API}/rag-agents`, { headers: getAuthHeaders() }).then(r => j<RAGAgentDefinition[]>(r)),
+  listRagAgents: (search?: string): Promise<RAGAgentDefinition[]> =>
+    afetch(`${API}/rag-agents${search ? `?search=${encodeURIComponent(search)}` : ''}`, {
+      headers: getAuthHeaders(),
+    }).then(r => j<RAGAgentDefinition[]>(r)),
+
+  getRagAgent: (ragAgentId: string): Promise<RAGAgentDefinition> =>
+    afetch(`${API}/rag-agents/${ragAgentId}`, { headers: getAuthHeaders() }).then(r => j<RAGAgentDefinition>(r)),
 
   queryRagAgent: (
     ragAgentId: string, query: string, runtimeFilters: Record<string, unknown> = {},
+    runtimeContext: Record<string, unknown> = {},
   ): Promise<RAGQueryResponse> =>
     afetch(`${API}/rag-agents/${ragAgentId}/query`, {
       method: 'POST', headers: jsonHeaders(),
-      body: JSON.stringify({ query, runtime_filters: runtimeFilters }),
+      body: JSON.stringify({ query, runtime_filters: runtimeFilters, runtime_context: runtimeContext }),
     }).then(r => j<RAGQueryResponse>(r)),
 };

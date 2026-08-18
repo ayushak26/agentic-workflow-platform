@@ -38,9 +38,24 @@ def _project_output(
     state: dict[str, Any],
     original_inputs: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Build the caller-facing output declared by the workflow contract."""
+    """Build the caller-facing output declared by the workflow contract.
+
+    An explicit `output:` block (existing pipeline-chaining use, see
+    app/workflow/subprocess_callback.py) always wins. Absent that, if the
+    workflow has exactly one End node (app/nodes/end.py) reached during this
+    run, its own `result` becomes the projected output automatically — this
+    is what makes "the End node defines the workflow's result" real without
+    requiring manual output-node YAML authoring.
+    """
 
     if spec.output is None:
+        end_node_ids = [node.id for node in spec.nodes if node.type == "EndAgent"]
+        node_outputs = state.get("node_outputs", {})
+        reached_end_ids = [node_id for node_id in end_node_ids if node_id in node_outputs]
+        if len(reached_end_ids) == 1:
+            result = node_outputs[reached_end_ids[0]].get("result")
+            if isinstance(result, dict):
+                return dict(result)
         return None
 
     projected: dict[str, Any] = {}

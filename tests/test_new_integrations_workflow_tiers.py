@@ -27,6 +27,7 @@ from app.runtime.preflight import preflight_workflow_yaml
 
 SIMPLE_WORKFLOWS = [
     Path("workflows/kimi_vision_agent_demo.yaml"),
+    Path("workflows/integration_agent_demo.yaml"),
 ]
 
 

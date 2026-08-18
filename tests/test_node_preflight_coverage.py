@@ -37,6 +37,20 @@ ACKNOWLEDGED_NODE_TYPES: frozenset[str] = frozenset({
     "EmailAgent",
     "MCPToolAgent",
     "WorkflowInputAgent",
+    #   StartAgent           — WorkflowInputAgent's successor; no services;
+    #                          preflight_output_fields exposes data.<field> per
+    #                          declared field (input_form mode) or is left at
+    #                          the static message/attachments schema (chatbot
+    #                          mode) — same pattern as WorkflowInputAgent.
+    #   EndAgent             — no services; preflight_output_fields exposes
+    #                          result.<key> per configured output
+    #                          (workflow_result), result.title/result.message
+    #                          (custom_response), or the fixed chat_response
+    #                          keys actually configured (chat_response) —
+    #                          never a static, fully-known shape since the
+    #                          workflow author chooses the keys.
+    "StartAgent",
+    "EndAgent",
     #   ExternalActionAgent  — required_services {external_action}; no
     #                          preflight_output_fields override needed —
     #                          response_body is a static output_schema field,
@@ -87,6 +101,14 @@ ACKNOWLEDGED_NODE_TYPES: frozenset[str] = frozenset({
     "HorizonEvaluationAgent",
     "HorizonHTMLProposalRenderer",
     "HumanInLoopAgent",
+    #   IntegrationAgent     — required_services {files_integration,
+    #                          object_store}; preflight_output_fields exposes
+    #                          file.<field>/first.<field>/files.items.<field>
+    #                          (the CloudFileMeta shape) and
+    #                          downloaded_file.<field> (the CloudFileRef
+    #                          shape) — mirrors EmailAgent's
+    #                          message.<field>/messages.items.<field> pattern.
+    "IntegrationAgent",
     "InternalProjectEvidenceRetrieverAgent",
     "KimiVisionAgent",
     #   KnowledgeRetrieval   — required_services {retrieval_service}; no

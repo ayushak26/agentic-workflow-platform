@@ -353,9 +353,15 @@ class KnowledgeRepository:
             raise ResourceNotFoundError(f"RAG agent {rag_agent_id!r} was not found")
         return RAGAgentDefinition.model_validate(_strip(doc))
 
-    async def list_rag_agents(self, owner_scope_id: str) -> list[RAGAgentDefinition]:
+    async def list_rag_agents(
+        self, owner_scope_id: str, search: str | None = None
+    ) -> list[RAGAgentDefinition]:
         cursor = self._rag_agents.find({"owner_scope_id": owner_scope_id})
-        return [RAGAgentDefinition.model_validate(_strip(doc)) async for doc in cursor]
+        agents = [RAGAgentDefinition.model_validate(_strip(doc)) async for doc in cursor]
+        needle = search.strip().casefold() if search else ""
+        if not needle:
+            return agents
+        return [agent for agent in agents if needle in agent.name.casefold()]
 
     # -- retrieval traces -----------------------------------------------------
     async def save_trace(self, trace: RetrievalTrace) -> RetrievalTrace:

@@ -1,4 +1,4 @@
-import { useState, type FC } from "react";
+import { useRef, useState, type FC } from "react";
 import { login } from "../../api/client";   // <-- add this import
 
 interface Props {
@@ -10,8 +10,14 @@ export const LoginPage: FC<Props> = ({ onLogin }) => {
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
   const [loading, setLoading]   = useState(false);
+  // A ref lock, not just `loading` state: state updates are async, so two
+  // keydown events in the same tick (Enter key-repeat) could both still see
+  // stale `loading === false` before React re-renders.
+  const submittingRef = useRef(false);
 
   const handleLogin = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setLoading(true); setError("");
     try {
       const result = await login(username, password);   // <-- sets _token in client.ts
@@ -20,6 +26,7 @@ export const LoginPage: FC<Props> = ({ onLogin }) => {
       setError("Invalid credentials or cannot reach server");
     } finally {
       setLoading(false);
+      submittingRef.current = false;
     }
   };
 

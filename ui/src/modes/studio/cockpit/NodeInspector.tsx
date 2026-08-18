@@ -331,6 +331,7 @@ export function NodeInspector({
         {tab === 'output' && (
           <OutputTab
             nodeId={selectedNode.id}
+            typeName={selectedNode.typeName}
             status={selectedNode.status}
             output={nodeRun?.output ?? null}
             streamingPreview={streamingPreview}

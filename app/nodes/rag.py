@@ -24,6 +24,14 @@ class RAGConfig(BaseModel):
     )
     model: str | None = None
     query: str                                  # templated, resolved by runtime
+    runtime_context: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Additional runtime info to accompany the query (e.g. a customer "
+            "record from an upstream node). Not indexed, not used for "
+            "retrieval filtering — kept distinct from retrieved knowledge."
+        ),
+    )
     runtime_filters: dict[str, Any] = Field(
         default_factory=dict,
         description="Additional typed metadata filters; security scope is never overridable.",
@@ -72,8 +80,13 @@ class Citation(BaseModel):
 
 
 class RAGOutput(BaseModel):
+    query: str = ""
     answer: str
     citations: list[Citation]
+    sources: list[dict] = Field(default_factory=list)          # deduplicated per source document (§37)
+    relevant_context: list[dict] = Field(default_factory=list)  # content/score per retrieved chunk (§15)
+    answering_model: str = ""            # configured value, e.g. "auto"
+    resolved_answering_model: str = ""   # concrete model actually used
     retrievals: list[dict]                      # full RetrievedChunk dump for the Cockpit
     rewritten_query: str | None
     grounding_for_drafter: str = ""
@@ -117,6 +130,7 @@ class RAGAgent(NodeType):
                 rag_agent_id=cfg.rag_agent_id,
                 query=cfg.query,
                 runtime_filters=cfg.runtime_filters,
+                runtime_context=cfg.runtime_context,
                 llm=llm,
             )
             grounding_for_drafter = "\n\n".join(
@@ -125,6 +139,7 @@ class RAGAgent(NodeType):
                 for index, chunk in enumerate(response.retrieved_chunks, start=1)
             )
             return {
+                "query": response.query,
                 "answer": response.answer,
                 "citations": [
                     {
@@ -136,6 +151,10 @@ class RAGAgent(NodeType):
                     }
                     for citation in response.citations
                 ],
+                "sources": response.sources,
+                "relevant_context": response.relevant_context,
+                "answering_model": response.configured_answering_model,
+                "resolved_answering_model": str(response.generation.get("model") or ""),
                 "retrievals": response.retrieved_chunks,
                 "rewritten_query": None,
                 "grounding_for_drafter": grounding_for_drafter,
@@ -171,6 +190,7 @@ class RAGAgent(NodeType):
         result = await retriever(q, llm=llm)
         if not result.chunks:
             return {
+                "query": cfg.query,
                 "answer": "No sources matched the query.",
                 "citations": [],
                 "retrievals": [],
@@ -221,6 +241,7 @@ class RAGAgent(NodeType):
         output_tokens = int(getattr(resp, "output_tokens", 0) or 0)
 
         return {
+            "query": cfg.query,
             "answer": answer,
             "citations": [c.model_dump() for c in citations],
             "retrievals": [c.model_dump() for c in result.chunks],

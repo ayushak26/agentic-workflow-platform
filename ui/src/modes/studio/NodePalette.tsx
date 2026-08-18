@@ -24,18 +24,21 @@ const CATEGORY_ORDER = [
   'Other',
 ];
 
-// Deprecated in favor of TransformAgent (see app/nodes/ai_task.py and
-// app/nodes/data_transform.py). Hidden from the palette so authors can't
-// start a new node with either; both types stay registered so any
-// already-saved instance still opens and configures normally in the
-// Inspector.
-const HIDDEN_FROM_PALETTE = new Set(['AITaskAgent', 'DataTransformAgent']);
+// Deprecated in favor of a newer primitive — AITaskAgent/DataTransformAgent by
+// TransformAgent (see app/nodes/ai_task.py and app/nodes/data_transform.py),
+// WorkflowInputAgent by StartAgent (see app/nodes/start.py). Hidden from the
+// palette so authors can't start a new node with any of these; all three stay
+// registered so an already-saved instance still opens and configures normally
+// in the Inspector.
+const HIDDEN_FROM_PALETTE = new Set(['AITaskAgent', 'DataTransformAgent', 'WorkflowInputAgent']);
 
 // Business-language names for the core primitives. The registry key is the
 // technical contract (and stays visible in the inspector); the palette is where
 // a non-technical author decides what to drag, so it reads as the capability
 // rather than as a class name.
 const PALETTE_LABELS: Record<string, string> = {
+  StartAgent: 'Start',
+  EndAgent: 'End',
   WorkflowInputAgent: 'Input',
   AITaskAgent: 'AI Task',
   DecisionAgent: 'Decision',
@@ -44,6 +47,7 @@ const PALETTE_LABELS: Record<string, string> = {
   TransformAgent: 'Transform',
   HumanInLoopAgent: 'Human Review',
   EmailAgent: 'Email',
+  IntegrationAgent: 'Integration',
   MCPToolAgent: 'MCP Tool',
   TextAssemblerAgent: 'Join',
 };

@@ -71,6 +71,7 @@ from app.api import node_types_chat as node_types_chat_api
 from app.api import workflow_generation as workflow_generation_api
 from app.api import builder as builder_api
 from app.api import email_oauth as email_oauth_api
+from app.api import integration_oauth as integration_oauth_api
 from app.api import entity_registry as entity_registry_api
 from app.api import knowledge as knowledge_api
 from app.api import retrieval as retrieval_api
@@ -331,6 +332,36 @@ async def lifespan(app: FastAPI):
     logger.info(
         "email.ready",
         connection_count=len(services["email"].connections),
+    )
+
+    # ── File integration (Google Drive / OneDrive) ────────────────────────────
+    # Same shape as the email integration above: static connections come from
+    # configuration (INTEGRATION_CONNECTIONS); OAuth-connected accounts
+    # (someone clicked "Connect Google Drive"/"Connect OneDrive" in the
+    # Builder — see app/api/integration_oauth.py) are loaded from Mongo and
+    # merged in here, so they survive a restart without needing to be
+    # redeclared as env-var config. Always constructed: with no connections
+    # configured, a workflow using IntegrationAgent is blocked by preflight
+    # with the missing connection named, rather than the API failing to start.
+    from app.integrations.files import build_integration_service
+    from app.integrations.files.connections_store import (
+        load_dynamic_connections as load_dynamic_integration_connections,
+    )
+
+    services["files_integration"] = build_integration_service(db=services.get("audit_db"))
+    if services.get("audit_db") is not None:
+        from app.api.integration_oauth import ensure_indexes as ensure_integration_oauth_indexes
+
+        try:
+            dynamic = await load_dynamic_integration_connections(services["audit_db"])
+            for connection in dynamic.values():
+                services["files_integration"].add_connection(connection)
+            await ensure_integration_oauth_indexes(services["audit_db"])
+        except Exception as error:
+            logger.warning("integration.dynamic_connections_load_failed", error=str(error))
+    logger.info(
+        "integration.ready",
+        connection_count=len(services["files_integration"].connections),
     )
 
     # ── Scientific Agent Skills ──────────────────────────────────────────────
@@ -682,6 +713,7 @@ app.include_router(workflow_generation_api.router)
 app.include_router(entity_registry_api.router)
 app.include_router(builder_api.router)
 app.include_router(email_oauth_api.router)
+app.include_router(integration_oauth_api.router)
 app.include_router(knowledge_api.router)
 app.include_router(retrieval_api.router)
 app.include_router(rag_agents_api.router)

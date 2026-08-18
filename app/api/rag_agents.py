@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from app.knowledge.repository import ResourceNotFoundError
@@ -43,9 +43,12 @@ async def create_agent(
 @router.get("")
 async def list_agents(
     request: Request,
+    search: str | None = Query(default=None),
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
-    return await request.app.state.services["knowledge_repository"].list_rag_agents(_scope(user))
+    return await request.app.state.services["knowledge_repository"].list_rag_agents(
+        _scope(user), search=search
+    )
 
 
 @router.get("/{rag_agent_id}")
@@ -65,6 +68,7 @@ async def get_agent(
 class RAGQueryRequest(BaseModel):
     query: str = Field(min_length=1)
     runtime_filters: dict[str, Any] = Field(default_factory=dict)
+    runtime_context: dict[str, Any] = Field(default_factory=dict)
 
 
 @router.post("/{rag_agent_id}/query")
@@ -93,6 +97,7 @@ async def query_agent(
             rag_agent_id=rag_agent_id,
             query=query,
             runtime_filters=payload.runtime_filters,
+            runtime_context=payload.runtime_context or None,
             llm=llm,
         )
     except (ResourceNotFoundError, PermissionError, ValueError) as exc:

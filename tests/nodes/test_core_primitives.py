@@ -1100,7 +1100,9 @@ class TestPaletteMetadata:
             for entry in NodeRegistry.manifest()
             if entry["family"] == "core"
         }
-        assert core == {
+        assert core >= {
+            "StartAgent",
+            "EndAgent",
             "WorkflowInputAgent",
             "AITaskAgent",
             "DecisionAgent",

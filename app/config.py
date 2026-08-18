@@ -172,6 +172,13 @@ class Settings(BaseSettings):
     #: entity_vault_master_key above: a leaked key must compromise exactly
     #: one thing, never a second by coincidence.
     email_token_vault_master_key: str = ""
+    #: Root key (envelope-encryption KEK) for the file-integration (Google
+    #: Drive/OneDrive) OAuth token vault
+    #: (app/integrations/files/token_vault.py). Separate from secret_key,
+    #: entity_vault_master_key, AND email_token_vault_master_key — a leaked
+    #: key must compromise exactly one security domain, never a second by
+    #: coincidence.
+    integration_token_vault_master_key: str = ""
 
     # Research API credentials for paper-search-mcp. These never reach the
     # subprocess by ambient inheritance in local dev (pydantic-settings' own

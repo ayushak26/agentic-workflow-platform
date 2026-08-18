@@ -356,6 +356,34 @@ export type EmailConnectionInfo = {
   allow_send: boolean;
 };
 
+export type IntegrationConnectionInfo = {
+  id: string;
+  provider: 'google_drive' | 'onedrive';
+  display_name: string;
+  address: string;
+  needs_reauth: boolean;
+};
+
+/** One file/folder entry from a cloud-storage browse call — the
+ *  provider-neutral shape CloudFileBrowser renders. */
+export type CloudFileMeta = {
+  id: string;
+  name: string;
+  mime_type?: string;
+  is_folder: boolean;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+  web_url?: string | null;
+  parent_id?: string | null;
+};
+
+/** A picked file/folder, as written into an IntegrationAgent's config —
+ *  just enough to redisplay the label without a re-fetch. */
+export type CloudFileRef = {
+  id: string;
+  name: string;
+};
+
 export type LLMModelInfo = {
   name: string;
   display_name: string;

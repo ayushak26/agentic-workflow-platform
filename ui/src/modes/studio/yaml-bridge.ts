@@ -173,6 +173,10 @@ export type WorkflowNodeData = {
   // canvas shows READ or WRITE without opening the inspector. Discovered from
   // the server, so it is not part of the saved YAML.
   mcpOperation?: string;
+  // For IntegrationAgent steps: set when the referenced connection's token
+  // needs reauthorization. Live account state, so — like mcpOperation — it
+  // is not part of the saved YAML.
+  connectionIssue?: 'reauth_required';
   // Semantic zoom: below a zoom threshold the node draws one large label
   // instead of its full detail, so a zoomed-out long workflow stays readable.
   compact?: boolean;
@@ -281,6 +285,52 @@ export function yamlToReactFlow(
   return { nodes, edges };
 }
 
+/**
+ * Mirrors app/runtime/schema.py's WorkflowSpec.derive_inputs_from_start_node —
+ * a Start node is the single place a workflow author declares what this
+ * workflow needs (see app/nodes/start.py), and this projects those
+ * declarations into the same `inputs:` shape the Run dialog and
+ * WorkflowInputsPanel already know how to render, so a Start-having
+ * workflow's fields are runnable without either component needing its own
+ * Start-awareness. Explicit `inputs:` entries always win — this only fills
+ * in names not already declared by hand, matching the backend exactly so
+ * the two stay in sync.
+ */
+function deriveInputsFromStartNode(
+  nodes: YamlWorkflowNode[],
+): Record<string, WorkflowInputSpec> {
+  const derived: Record<string, WorkflowInputSpec> = {};
+  for (const node of nodes) {
+    if (node.type !== 'StartAgent') continue;
+    const config = node.config ?? {};
+    if (config.mode === 'chatbot') {
+      if (config.allow_attachments !== false) {
+        derived.attachments ??= { type: 'file', required: false, multiple: true };
+      }
+      continue;
+    }
+    for (const field of (config.file_fields as Array<Record<string, unknown>> | undefined) ?? []) {
+      const name = typeof field.name === 'string' ? field.name : '';
+      if (!name) continue;
+      const multiple = Boolean(field.multiple);
+      derived[name] = {
+        type: 'file',
+        required: Boolean(field.required),
+        multiple,
+        accept: Array.isArray(field.accept) ? field.accept as string[] : FILE_CATEGORIES.map(([value]) => value),
+        max_files: multiple && typeof field.max_files === 'number' ? field.max_files : undefined,
+      };
+    }
+    for (const field of (config.fields as Array<Record<string, unknown>> | undefined) ?? []) {
+      const name = typeof field.name === 'string' ? field.name : '';
+      if (name && field.required) {
+        derived[name] = { type: 'json', required: true };
+      }
+    }
+  }
+  return derived;
+}
+
 /** React Flow nodes + edges → YAML workflow (used in 9B.2b for save). */
 export function reactFlowToYaml(
   meta: Omit<YamlWorkflow, 'nodes' | 'edges'>,
@@ -345,7 +395,7 @@ export function reactFlowToYaml(
   return {
     ...meta,
     version: meta.version ?? '1.0',
-    inputs: meta.inputs ?? {},
+    inputs: { ...deriveInputsFromStartNode(nodes), ...(meta.inputs ?? {}) },
     nodes,
     edges,
   };

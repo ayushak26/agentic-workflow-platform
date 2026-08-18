@@ -28,8 +28,12 @@ class RAGQueryResponse(BaseModel):
     retrieval_profile_version: int
     generation_profile_id: str
     generation_profile_version: int
+    query: str = ""
     answer: str
     citations: list[RAGCitation]
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    relevant_context: list[dict[str, Any]] = Field(default_factory=list)
+    configured_answering_model: str = ""
     retrieved_chunks: list[dict[str, Any]]
     final_context: str
     retrieval_trace_id: str

@@ -273,6 +273,14 @@ NODE_TYPE_GENERATION_FIXTURES: dict[str, GenerationFixture] = {
         "Declare the information entering the workflow from the incoming API request.",
         "workflows/multilingual_customer_request_triage.yaml",
     ),
+    "StartAgent": GenerationFixture(
+        "Start a workflow with a business-friendly input form or a chatbot message.",
+        "workflows/test_fixtures/generation_coverage/start_end_agent.yaml",
+    ),
+    "EndAgent": GenerationFixture(
+        "Return the workflow's final answer as its result.",
+        "workflows/test_fixtures/generation_coverage/start_end_agent.yaml",
+    ),
 }
 
 

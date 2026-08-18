@@ -11,6 +11,8 @@ NODE_CATEGORIES: dict[str, str] = {
     # configuration: the prompt, schema, labels, thresholds, rules, routes and
     # provider are all authored in the Builder, so a new business process needs
     # no new node type.
+    "StartAgent": "Core Building Blocks",
+    "EndAgent": "Core Building Blocks",
     "WorkflowInputAgent": "Core Building Blocks",
     "AITaskAgent": "Core Building Blocks",
     "DecisionAgent": "Core Building Blocks",
@@ -18,6 +20,7 @@ NODE_CATEGORIES: dict[str, str] = {
     "DataTransformAgent": "Core Building Blocks",
     "HumanInLoopAgent": "Core Building Blocks",
     "EmailAgent": "Core Building Blocks",
+    "IntegrationAgent": "Core Building Blocks",
     "MCPToolAgent": "Core Building Blocks",
     "ExternalActionAgent": "Core Building Blocks",
 

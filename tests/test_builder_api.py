@@ -563,6 +563,72 @@ class TestEmailConnections:
         assert response.status_code == 200
 
 
+class TestIntegrationConnections:
+    def test_it_reports_configured_connections_without_credentials(self, client):
+        body = client.get("/api/builder/integrations/connections").json()
+        assert "connections" in body
+        assert "configured" in body
+        assert "token" not in str(body).lower()
+
+    def test_no_configured_connection_is_not_an_error(self, client):
+        """An unconfigured deployment still opens the Builder; preflight is
+        where a workflow needing a connection is blocked."""
+        response = client.get("/api/builder/integrations/connections")
+        assert response.status_code == 200
+
+
+class TestIntegrationDownload:
+    """The file browser's "Download" action — streams real bytes straight to
+    the browser, authenticated by the same cookie the OAuth popup relies on,
+    never touching object storage (unlike the node's own get_file, which
+    persists a reference for workflow state)."""
+
+    @pytest.fixture
+    def fake_service(self, client):
+        from app.integrations.files.base import (
+            CloudFileMeta,
+            DownloadedFile,
+            IntegrationAuthError,
+            IntegrationNotFoundError,
+        )
+
+        class _FakeIntegrationService:
+            async def execute(self, *, connection_id, operation, **kwargs):
+                assert operation == "get_file"
+                if connection_id == "missing_file":
+                    raise IntegrationNotFoundError("no such file")
+                if connection_id == "revoked":
+                    raise IntegrationAuthError("token revoked")
+                meta = CloudFileMeta(id="file-1", name="Résumé Q3.pdf", is_folder=False)
+                downloaded = DownloadedFile(meta=meta, content=b"%PDF-bytes", content_type="application/pdf")
+                return type("Result", (), {"downloaded": downloaded})()
+
+        services = client.app.state.services
+        previous = services.get("files_integration")
+        services["files_integration"] = _FakeIntegrationService()
+        yield
+        if previous is not None:
+            services["files_integration"] = previous
+        else:
+            services.pop("files_integration", None)
+
+    def test_streams_the_real_bytes_with_a_content_disposition_header(self, client, fake_service):
+        response = client.get("/api/builder/integrations/connections/conn1/download/file-1")
+        assert response.status_code == 200
+        assert response.content == b"%PDF-bytes"
+        assert response.headers["content-type"].startswith("application/pdf")
+        assert "attachment" in response.headers["content-disposition"]
+        assert "filename*=UTF-8''" in response.headers["content-disposition"]
+
+    def test_a_revoked_token_is_a_401_not_a_500(self, client, fake_service):
+        response = client.get("/api/builder/integrations/connections/revoked/download/file-1")
+        assert response.status_code == 401
+
+    def test_a_missing_file_is_a_404(self, client, fake_service):
+        response = client.get("/api/builder/integrations/connections/missing_file/download/file-1")
+        assert response.status_code == 404
+
+
 class TestMCPDiscovery:
     """The Builder's window onto connected business systems.
 
