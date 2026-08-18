@@ -11,7 +11,7 @@ RUN apk add --no-cache ca-certificates git \
     && rm -rf /scientific-agent-skills/.git
 
 
-FROM python:3.12.11-slim-bookworm
+FROM python:3.14.7-slim-bookworm
 
 WORKDIR /app
 
