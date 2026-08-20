@@ -35,8 +35,8 @@ from typing import Any
 
 from app.runtime.snippet_protocol import (
     BOOTSTRAP_SOURCE,
-    MAX_MESSAGE_BYTES,
     SnippetRequest,
+    read_message,
 )
 
 _DEFAULT_SOCKET_PATH = "/run/snippet-runner/snippet-runner.sock"
@@ -157,7 +157,7 @@ async def _execute(request: SnippetRequest) -> dict[str, Any]:
 
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     try:
-        raw = await reader.read(MAX_MESSAGE_BYTES)
+        raw = await read_message(reader)
         if not raw:
             # A bare connect-then-disconnect with no request — the
             # healthcheck above does exactly this to verify the socket is

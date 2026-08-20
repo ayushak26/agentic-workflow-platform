@@ -266,6 +266,25 @@ class SubprocessAgent(NodeType):
 
     def _finalize(self, cfg: SubprocessConfig, decision: dict[str, Any]) -> dict[str, Any]:
         status = decision.get("status")
+        if status == "rejected":
+            # A rejected HITL gate *inside* the child (sp04_approval_gate,
+            # sp05_response_preparation, ...) is not this node's own failure —
+            # it is exactly the "approve/reject/edit, for the parent to act
+            # on" contract those subprocesses document. Surfacing it as a
+            # normal completed step, with the decision nested under `result`
+            # (never a top-level `decision` key), keeps the platform's
+            # generic "any node output with a top-level decision == reject
+            # marks the whole run rejected" convention (app.runtime.hitl/
+            # executor's _find_rejection) from firing here — the parent
+            # workflow's own router/decision logic is what gets to decide
+            # what a rejected subprocess means, the same way it already
+            # decides what an MCPToolAgent write's declined approval means.
+            return {
+                "status": "completed",
+                "result": {"decision": "reject", "reason": decision.get("error")},
+                "child_run_id": decision.get("child_run_id") or "",
+                "child_workflow": decision.get("child_workflow") or cfg.workflow,
+            }
         if status != "completed":
             raise RuntimeError(
                 f"SubprocessAgent '{self.node_id}' child workflow "

@@ -2,6 +2,20 @@ import { useMemo, useState } from 'react';
 
 import type { ContractField, ContractNode, OutputContract } from '../../../api/types';
 import { humanizeIdentifier } from '../guided/runtime-model';
+import {
+  asContractField,
+  buildRecommended,
+  incompatibilityReason,
+  isTypeCompatible,
+  tokenize,
+  typeLabel,
+} from './field-suggest';
+import type { DestinationKind } from './field-suggest';
+
+// Re-exported for existing call sites (`OutputsPanel.tsx`, `PromptTemplateConfig.tsx`)
+// that import these from here rather than from `field-suggest` directly.
+export { typeLabel };
+export type { DestinationKind };
 
 /**
  * The value picker behind every "use data from an earlier step" moment in
@@ -21,8 +35,6 @@ import { humanizeIdentifier } from '../guided/runtime-model';
  * would fail preflight.
  */
 
-export type DestinationKind = 'text' | 'number' | 'boolean' | 'any';
-
 const KIND_LABELS: Record<string, string> = {
   ai: 'AI',
   deterministic: 'Rule',
@@ -32,60 +44,8 @@ const KIND_LABELS: Record<string, string> = {
   output: 'Output',
 };
 
-export function typeLabel(field: Pick<ContractField, 'type' | 'item_type'>): string {
-  if (field.type === 'list' && field.item_type) return `List of ${field.item_type}`;
-  if (field.type === 'unknown') return 'Untyped';
-  return field.type.charAt(0).toUpperCase() + field.type.slice(1);
-}
-
-// A value's type doesn't have to match a destination exactly, just be safely
-// usable there — a number reads fine wherever text is expected. `unknown`
-// (an untyped upstream step) stays visible everywhere rather than being
-// hidden on a guess.
-const COMPATIBLE_TYPES: Record<Exclude<DestinationKind, 'any'>, Set<string>> = {
-  text: new Set(['string', 'number', 'integer', 'boolean', 'unknown']),
-  number: new Set(['number', 'integer', 'unknown']),
-  boolean: new Set(['boolean', 'unknown']),
-};
-
-function isTypeCompatible(field: ContractField, destinationKind: DestinationKind): boolean {
-  if (destinationKind === 'any') return true;
-  return COMPATIBLE_TYPES[destinationKind].has(field.type);
-}
-
-function incompatibilityReason(field: ContractField, destinationKind: DestinationKind): string {
-  return `${typeLabel(field)} — cannot be used directly as ${destinationKind}`;
-}
-
-// A small, hand-authored set of business-vocabulary synonyms used only to
-// break ties in "Recommended" — not derived from real usage data, and never
-// used to hide or gate anything, only to rank what's already shown.
-const SYNONYMS: Record<string, string[]> = {
-  message: ['email', 'body', 'content', 'text'],
-  customer: ['client', 'account', 'requester', 'contact'],
-  problem: ['issue', 'complaint', 'request', 'ticket'],
-  subject: ['title', 'headline'],
-  name: ['full_name', 'display_name'],
-  category: ['type', 'classification', 'intent'],
-  source: ['channel', 'origin'],
-};
-
-function tokenize(text: string): string[] {
-  const base = text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const expanded = new Set(base);
-  for (const token of base) {
-    for (const [key, synonyms] of Object.entries(SYNONYMS)) {
-      if (token === key) synonyms.forEach(item => expanded.add(item));
-      if (synonyms.includes(token)) expanded.add(key);
-    }
-  }
-  return [...expanded];
-}
-
-function overlapCount(a: string[], b: string[]): number {
-  const setB = new Set(b);
-  return a.filter(token => setB.has(token)).length;
-}
+//: A group past this many compatible values starts collapsed — see ValuePicker.
+const FIELD_GROUP_COLLAPSE_THRESHOLD = 8;
 
 function matches(field: ContractField, node: ContractNode | undefined, query: string): boolean {
   if (!query) return true;
@@ -93,75 +53,6 @@ function matches(field: ContractField, node: ContractNode | undefined, query: st
     `${field.path} ${field.description} ${node?.label ?? ''} ${humanizeIdentifier(field.path.split('.').slice(-1)[0] ?? '')}`,
   );
   return haystack.some(token => token.includes(query)) || `${field.path} ${field.description}`.toLowerCase().includes(query);
-}
-
-function asContractField(item: OutputContract['inputs'][number]): ContractField {
-  return {
-    path: item.name,
-    reference: item.reference,
-    type: item.type,
-    description: item.description,
-    required: item.required,
-    may_be_unavailable: !item.required,
-    enum_values: [],
-    item_type: null,
-    operators: [],
-  };
-}
-
-type Candidate = { field: ContractField; node: ContractNode | null; score: number };
-
-// Later index = declared closer to the selected step among its ancestors —
-// the best recency proxy the backend contract exposes (see
-// app/api/builder.py's output_contract(), which preserves the workflow's own
-// declaration order). Workflow inputs get a flat mid-range score: they're
-// always relevant, never more or less "recent" than any particular step.
-function scoreField(
-  field: ContractField,
-  recency: number,
-  destinationTokens: string[],
-  destinationKind: DestinationKind,
-): number {
-  if (!isTypeCompatible(field, destinationKind)) return -Infinity;
-  const candidateTokens = tokenize(`${field.path} ${field.description}`);
-  let score = 4 * overlapCount(candidateTokens, destinationTokens);
-  score += 2 * recency;
-  score += field.may_be_unavailable ? 0 : 1.5;
-  return score;
-}
-
-const RECOMMEND_MIN = 5;
-const RECOMMEND_MAX = 3;
-//: A group past this many compatible values starts collapsed — see ValuePicker.
-const FIELD_GROUP_COLLAPSE_THRESHOLD = 8;
-
-function buildRecommended(
-  groups: Array<{ node: ContractNode; fields: ContractField[] }>,
-  inputs: OutputContract['inputs'],
-  destinationLabel: string | undefined,
-  destinationHint: string | undefined,
-  destinationKind: DestinationKind,
-): Candidate[] {
-  const destinationTokens = tokenize(`${destinationLabel ?? ''} ${destinationHint ?? ''}`);
-  if (destinationTokens.length === 0) return [];
-
-  const candidates: Candidate[] = [];
-  const totalNodes = groups.length;
-  groups.forEach(({ node, fields }, index) => {
-    const recency = totalNodes > 1 ? index / (totalNodes - 1) : 1;
-    for (const field of fields) {
-      const score = scoreField(field, recency, destinationTokens, destinationKind);
-      if (Number.isFinite(score) && score > 0) candidates.push({ field, node, score });
-    }
-  });
-  for (const item of inputs) {
-    const field = asContractField(item);
-    const score = scoreField(field, 0.5, destinationTokens, destinationKind);
-    if (Number.isFinite(score) && score > 0) candidates.push({ field, node: null, score });
-  }
-
-  if (candidates.length < RECOMMEND_MIN) return [];
-  return candidates.sort((a, b) => b.score - a.score).slice(0, RECOMMEND_MAX);
 }
 
 function FieldEntry({

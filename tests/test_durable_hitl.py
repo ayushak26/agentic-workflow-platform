@@ -381,6 +381,109 @@ async def test_persistent_checkpointer_resumes_across_two_restart_boundaries():
     assert len(seed_writes) == 1
 
 
+GATE_TO_END_WORKFLOW = """
+name: durable_hitl_with_end
+version: "1.0"
+nodes:
+  - id: gate
+    type: HumanInLoopAgent
+    config:
+      question: Approve?
+      allowed_actions: [approve, reject]
+  - id: finish
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: decision
+          value_from: "{{outputs.gate.decision}}"
+edges:
+  - from: gate
+    to: finish
+entry: gate
+exit: finish
+"""
+
+
+@pytest.mark.asyncio
+async def test_resuming_the_in_memory_graph_still_produces_the_workflow_output():
+    """Regression test: `resume_workflow_durable`'s plain in-memory
+    `_PAUSED_GRAPHS` completion path used to skip `_project_output` entirely
+    (only a fresh, uninterrupted `run_workflow()` call computed it) — any
+    caller reading `result["output"]` after a resume, chief among them a
+    SubprocessAgent parent reading its child's result via
+    `app/workflow/subprocess_callback.py`'s `_select_result`, silently got
+    `None` for any workflow that paused at least once before finishing."""
+    run_id = "run-gate-to-end"
+    session_id = "user@example.com"
+    checkpoint = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "workflow_yaml": GATE_TO_END_WORKFLOW,
+        "inputs": {},
+        "collection_id": "default",
+        "status": "running",
+        "paused_node_id": None,
+        "node_results": {},
+        "completed_nodes": [],
+        "approvals": [],
+    }
+    db = FakeDB(checkpoint)
+    services = {"audit_db": db}
+    _PAUSED_GRAPHS.pop(run_id, None)
+
+    initial = await run_workflow(
+        load_workflow_from_string(GATE_TO_END_WORKFLOW),
+        {}, session_id=session_id, services=services, run_id=run_id,
+    )
+    assert initial["status"] == "paused"
+
+    completed = await resume_workflow_durable(
+        run_id, {"decision": "approve"}, services=services, session_id=session_id,
+    )
+
+    assert completed["status"] == "completed"
+    assert completed["output"] == {"decision": "approve"}
+
+
+@pytest.mark.asyncio
+async def test_resuming_the_persistent_checkpointer_still_produces_the_workflow_output():
+    """Same regression, the persistent-checkpointer completion branch."""
+    run_id = "run-gate-to-end-persistent"
+    session_id = "user@example.com"
+    checkpoint = {
+        "run_id": run_id,
+        "session_id": session_id,
+        "workflow_yaml": GATE_TO_END_WORKFLOW,
+        "inputs": {},
+        "collection_id": "default",
+        "status": "running",
+        "paused_node_id": None,
+        "node_results": {},
+        "completed_nodes": [],
+        "approvals": [],
+    }
+    db = FakeDB(checkpoint)
+    services = {"audit_db": db, "langgraph_checkpointer": MemorySaver()}
+    _PAUSED_GRAPHS.pop(run_id, None)
+
+    initial = await run_workflow(
+        load_workflow_from_string(GATE_TO_END_WORKFLOW),
+        {}, session_id=session_id, services=services, run_id=run_id,
+    )
+    assert initial["status"] == "paused"
+
+    # A process restart loses the in-memory graph, forcing the
+    # persistent-checkpointer branch rather than the plain in-memory one.
+    _PAUSED_GRAPHS.pop(run_id, None)
+    completed = await resume_workflow_durable(
+        run_id, {"decision": "approve"}, services=services, session_id=session_id,
+    )
+
+    assert completed["status"] == "completed"
+    assert completed["output"] == {"decision": "approve"}
+
+
 @pytest.mark.asyncio
 async def test_redis_checkpointer_reconnects_between_both_hitl_gates():
     """CI integration: recreate the Redis saver at every restart boundary."""

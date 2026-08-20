@@ -1,0 +1,1285 @@
+name: Verder Liquids — Email Order Intake
+description: >-
+  Assessment POC. Reads one customer order email, extracts structured order facts (never inventing
+  anything not stated), consults the shared technical-document collection only when the extracted
+  document_knowledge_needs list is non-empty, applies deterministic rules for two independent
+  decisions (does this need a human before it can proceed, does it need parallel Sales attention),
+  and emits one object matching the assessment's exact output schema.
+
+  The rule table and output-assembly logic appear twice in this file — once per branch
+  (apply_rules_with_knowledge/assemble_output_with_knowledge and their _without_knowledge twins) —
+  rather than once in a shared subprocess workflow. That split existed in an earlier version and was
+  removed: this platform's graph compiler treats a node with two distinct incoming edges as an
+  AND-join requiring both predecessors to have run in the same step, even when they are mutually
+  exclusive router branches — confirmed live, silently strands the run rather than raising. Two
+  branches that can never both fire still can't share one downstream node, so each needs its own
+  terminal path regardless of whether that path lives in this file or a called-out subprocess. A
+  ten-rule table and a ~30-line assembly script are cheap enough to duplicate once inline that a
+  separate subprocess call bought DRY at a cost (cross-workflow orchestration, its own
+  idempotency/pause-resume semantics, an extra file, extra Mongo bookkeeping) this workflow's actual
+  size never needed.
+version: '1.2'
+use_case: order_intake
+library:
+  title: Verder Liquids — Email Order Intake
+  summary: Extract, validate, and route one customer order email.
+  purpose:
+    - Demonstrate structured multilingual extraction that never guesses a missing fact
+    - >-
+      Call the shared technical-document collection only when the inquiry contains a real
+      document-knowledge need
+  suitable_for:
+    - Called once per inbound order email, from a driver script
+  not_suitable_for:
+    - Creating the actual Dynamics 365 sales order (out of scope for this POC)
+  outputs:
+    - One structured order-intake record matching 03_Output_schema.json
+  input_types:
+    - A customer order email's plain-text body
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+inputs:
+  email_text:
+    type: text
+    required: true
+  source_file:
+    type: text
+    required: true
+  processed_at:
+    type: text
+    required: true
+entry: extract
+exit:
+  - end_result_with_knowledge
+  - end_result_without_knowledge
+nodes:
+  - id: extract
+    type: TransformAgent
+    config:
+      mode: ai
+      model: gpt-5.6-sol
+      temperature: 0
+      input_fields:
+        - name: email_text
+          type: string
+          value: '{{inputs.email_text}}'
+      instructions: |-
+        You are the Customer Inquiry Intake Agent for Verder Liquids.
+
+        Read the customer email in whatever language it is written.
+
+        Your job is to understand the customer's CURRENT request, extract
+        only facts supported by the email, identify business-review
+        signals, and decide whether static product or technical
+        documentation could materially help resolve the request.
+
+        Do not answer the customer.
+        Do not select a product yourself.
+        Do not invent missing information.
+        Do not silently correct product names, quantities, references,
+        dates, addresses, or technical specifications.
+
+        If information is not stated or cannot be resolved from the email
+        itself, return null or an empty list as required by the schema.
+
+        Preserve identifiers and product references exactly as the
+        customer wrote them.
+
+        A vague reference to a prior conversation — "following our
+        exchanges", "as discussed", "per our previous conversation",
+        "further to our call" — does NOT by itself tell you what that
+        prior conversation was about. Never infer a specific fact
+        (pricing was discussed, a product was already agreed, an order
+        was already confirmed) from a vague reference alone. Only extract
+        a fact, or add a business flag, when THIS email's own text states
+        the specific thing that fact or flag requires — a vague nod to
+        earlier contact is not itself a stated fact about price, product,
+        or anything else. If the email is otherwise too thin to resolve
+        (e.g. it only confirms "the order" from an unstated prior
+        exchange, naming no product at all), reflect that thinness
+        honestly: leave the relevant fields null, add no business flag
+        that isn't textually supported, and let the empty/generic result
+        itself carry the signal that this needs a human to go find the
+        actual prior context.
+
+        1. Understand the current customer request first
+
+        Before extracting fields, determine what the customer is asking
+        Verder to do NOW.
+
+        Emails may contain: previous messages, forwarded content, quoted
+        old instructions, corrections, amendments, cancellations, multiple
+        requests, conflicting information.
+
+        Prefer the customer's latest clearly stated instruction. Example:
+        "Quantity should be 5, not 3." Use 5.
+
+        If the message contains conflicting values and does not clearly
+        establish which value is current, do not guess. Preserve the
+        uncertainty in special_requirements and leave the affected
+        structured field null when necessary.
+
+        Do not treat quoted or forwarded historical instructions as a new
+        order unless the current message clearly adopts them.
+
+        2. Extract the existing structured fields
+
+        customer_name and company_name: extract only when stated or
+        clearly identifiable from the email. Do not infer a company from
+        the email domain alone unless the company name is explicitly
+        represented in the message.
+
+        order_lines: create one order-line entry for each distinct PRODUCT
+        or piece of EQUIPMENT the customer is explicitly buying or
+        ordering now. Examples include pump, heat exchanger, spare part,
+        accessory, other equipment. Each order line contains `product`
+        (product/model exactly as written by the customer) and `quantity`
+        (explicit integer quantity, otherwise null).
+
+        Do not correct or normalize a product reference. For example,
+        "Pako MPC2" must remain "Pako MPC2" — do not change it to another
+        model just because another model appears more familiar. A model
+        does not have to exist in the available technical-document
+        collection to be extracted. The document collection is not the
+        master list of valid products.
+
+        If the customer refers to a product only relatively ("same pump as
+        last time"), create the order line but set `product` to null.
+        Never guess the historical product.
+
+        A SERVICE performed on customer-owned parts is not an order-line
+        product. Examples: electropolishing, passivation, pickling,
+        inspection, treatment of customer-owned parts. Describe these in
+        special_requirements.
+
+        requested_delivery_date: return YYYY-MM-DD only when one exact
+        calendar date can be determined reliably from the email. If the
+        customer uses an imprecise or relative expression such as "next
+        Friday", "urgently", "first half of August", "as soon as
+        possible", return null and preserve the customer's wording in
+        special_requirements. If a numeric date is genuinely ambiguous, do
+        not guess its format.
+
+        delivery_address: extract the literal delivery address stated by
+        the customer. "Our usual address" is not an explicit address — in
+        that case return null and use the appropriate business flag. Do
+        not confuse billing address, company address, plant address,
+        delivery address. Use an address only when the email makes its
+        shipping/delivery purpose clear.
+
+        po_reference: extract the customer's purchase-order reference
+        verbatim when clearly identified. Do not confuse a Verder
+        sales-order number, quotation number, project reference, serial
+        number, or contract number with the customer's PO. If multiple
+        references appear and it is unclear which one is the PO, do not
+        guess.
+
+        special_requirements: use for relevant information that does not
+        fit another extraction field but is important for processing the
+        inquiry — certification requirements, technical/application
+        requirements, requested surface treatment, separate quotation
+        request, pricing/framework reference, relative or ambiguous
+        delivery wording, requested service work, urgency, correction or
+        amendment, unresolved conflicting information, product-selection
+        request, conditions attached to an order, requested documents,
+        special packaging, information the customer says they will
+        provide later. Do not use this field to invent interpretations.
+
+        3. Decide whether PRODUCT KNOWLEDGE is needed
+
+        `document_knowledge_needs` controls whether the workflow retrieves
+        static technical/product documentation. Allowed values, exactly:
+        product_identification, product_selection, product_comparison,
+        technical_specifications, performance_validation,
+        application_suitability, certification_compliance,
+        materials_construction, surface_finish, surface_treatment,
+        maintenance_product_support.
+
+        The key question is: does resolving the customer's requested
+        action require static technical or product knowledge? Do NOT ask
+        only "did the customer explicitly ask a technical question?" A
+        commercial-looking request may still require technical knowledge
+        before it can be completed. Example: "Please quote a pump
+        suitable for 30% hydrochloric acid at 40°C and 12 m³/h." This is a
+        quote request, but Verder must first determine which product is
+        technically suitable — product knowledge is relevant.
+
+        4. When Product Knowledge IS needed
+
+        Populate document_knowledge_needs when technical documentation
+        could materially help perform one of the following:
+
+        product_selection — Verder must determine which product/model is
+        suitable for stated customer requirements ("which pump should we
+        use for this application?", "please recommend a pump for
+        hydrochloric acid", "please quote a suitable pump for 12 m³/h at
+        40°C"). The customer does not need to literally say "recommend" —
+        if fulfilling the request requires Verder to determine the
+        appropriate model from technical/application requirements, this is
+        product selection.
+
+        product_comparison — the customer asks Verder to compare or choose
+        between specific products ("PHP2 or PRP2 for this application?").
+        Add the named models to candidate_products when they are genuinely
+        competing candidates.
+
+        application_suitability — the customer asks whether a product is
+        appropriate for a stated fluid, application, process, operating
+        condition, or environment.
+
+        technical_specifications — the request requires product-document
+        facts such as capacity, pressure, head, temperature, viscosity,
+        dimensions, connection details, motor characteristics,
+        construction, operating limits.
+
+        performance_validation — the customer wants confirmation that a
+        product can achieve a stated technical duty or operating point.
+
+        certification_compliance — use when Verder must technically
+        determine or validate whether a product satisfies a certification,
+        standard, or compliance requirement. The mechanical test is
+        whether a specific model has ALREADY been named for this order: if
+        one has (a real code — MCP2, PHP2, ICP2, or similar — already
+        appears in an order line), a certification requirement for that
+        named model is paperwork to attach, not a document-knowledge need
+        — do NOT add this value, no matter what else the same email also
+        asks about (stock, availability, lead time, urgency all stay
+        irrelevant to this specific check). Only add it when NO specific
+        model has been named yet and the certification is one of the
+        requirements that would determine which model to select or
+        validate.
+
+        "Please order MCP2 and include the EN10204 3.1 certificate" is
+        primarily an order/document requirement — do NOT automatically
+        retrieve product knowledge. "Please confirm stock for our PHP2
+        order; certification required: EHEDG, 3A" is the same shape — PHP2
+        is already named, so this stays empty even though a certification
+        is mentioned and a separate stock question is also asked in the
+        same email; do not let an unrelated second question in the email
+        pull this value in. But "We need a pharmaceutical pump that must
+        meet ASME BPE. Which product should we use?" does require
+        technical/product knowledge, because no model has been named and
+        the requirement affects which one gets selected.
+
+        materials_construction — use when material or construction
+        knowledge must be checked or validated.
+
+        surface_finish / surface_treatment — use when the customer is
+        asking a TECHNICAL question about what treatment or finish is
+        possible, appropriate, or capable of achieving a requirement (e.g.
+        "Can electropolishing achieve Ra < 0.4 µm on these 316L parts?").
+        Do not use it for a purely commercial request such as "Please
+        quote electropolishing of these parts to Ra < 0.8 µm" when the
+        customer has already specified the service and requirement and is
+        simply requesting price/processing.
+
+        maintenance_product_support — use when technical product
+        documentation could help understand or troubleshoot an installed
+        product. Do not add it merely because the customer reports a
+        fault ("our pump is making noise and we need a technician" is
+        primarily a service/support request), but "what could cause this
+        noise on our MCP3 and what checks should we perform?" may require
+        maintenance/product documentation.
+
+        product_identification — use cautiously. Use it when static
+        product documentation could genuinely help distinguish or
+        identify a product from technical/product information supplied by
+        the customer. Do NOT use RAG as a product-master database. An
+        unfamiliar product code is not automatically a document-knowledge
+        need. Never assume "ICP3 must mean ICP2" simply because ICP2
+        exists in the knowledge collection. Preserve the customer's
+        reference exactly.
+
+        5. When Product Knowledge is NOT needed
+
+        Return document_knowledge_needs = [] when the unresolved
+        information is transactional, commercial, historical, logistical,
+        or customer-specific. Do not retrieve technical documents merely
+        because a product is mentioned. Product Knowledge is normally NOT
+        needed for: placing a clearly identified order, price, quotation
+        administration, framework pricing, contract pricing, stock,
+        inventory, availability, lead time, promised delivery date,
+        shipment status, delivery address, previous orders, "same as last
+        time", customer history, purchase-order lookup, sales-order
+        lookup, order amendment, cancellation, duplicate-order check,
+        customer-specific commercial terms. Technical documents cannot
+        reliably answer these questions.
+
+        Examples: "Please order 3 x MCP2." → no document knowledge. "Is
+        MCP2 in stock?" → no document knowledge. "Can MCP2 arrive next
+        Friday?" → no document knowledge. "Please use our
+        framework-agreement price." → no document knowledge. "Send the
+        same pump as last time." → no document knowledge (historical
+        business data is required instead).
+
+        6. Product knowledge may be relevant eventually, but retrieval may
+        be premature
+
+        Do not perform speculative technical retrieval when the
+        customer's request is too vague for meaningful product selection
+        or validation. Example: "We need a hygienic Packo pump." This may
+        eventually require product-selection knowledge, but the message
+        contains too little technical/application information for
+        meaningful retrieval. Do NOT invent fluid, flow, pressure/head,
+        temperature, viscosity, materials, or duty point.
+
+        If the request is a confirmed order with only a generic product
+        description, use product_named_generically. If it is only an
+        enquiry or quotation request, use the relevant existing business
+        flags such as not_a_confirmed_order and quote_requested. Describe
+        the missing context or need for clarification in
+        special_requirements when useful.
+
+        Only populate document_knowledge_needs when the email contains
+        enough grounded product/application context for technical
+        documentation to materially help the next step.
+
+        7. Classify business_flags
+
+        `business_flags` is a controlled list. Use only the existing
+        labels below. Include a label only when the email supports it.
+        Return an empty list if none apply.
+
+        pricing_mentioned — add whenever price, cost, discount, agreed
+        pricing, framework pricing, or contract price is referenced.
+
+        quote_requested — add when the customer asks for a quotation,
+        proposal, or price offer.
+
+        model_selection_requested — add when fulfilling the customer's
+        request requires Verder to recommend, select, or choose the
+        appropriate model. This includes explicit wording such as "which
+        model do you recommend?", "which pump should we use?", "MCP2 or
+        MCP3?" It also includes implicit selection requests such as
+        "Please quote a suitable pump for 30% hydrochloric acid at 40°C"
+        because Verder must choose an appropriate product before
+        fulfilling the request. Do NOT add this merely because a product
+        code is absent, the customer wrote "a pump", or the customer is
+        placing a generic but otherwise non-technical order — use
+        product_named_generically for confirmed orders that identify the
+        product only generically.
+
+        product_ambiguous — add when two or more SPECIFIC named candidate
+        products are genuinely alternatives and the customer has not
+        resolved which one applies (e.g. "PHP2 or PRP2?"). When set,
+        populate candidate_products with the specific candidate product
+        names exactly as written. Do not set this merely because an email
+        contains several separate order lines.
+
+        not_a_confirmed_order — add when the customer is making an
+        enquiry rather than committing to a purchase now. Examples: pure
+        quotation request, product-selection enquiry, technical question,
+        stock check, availability enquiry, "we may need...", "we are
+        considering...", conditional enquiry where purchase intent has
+        not yet become firm. Do NOT add it when the customer clearly
+        states present purchase intent. Examples of confirmed purchase
+        intent: "please process this order", "we want to order 3 units",
+        "we need to order 2 pumps", "please send us 5 units", "please
+        place the following order". A confirmed order remains a confirmed
+        order even if the same email also asks for availability, lead
+        time, pricing confirmation, urgent handling, certification
+        documents, or delivery confirmation.
+
+        relative_product_reference — add when the customer is ordering a
+        product but identifies it only through historical context ("same
+        pump as last time", "the usual pump", "same configuration as our
+        previous order"). Set the relevant order-line product to null
+        unless the email itself provides the actual product
+        identification. Do not resolve it from memory or assumptions.
+
+        relative_delivery_address — add when the customer refers to a
+        delivery address relatively ("our usual address", "same delivery
+        address as last order"). Set delivery_address to null.
+
+        product_named_generically — use for a CONFIRMED ORDER where an
+        ordered product is identified only at a broad category, brand, or
+        application level and no unique product/model can be determined.
+        GENERIC examples: "a pump", "Packo pump", "Packo milk pump",
+        "hygienic pumps". SPECIFIC examples: ICP2, MCP3, IFF, NMS, MFF,
+        VPCP, "Packo IFF centrifugal pump", or a distinct singular
+        equipment type such as "tube heat exchanger". A model/series code
+        remains specific even when surrounded by generic wording — do not
+        downgrade "Packo IFF centrifugal pump" to generic simply because
+        "centrifugal pump" is also present. Do not decide whether a model
+        code is valid by checking whether it exists in the
+        technical-document collection.
+
+        delivery_address_missing — add only when ALL are true: (1) the
+        message is a confirmed order, (2) no delivery address is stated,
+        (3) there is no relative-address reference, (4) the customer has
+        not stated a concrete plan to provide the address later. Do not
+        add this to a pure enquiry or quotation request where a delivery
+        address is not yet needed to process the enquiry. Do not add it
+        when the customer says "I will send the exact address tomorrow" —
+        that information is pending, not silently missing.
+
+        8. candidate_products
+
+        Populate candidate_products only when product_ambiguous is set.
+        Include only the specific competing product names the customer
+        actually provided, preserved exactly as written. Otherwise return
+        an empty list.
+
+        9. Multi-purpose emails
+
+        Treat each customer request independently when necessary. An
+        email may simultaneously contain a confirmed product order, a
+        quotation request, a pricing question, a service request, a
+        technical question, and a product-selection request. Do not let
+        one part erase another. Example: "Please order 2 x MCP3 and also
+        quote electropolishing for our housings." The MCP3 purchase
+        remains a confirmed order; the electropolishing request is
+        separately captured in special_requirements; quote_requested is
+        still set. Another example: "Please order two replacement pumps
+        and tell us what may be causing the noise in the installed unit."
+        The order may not require technical documentation, while the
+        troubleshooting question may. Populate document_knowledge_needs if
+        any meaningful part of the customer's current request genuinely
+        requires technical documentation.
+
+        10. Final reasoning check
+
+        Before returning the structured output, verify: Did I extract
+        only information supported by the email? Did I preserve product
+        names and identifiers exactly? Did I distinguish the customer's
+        current instruction from quoted/history text? Did I accidentally
+        treat price, stock, delivery, history, or customer data as
+        Product Knowledge? Does resolving the request genuinely require
+        static product/technical knowledge? If technical knowledge will
+        eventually be needed, is there enough grounded context for
+        retrieval to be useful now? Did I distinguish a technical
+        requirement attached to an existing product from a requirement
+        that must drive product selection or validation? Did I preserve
+        multiple requests instead of forcing the email into one
+        interpretation? Did I avoid using the knowledge collection as the
+        master list of valid products? Did I use only the allowed
+        controlled values defined by the structured-output schema?
+
+        Return only the structured output defined by the schema.
+      output_fields:
+        - name: customer_name
+          type: string
+          required: false
+          nullable: true
+        - name: company_name
+          type: string
+          required: false
+          nullable: true
+        - name: order_lines
+          type: list
+          item_type: object
+          fields:
+            - name: product
+              type: string
+              required: false
+              nullable: true
+            - name: quantity
+              type: integer
+              required: false
+              nullable: true
+        - name: requested_delivery_date
+          type: string
+          required: false
+          nullable: true
+        - name: delivery_address
+          type: string
+          required: false
+          nullable: true
+        - name: po_reference
+          type: string
+          required: false
+          nullable: true
+        - name: special_requirements
+          type: string
+          required: false
+          nullable: true
+        - name: document_knowledge_needs
+          type: list
+          item_type: string
+        - name: business_flags
+          type: list
+          item_type: string
+        - name: candidate_products
+          type: list
+          item_type: string
+    selected_model: gpt-5.6-sol
+    model_routing:
+      accuracy_priority: maximum
+      prefer_low_latency: false
+    experience:
+      display_name: Extract Order Facts
+      purpose: Read the email in its own language and extract only what it actually supports.
+      contribution: Every downstream decision reads a fact the customer actually stated, never a guess.
+      expected_output: Structured order fields, plus internal routing signals.
+      failure_message: The email could not be read well enough to extract anything from.
+  - id: need_knowledge
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: NEEDS_KNOWLEDGE
+          description: >-
+            Needs a product-documentation lookup because the extraction step identified these
+            document knowledge needs: {{outputs.extract.parsed.document_knowledge_needs}}
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.document_knowledge_needs
+                operator: is_not_empty
+        - route: SKIP
+          description: >-
+            No product-documentation lookup needed — the extraction step found no genuine technical
+            question, comparison, or certification/compliance question that the document collection
+            could resolve for this email.
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.document_knowledge_needs
+                operator: is_empty
+      fallback: SKIP
+    experience:
+      display_name: Does This Need Product Knowledge?
+      purpose: >-
+        Retrieve from the shared technical-document collection only when LLM extraction identifies a
+        real document-knowledge need.
+      contribution: >-
+        Straightforward orders skip retrieval, while technical questions, validation, selection,
+        comparison, compliance, and surface-treatment needs can use grounded documents.
+      expected_output: NEEDS_KNOWLEDGE or SKIP.
+      failure_message: Could not determine whether product knowledge is needed.
+  - id: retrieve_product_knowledge
+    type: KnowledgeRetrieval
+    config:
+      collection_id: col_01M0CYCB8G52FZB6SFV437J9C2
+      retrieval_profile_id: retprof_01M0D8GYAQWKK3BSMK0A0384WG
+      query: >-
+        Customer inquiry: {{inputs.email_text}} Extracted order lines:
+        {{outputs.extract.parsed.order_lines}} Document knowledge needed:
+        {{outputs.extract.parsed.document_knowledge_needs}} Candidate products, if any:
+        {{outputs.extract.parsed.candidate_products}} Special requirements stated by the customer:
+        {{outputs.extract.parsed.special_requirements}} Retrieve the most relevant passages from the
+        shared technical-document collection that can answer or validate these document knowledge
+        needs. Do not infer transactional, historical, pricing, stock, or delivery facts from
+        technical documents.
+    experience:
+      display_name: Retrieve Product Knowledge
+      purpose: Pull the most relevant passages for the technical knowledge need identified in the inquiry.
+      contribution: Grounds technical follow-up in the supplied product and surface-treatment documentation.
+      expected_output: Retrieved passages relevant to the identified document knowledge needs.
+      failure_message: The product knowledge could not be retrieved.
+  - id: apply_rules_with_knowledge
+    type: DecisionAgent
+    config:
+      defaults:
+        human_review_required: false
+        human_review_reasons: []
+        sales_team_flag: false
+        sales_team_reasons: []
+      rules:
+        - name: An order line's product could not be identified
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: relative_product_reference
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                The requested product was referenced relatively (e.g. "same as last time") and could
+                not be identified from the email alone.
+        - name: The delivery address could not be identified
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: relative_delivery_address
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                The delivery address was referenced relatively (e.g. "our usual address") and could
+                not be identified from the email alone.
+        - name: Required information is missing outright
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: delivery_address_missing
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                Required information (e.g. the delivery address) is missing from the email, with no
+                relative reference and no plan stated for providing it later.
+        - name: This is not a confirmed order
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: not_a_confirmed_order
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: This message is an enquiry or quote request, not a confirmed order.
+        - name: The customer asked Verder to choose the product
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: model_selection_requested
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                The customer asked Verder to select the correct model rather than naming one —
+                retrieved product evidence can inform this, but only a person may decide it.
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: A model-selection question needs Sales/technical follow-up.
+        - name: Two or more candidate products are genuinely ambiguous
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: product_ambiguous
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                Which specific product model applies is genuinely ambiguous between the candidates
+                the customer named.
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: Product ambiguity between named candidates needs Sales/technical follow-up.
+        - name: No order line could be resolved at all
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.order_lines
+                operator: is_empty
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: No product could be extracted from this email at all.
+        - name: The named product is not specific enough to order
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: product_named_generically
+              - field: outputs.extract.parsed.business_flags
+                operator: not_contains
+                value: not_a_confirmed_order
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                A product was named, but only generically (a brand or category, not a specific
+                model) — an identifiable model is needed before this confirmed order can be
+                processed.
+        - name: Pricing was mentioned
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: pricing_mentioned
+          then:
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: Pricing was referenced, which is out of scope for automated processing.
+        - name: A quote was requested
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: quote_requested
+          then:
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: A quotation was requested, which Sales must handle.
+    experience:
+      display_name: Apply Review And Sales Rules (With Knowledge)
+      purpose: >-
+        Decide, deterministically, whether this order needs a person before it can proceed, and
+        whether Sales needs to look at it in parallel.
+      contribution: >-
+        The two decisions are independent and both evaluate every rule. Identical rule table to the
+        no-knowledge branch.
+      expected_output: Two independent flags, each with its own accumulated reasons.
+      failure_message: The review/Sales rules could not be evaluated.
+  - id: assemble_output_with_knowledge
+    type: PythonSnippetAgent
+    config:
+      code: >
+        order_lines = inputs.get("order_lines") or []
+
+        products = [line.get("product") for line in order_lines if line.get("product")]
+
+        distinct_products = list(dict.fromkeys(products))
+
+        if not distinct_products:
+            product_reference = None
+        elif len(distinct_products) == 1:
+            product_reference = distinct_products[0]
+        else:
+            product_reference = distinct_products
+
+        quantities = [line.get("quantity") for line in order_lines if line.get("quantity") is not
+        None]
+
+        quantity = sum(quantities) if quantities else None
+
+
+        special_requirements = inputs.get("special_requirements")
+
+        if len(order_lines) > 1:
+            breakdown = "; ".join(
+                f"{line.get('product') or 'unspecified product'} x{line.get('quantity')}"
+                if line.get("quantity") is not None
+                else f"{line.get('product') or 'unspecified product'}"
+                for line in order_lines
+            )
+            line_note = f"Order lines: {breakdown}."
+            special_requirements = f"{line_note} {special_requirements}".strip() if special_requirements else line_note
+
+        # Retrieved passages are reference material for Sales, never an
+
+        # extracted customer fact — kept out of the structured extraction
+
+        # fields themselves, folded only into special_requirements (whose
+
+        # own stated purpose is "anything else worth a human seeing"),
+
+        # clearly labeled so it reads as supporting material, not something
+
+        # the customer said. Never used to pick a product on their behalf.
+
+        rag_note = (inputs.get("rag_context") or "").strip()
+
+        if rag_note:
+            # This is a note for a person to skim, not a context dump — cap
+            # it well short of the raw retrieved passages (which can run to
+            # several KB across multiple chunks) so it stays something
+            # "worth a human seeing" rather than burying special_requirements.
+            max_chars = 300
+            excerpt = rag_note if len(rag_note) <= max_chars else rag_note[:max_chars].rsplit(" ", 1)[0] + "…"
+            addition = f"Reference material for Sales (not customer-stated, not used to select a product): {excerpt}"
+            special_requirements = f"{special_requirements} {addition}".strip() if special_requirements else addition
+
+        human_review_reasons = inputs.get("human_review_reasons") or []
+
+        sales_team_reasons = inputs.get("sales_team_reasons") or []
+
+
+        output = {
+            "source_file": inputs.get("source_file"),
+            "processed_at": inputs.get("processed_at"),
+            "extraction": {
+                "customer_name": inputs.get("customer_name"),
+                "company_name": inputs.get("company_name"),
+                "product_reference": product_reference,
+                "quantity": quantity,
+                "requested_delivery_date": inputs.get("requested_delivery_date"),
+                "delivery_address": inputs.get("delivery_address"),
+                "po_reference": inputs.get("po_reference"),
+                "special_requirements": special_requirements,
+            },
+            "order_processing": {
+                "human_review_required": bool(inputs.get("human_review_required")),
+                "review_reason": "; ".join(human_review_reasons) if human_review_reasons else None,
+            },
+            "routing": {
+                "sales_team_flag": bool(inputs.get("sales_team_flag")),
+                "sales_team_reason": "; ".join(sales_team_reasons) if sales_team_reasons else None,
+            },
+        }
+      input_fields:
+        source_file: '{{inputs.source_file}}'
+        processed_at: '{{inputs.processed_at}}'
+        customer_name: '{{outputs.extract.parsed.customer_name}}'
+        company_name: '{{outputs.extract.parsed.company_name}}'
+        order_lines: '{{outputs.extract.parsed.order_lines}}'
+        requested_delivery_date: '{{outputs.extract.parsed.requested_delivery_date}}'
+        delivery_address: '{{outputs.extract.parsed.delivery_address}}'
+        po_reference: '{{outputs.extract.parsed.po_reference}}'
+        special_requirements: '{{outputs.extract.parsed.special_requirements}}'
+        rag_context: '{{outputs.retrieve_product_knowledge.context?}}'
+        human_review_required: '{{outputs.apply_rules_with_knowledge.decisions.human_review_required}}'
+        human_review_reasons: '{{outputs.apply_rules_with_knowledge.decisions.human_review_reasons}}'
+        sales_team_flag: '{{outputs.apply_rules_with_knowledge.decisions.sales_team_flag}}'
+        sales_team_reasons: '{{outputs.apply_rules_with_knowledge.decisions.sales_team_reasons}}'
+      output_fields:
+        - name: source_file
+          type: string
+        - name: processed_at
+          type: string
+        - name: extraction
+          type: object
+          fields:
+            - name: customer_name
+              type: string
+              required: false
+              nullable: true
+            - name: company_name
+              type: string
+              required: false
+              nullable: true
+            - name: product_reference
+              type: string
+              required: false
+              nullable: true
+            - name: quantity
+              type: integer
+              required: false
+              nullable: true
+            - name: requested_delivery_date
+              type: string
+              required: false
+              nullable: true
+            - name: delivery_address
+              type: string
+              required: false
+              nullable: true
+            - name: po_reference
+              type: string
+              required: false
+              nullable: true
+            - name: special_requirements
+              type: string
+              required: false
+              nullable: true
+        - name: order_processing
+          type: object
+          fields:
+            - name: human_review_required
+              type: boolean
+            - name: review_reason
+              type: string
+              required: false
+              nullable: true
+        - name: routing
+          type: object
+          fields:
+            - name: sales_team_flag
+              type: boolean
+            - name: sales_team_reason
+              type: string
+              required: false
+              nullable: true
+    experience:
+      display_name: Assemble Assessment Output (With Knowledge)
+      purpose: Build the exact output shape the assessment schema requires.
+      contribution: >-
+        A clean assessment record — internal signals, rules, and retrieved document evidence never
+        leak into extraction fields.
+      expected_output: One object matching 03_Output_schema.json.
+      failure_message: The output record could not be assembled.
+  - id: end_result_with_knowledge
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: record
+          value_from: '{{outputs.assemble_output_with_knowledge.result}}'
+    experience:
+      display_name: Order Intake Result (With Knowledge)
+      purpose: Return the finished record to the caller.
+      contribution: A clean, typed result.
+      expected_output: One structured order-intake record.
+      failure_message: The result could not be produced.
+  - id: apply_rules_without_knowledge
+    type: DecisionAgent
+    config:
+      defaults:
+        human_review_required: false
+        human_review_reasons: []
+        sales_team_flag: false
+        sales_team_reasons: []
+      rules:
+        - name: An order line's product could not be identified
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: relative_product_reference
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                The requested product was referenced relatively (e.g. "same as last time") and could
+                not be identified from the email alone.
+        - name: The delivery address could not be identified
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: relative_delivery_address
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                The delivery address was referenced relatively (e.g. "our usual address") and could
+                not be identified from the email alone.
+        - name: Required information is missing outright
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: delivery_address_missing
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                Required information (e.g. the delivery address) is missing from the email, with no
+                relative reference and no plan stated for providing it later.
+        - name: This is not a confirmed order
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: not_a_confirmed_order
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: This message is an enquiry or quote request, not a confirmed order.
+        - name: The customer asked Verder to choose the product
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: model_selection_requested
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                The customer asked Verder to select the correct model rather than naming one —
+                retrieved product evidence can inform this, but only a person may decide it.
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: A model-selection question needs Sales/technical follow-up.
+        - name: Two or more candidate products are genuinely ambiguous
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: product_ambiguous
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                Which specific product model applies is genuinely ambiguous between the candidates
+                the customer named.
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: Product ambiguity between named candidates needs Sales/technical follow-up.
+        - name: No order line could be resolved at all
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.order_lines
+                operator: is_empty
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: No product could be extracted from this email at all.
+        - name: The named product is not specific enough to order
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: product_named_generically
+              - field: outputs.extract.parsed.business_flags
+                operator: not_contains
+                value: not_a_confirmed_order
+          then:
+            - field: human_review_required
+              value: true
+            - field: human_review_reasons
+              operation: append
+              value: >-
+                A product was named, but only generically (a brand or category, not a specific
+                model) — an identifiable model is needed before this confirmed order can be
+                processed.
+        - name: Pricing was mentioned
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: pricing_mentioned
+          then:
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: Pricing was referenced, which is out of scope for automated processing.
+        - name: A quote was requested
+          when:
+            operator: and
+            conditions:
+              - field: outputs.extract.parsed.business_flags
+                operator: contains
+                value: quote_requested
+          then:
+            - field: sales_team_flag
+              value: true
+            - field: sales_team_reasons
+              operation: append
+              value: A quotation was requested, which Sales must handle.
+    experience:
+      display_name: Apply Review And Sales Rules (No Knowledge Needed)
+      purpose: >-
+        Decide, deterministically, whether this order needs a person before it can proceed, and
+        whether Sales needs to look at it in parallel.
+      contribution: >-
+        Identical rule table to the with-knowledge branch — same rules, same outcome for the same
+        facts, regardless of which branch ran.
+      expected_output: Two independent flags, each with its own accumulated reasons.
+      failure_message: The review/Sales rules could not be evaluated.
+  - id: assemble_output_without_knowledge
+    type: PythonSnippetAgent
+    config:
+      code: >
+        order_lines = inputs.get("order_lines") or []
+
+        products = [line.get("product") for line in order_lines if line.get("product")]
+
+        distinct_products = list(dict.fromkeys(products))
+
+        if not distinct_products:
+            product_reference = None
+        elif len(distinct_products) == 1:
+            product_reference = distinct_products[0]
+        else:
+            product_reference = distinct_products
+
+        quantities = [line.get("quantity") for line in order_lines if line.get("quantity") is not
+        None]
+
+        quantity = sum(quantities) if quantities else None
+
+
+        special_requirements = inputs.get("special_requirements")
+
+        if len(order_lines) > 1:
+            breakdown = "; ".join(
+                f"{line.get('product') or 'unspecified product'} x{line.get('quantity')}"
+                if line.get("quantity") is not None
+                else f"{line.get('product') or 'unspecified product'}"
+                for line in order_lines
+            )
+            line_note = f"Order lines: {breakdown}."
+            special_requirements = f"{line_note} {special_requirements}".strip() if special_requirements else line_note
+
+        # No lookup ran on this branch — rag_context is always empty here,
+
+        # kept only so this snippet is byte-for-byte identical to the
+
+        # with-knowledge copy apart from that one input's source.
+
+        rag_note = (inputs.get("rag_context") or "").strip()
+
+        if rag_note:
+            max_chars = 300
+            excerpt = rag_note if len(rag_note) <= max_chars else rag_note[:max_chars].rsplit(" ", 1)[0] + "…"
+            addition = f"Reference material for Sales (not customer-stated, not used to select a product): {excerpt}"
+            special_requirements = f"{special_requirements} {addition}".strip() if special_requirements else addition
+
+        human_review_reasons = inputs.get("human_review_reasons") or []
+
+        sales_team_reasons = inputs.get("sales_team_reasons") or []
+
+
+        output = {
+            "source_file": inputs.get("source_file"),
+            "processed_at": inputs.get("processed_at"),
+            "extraction": {
+                "customer_name": inputs.get("customer_name"),
+                "company_name": inputs.get("company_name"),
+                "product_reference": product_reference,
+                "quantity": quantity,
+                "requested_delivery_date": inputs.get("requested_delivery_date"),
+                "delivery_address": inputs.get("delivery_address"),
+                "po_reference": inputs.get("po_reference"),
+                "special_requirements": special_requirements,
+            },
+            "order_processing": {
+                "human_review_required": bool(inputs.get("human_review_required")),
+                "review_reason": "; ".join(human_review_reasons) if human_review_reasons else None,
+            },
+            "routing": {
+                "sales_team_flag": bool(inputs.get("sales_team_flag")),
+                "sales_team_reason": "; ".join(sales_team_reasons) if sales_team_reasons else None,
+            },
+        }
+      input_fields:
+        source_file: '{{inputs.source_file}}'
+        processed_at: '{{inputs.processed_at}}'
+        customer_name: '{{outputs.extract.parsed.customer_name}}'
+        company_name: '{{outputs.extract.parsed.company_name}}'
+        order_lines: '{{outputs.extract.parsed.order_lines}}'
+        requested_delivery_date: '{{outputs.extract.parsed.requested_delivery_date}}'
+        delivery_address: '{{outputs.extract.parsed.delivery_address}}'
+        po_reference: '{{outputs.extract.parsed.po_reference}}'
+        special_requirements: '{{outputs.extract.parsed.special_requirements}}'
+        rag_context: ''
+        human_review_required: '{{outputs.apply_rules_without_knowledge.decisions.human_review_required}}'
+        human_review_reasons: '{{outputs.apply_rules_without_knowledge.decisions.human_review_reasons}}'
+        sales_team_flag: '{{outputs.apply_rules_without_knowledge.decisions.sales_team_flag}}'
+        sales_team_reasons: '{{outputs.apply_rules_without_knowledge.decisions.sales_team_reasons}}'
+      output_fields:
+        - name: source_file
+          type: string
+        - name: processed_at
+          type: string
+        - name: extraction
+          type: object
+          fields:
+            - name: customer_name
+              type: string
+              required: false
+              nullable: true
+            - name: company_name
+              type: string
+              required: false
+              nullable: true
+            - name: product_reference
+              type: string
+              required: false
+              nullable: true
+            - name: quantity
+              type: integer
+              required: false
+              nullable: true
+            - name: requested_delivery_date
+              type: string
+              required: false
+              nullable: true
+            - name: delivery_address
+              type: string
+              required: false
+              nullable: true
+            - name: po_reference
+              type: string
+              required: false
+              nullable: true
+            - name: special_requirements
+              type: string
+              required: false
+              nullable: true
+        - name: order_processing
+          type: object
+          fields:
+            - name: human_review_required
+              type: boolean
+            - name: review_reason
+              type: string
+              required: false
+              nullable: true
+        - name: routing
+          type: object
+          fields:
+            - name: sales_team_flag
+              type: boolean
+            - name: sales_team_reason
+              type: string
+              required: false
+              nullable: true
+    experience:
+      display_name: Assemble Assessment Output (No Knowledge Needed)
+      purpose: Build the exact output shape the assessment schema requires.
+      contribution: A clean assessment record, assembled directly without a retrieval step.
+      expected_output: One object matching 03_Output_schema.json.
+      failure_message: The output record could not be assembled.
+  - id: end_result_without_knowledge
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: record
+          value_from: '{{outputs.assemble_output_without_knowledge.result}}'
+    experience:
+      display_name: Order Intake Result (No Knowledge Needed)
+      purpose: Return the finished record to the caller.
+      contribution: A clean, typed result.
+      expected_output: One structured order-intake record.
+      failure_message: The result could not be produced.
+edges:
+  - from: extract
+    to: need_knowledge
+  - from: need_knowledge
+    condition: route
+    branches:
+      NEEDS_KNOWLEDGE: retrieve_product_knowledge
+      SKIP: apply_rules_without_knowledge
+  - from: retrieve_product_knowledge
+    to: apply_rules_with_knowledge
+  - from: apply_rules_with_knowledge
+    to: assemble_output_with_knowledge
+  - from: assemble_output_with_knowledge
+    to: end_result_with_knowledge
+  - from: apply_rules_without_knowledge
+    to: assemble_output_without_knowledge
+  - from: assemble_output_without_knowledge
+    to: end_result_without_knowledge

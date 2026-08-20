@@ -165,6 +165,7 @@ class TestPermissions:
                         "to": [{"email": "a@b.c"}],
                         "subject": "s",
                         "body": "b",
+                        "allow_unattended_write": True,
                     },
                     service,
                 )
@@ -195,6 +196,7 @@ class TestIdempotency:
             "to": [{"email": "kunde@werke.de"}],
             "subject": "Re: Pumpe",
             "body": "Wir melden uns.",
+            "allow_unattended_write": True,
         }
         first = await run(node(config, service), run_id="run-1")
         second = await run(node(config, service), run_id="run-1")
@@ -213,6 +215,7 @@ class TestIdempotency:
             "to": [{"email": "kunde@werke.de"}],
             "subject": "Re: Pumpe",
             "body": "Wir melden uns.",
+            "allow_unattended_write": True,
         }
         await run(node(config, service), run_id="run-1")
         await run(node(config, service), run_id="run-2")
@@ -244,6 +247,7 @@ class TestIdempotency:
             "to": [{"email": "kunde@werke.de"}],
             "subject": "s",
             "body": "b",
+            "allow_unattended_write": True,
         }
         with pytest.raises(RuntimeError, match="rejected"):
             await run(node(config, service), run_id="run-1")
@@ -268,6 +272,7 @@ class TestIdempotency:
             "to": [{"email": "kunde@werke.de"}],
             "subject": "s",
             "body": "b",
+            "allow_unattended_write": True,
         }
         with pytest.raises(EmailAmbiguousFailure):
             await run(node(config, service), run_id="run-1")

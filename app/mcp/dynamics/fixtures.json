@@ -119,7 +119,7 @@
   ],
   "salesorders": [
     {
-      "salesorderid": "0rd00000-0000-4000-8000-000000000001",
+      "salesorderid": "ad000000-0000-4000-8000-000000000001",
       "order_number": "SO-2024-0881",
       "purchase_order_number": null,
       "name": "Dura 25 peristaltic pump",
@@ -144,7 +144,7 @@
       ]
     },
     {
-      "salesorderid": "0rd00000-0000-4000-8000-000000000002",
+      "salesorderid": "ad000000-0000-4000-8000-000000000002",
       "order_number": "SO-2023-0417",
       "purchase_order_number": null,
       "name": "Dura 15 peristaltic pump",
@@ -163,7 +163,7 @@
       ]
     },
     {
-      "salesorderid": "0rd00000-0000-4000-8000-000000000003",
+      "salesorderid": "ad000000-0000-4000-8000-000000000003",
       "order_number": "SO-2025-0290",
       "purchase_order_number": null,
       "name": "Spare hose kit",
@@ -184,27 +184,27 @@
   ],
   "shipments": [
     {
-      "shipmentid": "sh000000-0000-4000-8000-000000000001",
+      "shipmentid": "ad100000-0000-4000-8000-000000000001",
       "shipment_number": "SHIP-2024-0881",
       "status": "delivered",
       "shipped_date": "2024-09-23T07:30:00Z",
       "delivered_date": "2024-09-25T13:15:00Z",
-      "_salesorderid_value": "0rd00000-0000-4000-8000-000000000001",
+      "_salesorderid_value": "ad000000-0000-4000-8000-000000000001",
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
     },
     {
-      "shipmentid": "sh000000-0000-4000-8000-000000000002",
+      "shipmentid": "ad100000-0000-4000-8000-000000000002",
       "shipment_number": "SHIP-2023-0417",
       "status": "delivered",
       "shipped_date": "2023-04-10T07:00:00Z",
       "delivered_date": "2023-04-12T11:20:00Z",
-      "_salesorderid_value": "0rd00000-0000-4000-8000-000000000002",
+      "_salesorderid_value": "ad000000-0000-4000-8000-000000000002",
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000001"
     }
   ],
   "service_cases": [
     {
-      "caseid": "cs000000-0000-4000-8000-000000000001",
+      "caseid": "ad200000-0000-4000-8000-000000000001",
       "service_case_number": "CASE-2026-0147",
       "title": "Dura 25 reduced flow",
       "status": "open",
@@ -213,7 +213,7 @@
       "_customerid_value": "a1b2c3d4-0000-4000-8000-000000000002"
     },
     {
-      "caseid": "cs000000-0000-4000-8000-000000000002",
+      "caseid": "ad200000-0000-4000-8000-000000000002",
       "service_case_number": "CASE-2026-0098",
       "title": "Dura 15 maintenance enquiry",
       "status": "resolved",

@@ -1,0 +1,70 @@
+To: [platform/knowledge-studio owner — fill in]
+From: Ayush Khandelwal
+Subject: Verder knowledge collection — ingestion pipeline gaps found during the 6-model evaluation
+
+Hi,
+
+While tracing the RAG setup behind the Verder Liquids email-intake workflow for the evaluation
+report, I found that the "Verder Pump Product Knowledge" collection
+(col_01M0D8GYAD5FBWKTF7GCE1Z16F) was not actually ingested through the production Knowledge
+Studio upload pipeline, even though it has Parser/Chunking/Embedding Profile records attached
+that describe one. Flagging these so we can decide whether to re-ingest properly before this
+collection is used beyond the POC.
+
+What I found (all verified directly against Mongo, the live Weaviate instance, and the setup
+script itself — scripts/verder_setup_knowledge.py):
+
+1. Wrong pipeline entirely. The collection was seeded by a one-time script that calls the
+   legacy, low-level app/ingestion/pipeline.py::ingest_file() function directly for each of the
+   7 datasheet PDFs, then manually constructs and activates an Index record afterward. It never
+   goes through app/api/knowledge.py -> IngestionCoordinator -> IngestionJobRunner, which is the
+   real production path. Confirmed by zero records in ingestion_jobs, knowledge_source_versions,
+   and knowledge_index_documents for this collection.
+
+2. Parser profile is a label, not what ran. The index links a "Vision-Augmented Datasheet
+   Parser" profile (strategy=vision_augmented), but ingest_file() only ever calls the plain
+   PdfExtractor (pdfplumber) — no vision-model call happens. The setup script's own docstring
+   admits this: the performance-curve graphics in these datasheets are not read, only the
+   surrounding text. Confirmed live: a sample chunk's text is raw axis-tick numbers from a graph,
+   not a description of it.
+
+3. Chunking profile is also a label, not what ran. The index links a "Datasheet Parent/Child
+   Chunking" profile (strategy=parent_child), but ingest_file() calls chunk_document() with
+   chunk_config=None, i.e. the plain default recursive algorithm. No parent/child structure
+   exists. Confirmed live: chunk_role and parent_chunk_id are null on all 15 chunks.
+
+4. Product-level metadata tagging never reaches Weaviate. The setup script's whole documented
+   purpose for tagging each datasheet with a product field (e.g. "ICP2") was so retrieval could
+   filter to just the candidate models a given email names. But ingest_file()'s Weaviate payload
+   schema has no product field and never passes one through. Confirmed live: no product value
+   anywhere on a sample chunk's full property set. Retrieval currently runs on pure semantic +
+   keyword relevance across all 15 chunks, not per-product filtering.
+
+5. Physical Weaviate class name is hardcoded, not derived. index.physical_collection was
+   manually set to the literal string "DocumentChunk" in the setup script, rather than computed
+   by the real embedding-fingerprint naming logic the production path uses
+   (DocumentChunk_<fingerprint>).
+
+6. Corpus is small enough that retrieval never actually narrows anything. The collection only
+   has 15 chunks total across the 7 PDFs. The retrieval profile requests candidate_count=20, so
+   every RAG-triggered query returns the entire 15-chunk corpus as candidates (verified:
+   candidate_count=15 in the real retrieval traces for both triggered test emails). Reranking is
+   doing 100% of the actual relevance filtering right now, not the hybrid retrieval stage.
+
+None of this caused incorrect behavior in the workflow evaluation itself — RAG triggered
+correctly on exactly the 2 emails it should have, and the retrieved content for both was
+relevant to the question being asked. This is a "documented intent vs. what actually executed"
+gap in how the POC collection was set up, not a bug in the running workflow.
+
+Suggested next step: before this collection (or a similar one) is used in production, re-ingest
+the same 7 datasheets through the real Knowledge Studio upload API so the Parser/Chunking
+Profiles are actually honored (vision-augmented reading of the performance-curve graphics would
+likely help, since several test emails reference duty points that appear on those curves), and
+either wire product-level metadata through ingest_file() or migrate this collection's ingestion
+onto the production job runner so the existing metadata_schema (which already declares a
+`product` field) is actually populated.
+
+Happy to do this re-ingestion as a follow-up if useful.
+
+Thanks,
+Ayush

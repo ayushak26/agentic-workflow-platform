@@ -296,6 +296,9 @@ class NodeTestRequest(BaseModel):
     upstream_outputs: dict[str, Any] = Field(default_factory=dict)
     variables: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = None
+    #: The workflow this node belongs to, for cost-breakdown attribution only
+    #: (§ "By workflow" in Cost Management) — never persisted as a run record.
+    workflow_name: str | None = None
 
 
 @router.post("/node-test")
@@ -373,6 +376,11 @@ async def node_test(
                 node_id=body.node_id,
                 ledger=services.get("cost_ledger"),
                 node_type=body.type_name,
+                workflow_name=(
+                    f"{body.workflow_name} · node test"
+                    if body.workflow_name
+                    else "Node test (unsaved workflow)"
+                ),
             ),
         }
 

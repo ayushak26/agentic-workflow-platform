@@ -25,6 +25,7 @@ from app.integrations.email import (
     EmailSearchCriteria,
 )
 from app.integrations.email.base import SIDE_EFFECT_OPERATIONS
+from app.nodes.approval import human_approved
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 
@@ -108,6 +109,20 @@ class EmailNodeConfig(BaseModel):
     subject: str = Field(default="", description="Message subject, in create_draft/send operations.")
     body: str = Field(default="", description="Plain-text message body — normally a template reference.")
     body_html: str | None = Field(default=None, description="Optional HTML message body.")
+
+    #: send/reply only — search, read, and create_draft are never gated:
+    #: nothing leaves the building until a person sends the draft. Same
+    #: escape hatch as MCPToolConfig's and ExternalActionConfig's own.
+    allow_unattended_write: bool = Field(
+        default=False,
+        description="Explicit statement that a send/reply may happen without a human review step in front of it. Ignored for search/read/create_draft.",
+    )
+    #: Names the specific HumanInLoopAgent review that gates a send/reply.
+    #: Left unset, a review anywhere on the run satisfies the gate.
+    approved_by: str | None = Field(
+        default=None,
+        description="Node id of the HumanInLoopAgent review that gates a send/reply. When set, only that node's decision counts.",
+    )
 
     @model_validator(mode="after")
     def operation_has_what_it_needs(self) -> "EmailNodeConfig":
@@ -238,6 +253,18 @@ class EmailAgent(NodeType):
                 f"EmailAgent '{self.node_id}' needs the email service. Configure "
                 "at least one email connection in the deployment."
             )
+
+        if cfg.operation in SIDE_EFFECT_OPERATIONS:
+            approval_satisfied = cfg.allow_unattended_write or human_approved(
+                state, approved_by=cfg.approved_by
+            )
+            if not approval_satisfied:
+                raise RuntimeError(
+                    f"EmailAgent '{self.node_id}' would {cfg.operation} with no "
+                    "approved human review in front of it. Add a Human Review "
+                    "step, or set allow_unattended_write if this is meant to "
+                    "run unattended."
+                )
 
         # The run id scopes the idempotency key: retrying one run must not send
         # a second copy, while two different runs replying to two customers must

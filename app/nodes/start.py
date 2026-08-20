@@ -141,6 +141,7 @@ class StartAgent(NodeType):
             declared
             | {"data"}
             | {f"data.{item.path}" for item in field_paths(specs)}
+            | {f"data.{file_field.name}" for file_field in cfg.file_fields}
         )
 
     @classmethod

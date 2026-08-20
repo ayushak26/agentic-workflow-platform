@@ -69,7 +69,8 @@ inputs:
     description: A human-readable summary of the case, for the customer acknowledgment.
   customer_email:
     type: text
-    required: true
+    required: false
+    description: The customer's email address, if one is known — not every caller can supply one.
 
 entry: find_crm_account
 exit:
@@ -164,7 +165,7 @@ nodes:
         - key: department
           value_from: SALES
         - key: case
-          value_from: "{{outputs.create_case_sales.data.case}}"
+          value_from: "{{outputs.create_case_sales.data.case?}}"
     experience:
       display_name: Sales Case Result
       purpose: Return the created Sales case to the caller.
@@ -198,7 +199,7 @@ nodes:
         - key: department
           value_from: SERVICE
         - key: case
-          value_from: "{{outputs.create_case_service.data.case}}"
+          value_from: "{{outputs.create_case_service.data.case?}}"
     experience:
       display_name: Service Case Result
       purpose: Return the created Service case to the caller.
@@ -232,7 +233,7 @@ nodes:
         - key: department
           value_from: ENGINEERING
         - key: case
-          value_from: "{{outputs.create_case_engineering.data.case}}"
+          value_from: "{{outputs.create_case_engineering.data.case?}}"
     experience:
       display_name: Engineering Case Result
       purpose: Return the created Engineering case to the caller.
@@ -266,7 +267,7 @@ nodes:
         - key: department
           value_from: SUPPLY_CHAIN
         - key: case
-          value_from: "{{outputs.create_case_supply_chain.data.case}}"
+          value_from: "{{outputs.create_case_supply_chain.data.case?}}"
     experience:
       display_name: Supply Chain Case Result
       purpose: Return the created Supply Chain case to the caller.
@@ -300,7 +301,7 @@ nodes:
         - key: department
           value_from: GENERAL
         - key: case
-          value_from: "{{outputs.create_case_general.data.case}}"
+          value_from: "{{outputs.create_case_general.data.case?}}"
     experience:
       display_name: General Case Result
       purpose: Return the created general case to the caller.

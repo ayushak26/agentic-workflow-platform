@@ -141,10 +141,10 @@ nodes:
     config:
       separator: "\n"
       parts:
-        - "Order {{outputs.get_order.first.order_number}}: {{outputs.get_order.first.order_status}} (fulfilment: {{outputs.get_order.first.fulfilment_status}})"
-        - "Shipment: {{outputs.get_shipment.first.delivery_status}}"
-        - "Why: {{outputs.get_fulfilment_status.data.fulfilment.delivery_status}}"
-        - "Inventory for {{outputs.get_order.first.pump_model}}: {{outputs.get_inventory.first.availability_status}}, lead time {{outputs.get_inventory.first.lead_time_days}} days"
+        - "Order {{outputs.get_order.first.order_number?}}: {{outputs.get_order.first.order_status?}} (fulfilment: {{outputs.get_order.first.fulfilment_status?}})"
+        - "Shipment: {{outputs.get_shipment.first.delivery_status?}}"
+        - "Why: {{outputs.get_fulfilment_status.data.fulfilment.delivery_status?}}"
+        - "Inventory for {{outputs.get_order.first.pump_model?}}: {{outputs.get_inventory.first.availability_status?}}, lead time {{outputs.get_inventory.first.lead_time_days?}} days"
     experience:
       display_name: Join Delivery Checks
       purpose: Combine the four independent checks above into one readable summary.

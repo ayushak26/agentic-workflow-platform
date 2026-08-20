@@ -3,14 +3,23 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../../api/client';
 import type {
   ContractField,
-  MCPOperationClass,
   MCPServerInfo,
   MCPToolInfo,
   MCPToolTestResult,
   OutputContract,
 } from '../../../api/types';
+import type { NodeExperienceSpec } from '../yaml-bridge';
 import { FieldPicker } from './FieldPicker';
 import { ValueTree } from './ExplanationView';
+import { suggestField } from './field-suggest';
+import { humanizeIdentifier } from '../guided/runtime-model';
+import { MCPToolPicker } from './MCPToolPicker';
+import { OperationBadge } from './OperationBadge';
+
+// Re-exported for existing call sites (`EmailConfig.tsx`, `ExternalActionConfig.tsx`,
+// `SQLQueryConfig.tsx`) that import this from here rather than from
+// `OperationBadge` directly — this was its original home.
+export { OperationBadge };
 
 /**
  * Configuring a business-system capability.
@@ -25,40 +34,6 @@ import { ValueTree } from './ExplanationView';
  */
 
 type Config = Record<string, unknown>;
-
-const OPERATION_STYLES: Record<MCPOperationClass, string> = {
-  read: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  write: 'border-amber-200 bg-amber-50 text-amber-800',
-  destructive: 'border-red-200 bg-red-50 text-red-700',
-  unknown: 'border-slate-200 bg-slate-50 text-ink-600',
-  external_action: 'border-sky-200 bg-sky-50 text-sky-700',
-};
-
-const OPERATION_TITLES: Record<MCPOperationClass, string> = {
-  read: 'Reads data. Changes nothing.',
-  write: 'Changes data in the connected system.',
-  destructive: 'Deletes or irreversibly changes data in the connected system.',
-  unknown: 'Unclassified — treated as a write.',
-  external_action: 'Triggers an action outside the platform — not a simple read or write.',
-};
-
-/** Shared safety-classification badge — one visual language for every node
- *  that touches something outside the platform, not just MCP tools. Used
- *  by MCPToolConfig (its original home), EmailConfig, ExternalActionConfig
- *  and SQLQueryConfig, so an author (and, on the canvas/Cockpit, a
- *  reader) sees the same badge regardless of which node type produced it. */
-export function OperationBadge({ operation }: { operation: MCPOperationClass }) {
-  return (
-    <span
-      className={`inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
-        OPERATION_STYLES[operation] ?? OPERATION_STYLES.unknown
-      }`}
-      title={OPERATION_TITLES[operation] ?? OPERATION_TITLES.unknown}
-    >
-      {operation}
-    </span>
-  );
-}
 
 function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
@@ -94,17 +69,24 @@ function primitiveType(property: SchemaProperty): string {
 export function MCPToolConfig({
   config,
   contract,
+  experience,
+  onAddNextTool,
   onChange,
+  onExperienceChange,
 }: {
   config: Config;
   contract: OutputContract | null;
+  experience?: NodeExperienceSpec;
+  onAddNextTool?: (serverId: string, tool: MCPToolInfo) => void;
   onChange: (next: Config) => void;
+  onExperienceChange?: (next: NodeExperienceSpec | undefined) => void;
 }) {
   const [servers, setServers] = useState<MCPServerInfo[]>([]);
   const [tools, setTools] = useState<MCPToolInfo[]>([]);
   const [loadingTools, setLoadingTools] = useState(false);
   const [discoveryError, setDiscoveryError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [addingNextTool, setAddingNextTool] = useState(false);
 
   const serverId = asString(config.server_id);
   const toolName = asString(config.tool);
@@ -236,11 +218,18 @@ export function MCPToolConfig({
                     : 'border-slate-200 hover:border-accent-400'
                 }`}
                 key={item.name}
-                onClick={() => onChange({
-                  ...config,
-                  tool: item.name,
-                  arguments: {},
-                })}
+                onClick={() => {
+                  onChange({
+                    ...config,
+                    tool: item.name,
+                    arguments: {},
+                  });
+                  // Never overwrite a label the author already chose — only
+                  // fill the gap for a node that's never been named.
+                  if (!experience?.display_name?.trim() && item.title) {
+                    onExperienceChange?.({ ...experience, display_name: item.title });
+                  }
+                }}
                 type="button"
               >
                 <div className="flex items-center gap-1.5">
@@ -323,6 +312,28 @@ export function MCPToolConfig({
               </span>
             </span>
           </label>
+
+          {onAddNextTool && (
+            <section className="mt-4 border-t border-slate-200 pt-3">
+              <div className="builder-panel-heading">Next step</div>
+              <button
+                className="ui-button ui-button--secondary mt-2 w-full justify-center"
+                onClick={() => setAddingNextTool(true)}
+                type="button"
+              >
+                + Add Next Tool
+              </button>
+            </section>
+          )}
+
+          {addingNextTool && (
+            <MCPToolPicker
+              onClose={() => setAddingNextTool(false)}
+              onSelect={(nextServerId, nextTool) => onAddNextTool?.(nextServerId, nextTool)}
+              rankServerId={serverId}
+              title="Add the next tool"
+            />
+          )}
         </>
       )}
     </div>
@@ -492,8 +503,20 @@ function ToolForm({
 }) {
   const { properties, required } = propertiesOf(tool.input_schema);
   const [picking, setPicking] = useState<string | null>(null);
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
 
   if (Object.keys(properties).length === 0) return null;
+
+  // Optional-reference form for anything that can legitimately be absent: a
+  // CRM lookup that found nothing has no id, and the step should skip rather
+  // than fail the run. Shared by the field picker's onPick and the suggestion
+  // chip's "Use" button so both apply the same rule.
+  const applyReference = (name: string, field: ContractField) => {
+    const reference = field.may_be_unavailable
+      ? field.reference.replace(/\}\}$/, '?}}')
+      : field.reference;
+    onSetArgument(name, reference);
+  };
 
   return (
     <section className="mt-4">
@@ -511,6 +534,13 @@ function ToolForm({
               : kind === 'boolean'
                 ? 'boolean'
                 : 'any';
+          const isEmpty = value === undefined || value === null || value === '';
+          // Only a required, still-empty, not-yet-dismissed field gets a
+          // suggestion — never silently filled, and never nagging about an
+          // argument the author has no reason to map yet.
+          const suggestion = isRequired && isEmpty && !dismissedSuggestions.has(name)
+            ? suggestField(contract, label, property.description, destinationKind)
+            : null;
           return (
             <div key={name}>
               <div className="flex items-center justify-between">
@@ -582,6 +612,30 @@ function ToolForm({
                 />
               )}
 
+              {suggestion && (
+                <div className="mt-1 flex items-center gap-2 rounded border border-accent-200 bg-accent-50 px-2 py-1 text-[10px] text-accent-800">
+                  <span className="min-w-0 flex-1 truncate">
+                    Suggested: {suggestion.node ? suggestion.node.label : 'Workflow Input'}
+                    {' › '}
+                    {humanizeIdentifier(suggestion.field.path.split('.').slice(-1)[0] ?? suggestion.field.path)}
+                  </span>
+                  <button
+                    className="flex-none font-semibold text-accent-700 hover:underline"
+                    onClick={() => applyReference(name, suggestion.field)}
+                    type="button"
+                  >
+                    Use
+                  </button>
+                  <button
+                    className="flex-none text-ink-500 hover:underline"
+                    onClick={() => setDismissedSuggestions(current => new Set(current).add(name))}
+                    type="button"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+
               {picking === name && (
                 <div className="mt-2 rounded border border-slate-200 p-2">
                   <FieldPicker
@@ -590,13 +644,7 @@ function ToolForm({
                     destinationKind={destinationKind}
                     destinationLabel={label}
                     onPick={(field: ContractField) => {
-                      // Optional-reference form for anything that can legitimately
-                      // be absent: a CRM lookup that found nothing has no id, and
-                      // the step should skip rather than fail the run.
-                      const reference = field.may_be_unavailable
-                        ? field.reference.replace(/\}\}$/, '?}}')
-                        : field.reference;
-                      onSetArgument(name, reference);
+                      applyReference(name, field);
                       setPicking(null);
                     }}
                     selectedReference={typeof value === 'string' ? value : undefined}

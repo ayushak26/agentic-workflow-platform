@@ -77,7 +77,7 @@ nodes:
         }
       input_fields:
         stated: "{{inputs.stated_company_name}}"
-        resolved: "{{outputs.find_customer_by_name.first.account_name}}"
+        resolved: "{{outputs.find_customer_by_name.first.account_name?}}"
       output_fields:
         - name: names_match
           type: boolean
@@ -121,9 +121,9 @@ nodes:
             - field: resolution_status
               value: RESOLVED
             - field: resolved_company_name
-              value: "{{outputs.find_customer_by_name.first.account_name}}"
+              value: "{{outputs.find_customer_by_name.first.account_name?}}"
             - field: resolved_customer_id
-              value: "{{outputs.find_customer_by_name.first.account_id}}"
+              value: "{{outputs.find_customer_by_name.first.account_id?}}"
         - name: Multiple customers match
           when:
             operator: and
@@ -168,7 +168,7 @@ nodes:
         - key: order_found
           value_from: "{{outputs.find_order_by_reference.found}}"
         - key: order_status
-          value_from: "{{outputs.find_order_by_reference.first.order_status}}"
+          value_from: "{{outputs.find_order_by_reference.first.order_status?}}"
     experience:
       display_name: Identity Resolution Result
       purpose: Return the resolution to the calling workflow.

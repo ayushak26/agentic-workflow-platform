@@ -164,6 +164,7 @@ export function NodeTestPanel({
       config: supportsModel ? { ...selected.data.config, model: testModel } : selected.data.config,
       inputs: structuredInputs,
       upstream_outputs: structuredUpstream,
+      workflow_name: workflow.name,
     })
       .then(next => {
         setResult(next);
@@ -171,7 +172,7 @@ export function NodeTestPanel({
       })
       .catch(reason => setError(reason instanceof Error ? reason.message : String(reason)))
       .finally(() => setBusy(false));
-  }, [onNodeRunOutput, selected, structuredInputs, structuredUpstream, supportsModel, testModel]);
+  }, [onNodeRunOutput, selected, structuredInputs, structuredUpstream, supportsModel, testModel, workflow.name]);
 
   if (!selected) {
     return (

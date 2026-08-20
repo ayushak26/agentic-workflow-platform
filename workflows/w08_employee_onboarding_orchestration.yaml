@@ -1,21 +1,24 @@
 name: W08 — Employee Onboarding Orchestration
 description: >-
-  HR starts onboarding for a new employee. Five independent workstreams —
-  HR setup, IT provisioning, equipment, manager preparation, and
-  facilities — all always apply to every onboarding, so they run as a
-  genuinely unconditional parallel fan-out and join safely into one
-  readiness summary. HR Setup and IT Account are reusable subprocesses,
-  callable from other onboarding-shaped workflows; the other three are
-  inline here since they're specific to this process.
-version: "1.0"
+  HR starts onboarding for a new employee. Five independent workstreams — HR setup, IT provisioning,
+  equipment, manager preparation, and facilities — all always apply to every onboarding. Equipment,
+  manager preparation, and facilities run as a genuinely unconditional parallel fan-out. HR Setup and
+  IT Account are reusable subprocesses (callable from other onboarding-shaped workflows too), and run
+  one after the other rather than alongside each other: each subprocess call pauses this run while its
+  child executes, and the platform's durable human-review checkpoint currently tracks one pending gate
+  per run, so two subprocesses pausing at once isn't safe to resume yet. Sequencing them keeps both
+  workstreams real and always-run while staying inside that limit. Everything joins safely into one
+  readiness summary once all five have a result.
+version: '1.0'
 use_case: hr_operations
 library:
   title: W08 — Employee Onboarding Orchestration
   summary: Run five onboarding workstreams in parallel and join them into one readiness decision.
   purpose:
     - Demonstrate subprocess reuse alongside inline parallel work in the same fan-out
-    - Keep "is this employee actually ready to start" a deterministic check
-      over five real, always-run workstreams
+    - >-
+      Keep "is this employee actually ready to start" a deterministic check over five real,
+      always-run workstreams
   suitable_for:
     - Any new-employee onboarding once HR has the basic details
   not_suitable_for:
@@ -29,12 +32,35 @@ library:
     labels:
       - Final Onboarding Review
   visibility_status: draft
-
 entry: start
 exit:
   - end_ready
   - end_reviewed
-
+inputs:
+  employee_name:
+    type: json
+    required: true
+  employee_email:
+    type: json
+    required: true
+  department:
+    type: json
+    required: true
+  manager_name:
+    type: json
+    required: true
+  manager_email:
+    type: json
+    required: true
+  job_title:
+    type: json
+    required: true
+  start_date:
+    type: json
+    required: true
+  employment_type:
+    type: json
+    required: true
 nodes:
   - id: start
     type: StartAgent
@@ -56,7 +82,13 @@ nodes:
           type: enum
           required: true
           widget: dropdown
-          enum_values: [ENGINEERING, OPERATIONS, SALES, IT, FINANCE, HR]
+          enum_values:
+            - ENGINEERING
+            - OPERATIONS
+            - SALES
+            - IT
+            - FINANCE
+            - HR
         - name: manager_name
           label: Manager
           type: string
@@ -84,7 +116,10 @@ nodes:
           type: enum
           required: true
           widget: dropdown
-          enum_values: [FULL_TIME, CONTRACTOR, INTERN]
+          enum_values:
+            - FULL_TIME
+            - CONTRACTOR
+            - INTERN
         - name: equipment_requirements
           label: Equipment Requirements
           type: text
@@ -99,19 +134,15 @@ nodes:
       contribution: One form, one entry point, for every new employee.
       expected_output: Employee, manager, role, and requirement details.
       failure_message: The onboarding request could not be read.
-
-  # Unconditional fan-out — all five workstreams below always run for every
-  # onboarding, regardless of department or role. Safe join shape: nothing
-  # here is conditionally selected.
   - id: hr_setup
     type: SubprocessAgent
     config:
       workflow: w08sub_hr_setup
       inputs:
-        employee_name: "{{outputs.start.data.employee_name}}"
-        department: "{{outputs.start.data.department}}"
-        start_date: "{{outputs.start.data.start_date}}"
-        employment_type: "{{outputs.start.data.employment_type}}"
+        employee_name: '{{outputs.start.data.employee_name}}'
+        department: '{{outputs.start.data.department}}'
+        start_date: '{{outputs.start.data.start_date}}'
+        employment_type: '{{outputs.start.data.employment_type}}'
       result_from: workflow_output
     experience:
       display_name: HR Setup
@@ -119,16 +150,15 @@ nodes:
       contribution: Reuses the same HR checklist logic any onboarding-shaped workflow can call.
       expected_output: An HR setup checklist.
       failure_message: HR setup could not be completed.
-
   - id: it_account
     type: SubprocessAgent
     config:
       workflow: w08sub_it_account
       inputs:
-        employee_name: "{{outputs.start.data.employee_name}}"
-        employee_email: "{{outputs.start.data.employee_email}}"
-        department: "{{outputs.start.data.department}}"
-        system_access_requirements: "{{outputs.start.data.system_access_requirements}}"
+        employee_name: '{{outputs.start.data.employee_name}}'
+        employee_email: '{{outputs.start.data.employee_email}}'
+        department: '{{outputs.start.data.department}}'
+        system_access_requirements: '{{outputs.start.data.system_access_requirements}}'
       result_from: workflow_output
     experience:
       display_name: IT Account Provisioning
@@ -136,7 +166,6 @@ nodes:
       contribution: Reuses the same provisioning logic Workflow 09's access requests could call too.
       expected_output: A provisioning checklist.
       failure_message: The IT account could not be provisioned.
-
   - id: equipment_prep
     type: TransformAgent
     config:
@@ -145,7 +174,7 @@ nodes:
         - target: equipment_requirements
           operation: copy
           source: start.data.equipment_requirements
-          default: "standard laptop and desk setup"
+          default: standard laptop and desk setup
         - target: status
           operation: constant
           value: ORDERED
@@ -155,23 +184,24 @@ nodes:
       contribution: Specific to this process, so it's inline rather than a subprocess.
       expected_output: An equipment order status.
       failure_message: Equipment could not be prepared.
-
   - id: manager_notification
     type: EmailAgent
     config:
       connection: default
       operation: create_draft
       to:
-        - email: "{{outputs.start.data.manager_email}}"
-      subject: "{{outputs.start.data.employee_name}} starts {{outputs.start.data.start_date}}"
-      body: "{{outputs.start.data.employee_name}} joins {{outputs.start.data.department}} as {{outputs.start.data.job_title}} on {{outputs.start.data.start_date}}. Please prepare a first-week plan."
+        - email: '{{outputs.start.data.manager_email}}'
+      subject: '{{outputs.start.data.employee_name}} starts {{outputs.start.data.start_date}}'
+      body: >-
+        {{outputs.start.data.employee_name}} joins {{outputs.start.data.department}} as
+        {{outputs.start.data.job_title}} on {{outputs.start.data.start_date}}. Please prepare a
+        first-week plan.
     experience:
       display_name: Manager Preparation
       purpose: Give the manager enough notice to plan the first week.
       contribution: The manager hears about this well before day one, not on it.
       expected_output: A drafted notification to the manager.
       failure_message: The manager could not be notified.
-
   - id: facilities_setup
     type: TransformAgent
     config:
@@ -180,7 +210,7 @@ nodes:
         - target: location
           operation: copy
           source: start.data.location
-          default: "not specified"
+          default: not specified
         - target: desk_assigned
           operation: constant
           value: true
@@ -190,23 +220,24 @@ nodes:
       contribution: Specific to this process, so it's inline rather than a subprocess.
       expected_output: A facilities assignment status.
       failure_message: Facilities could not be set up.
-
   - id: join_readiness_summary
     type: TextAssemblerAgent
     config:
-      separator: "\n"
+      separator: |+
+
       parts:
-        - "HR: {{outputs.hr_setup.result.status}}"
-        - "IT: {{outputs.it_account.result.status}} (security review needed: {{outputs.it_account.result.requires_security_review}})"
-        - "Equipment: {{outputs.equipment_prep.data.status}}"
-        - "Facilities: desk assigned = {{outputs.facilities_setup.data.desk_assigned}}"
+        - 'HR: {{outputs.hr_setup.result.status}}'
+        - >-
+          IT: {{outputs.it_account.result.status}} (security review needed:
+          {{outputs.it_account.result.requires_security_review}})
+        - 'Equipment: {{outputs.equipment_prep.data.status}}'
+        - 'Facilities: desk assigned = {{outputs.facilities_setup.data.desk_assigned}}'
     experience:
       display_name: Join Onboarding Workstreams
       purpose: Combine all five workstreams above into one readiness summary.
       contribution: Every workstream above always ran, so this always has all of them to combine.
       expected_output: One combined onboarding readiness summary.
       failure_message: The readiness summary could not be assembled.
-
   - id: decide_readiness
     type: DecisionAgent
     config:
@@ -228,7 +259,6 @@ nodes:
       contribution: The same rule every time — never a judgment call on whether to check.
       expected_output: Whether a final review is required.
       failure_message: Readiness could not be assessed.
-
   - id: readiness_router
     type: RouterAgent
     config:
@@ -247,7 +277,6 @@ nodes:
       contribution: A standard onboarding completes immediately — nothing waits unnecessarily.
       expected_output: READY or REVIEW.
       failure_message: This onboarding could not be routed.
-
   - id: end_ready
     type: EndAgent
     config:
@@ -256,14 +285,13 @@ nodes:
         - key: outcome
           value_from: ready
         - key: summary
-          value_from: "{{outputs.join_readiness_summary.text}}"
+          value_from: '{{outputs.join_readiness_summary.text}}'
     experience:
       display_name: Ready Outcome
       purpose: Return the completed onboarding summary.
       contribution: A clean, typed result — never the whole accumulated state.
       expected_output: The onboarding readiness summary.
       failure_message: The result could not be produced.
-
   - id: final_review
     type: HumanInLoopAgent
     config:
@@ -281,7 +309,6 @@ nodes:
       contribution: Nothing security-flagged is marked ready without a person's confirmation.
       expected_output: Approve or reject.
       failure_message: The review could not be recorded.
-
   - id: end_reviewed
     type: EndAgent
     config:
@@ -290,21 +317,24 @@ nodes:
         - key: outcome
           value_from: reviewed
         - key: summary
-          value_from: "{{outputs.join_readiness_summary.text}}"
+          value_from: '{{outputs.join_readiness_summary.text}}'
         - key: review_decision
-          value_from: "{{outputs.final_review.decision}}"
+          value_from: '{{outputs.final_review.decision}}'
     experience:
       display_name: Reviewed Outcome
       purpose: Return the reviewed onboarding summary.
       contribution: A clean, typed result — never the whole accumulated state.
       expected_output: The onboarding summary and the reviewer's decision.
       failure_message: The result could not be produced.
-
 edges:
   - from: start
-    to: [hr_setup, it_account, equipment_prep, manager_notification, facilities_setup]
+    to:
+      - hr_setup
+      - equipment_prep
+      - manager_notification
+      - facilities_setup
   - from: hr_setup
-    to: join_readiness_summary
+    to: it_account
   - from: it_account
     to: join_readiness_summary
   - from: equipment_prep

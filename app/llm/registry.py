@@ -44,6 +44,7 @@ from app.llm.local_openai_gw import (
 from app.llm.model_catalog import AUTO_MODEL, MODEL_PROFILE_BY_NAME
 from app.llm.model_router import ModelRouter, infer_task_kind
 from app.llm.openai_gw import OpenAIGateway
+from app.llm.openrouter_catalog import is_openrouter_model_id
 from app.llm.openrouter_gw import OpenRouterGateway
 from app.llm.openai_registry import (
     OPENAI_LLM_FALLBACK_CHAINS,
@@ -581,6 +582,9 @@ class RegistryLLMGateway(LLMGateway):
         self._session_id: str | None = None
         self._node_id:    str | None = None
         self._ledger = None  # CostLedger | None
+        # Denormalized onto every LedgerEntry this gateway records (see
+        # _record_cost) so cost breakdowns never depend on a run_history join.
+        self._workflow_name: str | None = None
         # Automatic-routing context — bound per node by the compiler.
         self._event_bus = None            # RunEventBus | None
         self._node_type: str | None = None
@@ -630,6 +634,7 @@ class RegistryLLMGateway(LLMGateway):
         entity_tokenizer=None,
         collection_id: str = "default",
         processing_mode: str | None = None,
+        workflow_name: str | None = None,
     ) -> "RegistryLLMGateway":
         """Return a context-bound copy for per-node cost tracking and routing.
 
@@ -655,6 +660,7 @@ class RegistryLLMGateway(LLMGateway):
         clone._entity_tokenizer = entity_tokenizer
         clone._collection_id    = collection_id
         clone._processing_mode  = processing_mode
+        clone._workflow_name    = workflow_name
         # Each bound clone accumulates its own selections independently.
         clone._selection_history = []
         clone._call_seq = 0
@@ -683,7 +689,24 @@ class RegistryLLMGateway(LLMGateway):
             ledger=self._ledger,
             allowed_models=list(MODEL_PROFILE_BY_NAME.keys()),
             node_type=node_type,
+            collection_id=self._collection_id,
+            workflow_name=self._workflow_name,
         )
+
+    def with_collection_id(self, collection_id: str) -> "RegistryLLMGateway":
+        """Return a clone with only collection_id overridden.
+
+        Unlike calling with_context() again, this preserves every other bound
+        field (run_id, node_id, event_bus, workflow_name, ...) untouched —
+        with_context() resets any keyword field you don't re-pass back to its
+        own default. Used by nodes (e.g. KnowledgeRetrieval) that need to
+        attribute cost to their own configured collection rather than the
+        run-level default, without losing the compiler's per-node binding.
+        """
+        clone = RegistryLLMGateway.__new__(RegistryLLMGateway)
+        clone.__dict__.update(self.__dict__)
+        clone._collection_id = collection_id
+        return clone
 
     # ---- Confidential entity protection (Phase 1) --------------------------
     # Tokenization runs OUTSIDE _complete_impl/_complete_structured_impl/
@@ -985,6 +1008,7 @@ class RegistryLLMGateway(LLMGateway):
                 fallback_reason=fallback_reason,
                 stage=stage,
                 collection_id=self._collection_id,
+                workflow_name=self._workflow_name,
             )
             self._ledger.record(entry)
         except Exception:
@@ -1021,7 +1045,18 @@ class RegistryLLMGateway(LLMGateway):
         for model in requested:
             if model == AUTO_MODEL:
                 continue
-            if allowed is not None and model not in allowed:
+            # OpenRouter model ids are exempt from allowed_models the same way
+            # NodeSpec.selected_model_must_be_allowed() exempts them at config
+            # validation time: OpenRouter's own ~400-500 model catalog is the
+            # authoritative source for whether the id is real, so it is never
+            # enumerated into allowed_models. Without this exemption every
+            # OpenRouter-routed call fails here with an empty fallback chain
+            # even though it passed preflight cleanly.
+            if (
+                allowed is not None
+                and model not in allowed
+                and not is_openrouter_model_id(model)
+            ):
                 continue
             resolved = resolve_model(model)
             if resolved not in candidates:

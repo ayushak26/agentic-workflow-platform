@@ -367,6 +367,33 @@ def _review_content(
             format="json",
             source="workflow",
         )
+
+    # A gate configured with only `review_panels` (no context_fields, no
+    # editable_content_field — sp04_approval_gate.yaml is exactly this
+    # shape) reaches here with an empty `context`, since context_fields is
+    # what populates it. Without this, the frontend's own content fallback
+    # (ui/src/modes/studio/HITLPanel.tsx's initialReviewContent) treats the
+    # empty `context` object itself as the review's structured JSON body —
+    # editable, but showing the reviewer a bare "{}" instead of anything
+    # they configured. One available panel's own value is shown in its
+    # natural format (mirroring editable_content_field's single-field
+    # behavior above); more than one is joined into one readable block.
+    available_panels = [
+        panel for panel in _review_panels(cfg, state) if panel.available and panel.value is not None
+    ]
+    if len(available_panels) == 1:
+        panel = available_panels[0]
+        return HITLReviewContent(
+            text=_content_as_text(panel.value),
+            format=_content_format(panel.value),
+            source="workflow",
+            source_path=panel.field,
+        )
+    if available_panels:
+        joined = "\n\n".join(
+            f"{panel.label}: {_content_as_text(panel.value)}" for panel in available_panels
+        )
+        return HITLReviewContent(text=joined, format="text", source="workflow")
     return None
 
 

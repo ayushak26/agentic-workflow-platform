@@ -85,6 +85,12 @@ class ExternalActionConfig(BaseModel):
             "step in front of it, when safety_class is write or external_action."
         ),
     )
+    #: Same scoping as MCPToolConfig's own — names the specific review this
+    #: call is gated by, instead of accepting any approval anywhere on the run.
+    approved_by: str | None = Field(
+        default=None,
+        description="Node id of the HumanInLoopAgent review that gates this call. When set, only that node's decision counts.",
+    )
 
 
 class ExternalActionInput(BaseModel):
@@ -156,7 +162,9 @@ class ExternalActionAgent(NodeType):
         inputs = state.get("inputs") or {}
         run_id = str(inputs.get("SYSTEM.run_id") or "")
 
-        approval_satisfied = cfg.allow_unattended_write or human_approved(state)
+        approval_satisfied = cfg.allow_unattended_write or human_approved(
+            state, approved_by=cfg.approved_by
+        )
 
         try:
             result = await service.call(

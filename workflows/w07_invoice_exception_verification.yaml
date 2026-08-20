@@ -48,14 +48,14 @@ nodes:
       mode: input_form
       title: Upload Invoice
       fields:
-        - name: invoice_file
-          label: Invoice Document
-          type: object
-          required: true
         - name: notes
           label: Notes
           type: text
           required: false
+      file_fields:
+        - name: invoice_file
+          label: Invoice Document
+          required: true
     experience:
       display_name: Upload Invoice
       purpose: Take in the invoice document to be verified.
@@ -159,7 +159,7 @@ nodes:
       separator: "\n"
       parts:
         - "Invoice {{outputs.extract_invoice_fields.parsed.invoice_number}}: on file = {{outputs.find_invoice_record.found}}"
-        - "Order {{outputs.extract_invoice_fields.parsed.order_number}}: found = {{outputs.find_order_record.found}}, status = {{outputs.find_order_record.first.order_status}}"
+        - "Order {{outputs.extract_invoice_fields.parsed.order_number}}: found = {{outputs.find_order_record.found}}, status = {{outputs.find_order_record.first.order_status?}}"
         - "Customer {{outputs.extract_invoice_fields.parsed.customer_name}}: found = {{outputs.find_customer_record.found}}"
     experience:
       display_name: Join Verification Checks
@@ -182,7 +182,7 @@ nodes:
         output = {"amounts_match": bool(matches)}
       input_fields:
         extracted: "{{outputs.extract_invoice_fields.parsed.total_amount}}"
-        recorded: "{{outputs.find_invoice_record.first.total_amount}}"
+        recorded: "{{outputs.find_invoice_record.first.total_amount?}}"
       output_fields:
         - name: amounts_match
           type: boolean
@@ -201,6 +201,7 @@ nodes:
         exception_reason: ""
       rules:
         - name: The invoice is not on file
+          stop_on_match: true
           when:
             operator: and
             conditions:
@@ -212,6 +213,7 @@ nodes:
             - field: exception_reason
               value: INVOICE_NOT_ON_FILE
         - name: The referenced order does not exist
+          stop_on_match: true
           when:
             operator: and
             conditions:
@@ -222,6 +224,18 @@ nodes:
               value: true
             - field: exception_reason
               value: ORDER_NOT_FOUND
+        - name: The invoiced customer is not a recognized account
+          stop_on_match: true
+          when:
+            operator: and
+            conditions:
+              - field: find_customer_record.found
+                operator: is_false
+          then:
+            - field: exception
+              value: true
+            - field: exception_reason
+              value: CUSTOMER_NOT_FOUND
         - name: The amount does not match what was recorded
           when:
             operator: and

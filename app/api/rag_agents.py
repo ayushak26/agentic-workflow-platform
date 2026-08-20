@@ -91,6 +91,7 @@ async def query_agent(
                 session_id=_scope(user),
                 node_id="rag_agent_query",
                 ledger=services.get("cost_ledger"),
+                workflow_name="RAG Agent test",
             )
         return await request.app.state.services["rag_service"].query(
             owner_scope_id=_scope(user),

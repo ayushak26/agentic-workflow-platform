@@ -140,6 +140,7 @@ async def ask_about_node_types(
         llm = llm.with_context(
             run_id="node-types-chat", session_id=scope, node_id="node_types_ask",
             ledger=services.get("cost_ledger"),
+            workflow_name="AI assist · node types",
         )
 
     context = req.context
@@ -361,6 +362,7 @@ async def draft_prompt(
         llm = llm.with_context(
             run_id="node-types-chat", session_id=scope, node_id="draft_prompt",
             ledger=services.get("cost_ledger"),
+            workflow_name="AI assist · node types",
         )
 
     conversation = "\n".join(f"{m.role}: {m.content}" for m in req.history)
@@ -447,6 +449,7 @@ async def draft_instructions(
         llm = llm.with_context(
             run_id="node-types-chat", session_id=scope, node_id="draft_instructions",
             ledger=services.get("cost_ledger"),
+            workflow_name="AI assist · node types",
         )
 
     sections = [
@@ -513,6 +516,7 @@ async def draft_code(
         llm = llm.with_context(
             run_id="node-types-chat", session_id=scope, node_id="draft_code",
             ledger=services.get("cost_ledger"),
+            workflow_name="AI assist · node types",
         )
 
     sections = [f"LANGUAGE: {req.language}"]

@@ -55,10 +55,12 @@ async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name=definition["name"],
+            title=definition.get("title"),
             description=definition["description"],
             inputSchema=definition["input_schema"],
             outputSchema=definition["output_schema"],
             annotations=types.ToolAnnotations(
+                title=definition.get("title"),
                 readOnlyHint=definition["operation"] == "read",
                 openWorldHint=True,
             ),
@@ -66,6 +68,7 @@ async def list_tools() -> list[types.Tool]:
                 "eurskem": {
                     "operation": definition["operation"],
                     "system": "Business Records (MySQL)",
+                    "typical_uses": definition.get("typical_uses", []),
                     "mode": "live",
                 }
             },

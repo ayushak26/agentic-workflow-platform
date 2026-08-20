@@ -168,6 +168,7 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
                     routing_policy=getattr(instance, "_model_routing", None),
                     entity_tokenizer=services.get("entity_tokenizer"),
                     collection_id=state.get("collection_id", "default"),
+                    workflow_name=state.get("workflow_name"),
                     processing_mode=(
                         getattr(instance, "_data_protection_mode", None)
                         or services.get("entity_protection_mode")

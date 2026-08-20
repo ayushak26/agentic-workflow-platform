@@ -3,8 +3,12 @@ description: >-
   An employee submits a purchase request. Manager approval always happens —
   it's not conditional, so it's wired directly rather than through a router.
   Procurement review and Finance approval are the genuinely conditional
-  escalations, and either or both can apply to the same request, so they're
-  Multi-Route, each ending on its own approval record.
+  escalations, and either or both can apply to the same request. When both
+  apply, they run one after another — Procurement first, then Finance —
+  rather than at once: the platform's durable human-review checkpoint
+  currently tracks one pending gate per run, so sequencing keeps each
+  review independently approvable/rejectable without relying on
+  concurrent-pause support the runtime doesn't have yet.
 
   Note: this platform's connected business systems (see
   docs/workflow_examples_10/INTEGRATION_COVERAGE.md) have no supplier-master
@@ -18,7 +22,7 @@ library:
   summary: Route a purchase request through mandatory manager approval, plus Procurement and/or Finance when required.
   purpose:
     - Demonstrate a mandatory approval step wired directly (not through a
-      router, since it's not conditional) alongside genuinely conditional Multi-Route escalations
+      router, since it's not conditional) alongside genuinely conditional escalations
     - Ground supplier/policy questions in internal knowledge rather than inventing a business-system tool
   suitable_for:
     - Any internal purchase request needing manager sign-off, with escalation for high-risk or high-value cases
@@ -41,6 +45,7 @@ exit:
   - end_manager_only
   - end_procurement_approved
   - end_finance_approved
+  - end_both_approved
 
 nodes:
   - id: start
@@ -183,8 +188,17 @@ nodes:
     type: RouterAgent
     config:
       mode: conditions
-      selection: multi
+      selection: single
       cases:
+        - route: BOTH
+          description: Both a Procurement review and Finance approval are needed.
+          when:
+            operator: and
+            conditions:
+              - field: decide_escalation.decisions.needs_procurement_review
+                operator: is_true
+              - field: decide_escalation.decisions.needs_finance_approval
+                operator: is_true
         - route: PROCUREMENT
           description: Capital equipment needs a Procurement specialist's review.
           when:
@@ -202,9 +216,9 @@ nodes:
       fallback: NONE
     experience:
       display_name: Route For Escalation
-      purpose: Send the request to every additional approver it actually needs — possibly more than one, possibly none.
-      contribution: A capital purchase over budget gets both reviews, each on its own track.
-      expected_output: One or both escalation routes, or NONE.
+      purpose: Send the request to the first additional approver it actually needs — possibly none.
+      contribution: A capital purchase over budget still gets both reviews — Procurement first, then Finance.
+      expected_output: BOTH, one escalation route, or NONE.
       failure_message: The request could not be routed for escalation.
 
   - id: end_manager_only
@@ -242,6 +256,27 @@ nodes:
       contribution: Nothing capital-equipment-classified proceeds without this review.
       expected_output: Approve or reject.
       failure_message: The review could not be recorded.
+
+  - id: post_procurement_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      selection: single
+      cases:
+        - route: ALSO_NEEDS_FINANCE
+          description: This request also needs Finance sign-off, now that Procurement has approved it.
+          when:
+            operator: and
+            conditions:
+              - field: decide_escalation.decisions.needs_finance_approval
+                operator: is_true
+      fallback: PROCUREMENT_ONLY
+    experience:
+      display_name: Does This Also Need Finance?
+      purpose: After Procurement approval, decide whether Finance still needs to sign off too.
+      contribution: A request needing both approvals moves on to Finance instead of stopping early.
+      expected_output: Whether Finance approval is still needed.
+      failure_message: Could not determine whether Finance approval is still needed.
 
   - id: end_procurement_approved
     type: EndAgent
@@ -295,6 +330,44 @@ nodes:
       expected_output: The Finance decision.
       failure_message: The result could not be produced.
 
+  - id: finance_review_both
+    type: HumanInLoopAgent
+    config:
+      question: Procurement has approved this capital purchase. It also exceeds standard manager authority — approve it from Finance?
+      review_purpose: An amount this size needs budget-level sign-off, not just the requester's manager — asked after Procurement's, since this request needs both.
+      review_panels:
+        - label: Amount
+          field: start.data.estimated_amount
+        - label: Department
+          field: start.data.department
+      allowed_actions:
+        - approve
+        - reject
+    experience:
+      display_name: Finance Approval (After Procurement)
+      purpose: Let Finance approve or reject a request that already has Procurement sign-off.
+      contribution: This request's own dedicated Finance step — never shared with the Finance-only track, so each path is independently safe to route and to reject.
+      expected_output: Approve or reject.
+      failure_message: The approval could not be recorded.
+
+  - id: end_both_approved
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: approval
+          value_from: procurement_and_finance_approved
+        - key: procurement_decision
+          value_from: "{{outputs.procurement_review.decision}}"
+        - key: finance_decision
+          value_from: "{{outputs.finance_review_both.decision}}"
+    experience:
+      display_name: Both-Approved Outcome
+      purpose: Return the outcome once both Procurement and Finance have approved it, in sequence.
+      contribution: A clean, typed result — never the whole accumulated state.
+      expected_output: Both approval decisions.
+      failure_message: The result could not be produced.
+
 edges:
   - from: start
     to: [policy_check, policy_answer]
@@ -310,9 +383,17 @@ edges:
     condition: route
     branches:
       NONE: end_manager_only
+      BOTH: procurement_review
       PROCUREMENT: procurement_review
       FINANCE: finance_review
   - from: procurement_review
-    to: end_procurement_approved
+    to: post_procurement_router
+  - from: post_procurement_router
+    condition: route
+    branches:
+      ALSO_NEEDS_FINANCE: finance_review_both
+      PROCUREMENT_ONLY: end_procurement_approved
   - from: finance_review
     to: end_finance_approved
+  - from: finance_review_both
+    to: end_both_approved

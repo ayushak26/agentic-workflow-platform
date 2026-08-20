@@ -19,7 +19,7 @@ from app.workflow.run_history import (
     record_checkpoint_approval,
 )
 
-from .executor import _PAUSED_GRAPHS, run_workflow
+from .executor import _PAUSED_GRAPHS, _project_output, run_workflow
 
 
 class HITLResumeError(KeyError):
@@ -36,6 +36,26 @@ def _find_rejection(state: dict) -> dict | None:
         if isinstance(out, dict) and out.get("decision") == "reject":
             return {"node_id": node_id, "reason": out.get("reason")}
     return None
+
+
+def _resume_output(
+    checkpoint: dict[str, Any] | None, final_state: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The same projection a fresh `run_workflow` completion computes
+    (`executor._project_output`) — a resumed completion must produce it too,
+    or every caller reading `result["output"]` (subprocess delivery chief
+    among them — see `app/workflow/subprocess_callback.py`'s
+    `_select_result`, which is exactly how a SubprocessAgent parent learns
+    its child's result) silently gets `None` for any workflow that paused
+    at least once before finishing. Needs the workflow's own spec, which
+    only a durable checkpoint carries; a resume with no checkpoint (no
+    session_id/audit_db — an in-memory-only test, say) has no `output` to
+    offer, same as before this existed.
+    """
+    if checkpoint is None:
+        return None
+    spec = load_workflow_from_string(checkpoint["workflow_yaml"])
+    return _project_output(spec, final_state, checkpoint.get("inputs") or {})
 
 
 async def resume_workflow(run_id: str, decision: dict[str, Any]) -> dict[str, Any]:
@@ -161,12 +181,16 @@ async def resume_workflow_durable(
                     "state": final_state,
                     "resumed_node_id": checkpoint["paused_node_id"],
                 }
-            return {
+            result = {
                 "status": "completed",
                 "run_id": run_id,
                 "state": final_state,
                 "resumed_node_id": checkpoint["paused_node_id"],
             }
+            projected = _resume_output(checkpoint, final_state)
+            if projected is not None:
+                result["output"] = projected
+            return result
 
         # Backward-compatible fallback for deployments that have Mongo replay
         # records but have not enabled the Redis LangGraph checkpointer yet.
@@ -235,4 +259,7 @@ async def resume_workflow_durable(
     result = {"status": "completed", "run_id": run_id, "state": final_state}
     if checkpoint is not None:
         result["resumed_node_id"] = checkpoint["paused_node_id"]
+    projected = _resume_output(checkpoint, final_state)
+    if projected is not None:
+        result["output"] = projected
     return result

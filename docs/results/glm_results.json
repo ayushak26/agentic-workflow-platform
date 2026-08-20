@@ -1,0 +1,680 @@
+[
+  {
+    "source_file": "Email 01",
+    "processed_at": "2026-08-20T09:59:26.133097+00:00",
+    "extraction": {
+      "customer_name": "Jan Van den Berghe",
+      "company_name": "Van Belle Industries NV",
+      "product_reference": "Packo ICP2 centrifugal pump",
+      "quantity": 2,
+      "requested_delivery_date": "2026-07-28",
+      "delivery_address": "Industrieweg 14, 9000 Ghent, Belgium",
+      "po_reference": "PO-2026-0441",
+      "special_requirements": "Customer requests confirmation of receipt and expected lead time."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 02",
+    "processed_at": "2026-08-20T09:59:41.344380+00:00",
+    "extraction": {
+      "customer_name": "Carlos Mendoza",
+      "company_name": "Bombas Ibérica S.L.",
+      "product_reference": [
+        "Packo NMS",
+        "Packo MWP2"
+      ],
+      "quantity": 3,
+      "requested_delivery_date": "2026-08-05",
+      "delivery_address": "Polígono Industrial Norte, Calle Industria 22, 08040 Barcelona, España",
+      "po_reference": "BI-2026-0774",
+      "special_requirements": "Order lines: Packo NMS x2; Packo MWP2 x1."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 03",
+    "processed_at": "2026-08-20T11:01:56.740964+00:00",
+    "extraction": {
+      "customer_name": "Laura Anderson",
+      "company_name": "Biotech Cambridge Ltd.",
+      "product_reference": null,
+      "quantity": 1,
+      "requested_delivery_date": null,
+      "delivery_address": "Cambridge Science Park, Cambridge CB4 0WA, UK",
+      "po_reference": "BCL-2026-PH-019",
+      "special_requirements": "Customer requests confirmation of the correct model between PHP2 and PRP2 for their application (pharmaceutical-grade centrifugal pump for a new biotech line; low viscosity, around 5 cP; flow around 60 m3/h). Order for 1 unit is conditional on model confirmation. Requested delivery target stated imprecisely as 'mid-August 2026'. Reference material for Sales (not customer-stated, not used to select a product): [1] (source: 04_Datasheet PHP2.pdf)\npharmaceutical quality, roughness value < 0,4 μm for wetted parts,\nsurface finish electropolished, fully certified\n\nPerformance curves for PHP2\nPHP2\n\n1 Electropolished, easy to clean construction, no bacteria traps 120 173 567\nand no small clearances in order to…"
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; The customer asked Verder to select the correct model rather than naming one — retrieved product evidence can inform this, but only a person may decide it.; Which specific product model applies is genuinely ambiguous between the candidates the customer named."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A model-selection question needs Sales/technical follow-up.; Product ambiguity between named candidates needs Sales/technical follow-up."
+    }
+  },
+  {
+    "source_file": "Email 04",
+    "processed_at": "2026-08-20T10:02:37.049027+00:00",
+    "extraction": {
+      "customer_name": "Olivier Martin",
+      "company_name": "AgroProcess Nantes SAS",
+      "product_reference": [
+        "Packo ICP2",
+        "Packo MCP2"
+      ],
+      "quantity": 3,
+      "requested_delivery_date": "2026-08-12",
+      "delivery_address": "ZI des Landes, Rue de l'Industrie 18, 44300 Nantes, France",
+      "po_reference": "AGP-2026-0334",
+      "special_requirements": "Order lines: Packo ICP2 x2; Packo MCP2 x1. Separate quotation request: surface treatment (electropolishing) of 5 stainless steel 316L parts; not urgent, customer plans to schedule this for September."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 05",
+    "processed_at": "2026-08-20T10:03:00.905447+00:00",
+    "extraction": {
+      "customer_name": "Henrik Petersen",
+      "company_name": "Nordjysk Mejeri A/S",
+      "product_reference": null,
+      "quantity": 2,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": "NJM-DK-2026-0091",
+      "special_requirements": null
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "The requested product was referenced relatively (e.g. \"same as last time\") and could not be identified from the email alone.; The delivery address was referenced relatively (e.g. \"our usual address\") and could not be identified from the email alone."
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 06",
+    "processed_at": "2026-08-20T10:03:37.550452+00:00",
+    "extraction": {
+      "customer_name": "Petra van Kleef",
+      "company_name": "Van Kleef Processing BV",
+      "product_reference": "Packo MCP3",
+      "quantity": 2,
+      "requested_delivery_date": "2026-08-08",
+      "delivery_address": "Havenstraat 44, 3011 Amsterdam, Nederland",
+      "po_reference": "VKP-2026-0612",
+      "special_requirements": "Customer requests confirmation that the price matches their framework agreement from last year (reference FC-2025-0034)."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "Pricing was referenced, which is out of scope for automated processing."
+    }
+  },
+  {
+    "source_file": "Email 07",
+    "processed_at": "2026-08-20T10:03:55.246461+00:00",
+    "extraction": {
+      "customer_name": "Maarten de Jong",
+      "company_name": "RVS Finishing BV",
+      "product_reference": null,
+      "quantity": null,
+      "requested_delivery_date": null,
+      "delivery_address": "Metaalweg 7, 3001 Rotterdam, Netherlands",
+      "po_reference": null,
+      "special_requirements": "Quotation request for a surface treatment service on customer-owned parts (not a product purchase): electropolishing to standard Ra < 0.8 µm on 12 stainless steel pump housings (316L). Required completion: week of 4 August 2026 (week-based timing, no exact calendar date stated). Customer asks Verder to confirm availability and provide pricing. Customer reference: RVS-NL-2026-0551."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; No product could be extracted from this email at all."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "Pricing was referenced, which is out of scope for automated processing.; A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 08",
+    "processed_at": "2026-08-20T10:05:11.884177+00:00",
+    "extraction": {
+      "customer_name": "Stanisław Kowalski",
+      "company_name": "Mleczarnia Podlasie Sp. z o.o.",
+      "product_reference": "Packo MCP3",
+      "quantity": 4,
+      "requested_delivery_date": "2026-08-04",
+      "delivery_address": "ul. Przemysłowa 7, 15-110 Białystok, Poland",
+      "po_reference": "MLK-PL-2026-189",
+      "special_requirements": "Customer requests that the order confirmation be sent to this email address (s.kowalski@mleczarnia-podlasie.pl)."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 09",
+    "processed_at": "2026-08-20T10:05:30.708097+00:00",
+    "extraction": {
+      "customer_name": "Klaus Steinbach",
+      "company_name": "Brauerei Steinbach GmbH",
+      "product_reference": "Packo IFF Kreiselpumpe",
+      "quantity": 1,
+      "requested_delivery_date": "2026-07-22",
+      "delivery_address": "Brauereistraße 3, 85354 Freising, Deutschland",
+      "po_reference": "BST-2026-0092",
+      "special_requirements": "Customer requests confirmation of receipt of this order."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 10",
+    "processed_at": "2026-08-20T10:05:49.878804+00:00",
+    "extraction": {
+      "customer_name": "Michel Arnaud",
+      "company_name": "Chemi-Plant SA",
+      "product_reference": "ICP3 pump",
+      "quantity": 1,
+      "requested_delivery_date": null,
+      "delivery_address": "Lyon, France",
+      "po_reference": "CP-2026-MNT-034",
+      "special_requirements": "Urgent order: customer requests confirmation of availability urgently and needs the pump as soon as possible. Requested delivery 'by end of July if possible' (imprecise date, no exact calendar date given). Exact delivery address to be provided by the customer tomorrow; only 'Lyon, France' stated so far. Pump is intended for the customer's chemical plant in Lyon."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 11",
+    "processed_at": "2026-08-20T10:07:05.083821+00:00",
+    "extraction": {
+      "customer_name": "René Dubois",
+      "company_name": "Industrie Nord SARL",
+      "product_reference": "pompe centrifuge industrielle Packo",
+      "quantity": 1,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "Delivery timing stated imprecisely: the pump is needed 'pour fin août' (for the end of August). Product identified only generically as a Packo industrial centrifugal pump; no specific model stated."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "Required information (e.g. the delivery address) is missing from the email, with no relative reference and no plan stated for providing it later.; A product was named, but only generically (a brand or category, not a specific model) — an identifiable model is needed before this confirmed order can be processed."
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 12",
+    "processed_at": "2026-08-20T10:08:24.194116+00:00",
+    "extraction": {
+      "customer_name": "Ingrid Solberg",
+      "company_name": "Nordic Dairy Technology AS",
+      "product_reference": "Packo MCP2 centrifugal pump",
+      "quantity": 3,
+      "requested_delivery_date": "2026-08-11",
+      "delivery_address": "Industriveien 45, 4033 Stavanger, Norway",
+      "po_reference": "NDT-2026-PO-0312",
+      "special_requirements": "All units must include material certificates EN10204 3.1"
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 13",
+    "processed_at": "2026-08-20T10:08:42.348782+00:00",
+    "extraction": {
+      "customer_name": "Harun Yılmaz",
+      "company_name": "GM Gıda Makina Ltd.",
+      "product_reference": "Packo ICP1",
+      "quantity": 2,
+      "requested_delivery_date": null,
+      "delivery_address": "Istanbul, Turkey",
+      "po_reference": "GM-TR-2026-456",
+      "special_requirements": "Customer asks Verder to confirm whether the ordered units are in stock. Units are needed for a project starting in September (imprecise timing, no exact delivery date stated)."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 14",
+    "processed_at": "2026-08-20T10:09:06.405029+00:00",
+    "extraction": {
+      "customer_name": "Wolfgang Berger",
+      "company_name": "Fleischverarbeitung Ost GmbH",
+      "product_reference": "Packo IPP2 Kreiselpumpe",
+      "quantity": 2,
+      "requested_delivery_date": "2026-08-04",
+      "delivery_address": "Wiener Straße 88, 1220 Wien, Österreich",
+      "po_reference": "FVO-2026-0033",
+      "special_requirements": "Customer requests an order confirmation (Auftragsbestätigung)."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 15",
+    "processed_at": null,
+    "status": "FAILED — no final_record produced",
+    "fatal_error": "RuntimeError: TransformAgent 'extract' failed to produce valid structured output after 2 attempt(s): OpenRouterGateway: empty structured response for extract_Output"
+  },
+  {
+    "source_file": "Email 16",
+    "processed_at": "2026-08-20T10:16:17.095500+00:00",
+    "extraction": {
+      "customer_name": "Dr. Sophie van der Meer",
+      "company_name": "BioPharma Solutions BV",
+      "product_reference": "Packo PHP2 pharmaceutical centrifugal pump",
+      "quantity": 2,
+      "requested_delivery_date": "2026-08-01",
+      "delivery_address": "Science Park 904, 1098 XH Amsterdam, Netherlands",
+      "po_reference": "BPS-NL-2026-0087",
+      "special_requirements": "Certification required: FDA, USP Class VI, EN10204 3.1. Customer requests confirmation of availability and lead time."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 17",
+    "processed_at": "2026-08-20T10:16:34.686139+00:00",
+    "extraction": {
+      "customer_name": "Isabelle Fontaine",
+      "company_name": "Stérimed SAS",
+      "product_reference": "Packo PHP2",
+      "quantity": 1,
+      "requested_delivery_date": "2026-07-21",
+      "delivery_address": "Zone Industrielle de Bersol, 33185 Le Haillan, France",
+      "po_reference": "STM-2026-0441",
+      "special_requirements": "Urgent request (subject: 'urgent'; 'en urgence'). Required certifications: EHEDG, 3A. Application: sterile production line (ligne de production stérile). Customer asks Verder to confirm stock availability."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 18",
+    "processed_at": "2026-08-20T10:17:09.960183+00:00",
+    "extraction": {
+      "customer_name": "Tom Claes",
+      "company_name": "FarmoBel NV",
+      "product_reference": "Packo PRP2 farmaceutische centrifugaalpomp",
+      "quantity": 3,
+      "requested_delivery_date": "2026-08-06",
+      "delivery_address": "Ambachtenlaan 38B, 3001 Leuven, België",
+      "po_reference": "FBL-2026-0229",
+      "special_requirements": "Inclusief keuringsattest EN10204 3.1 vereist (EN10204 3.1 inspection certificate required)"
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 19",
+    "processed_at": "2026-08-20T10:17:32.870070+00:00",
+    "extraction": {
+      "customer_name": "Dr. Thomas Müller",
+      "company_name": "PharmaLab Munich GmbH",
+      "product_reference": "pharmaceutical pumps",
+      "quantity": 4,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "ASME BPE compliance is required. Pumps are intended for a pharmaceutical cleanroom expansion project. Customer requests best price for 4 units (quotation request). Customer plans to start the project in Q4 2026 (imprecise timing; no exact delivery date stated). Reference material for Sales (not customer-stated, not used to select a product): [1] (source: 04_Datasheet PHP2.pdf)\nThe Packo 3A certified pharmaceutical process pumps of the PHP2 series are used for the most demanding sterile • High pump efficiency lower energy consumption These perfectly cleanable process pumps are the ideal\napplications in the pharmaceutical, biotech and…"
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; The customer asked Verder to select the correct model rather than naming one — retrieved product evidence can inform this, but only a person may decide it."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A model-selection question needs Sales/technical follow-up.; Pricing was referenced, which is out of scope for automated processing.; A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 20",
+    "processed_at": "2026-08-20T10:19:24.150560+00:00",
+    "extraction": {
+      "customer_name": "Aurélie Morin",
+      "company_name": "Laiterie de Bretagne",
+      "product_reference": null,
+      "quantity": null,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "Quotation request for a surface-treatment service on customer-owned parts: passivation of 316L stainless steel ('Passivation acier inox 316L') covering 8 pump bodies (corps de pompe) + 4 lids (couvercles). Desired timeline: before end of July ('avant fin juillet') — imprecise, no exact calendar date. Parts would be shipped from Rennes, France; customer asks to confirm whether this service is available for parts shipped from France."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; No product could be extracted from this email at all."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 21",
+    "processed_at": "2026-08-20T10:20:09.136957+00:00",
+    "extraction": {
+      "customer_name": "Tobias Schmidt",
+      "company_name": "Edelstahlbearbeitung Nord GmbH",
+      "product_reference": null,
+      "quantity": null,
+      "requested_delivery_date": "2026-07-30",
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "Quotation requested for electropolishing service (surface treatment) on customer-owned parts: 20 Rohre (tubes) DN50, length 1 m each, Edelstahl 316L; required surface finish Ra < 0,4 µm, Pharmaqualität (pharmaceutical quality). Desired completion date (Fertigstellungsdatum) for the service: 30 Juli 2026. Pickup address (Abholadresse) for the parts: Hafenstraße 12, 20457 Hamburg, Deutschland. Customer reference: EBN-2026-EP-034."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; No product could be extracted from this email at all."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 22",
+    "processed_at": "2026-08-20T10:23:22.683240+00:00",
+    "extraction": {
+      "customer_name": "Marco Rossi",
+      "company_name": "Process Italia Srl",
+      "product_reference": null,
+      "quantity": null,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "Requested service: treatment of customer-owned stainless steel parts (specific treatment type not stated). Customer asks for a price for this work. Urgency stated: 'We need it done quickly' — no exact delivery date given. No details provided on part quantities, dimensions, or treatment requirements. Reference material for Sales (not customer-stated, not used to select a product): [1] (source: 04_Datasheet PHP2.pdf)\nThese perfectly cleanable pumps have stainless • Low NPSH values: less risk on cavitation solution for pure water circulation loops, cleaning\nsteel 316L pump casings constructed in thick cold rolled plate, 100% non porous and extremely smooth.\n\nThanks to its…"
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; No product could be extracted from this email at all."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "Pricing was referenced, which is out of scope for automated processing.; A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 23",
+    "processed_at": "2026-08-20T10:25:29.913380+00:00",
+    "extraction": {
+      "customer_name": "Bernard Lacroix",
+      "company_name": "Fromagerie du Jura",
+      "product_reference": null,
+      "quantity": null,
+      "requested_delivery_date": "2026-08-08",
+      "delivery_address": "Route des Fromageries 4, 39800 Poligny, France",
+      "po_reference": null,
+      "special_requirements": "Quotation request for surface-treatment services on customer-owned parts from the customer's dairy production line: acid pickling (décapage acide) of 6 stainless steel 316L fittings (raccords inox 316L) and passivation of the same 6 fittings; combined treatment of the same parts is requested. Customer reference: FJU-2026-ST-011. The requested delivery date corresponds to the customer's desired return date for the treated parts (retour souhaité: 8 août 2026)."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; No product could be extracted from this email at all."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A quotation was requested, which Sales must handle."
+    }
+  },
+  {
+    "source_file": "Email 24",
+    "processed_at": "2026-08-20T10:26:36.763218+00:00",
+    "extraction": {
+      "customer_name": "Pieter Visser",
+      "company_name": "Zuivelunie Friesland CV",
+      "product_reference": "Packo melkpomp (hygiënisch, 316L roestvast staal)",
+      "quantity": 6,
+      "requested_delivery_date": "2026-07-29",
+      "delivery_address": "Melkweg 1, 8934 BM Leeuwarden, Nederland",
+      "po_reference": "ZUF-NL-2026-0812",
+      "special_requirements": "Customer requests an order confirmation (orderbevestiging). Product is identified only generically as a Packo milk pump (hygienic, 316L stainless steel); no specific model is stated."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "A product was named, but only generically (a brand or category, not a specific model) — an identifiable model is needed before this confirmed order can be processed."
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 25",
+    "processed_at": "2026-08-20T10:27:56.441995+00:00",
+    "extraction": {
+      "customer_name": "Aoife Murphy",
+      "company_name": "Dairy Ireland Ltd.",
+      "product_reference": "Packo tube heat exchanger (hygienic, stainless steel)",
+      "quantity": 2,
+      "requested_delivery_date": "2026-08-05",
+      "delivery_address": "Dairy Road, Kilkenny, R95 XK22, Ireland",
+      "po_reference": "DI-IE-2026-0445",
+      "special_requirements": "Application: milk pasteurisation line. Customer requests confirmation of availability."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 26",
+    "processed_at": "2026-08-20T11:08:02.665209+00:00",
+    "extraction": {
+      "customer_name": "Hans-Jörg Wirth",
+      "company_name": "Käserei Allgäu GmbH",
+      "product_reference": "Packo Hygienepumpen",
+      "quantity": 4,
+      "requested_delivery_date": null,
+      "delivery_address": "Sennalpstraße 22, 87561 Oberstdorf, Deutschland",
+      "po_reference": "KAL-2026-HYG-007",
+      "special_requirements": "Product-selection/availability enquiry: customer asks which Packo hygienic pump models are available for milk applications with a viscosity of approx. 2 cP and a flow of approx. 15 m³/h, for a new cheese dairy line (Käsereilinie). The order of 4 units is conditional on availability ('Bei Verfügbarkeit möchten wir 4 Einheiten bestellen'). Requested delivery date stated imprecisely as 'Ende August 2026' (end of August 2026) — no exact calendar date given. Reference material for Sales (not customer-stated, not used to select a product): [1] (source: 04_Datasheet NMS.pdf)\nThe Packo multistage pumps from the NMS series are equipped with open investment cast impellers and pump casings.\n\nThey are the right match for operations at moderate flows and high pressures.\n\nFor use in food, brew, beverage, pharmaceutical and chemical…"
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order.; The customer asked Verder to select the correct model rather than naming one — retrieved product evidence can inform this, but only a person may decide it."
+    },
+    "routing": {
+      "sales_team_flag": true,
+      "sales_team_reason": "A model-selection question needs Sales/technical follow-up."
+    }
+  },
+  {
+    "source_file": "Email 27",
+    "processed_at": "2026-08-20T10:34:45.701735+00:00",
+    "extraction": {
+      "customer_name": "Sylvie Leroy",
+      "company_name": "Fromagerie Leroy SAS",
+      "product_reference": "Échangeur de chaleur tubulaire Packo (hygiénique)",
+      "quantity": 1,
+      "requested_delivery_date": "2026-07-31",
+      "delivery_address": "14 Rue de la Fromagerie, 74000 Annecy, France",
+      "po_reference": "FLR-2026-0128",
+      "special_requirements": null
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 28",
+    "processed_at": "2026-08-20T10:35:50.902098+00:00",
+    "extraction": {
+      "customer_name": "Karel Novák",
+      "company_name": "Mlékárna Centrum s.r.o.",
+      "product_reference": "hygienická čerpadla Packo",
+      "quantity": 3,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "Customer requests information on availability of the hygienic Packo pumps (availability enquiry, not a confirmed order)."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "This message is an enquiry or quote request, not a confirmed order."
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 29",
+    "processed_at": "2026-08-20T10:38:25.076388+00:00",
+    "extraction": {
+      "customer_name": "Eva Janssen",
+      "company_name": "FoodTech Eindhoven BV",
+      "product_reference": [
+        "Packo IFF pump",
+        "Packo tube heat exchanger (hygienic)"
+      ],
+      "quantity": 3,
+      "requested_delivery_date": "2026-08-07",
+      "delivery_address": "High Tech Campus 25, 5656 AE Eindhoven, Netherlands",
+      "po_reference": "FTE-NL-2026-0667",
+      "special_requirements": "Order lines: Packo IFF pump x2; Packo tube heat exchanger (hygienic) x1. Customer requests confirmation of the order. Line-level PO references: Line 1 – FTE-2026-L01; Line 2 – FTE-2026-L02."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 30",
+    "processed_at": "2026-08-20T10:38:51.657547+00:00",
+    "extraction": {
+      "customer_name": "Janis Berzins",
+      "company_name": "Baltic Food Processing SIA",
+      "product_reference": "pumps",
+      "quantity": null,
+      "requested_delivery_date": null,
+      "delivery_address": null,
+      "po_reference": null,
+      "special_requirements": "Urgent: customer states 'We need pumps immediately!!' and requests an ASAP call back at +371 2200 1234. No product model, quantity, or application details provided; order details must be clarified by phone."
+    },
+    "order_processing": {
+      "human_review_required": true,
+      "review_reason": "Required information (e.g. the delivery address) is missing from the email, with no relative reference and no plan stated for providing it later.; A product was named, but only generically (a brand or category, not a specific model) — an identifiable model is needed before this confirmed order can be processed."
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  },
+  {
+    "source_file": "Email 31",
+    "processed_at": "2026-08-20T10:39:47.325402+00:00",
+    "extraction": {
+      "customer_name": "Geert Peeters",
+      "company_name": "Suikerfabriek Tienen NV",
+      "product_reference": [
+        "Packo MFF",
+        "Packo VPCP"
+      ],
+      "quantity": 5,
+      "requested_delivery_date": "2026-08-18",
+      "delivery_address": "Tiensesteenweg 220, 3300 Tienen, België",
+      "po_reference": "SFT-2026-REV-014",
+      "special_requirements": "Order lines: Packo MFF x3; Packo VPCP x2. Customer asks whether a service contract is possible with this purchase. Order is placed in the context of the annual maintenance revision; the 3x Packo MFF are replacements for an existing installation."
+    },
+    "order_processing": {
+      "human_review_required": false,
+      "review_reason": null
+    },
+    "routing": {
+      "sales_team_flag": false,
+      "sales_team_reason": null
+    }
+  }
+]

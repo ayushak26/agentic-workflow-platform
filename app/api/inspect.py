@@ -249,6 +249,8 @@ async def _run_retrieval(
             node_id="retrieval_preview",
             ledger=services.get("cost_ledger"),
             semantic_cache=services.get("semantic_cache"),
+            collection_id=req.collection_id or "default",
+            workflow_name="Retrieval preview",
         )
 
     filters = RetrievalFilters(

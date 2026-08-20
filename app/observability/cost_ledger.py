@@ -90,6 +90,13 @@ class LedgerEntry:
     # Enables cost breakdowns filtered by collection_id; per-FILE attribution isn't tracked
     # at this layer (a single LLM call can draw on chunks from many files in a collection).
     collection_id: str = "default"
+    # Denormalized at call time from RegistryLLMGateway._workflow_name (set via
+    # with_context) so cost breakdowns never depend on a run_history join — a
+    # join that misses for any run_id never persisted there (node tests, eval
+    # runs, assist chat, workflow generation) and previously collapsed all of
+    # those into a misleading "unknown" bucket. None for legacy entries
+    # recorded before this field existed.
+    workflow_name: str | None = None
     ts: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -181,6 +188,7 @@ class CostLedger:
                 "stage":          entry.stage,
                 "no_model_charge": entry.no_model_charge,
                 "collection_id":  entry.collection_id,
+                "workflow_name":  entry.workflow_name,
                 "ts":             entry.ts,
             })
         logger.info(

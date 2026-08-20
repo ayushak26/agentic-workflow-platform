@@ -36,7 +36,7 @@ def _service(request: Request):
     return service
 
 
-def _llm(request: Request, scope: str, node_id: str):
+def _llm(request: Request, scope: str, node_id: str, collection_id: str | None = None):
     services = request.app.state.services
     llm = services.get("llm")
     if llm is not None and hasattr(llm, "with_context"):
@@ -45,6 +45,8 @@ def _llm(request: Request, scope: str, node_id: str):
             session_id=scope,
             node_id=node_id,
             ledger=services.get("cost_ledger"),
+            collection_id=collection_id or "default",
+            workflow_name=f"Retrieval Playground · {node_id}",
         )
     return llm
 
@@ -114,7 +116,7 @@ async def search(
     try:
         return await _service(request).retrieve(
             payload.to_query(scope), owner_scope_id=scope,
-            llm=_llm(request, scope, "search"),
+            llm=_llm(request, scope, "search", payload.collection_id),
         )
     except (ResourceNotFoundError, ValueError, PermissionError) as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc

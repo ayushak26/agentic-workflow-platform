@@ -44,6 +44,23 @@ async def ensure_indexes(db: Any) -> None:
     await db[_COLLECTION].create_index("child_run_id", unique=True)
     await db[_COLLECTION].create_index([("expires_at", 1)], expireAfterSeconds=0)
 
+    # Historical leftover: an earlier version of this collection stored the
+    # launch key in its own `launch_key` field and uniquely indexed it. Once
+    # `reserve_launch` switched to using `_id` as the key directly, that
+    # field stopped being written — but on any database that already had the
+    # old unique index, every document now indexes as `launch_key: null`,
+    # so a *second* subprocess launch anywhere in the whole collection
+    # collides with the first and gets DuplicateKeyError'd into oblivion
+    # (`reserve_launch`'s own not-created fallback then can't find it by
+    # `_id` either, since the collision was never really about `_id`).
+    # Dropping it is safe and idempotent: nothing reads or writes
+    # `launch_key` anymore, and a deployment that never had this index
+    # (the normal case) just gets a harmless "index not found".
+    try:
+        await db[_COLLECTION].drop_index("launch_key_1")
+    except Exception:
+        pass
+
 
 async def find_by_launch_key(db: Any, launch_key: str) -> dict[str, Any] | None:
     return await db[_COLLECTION].find_one({"_id": launch_key})

@@ -101,7 +101,7 @@ nodes:
   - id: service_manual
     type: RAGAgent
     config:
-      query: "Troubleshooting steps for {{outputs.find_equipment.first.pump_model}}: {{outputs.understand.result.issue.value}}"
+      query: "Troubleshooting steps for {{outputs.find_equipment.first.pump_model?}}: {{outputs.understand.result.issue.value}}"
     experience:
       display_name: Check Service Manual
       purpose: Ground the response in the actual service manual, not a guess.

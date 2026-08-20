@@ -38,11 +38,25 @@ const INTEGRATION_PROVIDER_LABELS: Record<string, string> = {
   onedrive: 'OneDrive',
 };
 
+function humanizeToolName(tool: string): string {
+  return tool
+    .split('_')
+    .filter(Boolean)
+    .map(word => word[0].toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
 export function nodeTypeLabel(typeName: string, config: Record<string, unknown>): string {
   const base = typeName === 'RouterAgent' && config.selection === 'multi'
     ? 'Multi-Route'
     : TYPE_LABELS[typeName] ?? typeName;
   const serverId = typeof config.server_id === 'string' ? config.server_id : '';
+  if (typeName === 'MCPToolAgent') {
+    const tool = typeof config.tool === 'string' ? config.tool : '';
+    if (serverId && tool) return `${base} · ${serverId} · ${humanizeToolName(tool)}`;
+    if (serverId) return `${base} · ${serverId}`;
+    return base;
+  }
   if (serverId) return `${base} · ${serverId}`;
   if (typeName === 'IntegrationAgent' && typeof config.provider === 'string') {
     const provider = INTEGRATION_PROVIDER_LABELS[config.provider] ?? config.provider;

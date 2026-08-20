@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import type { NodeTypeManifest } from '../../api/types';
+import type { MCPToolInfo, NodeTypeManifest } from '../../api/types';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { ExecutionKindBadge } from './builder/ExecutionKindBadge';
+import { MCPToolPicker } from './builder/MCPToolPicker';
 import { NodeTypeAskAi } from './NodeTypeAskAi';
 
 // Fixed display order — otherwise groups would shuffle on every reload
@@ -128,14 +129,20 @@ function NodeTypeCard({
 export function NodePalette({
   types,
   onAdd,
+  onAddMcpTool,
   onClose,
 }: {
   types: NodeTypeManifest[];
   onAdd: (typeName: string) => void;
+  /** When set, "+ Add" on the MCP Tool card opens a searchable tool picker
+   *  instead of dropping a blank, unconfigured node — the author picks what
+   *  the tool does and gets a pre-wired node in one action. */
+  onAddMcpTool?: (serverId: string, tool: MCPToolInfo) => void;
   onClose?: () => void;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
+  const [showMcpPicker, setShowMcpPicker] = useState(false);
 
   const filtered = useMemo(
     () =>
@@ -154,6 +161,14 @@ export function NodePalette({
       return next;
     });
   }
+
+  const handleAdd = (typeName: string) => {
+    if (typeName === 'MCPToolAgent' && onAddMcpTool) {
+      setShowMcpPicker(true);
+      return;
+    }
+    onAdd(typeName);
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -203,7 +218,7 @@ export function NodePalette({
               {!isCollapsed && (
                 <div className="mt-1 space-y-1">
                   {items.map(t => (
-                    <NodeTypeCard key={t.type_name} t={t} onAdd={onAdd} />
+                    <NodeTypeCard key={t.type_name} t={t} onAdd={handleAdd} />
                   ))}
                 </div>
               )}
@@ -211,6 +226,14 @@ export function NodePalette({
           );
         })}
       </div>
+
+      {showMcpPicker && (
+        <MCPToolPicker
+          onClose={() => setShowMcpPicker(false)}
+          onSelect={(serverId, tool) => onAddMcpTool?.(serverId, tool)}
+          title="Add an MCP tool"
+        />
+      )}
     </div>
   );
 }

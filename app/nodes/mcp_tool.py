@@ -81,6 +81,15 @@ class MCPToolConfig(BaseModel):
         description="Explicit statement that this write may happen without a human review step in front of it. Does not override the connection's own write policy.",
     )
 
+    #: Names the specific HumanInLoopAgent node whose decision gates this
+    #: write. Left unset, a review anywhere on the run satisfies the gate —
+    #: fine for a workflow with exactly one review, wrong for one with
+    #: several on different branches.
+    approved_by: str | None = Field(
+        default=None,
+        description="Node id of the HumanInLoopAgent review that gates this write. When set, only that node's decision counts.",
+    )
+
     #: Retries for read operations. Writes are never retried here; the ledger
     #: decides what a repeated write means.
     max_read_retries: int = Field(
@@ -235,7 +244,8 @@ class MCPToolAgent(NodeType):
         # read from the run's own state, not asserted by this node's config. A
         # node cannot vouch for its own approval.
         approval_satisfied = (
-            cfg.allow_unattended_write or _human_approved(state)
+            cfg.allow_unattended_write
+            or _human_approved(state, approved_by=cfg.approved_by)
         )
 
         try:

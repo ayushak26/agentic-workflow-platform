@@ -39,8 +39,8 @@ inputs:
     description: A summary of the case, for the draft to be grounded in.
   customer_email:
     type: text
-    required: true
-    description: The customer's email address.
+    required: false
+    description: The customer's email address, if one is known — not every caller can supply one (a chat message doesn't always mention it).
   skip_review:
     type: json
     required: false
@@ -50,6 +50,7 @@ entry: draft
 exit:
   - end_sent_direct
   - end_sent_after_review
+  - end_no_email
 
 nodes:
   - id: draft
@@ -71,6 +72,42 @@ nodes:
       contribution: A consistent, professional starting point — never a blank page.
       expected_output: A draft response.
       failure_message: The response could not be drafted.
+
+  - id: has_email_router
+    type: RouterAgent
+    config:
+      mode: conditions
+      cases:
+        - route: NO_EMAIL
+          description: No customer email address is available to respond to.
+          when:
+            operator: and
+            conditions:
+              - field: inputs.customer_email
+                operator: is_empty
+      fallback: HAS_EMAIL
+    experience:
+      display_name: Is There An Email To Respond To?
+      purpose: Only draft an email for sending when there's actually somewhere to send it.
+      contribution: A case with no known email address still completes cleanly instead of crashing on an input that was never actually guaranteed.
+      expected_output: NO_EMAIL or HAS_EMAIL.
+      failure_message: Could not determine whether a response email is possible.
+
+  - id: end_no_email
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: outcome
+          value_from: no_email_available
+        - key: draft_text
+          value_from: "{{outputs.draft.raw}}"
+    experience:
+      display_name: No Email Available Outcome
+      purpose: Return that no response could be sent, since no email address was given.
+      contribution: The calling workflow's case is still filed regardless — this only reports the response side, with the drafted text preserved for a person to use manually if needed.
+      expected_output: An outcome noting no email was available, plus the drafted text.
+      failure_message: The result could not be produced.
 
   - id: route_review
     type: RouterAgent
@@ -178,7 +215,12 @@ nodes:
 
 edges:
   - from: draft
-    to: route_review
+    to: has_email_router
+  - from: has_email_router
+    condition: route
+    branches:
+      NO_EMAIL: end_no_email
+      HAS_EMAIL: route_review
   - from: route_review
     condition: route
     branches:

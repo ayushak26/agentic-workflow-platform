@@ -66,6 +66,7 @@ async def score_output(
             session_id=user.session_id or user.username,
             node_id="judge",
             ledger=services.get("cost_ledger"),
+            workflow_name="Eval Lab · score output",
         )
     judge = LLMJudge(llm, model=req.judge_model)
     scores = await judge.score_all(
@@ -112,6 +113,7 @@ async def run(
             session_id=user.session_id or user.username,
             node_id="judge",
             ledger=services.get("cost_ledger"),
+            workflow_name=f"Eval Lab · {req.golden_set}",
         )
     judge = LLMJudge(llm, model=req.judge_model)
 

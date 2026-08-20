@@ -42,6 +42,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "anyOf": [{"required": ["customer_name"]}, {"required": ["company_name"]}],
         },
         "output_schema": _collection("customers"),
+        "typical_uses": [
+            "Look up an F&O customer by name",
+            "Confirm a customer exists before quoting or ordering",
+        ],
     },
     {
         "name": "find_quote",
@@ -64,6 +68,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "anyOf": [{"required": ["quotation_number"]}, {"required": ["purchase_order_number"]}],
         },
         "output_schema": _collection("quotes"),
+        "typical_uses": [
+            "Look up a quote by quotation number or purchase-order number",
+        ],
     },
     {
         "name": "find_account_ownership",
@@ -82,6 +89,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"ownership": {"type": "object"}},
             "required": ["ownership"],
         },
+        "typical_uses": [
+            "Find the sales/service/application owner for an account",
+        ],
     },
     {
         "name": "find_credit_status",
@@ -100,6 +110,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"credit": {"type": "object"}},
             "required": ["credit"],
         },
+        "typical_uses": [
+            "Check whether an account is on credit hold before confirming an order",
+        ],
     },
     {
         "name": "find_order_fulfilment_status",
@@ -120,6 +133,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"fulfilment": {"type": "object"}},
             "required": ["fulfilment"],
         },
+        "typical_uses": [
+            "Explain why an order hasn't shipped or delivered yet",
+        ],
     },
     {
         "name": "find_sales_order",
@@ -136,6 +152,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "anyOf": [{"required": ["order_number"]}, {"required": ["purchase_order_number"]}],
         },
         "output_schema": _collection("salesorders"),
+        "typical_uses": [
+            "Find a sales order by order number or purchase-order number",
+        ],
     },
     {
         "name": "find_shipment",
@@ -157,6 +176,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ],
         },
         "output_schema": _collection("shipments"),
+        "typical_uses": [
+            "Track a shipment against its order or purchase-order number",
+        ],
     },
     {
         "name": "find_invoice",
@@ -178,6 +200,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ],
         },
         "output_schema": _collection("invoices"),
+        "typical_uses": [
+            "Look up an invoice by invoice, order, or purchase-order number",
+        ],
     },
     {
         "name": "find_contract",
@@ -192,6 +217,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["contract_number"],
         },
         "output_schema": _collection("contracts"),
+        "typical_uses": [
+            "Check the terms or validity dates of a service contract",
+        ],
     },
     {
         "name": "find_installed_unit",
@@ -219,6 +247,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ],
         },
         "output_schema": _collection("installedunits"),
+        "typical_uses": [
+            "Identify equipment installed at a customer site by serial number or location",
+        ],
     },
     {
         "name": "find_inventory_availability",
@@ -241,6 +272,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             ],
         },
         "output_schema": _collection("inventory"),
+        "typical_uses": [
+            "Check stock availability and lead time for a pump model",
+        ],
     },
     {
         "name": "find_products",
@@ -257,6 +291,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": [],
         },
         "output_schema": _collection("products"),
+        "typical_uses": [
+            "Look up a pump's catalogue details by name, model, or family",
+        ],
     },
 ]
 

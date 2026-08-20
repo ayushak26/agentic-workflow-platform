@@ -28,6 +28,31 @@ function startFormFieldsFrom(workflowYaml: string): StartFormField[] {
   }
 }
 
+/** A chatbot-mode Start node declares no `fields:` — its whole "form" is one
+ * free-text message (StartAgent reads it from `inputs.message`, see
+ * app/nodes/start.py). `derive_inputs_from_start_node` never adds `message`
+ * to the workflow's declared `inputs:` contract either (only `attachments`
+ * is derived for chatbot mode), so nothing else in this dialog would ever
+ * collect it — without this, `runInputs.message` is simply never set and
+ * every downstream step reading `outputs.start.message` gets `null`. */
+function chatbotStartConfigFrom(
+  workflowYaml: string,
+): { chatbotName: string; welcomeMessage: string } | null {
+  try {
+    const parsed = parseYaml(workflowYaml);
+    const node = parsed.nodes.find(candidate => candidate.type === 'StartAgent');
+    if (!node) return null;
+    const config = node.config ?? {};
+    if ((config.mode ?? 'input_form') !== 'chatbot') return null;
+    return {
+      chatbotName: typeof config.chatbot_name === 'string' ? config.chatbot_name : 'Chat',
+      welcomeMessage: typeof config.welcome_message === 'string' ? config.welcome_message : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Only set when this Run is launched from the Builder — carries the
 // context Cockpit needs to offer "Back to Builder" and to label a node/
 // branch test run distinctly from a full run.
@@ -52,6 +77,9 @@ export function RunDialog({
   const navigate = useNavigate();
   const startFields = useMemo(() => startFormFieldsFrom(workflowYaml), [workflowYaml]);
   const startFieldNames = useMemo(() => new Set(startFields.map(field => field.name)), [startFields]);
+  const chatbotConfig = useMemo(() => chatbotStartConfigFrom(workflowYaml), [workflowYaml]);
+  const [chatMessage, setChatMessage] = useState('');
+  const [chatMessageError, setChatMessageError] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [startValues, setStartValues] = useState<Record<string, unknown>>({});
   const [startErrors, setStartErrors] = useState<Record<string, string>>({});
@@ -162,6 +190,15 @@ export function RunDialog({
     const nextStartErrors: Record<string, string> = {};
     const runInputs: Record<string, unknown> = {};
 
+    if (chatbotConfig) {
+      if (!chatMessage.trim()) {
+        setChatMessageError('Enter the message this run should start from.');
+      } else {
+        setChatMessageError(null);
+        runInputs.message = chatMessage.trim();
+      }
+    }
+
     const visibleStartFields = startFields.filter(
       field => !field.visible_when || evaluateConditionGroup(field.visible_when, startValues),
     );
@@ -205,7 +242,11 @@ export function RunDialog({
 
     setErrors(nextErrors);
     setStartErrors(nextStartErrors);
-    if (Object.keys(nextErrors).length > 0 || Object.keys(nextStartErrors).length > 0) {
+    if (
+      Object.keys(nextErrors).length > 0
+      || Object.keys(nextStartErrors).length > 0
+      || (chatbotConfig && !chatMessage.trim())
+    ) {
       return;
     }
 
@@ -308,9 +349,34 @@ export function RunDialog({
         </div>
 
         <div className="px-6 py-5 space-y-5">
-          {keys.length === 0 && startFields.length === 0 && (
+          {keys.length === 0 && startFields.length === 0 && !chatbotConfig && (
             <div className="text-sm text-ink-500">
               This workflow declares no inputs.
+            </div>
+          )}
+
+          {chatbotConfig && (
+            <div>
+              <label className="block text-sm font-medium text-ink-700">
+                {chatbotConfig.chatbotName} message
+                <span className="ml-1 text-bad">*</span>
+              </label>
+              {chatbotConfig.welcomeMessage && (
+                <p className="text-xs text-ink-500 mb-1">{chatbotConfig.welcomeMessage}</p>
+              )}
+              <textarea
+                rows={3}
+                value={chatMessage}
+                onChange={event => {
+                  setChatMessage(event.target.value);
+                  setChatMessageError(null);
+                }}
+                placeholder="Type the message this run should start from…"
+                className="mt-1 block w-full rounded-md border-slate-300 text-sm py-2 px-3 border"
+              />
+              {chatMessageError && (
+                <p className="mt-1 text-xs text-bad">{chatMessageError}</p>
+              )}
             </div>
           )}
 

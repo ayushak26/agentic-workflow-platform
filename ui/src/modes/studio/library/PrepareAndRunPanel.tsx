@@ -5,7 +5,7 @@ import type { ReadinessSummary, WorkflowSummary } from '../../../api/types';
 import { Spinner } from '../../../components/Spinner';
 import { humanizeIdentifier } from '../guided/runtime-model';
 import { RunDialog } from '../RunDialog';
-import { parseYaml, type YamlWorkflow } from '../yaml-bridge';
+import { isChatbotStart, parseYaml, type YamlWorkflow } from '../yaml-bridge';
 import { READINESS_LABEL, readinessFromPreflight } from './readiness';
 
 type Step = 'review' | 'inputs';
@@ -82,6 +82,13 @@ export function PrepareAndRunPanel({
 
   const title = workflow.library?.title || humanizeIdentifier(workflow.name);
   const inputCount = parsed ? Object.keys(parsed.inputs ?? {}).length : 0;
+  // A chatbot-mode Start always needs its message collected, even when
+  // `parsed.inputs` is empty (see isChatbotStart's own doc comment) — this
+  // used to fall through to "no inputs needed" and skip straight to a
+  // Start(); an empty chat message, launching every run with no message
+  // at all for any chatbot-mode workflow with no legacy top-level
+  // `inputs:` block.
+  const needsInputsStep = inputCount > 0 || (parsed ? isChatbotStart(parsed) : false);
   const reviewCount = workflow.library?.human_reviews.count ?? 0;
   const blocked = readiness.level === 'blocked';
 
@@ -107,8 +114,10 @@ export function PrepareAndRunPanel({
 
             <section className="prepare-run-step">
               <h3>2. What you&apos;ll need</h3>
-              {inputCount === 0 ? (
+              {!needsInputsStep ? (
                 <p>No inputs are required — this workflow starts immediately.</p>
+              ) : inputCount === 0 ? (
+                <p>A message to provide on the next step.</p>
               ) : (
                 <p>{inputCount} input{inputCount === 1 ? '' : 's'} to provide on the next step.</p>
               )}
@@ -160,9 +169,9 @@ export function PrepareAndRunPanel({
                 type="button"
                 className="ui-button ui-button--primary"
                 disabled={blocked || launching}
-                onClick={() => (inputCount === 0 ? void startNow() : setStep('inputs'))}
+                onClick={() => (needsInputsStep ? setStep('inputs') : void startNow())}
               >
-                {blocked ? 'Blocked — fix readiness first' : inputCount === 0 ? 'Start now' : 'Continue to inputs'}
+                {blocked ? 'Blocked — fix readiness first' : needsInputsStep ? 'Continue to inputs' : 'Start now'}
               </button>
             </div>
           </div>

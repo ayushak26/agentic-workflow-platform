@@ -764,6 +764,7 @@ def build_llm_yaml_generator(
         context_llm = llm.with_context(
             run_id="workflow-generation", session_id=scope, node_id="generate",
             ledger=services.get("cost_ledger"),
+            workflow_name="AI workflow generation",
         ) if hasattr(llm, "with_context") else llm
         if mode == "repair":
             # `base_prompt` (GENERIC_REPAIR_PROMPT) is a fixed instruction,

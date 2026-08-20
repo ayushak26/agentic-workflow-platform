@@ -8,6 +8,7 @@ place, so they cannot drift out of sync with each other.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Literal, TypedDict
 
 #: Bounds applied everywhere a size shows up in this protocol — a request or
@@ -15,6 +16,32 @@ from typing import Any, Literal, TypedDict
 #: the whole point of the sidecar is that its own resource use is bounded.
 MAX_MESSAGE_BYTES = 2_000_000
 MAX_CAPTURE_BYTES = 20_000
+
+
+async def read_message(reader: asyncio.StreamReader, limit: int = MAX_MESSAGE_BYTES) -> bytes:
+    """Read one EOF-terminated message, accumulating across as many socket
+    reads as it takes.
+
+    Both sides of this protocol send exactly one message per connection and
+    then close (see snippet_daemon.py's `_handle` and snippet_client.py's
+    `_call`) — a single `reader.read(limit)` call is NOT equivalent to that:
+    asyncio's StreamReader returns as soon as *any* data is buffered rather
+    than waiting for EOF, so a message that arrives across more than one
+    underlying socket read gets silently truncated to its first chunk. That
+    surfaced for real as `json.loads` failing with "Unterminated string" on
+    a large `rag_context` value that crossed a buffer boundary.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await reader.read(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > limit:
+            break
+    return b"".join(chunks)
 
 
 class SnippetRequest(TypedDict):

@@ -433,7 +433,10 @@ async def cost_overview(
     by_model: dict[str, float] = defaultdict(float)
     by_provider: dict[str, float] = defaultdict(float)
     by_collection: dict[str, float] = defaultdict(float)
-    run_ids: set[str] = set()
+    # run_ids of entries that don't already carry a denormalized workflow_name
+    # (legacy entries recorded before that field existed) — the only ones
+    # that still need the run_history join below.
+    run_ids_needing_lookup: set[str] = set()
     for entry in entries:
         cost = entry.get("cost_usd") or 0.0
         ts = entry.get("ts")
@@ -441,23 +444,39 @@ async def cost_overview(
         daily[day_key] += cost
         by_model[entry.get("model") or "unknown"] += cost
         by_provider[entry.get("provider") or "unknown"] += cost
-        by_collection[entry.get("collection_id") or "default"] += cost
-        if entry.get("run_id"):
-            run_ids.add(entry["run_id"])
+        # "default" is a placeholder meaning "no knowledge collection was in
+        # scope for this call" (most calls), not a real collection — shown
+        # under a clearly-synthetic label so it can't be mistaken for one.
+        raw_collection = entry.get("collection_id") or "default"
+        by_collection["(no collection)" if raw_collection == "default" else raw_collection] += cost
+        if not entry.get("workflow_name") and entry.get("run_id"):
+            run_ids_needing_lookup.add(entry["run_id"])
 
-    # Per-workflow: joins against run_history (same "db" connection, different collection —
-    # see module docstring) since LedgerEntry only carries run_id, not workflow_name.
-    by_workflow: dict[str, float] = defaultdict(float)
-    if db is not None and run_ids:
+    # Every current call site now stamps workflow_name directly onto the ledger
+    # entry (RegistryLLMGateway._workflow_name, set via with_context) — real
+    # workflow runs get the run's actual name, and non-run features (node
+    # tests, eval, assist chat, workflow generation) get their own clear
+    # synthetic label. The run_history join below only covers legacy entries
+    # recorded before this field existed.
+    run_to_workflow: dict[str, str] = {}
+    if db is not None and run_ids_needing_lookup:
         run_to_workflow = {
-            doc["run_id"]: doc.get("workflow_name") or "unknown"
+            doc["run_id"]: doc["workflow_name"]
             for doc in db["run_history"].find(
-                {"run_id": {"$in": list(run_ids)}}, {"_id": 0, "run_id": 1, "workflow_name": 1}
+                {"run_id": {"$in": list(run_ids_needing_lookup)}},
+                {"_id": 0, "run_id": 1, "workflow_name": 1},
             )
+            if doc.get("workflow_name")
         }
-        for entry in entries:
-            workflow_name = run_to_workflow.get(entry.get("run_id"), "unknown")
-            by_workflow[workflow_name] += entry.get("cost_usd") or 0.0
+
+    by_workflow: dict[str, float] = defaultdict(float)
+    for entry in entries:
+        workflow_name = (
+            entry.get("workflow_name")
+            or run_to_workflow.get(entry.get("run_id"))
+            or "unknown"
+        )
+        by_workflow[workflow_name] += entry.get("cost_usd") or 0.0
 
     allocations = {}
     if db is not None:

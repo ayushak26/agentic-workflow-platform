@@ -29,6 +29,7 @@ import { api } from '../../api/client';
 import type {
   IntegrationConnectionInfo,
   LLMModelInfo,
+  MCPToolInfo,
   NodeTypeManifest,
   WorkflowDraft,
   WorkflowPreflightReport,
@@ -453,9 +454,13 @@ export function Builder() {
     return () => window.clearTimeout(timer);
   }, [currentWorkflow, dirty, nodes, rfInstance, selectedId, workflowName]);
 
-  const addNode = useCallback((typeName: string, position?: { x: number; y: number }) => {
+  const addNode = useCallback((
+    typeName: string,
+    position?: { x: number; y: number },
+    options?: { config?: Record<string, unknown>; experience?: NodeExperienceSpec },
+  ): string | undefined => {
     const manifest = findManifest(manifests, typeName);
-    if (!manifest) return;
+    if (!manifest) return undefined;
     const snapshot = captureSnapshot();
     if (snapshot) pushHistory(snapshot);
     let effectivePosition = position;
@@ -471,7 +476,7 @@ export function Builder() {
     const supportsModelSelection = Boolean(
       (manifest.config_schema as { properties?: Record<string, unknown> }).properties?.model,
     );
-    const defaultConfig = generateDefaults(manifest.config_schema) ?? {};
+    const defaultConfig = { ...(generateDefaults(manifest.config_schema) ?? {}), ...(options?.config ?? {}) };
     if (typeName === 'RouterAgent') {
       // A fresh Router shouldn't inherit the backend schema's `mode: "rule"`
       // default — that's a legacy identity nobody chose, and it renders as a
@@ -487,6 +492,7 @@ export function Builder() {
         nodeId: id,
         typeName,
         config: defaultConfig,
+        ...(options?.experience ? { experience: options.experience } : {}),
         ...(supportsModelSelection ? {
           selectedModel: 'auto',
           modelRouting: { accuracy_priority: 'maximum', prefer_low_latency: false },
@@ -499,6 +505,7 @@ export function Builder() {
     setInspectorTab('configure');
     setInspectorOpen(true);
     markChanged();
+    return id;
   }, [captureSnapshot, manifests, markChanged, nodes, pushHistory, rfInstance, setNodes]);
 
   const onDrop = useCallback((event: React.DragEvent) => {
@@ -555,6 +562,33 @@ export function Builder() {
     }, current));
     markChanged();
   }, [markChanged, pushHistory, setEdges]);
+
+  // "Add Next Tool": create the new MCP node pre-configured (server, tool, a
+  // best-effort display name) and already wired to the step it followed —
+  // the chaining motion the plain palette can't offer, since it only ever
+  // drops a blank node the author must then connect and configure by hand.
+  const addConnectedMcpTool = useCallback((
+    sourceNodeId: string,
+    serverId: string,
+    tool: MCPToolInfo,
+  ) => {
+    const source = nodes.find(node => node.id === sourceNodeId);
+    const position = source ? { x: source.position.x, y: source.position.y + 160 } : undefined;
+    const newId = addNode('MCPToolAgent', position, {
+      config: { server_id: serverId, tool: tool.name, arguments: {} },
+      experience: tool.title ? { display_name: tool.title } : undefined,
+    });
+    if (!newId) return;
+    const groupId = `builder-edge-${crypto.randomUUID()}`;
+    setEdges(current => addEdge({
+      source: sourceNodeId,
+      target: newId,
+      id: groupId,
+      type: 'smoothstep',
+      data: { edgeKind: 'simple', groupId },
+    }, current));
+    markChanged();
+  }, [addNode, markChanged, nodes, setEdges]);
 
   const onNodesChange = useCallback((allChanges: NodeChange[]) => {
     // Stage bands and collapsed-stage placeholders are drawn on top of the
@@ -1395,7 +1429,15 @@ export function Builder() {
       <div className="builder-workspace flex min-h-0 flex-1">
         {paletteOpen && (
           <aside className="builder-palette" aria-label="Node library">
-            <NodePalette types={manifests} onAdd={typeName => addNode(typeName)} onClose={() => setPaletteOpen(false)} />
+            <NodePalette
+              onAdd={typeName => addNode(typeName)}
+              onAddMcpTool={(serverId, tool) => addNode('MCPToolAgent', undefined, {
+                config: { server_id: serverId, tool: tool.name, arguments: {} },
+                experience: tool.title ? { display_name: tool.title } : undefined,
+              })}
+              onClose={() => setPaletteOpen(false)}
+              types={manifests}
+            />
           </aside>
         )}
 
@@ -1595,6 +1637,9 @@ export function Builder() {
               onCloseInputs={() => setShowInputs(false)}
               onToggleWide={() => setInspectorWide(value => !value)}
               wide={inspectorWide}
+              onAddNextTool={(serverId, tool) => {
+                if (selected) addConnectedMcpTool(selected.id, serverId, tool);
+              }}
               onConfigChange={onConfigChange}
               onExperienceChange={onExperienceChange}
               onIdChange={onIdChange}

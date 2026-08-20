@@ -43,13 +43,13 @@ nodes:
       mode: input_form
       title: New Proposal
       fields:
-        - name: call_document
-          label: Call Document
-          type: object
-          required: true
         - name: concept_note
           label: Concept Note
           type: text
+          required: true
+      file_fields:
+        - name: call_document
+          label: Call Document
           required: true
     experience:
       display_name: New Proposal
@@ -209,26 +209,45 @@ nodes:
   - id: concept_review
     type: HumanInLoopAgent
     config:
-      question: Approve drafting the recommended concept alternative?
+      question: Approve drafting the recommended concept alternative, or edit this field with a different alternative's id (conservative / balanced / ambitious) to override it?
       review_purpose: Which posture the proposal commits to is a person's call, not the model's own recommendation standing unchecked.
       review_panels:
         - label: Recommended Concept
           field: concept_alternatives.recommended_concept_id
+        - label: All Generated Alternatives (for reference, to override with)
+          field: concept_alternatives.alternatives
       allowed_actions:
         - approve
         - reject
+        - edit
     experience:
       display_name: Concept Approval
-      purpose: Let a person confirm the recommended concept before it's frozen.
-      contribution: Nothing is frozen without a person having actually looked at the recommendation.
-      expected_output: Approve or reject.
+      purpose: Let a person confirm the recommended concept before it's frozen, or override it with a different alternative.
+      contribution: Nothing is frozen without a person having actually looked at the recommendation — and the recommendation is never the only option they can pick.
+      expected_output: Approve, reject, or edit with a different alternative's id.
       failure_message: The concept review could not be recorded.
+
+  - id: resolve_concept_choice
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: selected_concept_id
+          operation: copy
+          source: concept_review.edited_content.text
+          default: "{{outputs.concept_alternatives.recommended_concept_id}}"
+    experience:
+      display_name: Resolve Concept Choice
+      purpose: Use the human's overriding alternative id when they edited the review, otherwise the original recommendation.
+      contribution: An approve keeps the recommendation; an edit genuinely picks a different alternative — never silently ignored.
+      expected_output: The concept id that should actually be frozen.
+      failure_message: The concept choice could not be resolved.
 
   - id: concept_freeze
     type: ConceptFreezeAgent
     config:
       alternatives: "{{outputs.concept_alternatives.alternatives}}"
-      selected_concept_id: "{{outputs.concept_alternatives.recommended_concept_id}}"
+      selected_concept_id: "{{outputs.resolve_concept_choice.data.selected_concept_id}}"
     experience:
       display_name: Freeze Concept
       purpose: Resolve the approved concept choice — fails closed on any mismatch, no model call.
@@ -248,8 +267,8 @@ nodes:
       expected_output: One Method Card per objective.
       failure_message: The methodology could not be engineered.
 
-  # Unconditional fan-out — both drafting steps below always run once
-  # methodology exists. Safe join shape: neither is conditionally selected.
+  # Unconditional fan-out — all three drafting steps below always run once
+  # methodology exists. Safe join shape: none is conditionally selected.
   - id: draft_excellence
     type: TransformAgent
     config:
@@ -292,6 +311,28 @@ nodes:
       expected_output: A drafted Impact section.
       failure_message: The Impact section could not be drafted.
 
+  - id: draft_implementation
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0.2
+      input_fields:
+        - name: methodology
+          type: string
+          value: "{{outputs.methodology.method_cards}}"
+      instructions: |-
+        Draft the Implementation section of the proposal from the Method
+        Cards provided: work plan, timeline, and risk management. Ground
+        every claim in the methodology given — never invent a result or
+        figure not present in it.
+    experience:
+      display_name: Draft Implementation Section
+      purpose: Draft the Implementation section from the engineered methodology.
+      contribution: Runs independently of Excellence and Impact, in parallel — the evaluator and submission gate both expect this section to exist.
+      expected_output: A drafted Implementation section.
+      failure_message: The Implementation section could not be drafted.
+
   - id: assemble_proposal
     type: TextAssemblerAgent
     config:
@@ -299,10 +340,11 @@ nodes:
       parts:
         - "{{outputs.draft_excellence.raw}}"
         - "{{outputs.draft_impact.raw}}"
+        - "{{outputs.draft_implementation.raw}}"
     experience:
       display_name: Join Drafted Sections
       purpose: Combine the two independently-drafted sections into one proposal text.
-      contribution: Both sections always ran, so this always has both to combine — nothing to wait on that might not arrive.
+      contribution: All three sections always ran, so this always has all three to combine — nothing to wait on that might not arrive.
       expected_output: One assembled proposal text.
       failure_message: The sections could not be assembled.
 
@@ -343,6 +385,7 @@ nodes:
     type: ProposalSubmissionGate
     config:
       proposal_text: "{{outputs.assemble_proposal.text}}"
+      evidence_blockers: "{{outputs.verify_evidence.blocking_issues}}"
       consistency_gate: "{{outputs.consistency_check.gate}}"
       consistency_findings: "{{outputs.consistency_check.findings}}"
       evaluation_threshold_passed: "{{outputs.horizon_evaluation.threshold_passed}}"
@@ -443,6 +486,7 @@ nodes:
       sections:
         Excellence: "{{outputs.draft_excellence.raw}}"
         Impact: "{{outputs.draft_impact.raw}}"
+        Implementation: "{{outputs.draft_implementation.raw}}"
       proposal_title: "{{outputs.start.data.concept_note}}"
       client_name: Internal Review Board
     experience:
@@ -498,14 +542,18 @@ edges:
   - from: concept_alternatives
     to: concept_review
   - from: concept_review
+    to: resolve_concept_choice
+  - from: resolve_concept_choice
     to: concept_freeze
   - from: concept_freeze
     to: methodology
   - from: methodology
-    to: [draft_excellence, draft_impact]
+    to: [draft_excellence, draft_impact, draft_implementation]
   - from: draft_excellence
     to: assemble_proposal
   - from: draft_impact
+    to: assemble_proposal
+  - from: draft_implementation
     to: assemble_proposal
   - from: assemble_proposal
     to: [consistency_check, call_coverage, horizon_evaluation]

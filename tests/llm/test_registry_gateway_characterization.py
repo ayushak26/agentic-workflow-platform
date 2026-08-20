@@ -517,6 +517,21 @@ def test_models_for_call_raises_llm_provider_unavailable_error_when_allowed_mode
         gateway._models_for_call("claude-opus-5")
 
 
+def test_models_for_call_exempts_openrouter_model_ids_from_allowed_models():
+    # NodeSpec.selected_model_must_be_allowed() (app/runtime/schema.py) already
+    # exempts OpenRouter model ids from the allowed_models allowlist at config
+    # validation time — OpenRouter's own catalog is authoritative, not our
+    # static list. This call-time filter must honor the same exemption, or
+    # every OpenRouter-routed node fails with an empty fallback chain despite
+    # passing preflight cleanly.
+    gateway = RegistryLLMGateway().with_context(
+        run_id="r", session_id="s", node_id="n", allowed_models=["claude-opus-5"]
+    )
+    assert gateway._models_for_call("openrouter/z-ai/glm-5.3") == [
+        "openrouter/z-ai/glm-5.3"
+    ]
+
+
 # ── retry delay arithmetic (_delay_for) ──────────────────────────────────────
 
 def test_delay_for_honors_a_retry_after_header_capped_at_max_delay():

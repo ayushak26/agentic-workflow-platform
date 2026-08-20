@@ -7,12 +7,18 @@ import type {
   FieldSpec,
   IntegrationConnectionInfo,
   LLMModelInfo,
+  MCPToolInfo,
   NodeTypeManifest,
   OperatorCatalog,
   OutputContract,
 } from '../../../api/types';
 import { SchemaForm } from '../SchemaForm';
-import type { WorkflowInputSpec, WorkflowNodeData, YamlWorkflow } from '../yaml-bridge';
+import type {
+  NodeExperienceSpec,
+  WorkflowInputSpec,
+  WorkflowNodeData,
+  YamlWorkflow,
+} from '../yaml-bridge';
 import { AITaskConfig } from './AITaskConfig';
 import { DataTransformConfig } from './DataTransformConfig';
 import { EmailConfig } from './EmailConfig';
@@ -69,7 +75,9 @@ export function ConfigureTab({
   integrationConnections,
   llmModels,
   manifest,
+  onAddNextTool,
   onConfigChange,
+  onExperienceChange,
   onIdChange,
   onInputsChange,
   operators,
@@ -83,7 +91,9 @@ export function ConfigureTab({
   integrationConnections: IntegrationConnectionInfo[];
   llmModels: LLMModelInfo[];
   manifest: NodeTypeManifest | undefined;
+  onAddNextTool?: (serverId: string, tool: MCPToolInfo) => void;
   onConfigChange: (next: Record<string, unknown>) => void;
+  onExperienceChange?: (experience: NodeExperienceSpec | undefined) => void;
   onIdChange: (nextId: string) => void;
   onInputsChange: (inputs: Record<string, WorkflowInputSpec>) => void;
   operators: OperatorCatalog | null;
@@ -189,7 +199,10 @@ export function ConfigureTab({
           <MCPToolConfig
             config={config}
             contract={contract}
+            experience={selected.data.experience}
+            onAddNextTool={onAddNextTool}
             onChange={onConfigChange}
+            onExperienceChange={onExperienceChange}
           />
         )}
 

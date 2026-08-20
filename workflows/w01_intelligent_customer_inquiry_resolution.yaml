@@ -1,115 +1,76 @@
 name: W01 — Intelligent Customer Inquiry Resolution
 description: >-
-  The main showcase workflow. A customer submits a multilingual, possibly
-  multi-intent inquiry through a form. The workflow understands it, resolves
-  the customer's identity against real business records without overwriting
-  what the customer said, decides which department(s) apply, escalates to a
-  human when identity is ambiguous, and — regardless of that outcome — files
-  a real case per department and sends the customer an acknowledgment.
+  The main showcase workflow. A customer submits a multilingual, possibly multi-intent inquiry
+  through a support chatbot. The workflow understands it, resolves the customer's identity against
+  real business records without overwriting what the customer said, decides which department(s)
+  apply, escalates to a human when identity is ambiguous, and — regardless of that outcome — files a
+  real case per department and sends the customer an acknowledgment.
 
-  Multi-Route/Join note: this workflow deliberately never feeds two
-  mutually-exclusive branches (from either the top-level review/proceed
-  Router or the Multi-Route department Router inside
-  w01sub_route_and_notify.yaml) into one shared downstream node. Where the
-  original design called for "consolidate parallel department work with a
-  Join," each department instead files its own case and ends on its own
-  node — consolidation happens at the business-record level (a shared
-  resolved account), not in the workflow graph. See
-  docs/workflow_examples_10/NODE_COVERAGE_MATRIX.md for the general rule
-  this follows.
-version: "1.0"
+  Multi-Route/Join note: this workflow deliberately never feeds two mutually-exclusive branches
+  (from either the top-level review/proceed Router or the Multi-Route department Router inside
+  w01sub_route_and_notify.yaml) into one shared downstream node. Where the original design called
+  for "consolidate parallel department work with a Join," each department instead files its own case
+  and ends on its own node — consolidation happens at the business-record level (a shared resolved
+  account), not in the workflow graph. See docs/workflow_examples_10/NODE_COVERAGE_MATRIX.md for the
+  general rule this follows.
+version: '1.0'
 use_case: customer_operations
 library:
   title: W01 — Intelligent Customer Inquiry Resolution
   summary: >-
-    Understand a multilingual, possibly multi-intent customer inquiry,
-    resolve identity against real records, and route it to the departments
-    that actually need to act — escalating to a human only when identity is genuinely unclear.
+    Understand a multilingual, possibly multi-intent customer inquiry, resolve identity against real
+    records, and route it to the departments that actually need to act — escalating to a human only
+    when identity is genuinely unclear.
   purpose:
-    - Show AI understanding, business-record resolution, deterministic
-      rules, Multi-Route, human review, and a customer acknowledgment
-      working together in one realistic process
+    - >-
+      Show AI understanding, business-record resolution, deterministic rules, Multi-Route, human
+      review, and a customer acknowledgment working together in one realistic process
   suitable_for:
     - The main reference implementation for customer inquiry automation
   not_suitable_for:
-    - Processes where every inquiry needs identical handling — this exists
-      specifically because inquiries don't
+    - >-
+      Processes where every inquiry needs identical handling — this exists specifically because
+      inquiries don't
   outputs:
     - One case per department the inquiry touches, plus a customer acknowledgment
   input_types:
-    - A customer inquiry submitted through a form
+    - A free-text chat message
   human_reviews:
     count: 1
     labels:
       - Identity Ambiguity Review
   visibility_status: draft
-
 entry: start
 exit:
   - end_stopped
   - end_after_review
   - end_proceed
-
 nodes:
   - id: start
     type: StartAgent
     config:
-      mode: input_form
-      title: Customer Inquiry
-      fields:
-        - name: existing_customer
-          label: Existing Customer?
-          type: boolean
-          required: false
-          widget: toggle
-        - name: company_name
-          label: Company Name
-          type: string
-          required: true
-        - name: contact_name
-          label: Contact Name
-          type: string
-          required: false
-        - name: email
-          label: Email
-          type: string
-          required: true
-          format: email
-        - name: country
-          label: Country
-          type: string
-          required: false
-          preset: country
-        - name: inquiry_type
-          label: Inquiry Type
-          type: enum
-          required: false
-          enum_values: [QUOTATION, TECHNICAL_QUESTION, DELIVERY, SERVICE, INVOICE, OTHER]
-        - name: order_reference
-          label: Order / Quote Reference
-          type: string
-          required: false
-        - name: message
-          label: Message
-          type: text
-          required: true
-        - name: attachments
-          label: Attachments
-          type: object
-          required: false
+      mode: chatbot
+      chatbot_name: Customer Inquiries
+      welcome_message: >-
+        Tell me what's going on — your company name, any order or quote
+        number, and the best email to reach you at — and I'll get it to the
+        right team.
+      allow_attachments: true
+      suggested_questions:
+        - We'd like a quote for two replacement pump units
+        - Our pump from order SO-45882 is making a loud noise
     experience:
-      display_name: Customer Inquiry
-      purpose: Take in the inquiry exactly as the customer wrote it.
-      contribution: Company lookup is not mandatory here — resolution happens downstream, on real records.
-      expected_output: A company name, contact details, and the inquiry message.
+      display_name: Customer Inquiry Chat
+      purpose: Let the customer describe their inquiry in their own words.
+      contribution: The same entry point regardless of what the inquiry turns out to be about.
+      expected_output: A free-text message, and any attachments.
       failure_message: The inquiry could not be read.
-
   - id: understand
     type: SubprocessAgent
     config:
       workflow: sp01_multilingual_message_understanding
       inputs:
-        message: "{{outputs.start.data.message}}"
+        message: '{{outputs.start.message}}'
       result_from: workflow_output
     experience:
       display_name: Understand The Inquiry
@@ -117,14 +78,51 @@ nodes:
       contribution: Every fact used below is status-tagged, never silently guessed.
       expected_output: A translated message and five status-tagged facts.
       failure_message: The inquiry could not be understood.
-
+  - id: extract_contact_email
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      temperature: 0
+      input_fields:
+        - name: message
+          type: string
+          value: '{{outputs.start.message}}'
+      instructions: |-
+        Extract the customer's email address, if they stated one anywhere in
+        the message. Return an empty string if no email address is present —
+        never invent one.
+      output_fields:
+        - name: email
+          type: string
+    experience:
+      display_name: Extract Contact Email
+      purpose: Pull the customer's email address out of their own chat message, if they gave one.
+      contribution: The acknowledgment can only be sent to an address the customer actually stated, never a guess.
+      expected_output: An email address, or empty if none was given.
+      failure_message: The contact email could not be extracted.
+  - id: resolve_stated_company_name
+    type: TransformAgent
+    config:
+      mode: deterministic
+      operations:
+        - target: stated_company_name
+          operation: copy
+          source: understand.result.company_name.value
+          default: Not stated by customer
+    experience:
+      display_name: Resolve Stated Company Name
+      purpose: Ensure identity resolution always has a real, non-empty company name to search with.
+      contribution: A chat message that never mentions a company still gets a clean "not found" result instead of a crash.
+      expected_output: The company name the customer stated, or a clear placeholder if they never gave one.
+      failure_message: The stated company name could not be resolved.
   - id: resolve_identity
     type: SubprocessAgent
     config:
       workflow: sp02_customer_identity_resolution
       inputs:
-        stated_company_name: "{{outputs.start.data.company_name}}"
-        order_reference: "{{outputs.start.data.order_reference}}"
+        stated_company_name: '{{outputs.resolve_stated_company_name.data.stated_company_name}}'
+        order_reference: '{{outputs.understand.result.order_reference.value}}'
       result_from: workflow_output
     experience:
       display_name: Resolve Customer Identity
@@ -132,7 +130,6 @@ nodes:
       contribution: The stated name is never silently replaced by what the system found.
       expected_output: A resolution status, plus both the stated and resolved company name.
       failure_message: The customer's identity could not be resolved.
-
   - id: build_context
     type: TransformAgent
     config:
@@ -141,11 +138,11 @@ nodes:
         - target: issue
           operation: copy
           source: understand.result.issue.value
-          default: ""
+          default: ''
         - target: requested_action
           operation: copy
           source: understand.result.requested_action.value
-          default: ""
+          default: ''
         - target: urgency
           operation: copy
           source: understand.result.urgency.value
@@ -156,15 +153,27 @@ nodes:
         - target: resolved_company_name
           operation: copy
           source: resolve_identity.result.resolved_company_name
+          default: '{{outputs.resolve_stated_company_name.data.stated_company_name}}'
+        - target: contact_email
+          operation: copy
+          source: extract_contact_email.parsed.email
+          default: ''
         - target: context_summary
           operation: format
-          value: |-
-            Company stated by customer: {{outputs.start.data.company_name}}
-            Company resolved in Finance & SCM: {{outputs.resolve_identity.result.resolved_company_name}}
+          value: >-
+            Company stated by customer: {{outputs.resolve_stated_company_name.data.stated_company_name}}
+
+            Company resolved in Finance & SCM:
+            {{outputs.resolve_identity.result.resolved_company_name}}
+
             Identity resolution: {{outputs.resolve_identity.result.resolution_status}}
+
             Issue: {{outputs.understand.result.issue.value}}
+
             Requested action: {{outputs.understand.result.requested_action.value}}
+
             Urgency: {{outputs.understand.result.urgency.value}}
+
             Original message (translated): {{outputs.understand.result.translated_message}}
     experience:
       display_name: Build Case Context
@@ -172,7 +181,6 @@ nodes:
       contribution: One clean object the rules below and any human reviewer can both read.
       expected_output: A single case-context object.
       failure_message: The case context could not be built.
-
   - id: decide_routing
     type: DecisionAgent
     config:
@@ -257,7 +265,6 @@ nodes:
       contribution: Every rule is readable and testable — the same answer every time on the same facts.
       expected_output: Department flags and whether human review is required.
       failure_message: The routing rules could not be evaluated.
-
   - id: review_gate
     type: RouterAgent
     config:
@@ -277,14 +284,15 @@ nodes:
       contribution: The canvas makes this decision point visible, not buried inside a prompt.
       expected_output: NEEDS_REVIEW or PROCEED.
       failure_message: This inquiry could not be routed.
-
   - id: ambiguity_review
     type: SubprocessAgent
     config:
       workflow: sp04_approval_gate
       inputs:
-        question: This inquiry's identity could not be resolved automatically, or matched no department. Approve proceeding with the routing below?
-        context_summary: "{{outputs.build_context.data.context_summary}}"
+        question: >-
+          This inquiry's identity could not be resolved automatically, or matched no department.
+          Approve proceeding with the routing below?
+        context_summary: '{{outputs.build_context.data.context_summary}}'
       result_from: workflow_output
     experience:
       display_name: Ambiguity Review
@@ -292,7 +300,6 @@ nodes:
       contribution: Stops a case being filed against the wrong company, or lost in the wrong queue.
       expected_output: Approve or reject.
       failure_message: The review could not be recorded.
-
   - id: check_approved
     type: RouterAgent
     config:
@@ -312,7 +319,6 @@ nodes:
       contribution: A reject (or anything unexpected) safely stops here — nothing is filed on a guess.
       expected_output: APPROVED or STOPPED.
       failure_message: The review outcome could not be checked.
-
   - id: end_stopped
     type: EndAgent
     config:
@@ -321,29 +327,28 @@ nodes:
         - key: outcome
           value_from: not_processed_automatically
         - key: reason
-          value_from: "{{outputs.ambiguity_review.result.reason}}"
+          value_from: '{{outputs.ambiguity_review.result.reason}}'
     experience:
       display_name: Stopped Outcome
       purpose: Return the "not processed automatically" outcome.
       contribution: A clean, typed result — never the whole accumulated state.
       expected_output: An outcome and the reviewer's reason, if given.
       failure_message: The result could not be produced.
-
   - id: route_and_notify_after_review
     type: SubprocessAgent
     config:
       workflow: w01sub_route_and_notify
       inputs:
-        needs_sales: "{{outputs.decide_routing.decisions.needs_sales}}"
-        needs_service: "{{outputs.decide_routing.decisions.needs_service}}"
-        needs_engineering: "{{outputs.decide_routing.decisions.needs_engineering}}"
-        needs_supply_chain: "{{outputs.decide_routing.decisions.needs_supply_chain}}"
-        company_name: "{{outputs.build_context.data.resolved_company_name}}"
-        issue: "{{outputs.build_context.data.issue}}"
-        requested_action: "{{outputs.build_context.data.requested_action}}"
-        urgency: "{{outputs.build_context.data.urgency}}"
-        case_summary: "{{outputs.build_context.data.context_summary}}"
-        customer_email: "{{outputs.start.data.email}}"
+        needs_sales: '{{outputs.decide_routing.decisions.needs_sales}}'
+        needs_service: '{{outputs.decide_routing.decisions.needs_service}}'
+        needs_engineering: '{{outputs.decide_routing.decisions.needs_engineering}}'
+        needs_supply_chain: '{{outputs.decide_routing.decisions.needs_supply_chain}}'
+        company_name: '{{outputs.build_context.data.resolved_company_name}}'
+        issue: '{{outputs.build_context.data.issue}}'
+        requested_action: '{{outputs.build_context.data.requested_action}}'
+        urgency: '{{outputs.build_context.data.urgency}}'
+        case_summary: '{{outputs.build_context.data.context_summary}}'
+        customer_email: '{{outputs.build_context.data.contact_email}}'
       result_from: all_outputs
     experience:
       display_name: Route And Notify (After Review)
@@ -351,7 +356,6 @@ nodes:
       contribution: Reuses the exact same routing/notification logic the direct path uses.
       expected_output: One case per department, and a sent acknowledgment.
       failure_message: The case(s) could not be filed.
-
   - id: end_after_review
     type: EndAgent
     config:
@@ -360,29 +364,28 @@ nodes:
         - key: outcome
           value_from: processed_after_review
         - key: result
-          value_from: "{{outputs.route_and_notify_after_review.result}}"
+          value_from: '{{outputs.route_and_notify_after_review.result}}'
     experience:
       display_name: Processed-After-Review Outcome
       purpose: Return the routing/notification result.
       contribution: A clean, typed result — never the whole accumulated state.
       expected_output: The department case(s) and acknowledgment outcome.
       failure_message: The result could not be produced.
-
   - id: route_and_notify_direct
     type: SubprocessAgent
     config:
       workflow: w01sub_route_and_notify
       inputs:
-        needs_sales: "{{outputs.decide_routing.decisions.needs_sales}}"
-        needs_service: "{{outputs.decide_routing.decisions.needs_service}}"
-        needs_engineering: "{{outputs.decide_routing.decisions.needs_engineering}}"
-        needs_supply_chain: "{{outputs.decide_routing.decisions.needs_supply_chain}}"
-        company_name: "{{outputs.build_context.data.resolved_company_name}}"
-        issue: "{{outputs.build_context.data.issue}}"
-        requested_action: "{{outputs.build_context.data.requested_action}}"
-        urgency: "{{outputs.build_context.data.urgency}}"
-        case_summary: "{{outputs.build_context.data.context_summary}}"
-        customer_email: "{{outputs.start.data.email}}"
+        needs_sales: '{{outputs.decide_routing.decisions.needs_sales}}'
+        needs_service: '{{outputs.decide_routing.decisions.needs_service}}'
+        needs_engineering: '{{outputs.decide_routing.decisions.needs_engineering}}'
+        needs_supply_chain: '{{outputs.decide_routing.decisions.needs_supply_chain}}'
+        company_name: '{{outputs.build_context.data.resolved_company_name}}'
+        issue: '{{outputs.build_context.data.issue}}'
+        requested_action: '{{outputs.build_context.data.requested_action}}'
+        urgency: '{{outputs.build_context.data.urgency}}'
+        case_summary: '{{outputs.build_context.data.context_summary}}'
+        customer_email: '{{outputs.build_context.data.contact_email}}'
       result_from: all_outputs
     experience:
       display_name: Route And Notify (Direct)
@@ -390,7 +393,6 @@ nodes:
       contribution: Reuses the exact same routing/notification logic the reviewed path uses.
       expected_output: One case per department, and a sent acknowledgment.
       failure_message: The case(s) could not be filed.
-
   - id: end_proceed
     type: EndAgent
     config:
@@ -399,20 +401,23 @@ nodes:
         - key: outcome
           value_from: processed_directly
         - key: result
-          value_from: "{{outputs.route_and_notify_direct.result}}"
+          value_from: '{{outputs.route_and_notify_direct.result}}'
     experience:
       display_name: Processed-Directly Outcome
       purpose: Return the routing/notification result.
       contribution: A clean, typed result — never the whole accumulated state.
       expected_output: The department case(s) and acknowledgment outcome.
       failure_message: The result could not be produced.
-
 edges:
   - from: start
-    to: understand
+    to: [understand, extract_contact_email]
   - from: understand
+    to: resolve_stated_company_name
+  - from: resolve_stated_company_name
     to: resolve_identity
   - from: resolve_identity
+    to: build_context
+  - from: extract_contact_email
     to: build_context
   - from: build_context
     to: decide_routing

@@ -68,6 +68,26 @@ ACTIVITY_COLUMNS = [
     "_regardingobjectid_value",
 ]
 
+SHIPMENT_COLUMNS = [
+    "shipmentid",
+    "shipment_number",
+    "status",
+    "shipped_date",
+    "delivered_date",
+    "_salesorderid_value",
+    "_customerid_value",
+]
+
+SERVICE_CASE_COLUMNS = [
+    "caseid",
+    "service_case_number",
+    "title",
+    "status",
+    "priority",
+    "serial_number",
+    "_customerid_value",
+]
+
 #: Dataverse `statecode` for accounts/opportunities: 0 is the live state.
 _ACTIVE = 0
 
@@ -144,6 +164,34 @@ def _activity(row: dict[str, Any]) -> dict[str, Any]:
         "subject": row.get("subject") or "",
         "created_on": row.get("createdon"),
         "status": "open" if row.get("statecode", 0) == 0 else "completed",
+    }
+
+
+def _shipment(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "shipment_id": row.get("shipmentid") or "",
+        "shipment_number": row.get("shipment_number") or "",
+        "status": row.get("status"),
+        "shipped_date": row.get("shipped_date"),
+        "delivered_date": row.get("delivered_date"),
+        "order_id": row.get("_salesorderid_value"),
+        "account_id": row.get("_customerid_value"),
+    }
+
+
+def _service_case(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "case_id": row.get("caseid") or "",
+        "case_number": row.get("service_case_number") or "",
+        "title": row.get("title"),
+        "status": row.get("status"),
+        "priority": row.get("priority"),
+        "serial_number": row.get("serial_number"),
+        "account_id": row.get("_customerid_value"),
+        # Dataverse case ownership is not modelled in this fixture set; a live
+        # tenant would resolve `_ownerid_value` to a business role/department
+        # the way `create_followup_activity` resolves a regarding lookup.
+        "current_owner": None,
     }
 
 
@@ -314,6 +362,88 @@ async def find_product(
     return _collection([_product(row) for row in rows], "products", limit)
 
 
+async def find_shipment(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    shipment_number = (arguments.get("shipment_number") or "").strip()
+    order_id = arguments.get("order_id")
+    account_id = arguments.get("account_id")
+    if not shipment_number and not order_id:
+        raise DynamicsError(
+            "find_shipment needs a shipment_number or an order_id.",
+            code="CRM_INVALID_ARGUMENTS",
+            retryable=False,
+        )
+    identity_filters = []
+    if shipment_number:
+        identity_filters.append(odata.string_filter("shipment_number", shipment_number))
+    if order_id:
+        identity_filters.append(odata.lookup_filter("_salesorderid_value", order_id))
+    filters = [odata.any_of(*identity_filters)]
+    if account_id:
+        filters.append(odata.lookup_filter("_customerid_value", account_id))
+    rows = await backend.query(
+        "shipments",
+        select=SHIPMENT_COLUMNS,
+        filter_expression=odata.all_of(*filters),
+        order_by="shipped_date desc",
+        top=1,
+    )
+    if not rows:
+        return {"shipment": None, "found": False}
+    return {"shipment": _shipment(rows[0]), "found": True}
+
+
+async def find_service_case(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    service_case_number = (arguments.get("service_case_number") or "").strip()
+    serial_number = (arguments.get("serial_number") or "").strip()
+    account_id = arguments.get("account_id")
+    if not service_case_number and not serial_number:
+        raise DynamicsError(
+            "find_service_case needs a service_case_number or a serial_number.",
+            code="CRM_INVALID_ARGUMENTS",
+            retryable=False,
+        )
+    identity_filters = []
+    if service_case_number:
+        identity_filters.append(
+            odata.string_filter("service_case_number", service_case_number)
+        )
+    if serial_number:
+        identity_filters.append(odata.string_filter("serial_number", serial_number))
+    filters = [odata.any_of(*identity_filters)]
+    if account_id:
+        filters.append(odata.lookup_filter("_customerid_value", account_id))
+    rows = await backend.query(
+        "service_cases",
+        select=SERVICE_CASE_COLUMNS,
+        filter_expression=odata.all_of(*filters),
+        order_by="service_case_number desc",
+        top=1,
+    )
+    if not rows:
+        return {"service_case": None, "found": False}
+    return {"service_case": _service_case(rows[0]), "found": True}
+
+
+async def get_service_cases_for_account(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    limit = _limit(arguments, 20, 50)
+    rows = await backend.query(
+        "service_cases",
+        select=SERVICE_CASE_COLUMNS,
+        filter_expression=odata.lookup_filter(
+            "_customerid_value", arguments.get("account_id")
+        ),
+        order_by="service_case_number desc",
+        top=limit + 1,
+    )
+    return _collection([_service_case(row) for row in rows], "service_cases", limit)
+
+
 async def get_recent_activities(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
@@ -469,6 +599,9 @@ HANDLERS = {
     "get_contacts_for_account": get_contacts_for_account,
     "get_open_opportunities": get_open_opportunities,
     "find_previous_orders": find_previous_orders,
+    "find_shipment": find_shipment,
+    "find_service_case": find_service_case,
+    "get_service_cases_for_account": get_service_cases_for_account,
     "find_product": find_product,
     "get_recent_activities": get_recent_activities,
     "create_lead": create_lead,

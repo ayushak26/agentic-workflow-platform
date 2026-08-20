@@ -12,7 +12,7 @@ import asyncio
 import json
 from typing import Any
 
-from app.runtime.snippet_protocol import MAX_MESSAGE_BYTES
+from app.runtime.snippet_protocol import read_message
 
 #: How much longer the client waits than the snippet's own requested
 #: timeout, before giving up on the sidecar entirely — covers queueing/
@@ -75,7 +75,7 @@ class SnippetRunnerClient:
             writer.write_eof()
             await writer.drain()
             try:
-                raw = await asyncio.wait_for(reader.read(MAX_MESSAGE_BYTES), timeout=timeout_seconds)
+                raw = await asyncio.wait_for(read_message(reader), timeout=timeout_seconds)
             except TimeoutError as exc:
                 raise SnippetRunnerUnavailable(
                     "Snippet runner did not respond in time — it may be "

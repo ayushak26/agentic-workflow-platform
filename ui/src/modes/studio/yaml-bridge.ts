@@ -207,6 +207,24 @@ export function parseYaml(text: string): YamlWorkflow {
   return yaml.load(text) as YamlWorkflow;
 }
 
+/** Does this workflow's Start node collect a free-text chat message?
+ *
+ * `parseYaml` is a raw parse — it does NOT run `deriveInputsFromStartNode`
+ * (that only happens inside `reactFlowToYaml`, the Builder-canvas save
+ * path). So `parsed.inputs` for a chatbot-mode Start with no hand-written
+ * top-level `inputs:` block (the normal case — see RunDialog's own
+ * `chatbotStartConfigFrom`) is simply absent, and any caller that infers
+ * "this workflow needs no input step" from an empty `inputs:` map is wrong
+ * for exactly this shape: it still needs a chat message, just not one
+ * `parsed.inputs` will ever mention. Anything that decides whether to skip
+ * straight to running a workflow (see PrepareAndRunPanel) must check this
+ * separately, not just `Object.keys(parsed.inputs ?? {}).length`. */
+export function isChatbotStart(wf: YamlWorkflow): boolean {
+  const node = wf.nodes?.find(candidate => candidate.type === 'StartAgent');
+  const config = node?.config ?? {};
+  return (config.mode ?? 'input_form') === 'chatbot';
+}
+
 export function dumpYaml(wf: YamlWorkflow): string {
   return yaml.dump(wf, { noRefs: true, lineWidth: 100 });
 }

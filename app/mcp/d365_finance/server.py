@@ -63,14 +63,20 @@ async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name=definition["name"],
+            title=definition.get("title"),
             description=definition["description"],
             inputSchema=definition["input_schema"],
             outputSchema=definition["output_schema"],
-            annotations=types.ToolAnnotations(readOnlyHint=True, openWorldHint=True),
+            annotations=types.ToolAnnotations(
+                title=definition.get("title"),
+                readOnlyHint=True,
+                openWorldHint=True,
+            ),
             meta={
                 "eurskem": {
                     "operation": definition["operation"],
                     "system": "Microsoft Dynamics 365 Finance & Operations",
+                    "typical_uses": definition.get("typical_uses", []),
                     "mode": "mock",
                 }
             },

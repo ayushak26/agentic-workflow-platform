@@ -56,6 +56,15 @@ class KnowledgeRetrieval(NodeType):
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
         cfg = KnowledgeRetrievalConfig.model_validate(resolved_config)
         metadata = coerce_metadata_filter_group(cfg.runtime_filters)
+        # Attribute any LLM-driven retrieval stage (query rewrite, rerank,
+        # compression) to this node's own configured collection rather than
+        # the run-level default. Without this, RetrievalService.retrieve()
+        # falls back to its own unbound gateway (llm=None -> self.llm) and
+        # every such call lands in the cost ledger tagged collection_id
+        # "default", even though a real collection was queried.
+        llm = self.services.get("llm")
+        if llm is not None and hasattr(llm, "with_collection_id"):
+            llm = llm.with_collection_id(cfg.collection_id)
         result = await self.services["retrieval_service"].retrieve(
             RetrievalQuery(
                 query=cfg.query,
@@ -67,6 +76,7 @@ class KnowledgeRetrieval(NodeType):
                 retrieval_profile_id=cfg.retrieval_profile_id,
             ),
             owner_scope_id=state["session_id"],
+            llm=llm,
         )
         citations = [
             {

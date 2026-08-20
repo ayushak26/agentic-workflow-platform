@@ -313,6 +313,7 @@ export const api = {
     inputs?: Record<string, unknown>;
     upstream_outputs?: Record<string, unknown>;
     variables?: Record<string, unknown>;
+    workflow_name?: string;
   }) =>
     afetch(`${API}/builder/node-test`, {
       method: 'POST',

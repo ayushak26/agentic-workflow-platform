@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     mongo_uri: str = "mongodb://eurskem:eurschempass@localhost:27017"
     mongo_db: str = "eurskem_ai"
 
-    retrieval_reranker_model: str = "claude-sonnet-4-5"
-    retrieval_compressor_model: str = "claude-sonnet-4-5"
+    retrieval_reranker_model: str = "gpt-5.6-sol"
+    retrieval_compressor_model: str = "gpt-5.6-sol"
     retrieval_trace_retention_days: int = 30
 
     weaviate_host: str = "weaviate"

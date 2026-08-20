@@ -321,8 +321,8 @@ def _json_schema_paths(schema: dict[str, Any], prefix: str) -> list[FieldPath]:
     return found
 
 
-def _static_mcp_output_schema(server_id: Any, tool_name: Any) -> dict[str, Any] | None:
-    """The declared output_schema for a tool this platform ships itself.
+def _static_mcp_tool_registries() -> dict[str, dict[str, dict[str, Any]]]:
+    """Per-server `TOOLS_BY_NAME` registries for the built-in MCP connectors.
 
     Only the built-in servers whose tool vocabulary is a plain Python object
     (loaded at import time, no live round trip) can be resolved this way —
@@ -332,24 +332,67 @@ def _static_mcp_output_schema(server_id: Any, tool_name: Any) -> dict[str, Any] 
     either way: `dynamics365_finance_scm`'s mock and live modes never share a
     tool name, so resolving it here can never describe the wrong backend.
     """
-    if not isinstance(server_id, str) or not isinstance(tool_name, str):
-        return None
-
     from app.mcp.business_records.tools import TOOLS_BY_NAME as _BUSINESS_RECORDS_TOOLS
     from app.mcp.d365_finance.tools import TOOLS_BY_NAME as _D365_FINANCE_TOOLS
     from app.mcp.dynamics.tools import TOOLS_BY_NAME as _DYNAMICS_TOOLS
 
-    registries = {
+    return {
         "business_records": _BUSINESS_RECORDS_TOOLS,
         "dynamics365_finance_scm": _D365_FINANCE_TOOLS,
         "dynamics365": _DYNAMICS_TOOLS,
         "dynamics365_readonly": _DYNAMICS_TOOLS,
     }
-    definition = registries.get(server_id, {}).get(tool_name)
+
+
+def _static_mcp_tool_definition(server_id: Any, tool_name: Any) -> dict[str, Any] | None:
+    if not isinstance(server_id, str) or not isinstance(tool_name, str):
+        return None
+    return _static_mcp_tool_registries().get(server_id, {}).get(tool_name)
+
+
+def _static_mcp_output_schema(server_id: Any, tool_name: Any) -> dict[str, Any] | None:
+    """The declared output_schema for a tool this platform ships itself."""
+    definition = _static_mcp_tool_definition(server_id, tool_name)
     if not definition:
         return None
     schema = definition.get("output_schema")
     return schema if isinstance(schema, dict) else None
+
+
+def _static_mcp_required_arguments(
+    server_id: Any, tool_name: Any, arguments: dict[str, Any]
+) -> list[str] | None:
+    """Argument names the tool's own static schema requires but `arguments`
+    never mentions — or `None` when this tool isn't one preflight can see
+    statically (a live/third-party server), in which case there is nothing to
+    report. Mirrors `app.nodes.mcp_tool._required_arguments`'s `anyOf` handling
+    exactly, but offline: this only checks that *a* key was authored for each
+    required name, never whether it resolves to a real value at run time —
+    that half of the question still belongs to the run itself.
+    """
+    definition = _static_mcp_tool_definition(server_id, tool_name)
+    if not definition:
+        return None
+    schema = definition.get("input_schema")
+    if not isinstance(schema, dict):
+        return None
+
+    required = schema.get("required")
+    names = {name for name in required if isinstance(name, str)} if isinstance(required, list) else set()
+
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list) and any_of:
+        provided = {name for name, value in arguments.items() if value not in (None, "")}
+        alternatives = [
+            set(alt["required"])
+            for alt in any_of
+            if isinstance(alt, dict) and isinstance(alt.get("required"), list)
+        ]
+        if alternatives and not any(alt <= provided for alt in alternatives):
+            names |= {name for alt in alternatives for name in alt}
+
+    missing = sorted(name for name in names if name not in arguments)
+    return missing
 
 
 def _static_subprocess_child_spec(config: dict[str, Any]) -> WorkflowSpec | None:
@@ -1321,10 +1364,13 @@ def _check_external_actions(
 
     for node in spec.nodes:
         if node.type == "EmailAgent":
-            operation = node.effective_config().get("operation", "search")
+            config = node.effective_config()
+            operation = config.get("operation", "search")
             if not is_side_effect(operation) or operation == "create_draft":
                 # A draft is the safe form of an outward action: nothing reaches
                 # the recipient until a person sends it.
+                continue
+            if config.get("allow_unattended_write"):
                 continue
             if not reviewed_before(node.id):
                 issue(
@@ -1781,6 +1827,25 @@ def _check_mcp_tool(
             ),
         )
         return
+
+    arguments = config.get("arguments")
+    missing = _static_mcp_required_arguments(
+        server_id, tool_name, arguments if isinstance(arguments, dict) else {}
+    )
+    if missing:
+        issue(
+            "MCP_REQUIRED_ARGUMENT_MISSING",
+            (
+                f"Step {node.id!r} calls {tool_name!r} without a value for "
+                f"{', '.join(missing)!r} — {tool_name} requires it."
+            ),
+            path=f"nodes.{node.id}.config.arguments",
+            node_id=node.id,
+            suggestion=(
+                "Map a value for this argument in the Configure tab, or "
+                "leave it if it's genuinely optional in the tool's schema."
+            ),
+        )
 
     operation = classify_tool(tool_name, connection=connection)
     if not is_write(operation):

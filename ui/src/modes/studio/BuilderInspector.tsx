@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Edge, Node } from 'reactflow';
 import type {
   LLMModelInfo,
+  MCPToolInfo,
   NodeTypeManifest,
   WorkflowPreflightReport,
 } from '../../api/types';
@@ -63,6 +64,7 @@ export function BuilderInspector({
   llmModels,
   manifests,
   nodes,
+  onAddNextTool,
   onClose,
   onCloseInputs,
   onConfigChange,
@@ -96,6 +98,7 @@ export function BuilderInspector({
   llmModels: LLMModelInfo[];
   manifests: NodeTypeManifest[];
   nodes: Node<WorkflowNodeData>[];
+  onAddNextTool?: (serverId: string, tool: MCPToolInfo) => void;
   onAutofix?: () => void;
   onClose: () => void;
   onCloseInputs: () => void;
@@ -271,7 +274,9 @@ export function BuilderInspector({
                   integrationConnections={integrationConnections}
                   llmModels={llmModels}
                   manifest={manifest}
+                  onAddNextTool={onAddNextTool}
                   onConfigChange={onConfigChange}
+                  onExperienceChange={onExperienceChange}
                   onIdChange={onIdChange}
                   refetchEmailConnections={refetchEmailConnections}
                   refetchIntegrationConnections={refetchIntegrationConnections}

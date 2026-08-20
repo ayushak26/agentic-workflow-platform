@@ -188,6 +188,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["customer_name"],
         },
         "output_schema": _collection("customers", _customer_item()),
+        "typical_uses": [
+            "Look up a customer or account by name",
+            "Confirm a customer exists before creating a case or order",
+        ],
     },
     {
         "name": "order_search",
@@ -209,6 +213,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "anyOf": [{"required": ["order_number"]}, {"required": ["purchase_order_number"]}],
         },
         "output_schema": _collection("orders", _order_item()),
+        "typical_uses": [
+            "Find a sales order by order number or purchase-order number",
+            "Check an order's fulfilment or delivery status",
+        ],
     },
     {
         "name": "inventory_check",
@@ -223,6 +231,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["pump_model"],
         },
         "output_schema": _collection("inventory", _inventory_item()),
+        "typical_uses": [
+            "Check stock availability for a pump model",
+            "Estimate lead time before promising a delivery date",
+        ],
     },
     {
         "name": "product_search",
@@ -243,6 +255,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "anyOf": [{"required": ["product_name"]}, {"required": ["product_family"]}],
         },
         "output_schema": _collection("products", _product_item()),
+        "typical_uses": [
+            "Look up a pump's specs by product name or family",
+            "Identify a replacement or comparable product",
+        ],
     },
     {
         "name": "query_readonly",
@@ -275,6 +291,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "required": ["sql"],
         },
         "output_schema": _collection("rows", {"type": "object", "additionalProperties": True}),
+        "typical_uses": [
+            "Run a one-off lookup none of the other tools cover",
+        ],
     },
     # --------------------------------------------------------------- WRITE --
     {
@@ -302,6 +321,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"case": _case_record()},
             "required": ["case"],
         },
+        "typical_uses": [
+            "Open a support case for a known account",
+        ],
     },
     {
         "name": "create_opportunity",
@@ -323,6 +345,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"opportunity": _opportunity_record()},
             "required": ["opportunity"],
         },
+        "typical_uses": [
+            "Log a new sales opportunity for a known account",
+        ],
     },
     {
         "name": "create_order",
@@ -345,6 +370,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"order": _order_record()},
             "required": ["order"],
         },
+        "typical_uses": [
+            "Place a new sales order for a known account",
+        ],
     },
     {
         "name": "update_order",
@@ -370,6 +398,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"order": _order_record(), "updated": {"type": "boolean"}},
             "required": ["order", "updated"],
         },
+        "typical_uses": [
+            "Confirm or update the status of an existing sales order",
+        ],
     },
     {
         "name": "update_case",
@@ -399,6 +430,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "properties": {"case": _case_record(), "updated": {"type": "boolean"}},
             "required": ["case", "updated"],
         },
+        "typical_uses": [
+            "Resolve or reprioritize an existing support case",
+        ],
     },
 ]
 

@@ -168,6 +168,13 @@ class RAGService:
         if not collection.active_index_id:
             raise ValueError(f"collection {collection.collection_id} has no active index")
         index = await self.repository.get_index(owner_scope_id, collection.active_index_id)
+        # Attribute retrieval + generation cost to the RAG Agent's actual
+        # collection rather than whatever run-level default `gateway` arrived
+        # with — otherwise every RAG Agent query's cost lands in the ledger
+        # tagged collection_id "default" regardless of which real collection
+        # was queried.
+        if hasattr(gateway, "with_collection_id"):
+            gateway = gateway.with_collection_id(collection.collection_id)
         retrieval_profile = await self.repository.get_profile(
             owner_scope_id,
             retrieval_profile_id,
