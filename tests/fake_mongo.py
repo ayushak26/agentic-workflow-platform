@@ -22,9 +22,13 @@ class _DeleteResult:
 
 
 def _matches_leaf(value: Any, expected: Any) -> bool:
-    if isinstance(expected, dict) and ("$in" in expected or "$nin" in expected):
+    if isinstance(expected, dict) and (
+        "$in" in expected or "$nin" in expected or "$ne" in expected
+    ):
         if "$in" in expected:
             return value in expected["$in"]
+        if "$ne" in expected:
+            return value != expected["$ne"]
         return value not in expected["$nin"]
     return value == expected
 
@@ -34,6 +38,8 @@ def _match_path(value: Any, parts: list[str], expected: Any) -> bool:
         return _matches_leaf(value, expected)
     head, rest = parts[0], parts[1:]
     if isinstance(value, dict):
+        if head not in value:
+            return not rest and isinstance(expected, dict) and "$ne" in expected
         return head in value and _match_path(value[head], rest, expected)
     if isinstance(value, list):
         if head.isdigit():

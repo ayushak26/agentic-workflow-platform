@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
 from app.config import settings
@@ -64,7 +64,7 @@ def _scope(user: CurrentUser) -> str:
 @router.get("/mine")
 async def my_runs(
     request: Request,
-    limit: int = 50,
+    limit: int = Query(default=50, ge=1, le=200),
     user: CurrentUser = Depends(require_consultant),
 ):
     """Compute the my runs.
@@ -779,6 +779,12 @@ async def retry_failed_run(
         attempt=attempt,
         reused_node_count=0,
         reused_nodes=[],
+        origin=source.get("origin"),
+        history_visibility=source.get("history_visibility"),
+        workflow_id=source.get("workflow_id"),
+        workflow_version_id=source.get("workflow_version_id"),
+        conversation_id=source.get("conversation_id"),
+        message_id=source.get("message_id"),
     )
     await initialize_run_checkpoint(
         db,
@@ -1096,6 +1102,12 @@ async def restart_run(
         attempt=attempt,
         reused_node_count=0,
         reused_nodes=[],
+        origin=source.get("origin"),
+        history_visibility=source.get("history_visibility"),
+        workflow_id=source.get("workflow_id"),
+        workflow_version_id=source.get("workflow_version_id"),
+        conversation_id=source.get("conversation_id"),
+        message_id=source.get("message_id"),
     )
     await initialize_run_checkpoint(
         db,

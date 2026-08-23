@@ -44,6 +44,12 @@ async def start_new_run_record(
     stage_id: str | None = None,
     stage_index: int | None = None,
     total_stages: int | None = None,
+    origin: str = "direct",
+    history_visibility: str = "global",
+    workflow_id: str | None = None,
+    workflow_version_id: str | None = None,
+    conversation_id: str | None = None,
+    message_id: str | None = None,
 ) -> None:
     """Create the durable "running" record and checkpoint before execution.
 
@@ -80,6 +86,12 @@ async def start_new_run_record(
         stage_id=stage_id,
         stage_index=stage_index,
         total_stages=total_stages,
+        origin=origin,
+        history_visibility=history_visibility,
+        workflow_id=workflow_id,
+        workflow_version_id=workflow_version_id,
+        conversation_id=conversation_id,
+        message_id=message_id,
     )
     await initialize_run_checkpoint(
         db,

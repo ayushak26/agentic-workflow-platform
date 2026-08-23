@@ -8,7 +8,7 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Depends, Header, status
 from pydantic import BaseModel, Field, ValidationError
@@ -179,6 +179,18 @@ class RunRequest(BaseModel):
     collection_id: str = "default"
     run_id: str | None = None
     skip_preflight: bool = False
+    origin: Literal[
+        "direct",
+        "builder",
+        "chat_saved_workflow",
+        "chat_ad_hoc",
+        "subworkflow",
+    ] = "direct"
+    history_visibility: Literal["global", "conversation_only"] = "global"
+    workflow_id: str | None = None
+    workflow_version_id: str | None = None
+    conversation_id: str | None = None
+    message_id: str | None = None
 
 
 class ValidateWorkflowRequest(BaseModel):
@@ -522,6 +534,12 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
         workflow_yaml=req.workflow_yaml,
         inputs=validated_inputs,
         collection_id=req.collection_id,
+        origin=req.origin,
+        history_visibility=req.history_visibility,
+        workflow_id=req.workflow_id,
+        workflow_version_id=req.workflow_version_id,
+        conversation_id=req.conversation_id,
+        message_id=req.message_id,
     )
 
     # Execution is detached from this request through the leased run manager

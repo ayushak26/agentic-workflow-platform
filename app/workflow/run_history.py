@@ -265,6 +265,12 @@ async def upsert_run(
     stage_id: str | None = None,
     stage_index: int | None = None,
     total_stages: int | None = None,
+    origin: str | None = None,
+    history_visibility: str | None = None,
+    workflow_id: str | None = None,
+    workflow_version_id: str | None = None,
+    conversation_id: str | None = None,
+    message_id: str | None = None,
 ) -> None:
     """Create or patch one run without erasing fields omitted by the caller."""
 
@@ -307,6 +313,12 @@ async def upsert_run(
         "stage_id": stage_id,
         "stage_index": stage_index,
         "total_stages": total_stages,
+        "origin": origin,
+        "history_visibility": history_visibility,
+        "workflow_id": workflow_id,
+        "workflow_version_id": workflow_version_id,
+        "conversation_id": conversation_id,
+        "message_id": message_id,
     }
     fields.update(
         {key: value for key, value in optional_fields.items() if value is not None}
@@ -348,6 +360,8 @@ async def upsert_run(
         "reused_nodes": [],
         "attempt": 1,
         "error": None,
+        "origin": "direct",
+        "history_visibility": "global",
         "schema_version": CURRENT_RUN_SCHEMA_VERSION,
     }
     for key in fields:
@@ -1219,8 +1233,10 @@ async def list_runs(
     db,
     session_id: str,
     limit: int = 50,
+    *,
+    include_conversation_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return light run summaries, newest first, including active runs."""
+    """Return summaries, excluding conversation-owned Chat runs by default."""
 
     _require_session(session_id)
     projection = {
@@ -1230,9 +1246,12 @@ async def list_runs(
         "node_runs": 0,
         "workflow_yaml": 0,
     }
+    query: dict[str, Any] = {"session_id": session_id}
+    if not include_conversation_only:
+        query["history_visibility"] = {"$ne": "conversation_only"}
     cursor = (
         db["run_history"]
-        .find({"session_id": session_id}, projection)
+        .find(query, projection)
         .sort("created_at", -1)
         .limit(limit)
     )
@@ -1269,7 +1288,11 @@ async def workflow_stats(
     }
     cursor = (
         db["run_history"]
-        .find({"session_id": session_id, "workflow_name": workflow_name}, projection)
+        .find({
+            "session_id": session_id,
+            "workflow_name": workflow_name,
+            "history_visibility": {"$ne": "conversation_only"},
+        }, projection)
         .sort("created_at", -1)
         .limit(sample_limit)
     )
