@@ -54,6 +54,11 @@ log = get_logger(__name__)
 
 
 def _now() -> datetime:
+    """Internal helper for the now step.
+
+    Returns:
+        datetime: The result.
+    """
     return datetime.now(UTC)
 
 
@@ -84,6 +89,11 @@ class EmailOperationLedger(ExternalOperationLedger):
     COLLECTION = "email_operations"
 
     def __init__(self, db: Any = None):
+        """Initialize the EmailOperationLedger.
+
+        Args:
+            db (Any): Mongo database handle (optional, default None).
+        """
         super().__init__(db, collection=self.COLLECTION)
 
 
@@ -97,6 +107,14 @@ class EmailService:
         ledger: EmailOperationLedger | None = None,
         db: Any = None,
     ):
+        """Initialize the EmailService.
+
+        Args:
+            adapters (dict[str, EmailAdapter]): The adapters.
+            connections (dict[str, EmailConnection]): The connections.
+            ledger (EmailOperationLedger | None): Operation ledger (optional, default None).
+            db (Any): Mongo database handle (optional, default None).
+        """
         self.adapters = adapters
         self.connections = connections
         self.ledger = ledger or EmailOperationLedger()
@@ -108,6 +126,14 @@ class EmailService:
     # -- connection resolution -----------------------------------------
 
     def connection(self, connection_id: str) -> EmailConnection:
+        """Compute the connection.
+
+        Args:
+            connection_id (str): The connection id.
+
+        Returns:
+            EmailConnection: The result.
+        """
         found = self.connections.get(connection_id)
         if found is None:
             raise EmailConnectionError(
@@ -123,6 +149,11 @@ class EmailService:
         self.connections[connection.id] = connection
 
     def remove_connection(self, connection_id: str) -> None:
+        """Remove the connection.
+
+        Args:
+            connection_id (str): The connection id.
+        """
         self.connections.pop(connection_id, None)
 
     async def _refreshed(self, connection: EmailConnection) -> EmailConnection:
@@ -185,6 +216,14 @@ class EmailService:
         return refreshed
 
     def adapter(self, connection: EmailConnection) -> EmailAdapter:
+        """Compute the adapter.
+
+        Args:
+            connection (EmailConnection): The connection.
+
+        Returns:
+            EmailAdapter: The result.
+        """
         found = self.adapters.get(connection.provider)
         if found is None:
             raise EmailConnectionError(
@@ -219,6 +258,19 @@ class EmailService:
         draft: EmailDraft | None = None,
         idempotency_scope: str | None = None,
     ) -> EmailResult:
+        """Execute the result.
+
+        Args:
+            connection_id (str): The connection id.
+            operation (EmailOperation): The operation.
+            criteria (EmailSearchCriteria | None): The criteria (optional, default None).
+            message_id (str | None): The message id (optional, default None).
+            draft (EmailDraft | None): The draft (optional, default None).
+            idempotency_scope (str | None): The idempotency scope (optional, default None).
+
+        Returns:
+            EmailResult: The result.
+        """
         connection = await self._refreshed(self.connection(connection_id))
         adapter = self.adapter(connection)
 
@@ -274,6 +326,18 @@ class EmailService:
         draft: EmailDraft,
         idempotency_scope: str | None,
     ) -> EmailResult:
+        """Internal helper for the perform write step.
+
+        Args:
+            adapter (EmailAdapter): The adapter.
+            connection (EmailConnection): The connection.
+            operation (EmailOperation): The operation.
+            draft (EmailDraft): The draft.
+            idempotency_scope (str | None): The idempotency scope.
+
+        Returns:
+            EmailResult: The write.
+        """
         key = idempotency_key(
             connection_id=connection.id,
             operation=operation,

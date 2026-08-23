@@ -74,6 +74,14 @@ SIMULATION_TIMEOUT_SECONDS = 180
 
 
 def _services(request: Request) -> dict[str, Any]:
+    """Internal helper for the services step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return getattr(request.app.state, "services", {}) or {}
 
 
@@ -134,6 +142,12 @@ def operators(user: CurrentUser = Depends(require_consultant)) -> dict[str, Any]
 # --------------------------------------------------------------------------
 
 class ContractRequest(BaseModel):
+    """Pydantic model defining the ContractRequest shape.
+
+    Attributes:
+        workflow_yaml (str).
+        node_id (str | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     workflow_yaml: str
@@ -143,6 +157,18 @@ class ContractRequest(BaseModel):
 
 
 class ContractField(BaseModel):
+    """Pydantic model defining the ContractField shape.
+
+    Attributes:
+        path (str).
+        reference (str).
+        type (str).
+        description (str).
+        required (bool).
+        may_be_unavailable (bool).
+        enum_values (list[str]).
+        item_type (str | None).
+    """
     path: str
     reference: str
     type: str
@@ -155,6 +181,16 @@ class ContractField(BaseModel):
 
 
 class ContractNode(BaseModel):
+    """Pydantic model defining the ContractNode shape.
+
+    Attributes:
+        node_id (str).
+        type_name (str).
+        label (str).
+        execution_kind (str).
+        typed (bool).
+        fields (list[ContractField]).
+    """
     node_id: str
     type_name: str
     label: str
@@ -246,6 +282,11 @@ def output_contract(
 # --------------------------------------------------------------------------
 
 class SchemaPreviewRequest(BaseModel):
+    """Pydantic model defining the SchemaPreviewRequest shape.
+
+    Attributes:
+        output_fields (list[dict[str, Any]]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     output_fields: list[dict[str, Any]] = Field(default_factory=list)
@@ -284,6 +325,18 @@ def schema_preview(
 # --------------------------------------------------------------------------
 
 class NodeTestRequest(BaseModel):
+    """Pydantic model defining the NodeTestRequest shape.
+
+    Attributes:
+        type_name (str).
+        config (dict[str, Any]).
+        node_id (str).
+        inputs (dict[str, Any]).
+        upstream_outputs (dict[str, Any]).
+        variables (dict[str, Any]).
+        session_id (str | None).
+        workflow_name (str | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     type_name: str
@@ -430,6 +483,14 @@ async def node_test(
 # --------------------------------------------------------------------------
 
 class SimulateRequest(BaseModel):
+    """Pydantic model defining the SimulateRequest shape.
+
+    Attributes:
+        workflow_yaml (str).
+        inputs (dict[str, Any]).
+        stub_outputs (dict[str, dict[str, Any]]).
+        until_node (str | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     workflow_yaml: str
@@ -659,6 +720,14 @@ def _timeline(
 
 
 def _executed_path(state: dict[str, Any]) -> list[str]:
+    """Internal helper for the executed path step.
+
+    Args:
+        state (dict[str, Any]): Current workflow state.
+
+    Returns:
+        list[str]: The path.
+    """
     seen: list[str] = []
     for entry in state.get("audit_log") or []:
         node_id = entry.get("node_id") if isinstance(entry, dict) else None
@@ -790,6 +859,13 @@ def _explain(type_name: str, output: dict[str, Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 class SchemaAssistRequest(BaseModel):
+    """Pydantic model defining the SchemaAssistRequest shape.
+
+    Attributes:
+        description (str).
+        sample_content (str).
+        existing_fields (list[dict[str, Any]]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: What the author wants extracted, in their own words.
@@ -821,6 +897,12 @@ ProposedField.model_rebuild()
 
 
 class ProposedSchema(BaseModel):
+    """Pydantic model defining the ProposedSchema shape.
+
+    Attributes:
+        fields (list[ProposedField]).
+        notes (str).
+    """
     model_config = ConfigDict(extra="forbid")
 
     fields: list[ProposedField]
@@ -917,6 +999,12 @@ async def assist_schema(
 
 
 class RuleAssistRequest(BaseModel):
+    """Pydantic model defining the RuleAssistRequest shape.
+
+    Attributes:
+        description (str).
+        available_fields (list[dict[str, Any]]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: The business rule in the author's own words.
@@ -928,6 +1016,12 @@ class RuleAssistRequest(BaseModel):
 
 
 class ProposedRules(BaseModel):
+    """Pydantic model defining the ProposedRules shape.
+
+    Attributes:
+        rules (list[dict[str, Any]]).
+        notes (str).
+    """
     model_config = ConfigDict(extra="forbid")
 
     rules: list[dict[str, Any]]
@@ -1095,6 +1189,13 @@ async def mcp_health(
 
 
 class MCPToolTestRequest(BaseModel):
+    """Pydantic model defining the MCPToolTestRequest shape.
+
+    Attributes:
+        server_id (str).
+        tool (str).
+        arguments (dict[str, Any]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     server_id: str
@@ -1178,6 +1279,14 @@ async def mcp_test_tool(
 
 
 def _require_mcp(request: Request) -> Any:
+    """Internal helper for the require mcp step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        Any: The mcp.
+    """
     service = _services(request).get("mcp")
     if service is None:
         raise HTTPException(
@@ -1231,6 +1340,14 @@ def _contract_sort_key(field: Any) -> tuple[int, str]:
 
 
 def _parse_workflow(yaml_text: str) -> WorkflowSpec:
+    """Parse the workflow.
+
+    Args:
+        yaml_text (str): Workflow YAML text.
+
+    Returns:
+        WorkflowSpec: The workflow.
+    """
     try:
         return load_workflow_from_string(yaml_text)
     except Exception as error:
@@ -1240,6 +1357,14 @@ def _parse_workflow(yaml_text: str) -> WorkflowSpec:
 
 
 def _require_llm(request: Request) -> Any:
+    """Internal helper for the require llm step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        Any: The llm.
+    """
     llm = _services(request).get("llm")
     if llm is None:
         raise HTTPException(
@@ -1257,6 +1382,14 @@ def _label_of(node: Any) -> str:
 
 
 def _execution_kind(type_name: str) -> str:
+    """Internal helper for the execution kind step.
+
+    Args:
+        type_name (str): Node type name.
+
+    Returns:
+        str: The kind.
+    """
     from app.nodes.categories import execution_kind_for
 
     try:
@@ -1274,6 +1407,15 @@ def _execution_kind(type_name: str) -> str:
 
 
 def _is_external_write(type_name: str, config: dict[str, Any]) -> bool:
+    """Return whether external write.
+
+    Args:
+        type_name (str): Node type name.
+        config (dict[str, Any]): Node configuration mapping.
+
+    Returns:
+        bool: True when external write.
+    """
     if type_name != "EmailAgent":
         return False
     from app.integrations.email.base import SIDE_EFFECT_OPERATIONS
@@ -1282,6 +1424,15 @@ def _is_external_write(type_name: str, config: dict[str, Any]) -> bool:
 
 
 def _ancestors(spec: WorkflowSpec, node_id: str) -> set[str]:
+    """Internal helper for the ancestors step.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        node_id (str): Workflow node identifier.
+
+    Returns:
+        set[str]: The result.
+    """
     reverse: dict[str, set[str]] = {node.id: set() for node in spec.nodes}
     for edge in spec.edges:
         targets = (
@@ -1357,6 +1508,15 @@ def _slice_through(spec: WorkflowSpec, node_id: str) -> WorkflowSpec:
 
 
 def _short(value: Any, limit: int = 80) -> str:
+    """Internal helper for the short step.
+
+    Args:
+        value (Any): Value to process.
+        limit (int): Maximum number of items to return (optional, default 80).
+
+    Returns:
+        str: The result.
+    """
     text = str(value)
     return text if len(text) <= limit else text[:limit] + "…"
 

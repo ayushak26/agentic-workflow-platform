@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 
 class Status(str, Enum):
+    """Enumeration of Status values."""
     ADDRESSED = "ADDRESSED"   # a specific, grounded fact exists
     PARTIAL = "PARTIAL"       # present but incomplete / weak
     MISSING = "MISSING"       # required fact absent — must be supplied by a human
@@ -53,12 +54,14 @@ class Authority(str, Enum):
 
 
 class EvidenceStance(str, Enum):
+    """Enumeration of EvidenceStance values."""
     SUPPORTS = "supports"
     CONTRADICTS = "contradicts"
     INSUFFICIENT = "insufficient"
 
 
 class ConceptPosture(str, Enum):
+    """Enumeration of ConceptPosture values."""
     CONSERVATIVE = "conservative"
     BALANCED = "balanced"
     AMBITIOUS = "ambitious"
@@ -68,6 +71,18 @@ class ConceptPosture(str, Enum):
 # 1. Call requirement — an atomic thing the call demands the proposal cover.
 # ---------------------------------------------------------------------------
 class CallRequirement(BaseModel):
+    """Pydantic model defining the CallRequirement shape.
+
+    Attributes:
+        id (str).
+        text (str).
+        kind (str).
+        addressed_by_section (Optional[str]).
+        addressed_by_ids (list[str]).
+        evidence_claim_ids (list[str]).
+        owner_partner_ids (list[str]).
+        notes (Optional[str]).
+    """
     id: str                                  # "CR-EO1", "CR-SCOPE-MAA"
     text: str
     kind: str = "must_address"               # hard_eligibility|expected_outcome|
@@ -84,6 +99,18 @@ class CallRequirement(BaseModel):
 # 2. Evidence source + 3. Claim (claim -> evidence -> locator -> verification)
 # ---------------------------------------------------------------------------
 class EvidenceSource(BaseModel):
+    """Pydantic model defining the EvidenceSource shape.
+
+    Attributes:
+        id (str).
+        citation (str).
+        identifier (Optional[str]).
+        authority (Authority).
+        retrieved_at (Optional[str]).
+        title (Optional[str]).
+        source_type (Optional[str]).
+        version_id (Optional[str]).
+    """
     id: str                                  # "SRC-038"
     citation: str                            # human-readable ref
     identifier: Optional[str] = None         # DOI / arXiv / CORDIS id / URL
@@ -98,6 +125,18 @@ class EvidenceSource(BaseModel):
 
 
 class Claim(BaseModel):
+    """Pydantic model defining the Claim shape.
+
+    Attributes:
+        id (str).
+        text (str).
+        claim_type (str).
+        proposal_section (Optional[str]).
+        evidence_source_ids (list[str]).
+        evidence_relation_ids (list[str]).
+        locator (Optional[str]).
+        verification (Status).
+    """
     id: str                                  # "CL-014"
     text: str
     claim_type: str = "state_of_art"         # problem|state_of_art|impact|method
@@ -130,6 +169,16 @@ class EvidenceRelation(BaseModel):
 #    (the Excellence + Impact backbone)
 # ---------------------------------------------------------------------------
 class Objective(BaseModel):
+    """Pydantic model defining the Objective shape.
+
+    Attributes:
+        id (str).
+        text (str).
+        is_general (bool).
+        measurable_ambition (Optional[str]).
+        work_package_ids (list[str]).
+        status (Status).
+    """
     id: str                                  # "OBJ-GEN", "OBJ-SO1"
     text: str
     is_general: bool = False
@@ -139,6 +188,18 @@ class Objective(BaseModel):
 
 
 class Innovation(BaseModel):
+    """Pydantic model defining the Innovation shape.
+
+    Attributes:
+        id (str).
+        name (str).
+        existing_approach (Optional[str]).
+        limitation (Optional[str]).
+        proposed_advance (Optional[str]).
+        degree (Optional[str]).
+        demonstration (Optional[str]).
+        evidence_claim_ids (list[str]).
+    """
     id: str                                  # "INNO-IARGF", "INNO-RBOS"
     name: str
     existing_approach: Optional[str] = None
@@ -151,6 +212,14 @@ class Innovation(BaseModel):
 
 
 class Result(BaseModel):
+    """Pydantic model defining the Result shape.
+
+    Attributes:
+        id (str).
+        name (str).
+        description (Optional[str]).
+        from_objective_ids (list[str]).
+    """
     id: str                                  # "RES-IARGF"
     name: str
     description: Optional[str] = None
@@ -158,6 +227,15 @@ class Result(BaseModel):
 
 
 class Outcome(BaseModel):
+    """Pydantic model defining the Outcome shape.
+
+    Attributes:
+        id (str).
+        text (str).
+        call_requirement_id (Optional[str]).
+        from_result_ids (list[str]).
+        adoption_mechanism (Optional[str]).
+    """
     id: str                                  # "OUT-1"
     text: str
     call_requirement_id: Optional[str] = None    # ties to an expected outcome
@@ -166,6 +244,14 @@ class Outcome(BaseModel):
 
 
 class Impact(BaseModel):
+    """Pydantic model defining the Impact shape.
+
+    Attributes:
+        id (str).
+        text (str).
+        horizon (str).
+        from_outcome_ids (list[str]).
+    """
     id: str                                  # "IMP-1"
     text: str
     horizon: str = "long"                    # short|medium|long
@@ -176,6 +262,15 @@ class Impact(BaseModel):
 # 9. Work package  10. Task  11. Partner  (the Implementation backbone)
 # ---------------------------------------------------------------------------
 class Task(BaseModel):
+    """Pydantic model defining the Task shape.
+
+    Attributes:
+        id (str).
+        work_package_id (str).
+        title (str).
+        lead_partner_id (Optional[str]).
+        output (Optional[str]).
+    """
     id: str                                  # "TSK-3.1"
     work_package_id: str                     # "WP-3"
     title: str
@@ -184,6 +279,18 @@ class Task(BaseModel):
 
 
 class WorkPackage(BaseModel):
+    """Pydantic model defining the WorkPackage shape.
+
+    Attributes:
+        id (str).
+        number (int).
+        title (str).
+        start_month (Optional[int]).
+        end_month (Optional[int]).
+        lead_partner_id (Optional[str]).
+        partner_ids (list[str]).
+        objective_ids (list[str]).
+    """
     id: str                                  # "WP-3"
     number: int
     title: str
@@ -197,6 +304,18 @@ class WorkPackage(BaseModel):
 
 
 class Partner(BaseModel):
+    """Pydantic model defining the Partner shape.
+
+    Attributes:
+        id (str).
+        acronym (str).
+        legal_name (Optional[str]).
+        country (Optional[str]).
+        role (Optional[str]).
+        is_end_user (bool).
+        person_months (Optional[float]).
+        status (Status).
+    """
     id: str                                  # "PRT-HAW"
     acronym: str
     legal_name: Optional[str] = None         # MISSING until consortium supplies
@@ -211,6 +330,18 @@ class Partner(BaseModel):
 # 12. KPI  13. Risk
 # ---------------------------------------------------------------------------
 class KPI(BaseModel):
+    """Pydantic model defining the KPI shape.
+
+    Attributes:
+        id (str).
+        name (str).
+        definition (Optional[str]).
+        baseline (Optional[str]).
+        target (Optional[str]).
+        unit (Optional[str]).
+        measurement_source (Optional[str]).
+        owner_partner_id (Optional[str]).
+    """
     id: str                                  # "KPI-1"
     name: str
     definition: Optional[str] = None
@@ -225,6 +356,17 @@ class KPI(BaseModel):
 
 
 class Risk(BaseModel):
+    """Pydantic model defining the Risk shape.
+
+    Attributes:
+        id (str).
+        description (str).
+        work_package_id (Optional[str]).
+        likelihood (Optional[str]).
+        impact (Optional[str]).
+        mitigation (Optional[str]).
+        owner_partner_id (Optional[str]).
+    """
     id: str                                  # "RSK-1"
     description: str
     work_package_id: Optional[str] = None
@@ -239,6 +381,15 @@ class Risk(BaseModel):
 #     — the four you asked about, now first-class graph citizens.
 # ---------------------------------------------------------------------------
 class ComplianceObject(BaseModel):
+    """Pydantic model defining the ComplianceObject shape.
+
+    Attributes:
+        id (str).
+        dimension (str).
+        status (Status).
+        detail (dict).
+        gaps (list[str]).
+    """
     id: str                                  # "CMP-GENDER" ...
     dimension: str                           # gender|ssh|open_science|ethics|dnsh
     status: Status = Status.MISSING
@@ -250,6 +401,14 @@ class ComplianceObject(BaseModel):
 # 15. Open question — anything the system knows it does not yet know.
 # ---------------------------------------------------------------------------
 class OpenQuestion(BaseModel):
+    """Pydantic model defining the OpenQuestion shape.
+
+    Attributes:
+        id (str).
+        text (str).
+        blocks_submission (bool).
+        owner (Optional[str]).
+    """
     id: str                                  # "OQ-1"
     text: str
     blocks_submission: bool = False
@@ -260,6 +419,18 @@ class OpenQuestion(BaseModel):
 # 16. Concept alternative — three explicitly different proposal postures.
 # ---------------------------------------------------------------------------
 class ConceptAlternative(BaseModel):
+    """Pydantic model defining the ConceptAlternative shape.
+
+    Attributes:
+        id (str).
+        posture (ConceptPosture).
+        title (str).
+        summary (str).
+        scientific_advance (str).
+        scope (str).
+        call_requirement_ids (list[str]).
+        objective_ids (list[str]).
+    """
     id: str
     posture: ConceptPosture
     title: str

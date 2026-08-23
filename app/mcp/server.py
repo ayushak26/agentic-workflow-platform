@@ -43,6 +43,11 @@ _cached: dict[str, Any] = {}
 
 
 def _services() -> dict[str, Any]:
+    """Internal helper for the services step.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     if not _cached:
         _cached["weaviate"] = get_weaviate_client().connect()
         _cached["embedder"] = get_embedder()
@@ -52,6 +57,11 @@ def _services() -> dict[str, Any]:
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
+    """List the tools.
+
+    Returns:
+        list[types.Tool]: The tools.
+    """
     return [
         types.Tool(
             name="search_documents",
@@ -125,6 +135,15 @@ async def list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    """Compute the call tool.
+
+    Args:
+        name (str): Workflow or resource name.
+        arguments (dict): The arguments.
+
+    Returns:
+        list[types.TextContent]: The tool.
+    """
     log.info("mcp.tool_call", tool=name, session_id=arguments.get("session_id"))
 
     # Validate the tool name BEFORE initializing services. This means the
@@ -239,6 +258,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
 
 async def main() -> None:
+    """Compute the main."""
     async with stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream, write_stream, server.create_initialization_options(),

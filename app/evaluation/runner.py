@@ -32,6 +32,16 @@ async def _eval_one(
     judge: LLMJudge,
     produce_answer: ProduceAnswer,
 ) -> ExampleResult:
+    """Internal helper for the eval one step.
+
+    Args:
+        ex (GoldenExample): The ex.
+        judge (LLMJudge): The judge.
+        produce_answer (ProduceAnswer): The produce answer.
+
+    Returns:
+        ExampleResult: The one.
+    """
     answer, context = await produce_answer(ex)
     scores = await judge.score_all(
         question=ex.question,

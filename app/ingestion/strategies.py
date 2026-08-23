@@ -14,7 +14,17 @@ from app.ingestion.extractor import ExtractedDocument, ExtractedUnit, get_extrac
 
 
 class StandardDocumentParser:
+    """Provides the StandardDocumentParser behaviour."""
     async def parse(self, path: Path, *, config: dict[str, Any]) -> ExtractedDocument:
+        """Parse the result.
+
+        Args:
+            path (Path): Filesystem path.
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         return await asyncio.to_thread(get_extractor(path).extract, path)
 
 
@@ -27,7 +37,17 @@ class LayoutAwareDocumentParser(StandardDocumentParser):
 
 
 class StructureAwareDocumentParser(LayoutAwareDocumentParser):
+    """Provides the StructureAwareDocumentParser behaviour."""
     async def parse(self, path: Path, *, config: dict[str, Any]) -> ExtractedDocument:
+        """Parse the result.
+
+        Args:
+            path (Path): Filesystem path.
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         document = await super().parse(path, config=config)
         for unit in document.units:
             unit.text = unit.text.strip()
@@ -47,10 +67,25 @@ class OcrFallbackDocumentParser(StandardDocumentParser):
         ocr: Callable[[Path], ExtractedDocument] | None = None,
         describer: Any | None = None,
     ):
+        """Initialize the OcrFallbackDocumentParser.
+
+        Args:
+            ocr (Callable[[Path], ExtractedDocument] | None): The ocr (optional, default None).
+            describer (Any | None): The describer (optional, default None).
+        """
         self._ocr = ocr
         self._describer = describer
 
     async def parse(self, path: Path, *, config: dict[str, Any]) -> ExtractedDocument:
+        """Parse the result.
+
+        Args:
+            path (Path): Filesystem path.
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         document = await super().parse(path, config=config)
         minimum = int(config.get("ocr_min_text_characters", 80))
         if len(document.full_text.strip()) >= minimum:
@@ -114,9 +149,23 @@ class VisionAugmentedDocumentParser(StandardDocumentParser):
     """
 
     def __init__(self, describer: Any | None = None):
+        """Initialize the VisionAugmentedDocumentParser.
+
+        Args:
+            describer (Any | None): The describer (optional, default None).
+        """
         self._describer = describer
 
     async def parse(self, path: Path, *, config: dict[str, Any]) -> ExtractedDocument:
+        """Parse the result.
+
+        Args:
+            path (Path): Filesystem path.
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         document = await super().parse(path, config=config)
         if path.suffix.lower() != ".pdf":
             return document
@@ -162,11 +211,20 @@ class VisionAugmentedDocumentParser(StandardDocumentParser):
 
 
 def _chunk_config(config: dict[str, Any]) -> ChunkConfig:
+    """Chunk the config.
+
+    Args:
+        config (dict[str, Any]): Node configuration mapping.
+
+    Returns:
+        ChunkConfig: The config.
+    """
     fields = ChunkConfig.__dataclass_fields__
     return ChunkConfig(**{key: value for key, value in config.items() if key in fields})
 
 
 class RecursiveChunkingStrategy:
+    """Provides the RecursiveChunkingStrategy behaviour."""
     async def chunk(
         self,
         document: ExtractedDocument,
@@ -174,10 +232,21 @@ class RecursiveChunkingStrategy:
         config: dict[str, Any],
         chunk_id_prefix: str,
     ) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         return chunk_document(document, _chunk_config(config), chunk_id_prefix=chunk_id_prefix)
 
 
 class FixedTokenChunkingStrategy:
+    """Provides the FixedTokenChunkingStrategy behaviour."""
     async def chunk(
         self,
         document: ExtractedDocument,
@@ -185,6 +254,16 @@ class FixedTokenChunkingStrategy:
         config: dict[str, Any],
         chunk_id_prefix: str,
     ) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         cfg = _chunk_config(config)
         encoding = tiktoken.get_encoding(cfg.tokenizer_name)
         output: list[Chunk] = []
@@ -214,7 +293,18 @@ class FixedTokenChunkingStrategy:
 
 
 class StructureAwareChunkingStrategy(RecursiveChunkingStrategy):
+    """Provides the StructureAwareChunkingStrategy behaviour."""
     async def chunk(self, document: ExtractedDocument, *, config: dict[str, Any], chunk_id_prefix: str) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         chunks = await super().chunk(document, config=config, chunk_id_prefix=chunk_id_prefix)
         title = document.metadata.get("title")
         for chunk in chunks:
@@ -224,7 +314,18 @@ class StructureAwareChunkingStrategy(RecursiveChunkingStrategy):
 
 
 class ParentChildChunkingStrategy(RecursiveChunkingStrategy):
+    """Provides the ParentChildChunkingStrategy behaviour."""
     async def chunk(self, document: ExtractedDocument, *, config: dict[str, Any], chunk_id_prefix: str) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         child_config = dict(config)
         children = await super().chunk(document, config=child_config, chunk_id_prefix=chunk_id_prefix)
         by_unit: dict[int, list[Chunk]] = {}
@@ -262,7 +363,18 @@ class ParentChildChunkingStrategy(RecursiveChunkingStrategy):
 
 
 class ContextualChunkingStrategy(StructureAwareChunkingStrategy):
+    """Provides the ContextualChunkingStrategy behaviour."""
     async def chunk(self, document: ExtractedDocument, *, config: dict[str, Any], chunk_id_prefix: str) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         chunks = await super().chunk(document, config=config, chunk_id_prefix=chunk_id_prefix)
         title = str(document.metadata.get("title") or Path(document.source_path).name)
         for chunk in chunks:
@@ -275,7 +387,18 @@ _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
 class SentenceWindowChunkingStrategy:
+    """Provides the SentenceWindowChunkingStrategy behaviour."""
     async def chunk(self, document: ExtractedDocument, *, config: dict[str, Any], chunk_id_prefix: str) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         window = int(config.get("sentence_window", 2))
         encoding = tiktoken.get_encoding(str(config.get("tokenizer_name", "cl100k_base")))
         output: list[Chunk] = []
@@ -305,6 +428,14 @@ class SentenceWindowChunkingStrategy:
 
 
 def _terms(text: str) -> set[str]:
+    """Internal helper for the terms step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        set[str]: The result.
+    """
     return {term for term in re.findall(r"[a-z0-9]{3,}", text.lower())}
 
 
@@ -317,6 +448,16 @@ class SemanticChunkingStrategy:
     """
 
     async def chunk(self, document: ExtractedDocument, *, config: dict[str, Any], chunk_id_prefix: str) -> list[Chunk]:
+        """Chunk the result.
+
+        Args:
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+            chunk_id_prefix (str): The chunk id prefix.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         threshold = float(config.get("semantic_similarity_threshold", 0.12))
         units: list[ExtractedUnit] = []
         for original in document.units:
@@ -347,7 +488,18 @@ class SemanticChunkingStrategy:
 
 
 class MetadataContextEnricher:
+    """Provides the MetadataContextEnricher behaviour."""
     async def enrich(self, chunks: list[Chunk], *, document: ExtractedDocument, config: dict[str, Any]) -> list[Chunk]:
+        """Compute the enrich.
+
+        Args:
+            chunks (list[Chunk]): The chunks.
+            document (ExtractedDocument): Document.
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         title = str(document.metadata.get("title") or Path(document.source_path).name)
         for chunk in chunks:
             if config.get("prepend_context", False) and not chunk.retrieval_content:
@@ -358,6 +510,11 @@ class MetadataContextEnricher:
 
 
 def build_stage_registry() -> StageRegistry:
+    """Build the stage registry.
+
+    Returns:
+        StageRegistry: The stage registry.
+    """
     registry = StageRegistry()
     registry.parser("standard", StandardDocumentParser())
     registry.parser("layout_aware", LayoutAwareDocumentParser())

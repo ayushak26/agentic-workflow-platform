@@ -29,6 +29,16 @@ WORKFLOW = load_workflow("workflows/crm_aware_customer_triage.yaml")
 
 
 class WorkflowGoldenCase(BaseModel):
+    """Pydantic model defining the WorkflowGoldenCase shape.
+
+    Attributes:
+        id (str).
+        label (str).
+        subject (str).
+        message (str).
+        sender_email (str).
+        expected (dict[str, Any]).
+    """
     id: str
     label: str
     subject: str
@@ -38,6 +48,14 @@ class WorkflowGoldenCase(BaseModel):
 
 
 def load_workflow_golden_set(path: str | Path) -> list[WorkflowGoldenCase]:
+    """Load the workflow golden set.
+
+    Args:
+        path (str | Path): Filesystem path.
+
+    Returns:
+        list[WorkflowGoldenCase]: The workflow golden set.
+    """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Golden set not found: {p}")
@@ -46,6 +64,14 @@ def load_workflow_golden_set(path: str | Path) -> list[WorkflowGoldenCase]:
 
 
 class FieldCheck(BaseModel):
+    """Pydantic model defining the FieldCheck shape.
+
+    Attributes:
+        field (str).
+        expected (Any).
+        actual (Any).
+        passed (bool).
+    """
     field: str
     expected: Any
     actual: Any
@@ -53,6 +79,18 @@ class FieldCheck(BaseModel):
 
 
 class WorkflowCaseResult(BaseModel):
+    """Pydantic model defining the WorkflowCaseResult shape.
+
+    Attributes:
+        case_id (str).
+        label (str).
+        model (str).
+        passed (bool).
+        checks (list[FieldCheck]).
+        cost_usd (float | None).
+        latency_ms (float | None).
+        error (str | None).
+    """
     case_id: str
     label: str
     model: str
@@ -64,6 +102,17 @@ class WorkflowCaseResult(BaseModel):
 
 
 class ModelComparisonResult(BaseModel):
+    """Pydantic model defining the ModelComparisonResult shape.
+
+    Attributes:
+        model (str).
+        total_cases (int).
+        passed_cases (int).
+        pass_rate (float).
+        avg_cost_usd (float | None).
+        avg_latency_ms (float | None).
+        cases (list[WorkflowCaseResult]).
+    """
     model: str
     total_cases: int
     passed_cases: int
@@ -83,26 +132,67 @@ class ModelOverrideGateway:
     """
 
     def __init__(self, inner: Any, model: str):
+        """Initialize the ModelOverrideGateway.
+
+        Args:
+            inner (Any): The inner.
+            model (str): Model name.
+        """
         self._inner = inner
         self._model = model
 
     def with_context(self, **kwargs: Any) -> "ModelOverrideGateway":
+        """Compute the with context.
+
+        Args:
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            'ModelOverrideGateway': The context.
+        """
         return ModelOverrideGateway(self._inner.with_context(**kwargs), self._model)
 
     async def complete(self, *, model: str | None = None, **kwargs: Any):
+        """Complete the result.
+
+        Args:
+            model (str | None): Model name (optional, default None).
+            **kwargs (Any): Keyword arguments.
+        """
         del model
         return await self._inner.complete(model=self._model, **kwargs)
 
     async def complete_structured(self, *, model: str | None = None, **kwargs: Any):
+        """Complete the structured.
+
+        Args:
+            model (str | None): Model name (optional, default None).
+            **kwargs (Any): Keyword arguments.
+        """
         del model
         return await self._inner.complete_structured(model=self._model, **kwargs)
 
     async def chat_with_tools(self, *, model: str | None = None, **kwargs: Any):
+        """Compute the chat with tools.
+
+        Args:
+            model (str | None): Model name (optional, default None).
+            **kwargs (Any): Keyword arguments.
+        """
         del model
         return await self._inner.chat_with_tools(model=self._model, **kwargs)
 
 
 def _actual_value(result: dict[str, Any], field: str) -> Any:
+    """Internal helper for the actual value step.
+
+    Args:
+        result (dict[str, Any]): Result mapping.
+        field (str): The field.
+
+    Returns:
+        Any: The value.
+    """
     if field == "status":
         return result.get("status")
     node_outputs = result.get("state", {}).get("node_outputs", {})
@@ -119,6 +209,17 @@ async def run_workflow_golden_case(
     services: dict[str, Any],
     run_id: str,
 ) -> WorkflowCaseResult:
+    """Run the workflow golden case.
+
+    Args:
+        case (WorkflowGoldenCase): The case.
+        model (str): Model name.
+        services (dict[str, Any]): Shared application services dict.
+        run_id (str): Workflow run identifier.
+
+    Returns:
+        WorkflowCaseResult: The workflow golden case.
+    """
     run_services = {**services, "llm": ModelOverrideGateway(services["llm"], model)}
     started = time.monotonic()
     try:
@@ -168,6 +269,17 @@ async def run_golden_set_with_model(
     services: dict[str, Any],
     run_id_prefix: str,
 ) -> ModelComparisonResult:
+    """Run the golden set with model.
+
+    Args:
+        cases (list[WorkflowGoldenCase]): The cases.
+        model (str): Model name.
+        services (dict[str, Any]): Shared application services dict.
+        run_id_prefix (str): The run id prefix.
+
+    Returns:
+        ModelComparisonResult: The golden set with model.
+    """
     results = [
         await run_workflow_golden_case(
             case, model=model, services=services, run_id=f"{run_id_prefix}:{model}:{case.id}",

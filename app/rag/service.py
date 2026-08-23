@@ -73,7 +73,15 @@ def _build_relevant_context(chunks: list[Any]) -> list[dict[str, Any]]:
 
 
 class RAGService:
+    """Provides the RAGService behaviour."""
     def __init__(self, *, repository: KnowledgeRepository, retrieval_service: Any, llm: Any):
+        """Initialize the RAGService.
+
+        Args:
+            repository (KnowledgeRepository): The repository.
+            retrieval_service (Any): The retrieval service.
+            llm (Any): The llm.
+        """
         self.repository = repository
         self.retrieval_service = retrieval_service
         self.llm = llm
@@ -84,6 +92,16 @@ class RAGService:
         query: str,
         llm: Any,
     ) -> tuple[RetrievalRoute, str]:
+        """Select the route.
+
+        Args:
+            config (RetrievalRoutingProfileConfig): Node configuration mapping.
+            query (str): Query filter.
+            llm (Any): The llm.
+
+        Returns:
+            tuple[RetrievalRoute, str]: The route.
+        """
         normalized = query.casefold()
         scored = [
             (
@@ -136,6 +154,19 @@ class RAGService:
         runtime_context: dict[str, Any] | None = None,
         llm: Any | None = None,
     ) -> RAGQueryResponse:
+        """Query the result.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+            rag_agent_id (str): The rag agent id.
+            query (str): Query filter.
+            runtime_filters (dict[str, Any] | MetadataFilterGroup | None): The runtime filters (optional, default None).
+            runtime_context (dict[str, Any] | None): The runtime context (optional, default None).
+            llm (Any | None): The llm (optional, default None).
+
+        Returns:
+            RAGQueryResponse: The result.
+        """
         agent = await self.repository.get_rag_agent(owner_scope_id, rag_agent_id)
         if agent.status != ResourceStatus.ACTIVE:
             raise ValueError(f"RAG agent {rag_agent_id} is not active")

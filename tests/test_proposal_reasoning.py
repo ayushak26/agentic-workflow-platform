@@ -90,10 +90,18 @@ def test_call_coverage_requires_mapping_section_and_verified_evidence():
 
 
 def test_reference_eu_proposal_pipeline_loads_with_all_new_nodes():
-    spec = load_workflow_from_string(
-        Path("workflows/horizon_proposal_hitl_pdf.yaml").read_text()
-    )
-    assert {node.type for node in spec.nodes} >= {
+    """The monolithic ``horizon_proposal_hitl_pdf`` reference workflow was
+    retired in favour of the staged Part B pipeline; the union of the
+    evidence and rendering stages must still carry every specialised
+    proposal node type the monolith exercised."""
+    staged_types: set[str] = set()
+    for staged in (
+        Path("workflows/horizon_partb_evidence.yaml"),
+        Path("workflows/horizon_partb_drafts_to_docx.yaml"),
+    ):
+        spec = load_workflow_from_string(staged.read_text())
+        staged_types.update(node.type for node in spec.nodes)
+    assert staged_types >= {
         "ScholarlyCandidateDiscoveryAgent",
         "ResearchSourceAcquirer",
         "ProposalEvidenceFactoryAgent",

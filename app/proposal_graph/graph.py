@@ -106,4 +106,9 @@ def merge_graph(left: Any, right: Any) -> dict:
 
 
 def empty_graph() -> ProposalGraph:
+    """Compute the empty graph.
+
+    Returns:
+        ProposalGraph: The graph.
+    """
     return ProposalGraph()

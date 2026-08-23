@@ -36,6 +36,14 @@ TERMINAL = {"completed", "partially_completed", "failed", "cancelled"}
 
 @dataclass
 class Result:
+    """Provides the Result behaviour.
+
+    Attributes:
+        area (str).
+        name (str).
+        ok (bool).
+        detail (str).
+    """
     area: str
     name: str
     ok: bool
@@ -44,9 +52,25 @@ class Result:
 
 @dataclass
 class Report:
+    """Provides the Report behaviour.
+
+    Attributes:
+        results (list[Result]).
+    """
     results: list[Result] = field(default_factory=list)
 
     def record(self, area: str, name: str, ok: bool, detail: str = "") -> bool:
+        """Record the result.
+
+        Args:
+            area (str): The area.
+            name (str): Workflow or resource name.
+            ok (bool): The ok.
+            detail (str): The detail (optional, default '').
+
+        Returns:
+            bool: The result.
+        """
         self.results.append(Result(area, name, ok, detail))
         mark = "\033[32mPASS\033[0m" if ok else "\033[31mFAIL\033[0m"
         line = f"  {mark}  {name}"
@@ -71,9 +95,15 @@ class Report:
 
     @property
     def failed(self) -> list[Result]:
+        """The failed."""
         return [item for item in self.results if not item.ok]
 
     def summary(self) -> int:
+        """Compute the summary.
+
+        Returns:
+            int: The result.
+        """
         total, bad = len(self.results), len(self.failed)
         print("\n" + "=" * 72)
         print(f"  {total - bad}/{total} checks passed")
@@ -89,7 +119,15 @@ class Report:
 
 
 class Api:
+    """Provides the Api behaviour."""
     def __init__(self, base: str, username: str, password: str):
+        """Initialize the Api.
+
+        Args:
+            base (str): The base.
+            username (str): Username value.
+            password (str): Password value.
+        """
         self.base = base.rstrip("/")
         self.client = httpx.Client(base_url=self.base, timeout=TIMEOUT)
         r = self.client.post(
@@ -100,6 +138,7 @@ class Api:
 
     @property
     def h(self) -> dict[str, str]:
+        """The h."""
         return {"Authorization": f"Bearer {self.token}"}
 
     def _send(self, method: str, path: str, **kw: Any) -> httpx.Response:
@@ -118,26 +157,68 @@ class Api:
         return r
 
     def get(self, path: str, **kw: Any) -> httpx.Response:
+        """Return the result.
+
+        Args:
+            path (str): Filesystem path.
+            **kw (Any): The kw.
+
+        Returns:
+            httpx.Response: The result.
+        """
         return self._send("GET", path, **kw)
 
     def post(self, path: str, **kw: Any) -> httpx.Response:
+        """Compute the post.
+
+        Args:
+            path (str): Filesystem path.
+            **kw (Any): The kw.
+
+        Returns:
+            httpx.Response: The result.
+        """
         return self._send("POST", path, **kw)
 
     def jpost(self, path: str, payload: dict[str, Any]) -> Any:
+        """Compute the jpost.
+
+        Args:
+            path (str): Filesystem path.
+            payload (dict[str, Any]): Event or audit payload.
+
+        Returns:
+            Any: The result.
+        """
         r = self.post(path, json=payload)
         _raise(r)
         return r.json()
 
     def jget(self, path: str, **kw: Any) -> Any:
+        """Compute the jget.
+
+        Args:
+            path (str): Filesystem path.
+            **kw (Any): The kw.
+
+        Returns:
+            Any: The result.
+        """
         r = self.get(path, **kw)
         _raise(r)
         return r.json()
 
     def close(self) -> None:
+        """Close the result."""
         self.client.close()
 
 
 def _raise(r: httpx.Response) -> None:
+    """Raise the result.
+
+    Args:
+        r (httpx.Response): The r.
+    """
     if r.is_success:
         return
     raise AssertionError(f"HTTP {r.status_code} {r.request.url.path} :: {r.text[:300]}")
@@ -156,6 +237,14 @@ PROSE = (
 
 
 def _long(times: int = 6) -> str:
+    """Internal helper for the long step.
+
+    Args:
+        times (int): The times (optional, default 6).
+
+    Returns:
+        str: The result.
+    """
     return PROSE * times
 
 
@@ -164,6 +253,12 @@ def build_fixtures(root: Path) -> dict[str, Path]:
     files: dict[str, Path] = {}
 
     def write(name: str, text: str) -> None:
+        """Write the result.
+
+        Args:
+            name (str): Workflow or resource name.
+            text (str): The text.
+        """
         path = root / name
         path.write_text(text, encoding="utf-8")
         files[path.suffix.lstrip(".")] = path
@@ -251,6 +346,15 @@ def build_fixtures(root: Path) -> dict[str, Path]:
 
 
 def _write_pdf(path: Path, lines: list[str] | None = None) -> Path:
+    """Write the pdf.
+
+    Args:
+        path (Path): Filesystem path.
+        lines (list[str] | None): The lines (optional, default None).
+
+    Returns:
+        Path: The pdf.
+    """
     if lines is None:
         lines = [PROSE[i : i + 90] for i in range(0, len(PROSE) * 2, 90)][:40]
     text = "BT /F1 11 Tf 40 750 Td 13 TL\n" + "".join(
@@ -285,6 +389,16 @@ def _write_pdf(path: Path, lines: list[str] | None = None) -> Path:
 
 
 def wait_for_job(api: Api, job_id: str, timeout: float = 180.0) -> dict[str, Any]:
+    """Compute the wait for job.
+
+    Args:
+        api (Api): The api.
+        job_id (str): The job id.
+        timeout (float): Timeout in seconds (optional, default 180.0).
+
+    Returns:
+        dict[str, Any]: The for job.
+    """
     deadline = time.time() + timeout
     job: dict[str, Any] = {}
     while time.time() < deadline:
@@ -306,6 +420,21 @@ def ingest(
     metadata: dict[str, Any] | None = None,
     wait: bool = True,
 ) -> dict[str, Any]:
+    """Ingest the result.
+
+    Args:
+        api (Api): The api.
+        collection_id (str): Knowledge collection identifier.
+        paths (list[Path]): The paths.
+        parser (dict[str, Any] | None): The parser (optional, default None).
+        chunking (dict[str, Any] | None): The chunking (optional, default None).
+        embedding (dict[str, Any] | None): The embedding (optional, default None).
+        metadata (dict[str, Any] | None): Metadata mapping (optional, default None).
+        wait (bool): The wait (optional, default True).
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     handles = [("files", (p.name, p.read_bytes(), "application/octet-stream")) for p in paths]
     data: dict[str, Any] = {"metadata_json": json.dumps(metadata or {})}
     for key, prof in (("parser", parser), ("chunking", chunking), ("embedding", embedding)):
@@ -321,6 +450,18 @@ def ingest(
 
 
 def profile(api: Api, kind: str, name: str, strategy: str, config: dict[str, Any]) -> dict[str, Any]:
+    """Compute the profile.
+
+    Args:
+        api (Api): The api.
+        kind (str): The kind.
+        name (str): Workflow or resource name.
+        strategy (str): The strategy.
+        config (dict[str, Any]): Node configuration mapping.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return api.jpost(
         "/api/knowledge/profiles",
         {"profile_type": kind, "name": name, "strategy": strategy, "config": config},
@@ -331,6 +472,17 @@ def profile(api: Api, kind: str, name: str, strategy: str, config: dict[str, Any
 
 
 def run(base: str, user: str, password: str, keep: bool) -> int:
+    """Run the result.
+
+    Args:
+        base (str): The base.
+        user (str): Authenticated current user.
+        password (str): Password value.
+        keep (bool): The keep.
+
+    Returns:
+        int: The result.
+    """
     rep = Report()
     api = Api(base, user, password)
     stamp = time.strftime("%H%M%S")
@@ -352,6 +504,11 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         print("\033[1mA. Collections\033[0m")
 
         def create_collection() -> str:
+            """Create the collection.
+
+            Returns:
+                str: The collection.
+            """
             coll = api.jpost(
                 "/api/knowledge/collections",
                 {
@@ -410,6 +567,11 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         )
 
         def versioning() -> str:
+            """Compute the versioning.
+
+            Returns:
+                str: The result.
+            """
             first = profile(api, "chunking", f"Versioned {stamp}", "recursive", {"target_tokens": 400})
             second = api.jpost(
                 "/api/knowledge/profiles",
@@ -461,6 +623,14 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
                 continue
 
             def one(fmt: str = fmt) -> str:
+                """Compute the one.
+
+                Args:
+                    fmt (str): The fmt (optional, default fmt).
+
+                Returns:
+                    str: The result.
+                """
                 job = ingest(api, cid, [fixtures[fmt]], metadata={"product": "Dura 25", "revision": 3})
                 assert job["status"] == "completed", f"{job['status']} :: {job['errors']}"
                 assert job["chunks_created"] > 0, "no chunks"
@@ -469,6 +639,11 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
             rep.check("formats", f"ingest .{fmt}", one)
 
         def scanned() -> str:
+            """Compute the scanned.
+
+            Returns:
+                str: The result.
+            """
             job = ingest(api, cid, [fixtures["pdf_blank"]])
             assert job["status"] == "failed", f"expected failure, got {job['status']}"
             msg = job["errors"][0]["message"]
@@ -479,6 +654,11 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         rep.check("formats", "text-less PDF fails with an actionable message", scanned)
 
         def tiny() -> str:
+            """Compute the tiny.
+
+            Returns:
+                str: The result.
+            """
             path = root / "tiny.txt"
             path.write_text("Dura 25 max flow is 25 m3/h.", encoding="utf-8")
             job = ingest(api, cid, [path])
@@ -500,6 +680,14 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         ]:
 
             def one(strategy: str = strategy) -> str:
+                """Compute the one.
+
+                Args:
+                    strategy (str): The strategy (optional, default strategy).
+
+                Returns:
+                    str: The result.
+                """
                 prof = profile(
                     api,
                     "chunking",
@@ -525,6 +713,14 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         for strategy in ["standard", "layout_aware", "structure_aware"]:
 
             def one(strategy: str = strategy) -> str:
+                """Compute the one.
+
+                Args:
+                    strategy (str): The strategy (optional, default strategy).
+
+                Returns:
+                    str: The result.
+                """
                 prof = profile(api, "parser", f"parser {strategy} {stamp}", strategy, {"strategy": strategy})
                 job = ingest(api, cid, [fixtures["html"]], parser=prof)
                 assert job["status"] == "completed", f"{job['status']} :: {job['errors']}"
@@ -533,6 +729,11 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
             rep.check("parsers", f"parser: {strategy}", one)
 
         def ocr_unconfigured() -> str:
+            """Compute the ocr unconfigured.
+
+            Returns:
+                str: The unconfigured.
+            """
             prof = profile(
                 api, "parser", f"parser ocr {stamp}", "ocr_fallback",
                 {"strategy": "ocr_fallback", "ocr_min_text_characters": 80},
@@ -639,6 +840,14 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         ]:
 
             def one(extra: dict = extra) -> str:
+                """Compute the one.
+
+                Args:
+                    extra (dict): The extra (optional, default extra).
+
+                Returns:
+                    str: The result.
+                """
                 out = api.jpost(
                     "/api/retrieval/search",
                     {
@@ -664,6 +873,14 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         for transform in ["rewrite", "multi_query", "hyde", "decomposition"]:
 
             def one(transform: str = transform) -> str:
+                """Compute the one.
+
+                Args:
+                    transform (str): The transform (optional, default transform).
+
+                Returns:
+                    str: The result.
+                """
                 out = api.jpost(
                     "/api/retrieval/search",
                     {"collection_id": cid, "query": query, "strategy": "hybrid",
@@ -683,6 +900,15 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
         ]:
 
             def one(expansion: str = expansion, chunking: str = chunking) -> str:
+                """Compute the one.
+
+                Args:
+                    expansion (str): The expansion (optional, default expansion).
+                    chunking (str): The chunking (optional, default chunking).
+
+                Returns:
+                    str: The result.
+                """
                 index_id = (state.get("strategy_index") or {}).get(chunking)
                 assert index_id, f"no index was built with {chunking} chunking"
                 out = api.jpost(
@@ -768,37 +994,101 @@ def run(base: str, user: str, password: str, keep: bool) -> int:
 
 
 def _assert_eq(actual: Any, expected: Any) -> str:
+    """Internal helper for the assert eq step.
+
+    Args:
+        actual (Any): Actual value.
+        expected (Any): Expected value.
+
+    Returns:
+        str: The eq.
+    """
     assert actual == expected, f"expected {expected!r}, got {actual!r}"
     return ""
 
 
 def _assert_in(needle: Any, haystack: Any) -> str:
+    """Internal helper for the assert in step.
+
+    Args:
+        needle (Any): The needle.
+        haystack (Any): The haystack.
+
+    Returns:
+        str: The in.
+    """
     assert needle in haystack, f"{needle!r} missing"
     return ""
 
 
 def _assert_true(value: bool, message: str) -> str:
+    """Internal helper for the assert true step.
+
+    Args:
+        value (bool): Value to process.
+        message (str): Message text.
+
+    Returns:
+        str: The true.
+    """
     assert value, message
     return ""
 
 
 def _assert_keys(payload: dict[str, Any], keys: set[str]) -> dict[str, Any]:
+    """Internal helper for the assert keys step.
+
+    Args:
+        payload (dict[str, Any]): Event or audit payload.
+        keys (set[str]): The keys.
+
+    Returns:
+        dict[str, Any]: The keys.
+    """
     missing = keys - set(payload)
     assert not missing, f"missing {sorted(missing)}"
     return payload
 
 
 def _assert_nonempty(value: list[Any], label: str) -> list[Any]:
+    """Internal helper for the assert nonempty step.
+
+    Args:
+        value (list[Any]): Value to process.
+        label (str): The label.
+
+    Returns:
+        list[Any]: The nonempty.
+    """
     assert value, f"no {label} returned"
     return value
 
 
 def _assert_status(r: httpx.Response, expected: int) -> str:
+    """Internal helper for the assert status step.
+
+    Args:
+        r (httpx.Response): The r.
+        expected (int): Expected value.
+
+    Returns:
+        str: The status.
+    """
     assert r.status_code == expected, f"expected {expected}, got {r.status_code}: {r.text[:200]}"
     return f"{expected}"
 
 
 def _multi_file(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
+    """Internal helper for the multi file step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        fixtures (dict[str, Path]): The fixtures.
+
+    Returns:
+        str: The file.
+    """
     paths = [fixtures[k] for k in ("txt", "md", "csv") if k in fixtures]
     job = ingest(api, cid, paths)
     assert job["documents_total"] == len(paths), job["documents_total"]
@@ -807,6 +1097,16 @@ def _multi_file(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
 
 
 def _dupe_names(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
+    """Internal helper for the dupe names step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        fixtures (dict[str, Path]): The fixtures.
+
+    Returns:
+        str: The names.
+    """
     blob = fixtures["txt"].read_bytes()
     r = api.post(
         f"/api/knowledge/collections/{cid}/ingestions",
@@ -818,6 +1118,16 @@ def _dupe_names(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
 
 
 def _idempotent(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
+    """Internal helper for the idempotent step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        fixtures (dict[str, Path]): The fixtures.
+
+    Returns:
+        str: The result.
+    """
     first = ingest(api, cid, [fixtures["csv"]])
     second = ingest(api, cid, [fixtures["csv"]])
     assert first["status"] == "completed" and second["status"] == "completed"
@@ -828,6 +1138,15 @@ def _idempotent(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
 
 
 def _job_list(api: Api, cid: str) -> str:
+    """Internal helper for the job list step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+
+    Returns:
+        str: The list.
+    """
     jobs = api.jget("/api/knowledge/ingestions", params={"collection_id": cid})
     assert jobs, "no jobs"
     assert all(j["collection_id"] == cid for j in jobs), "filter leaked other collections"
@@ -835,6 +1154,16 @@ def _job_list(api: Api, cid: str) -> str:
 
 
 def _cancel(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
+    """Cancel the result.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        fixtures (dict[str, Path]): The fixtures.
+
+    Returns:
+        str: The result.
+    """
     job = ingest(api, cid, [fixtures["txt"]], wait=False)
     r = api.post(f"/api/knowledge/ingestions/{job['ingestion_job_id']}/cancel")
     assert r.status_code in (200, 409), f"unexpected {r.status_code}: {r.text[:200]}"
@@ -847,12 +1176,29 @@ def _cancel(api: Api, cid: str, fixtures: dict[str, Path]) -> str:
 
 
 def _provenance(doc: dict[str, Any]) -> str:
+    """Internal helper for the provenance step.
+
+    Args:
+        doc (dict[str, Any]): Document.
+
+    Returns:
+        str: The result.
+    """
     for field_name in ("content_hash", "current_source_version_id", "collection_id"):
         assert doc.get(field_name), f"missing {field_name}"
     return doc["content_hash"][:12]
 
 
 def _source_url(api: Api, doc_id: str) -> str:
+    """Internal helper for the source url step.
+
+    Args:
+        api (Api): The api.
+        doc_id (str): The doc id.
+
+    Returns:
+        str: The url.
+    """
     out = api.jget(f"/api/knowledge/documents/{doc_id}/source-url")
     assert out.get("url", "").startswith("http"), out
     with httpx.Client(timeout=TIMEOUT) as raw:
@@ -862,6 +1208,14 @@ def _source_url(api: Api, doc_id: str) -> str:
 
 
 def _index_pins(indexes: list[dict[str, Any]]) -> str:
+    """Internal helper for the index pins step.
+
+    Args:
+        indexes (list[dict[str, Any]]): The indexes.
+
+    Returns:
+        str: The pins.
+    """
     assert indexes, "no indexes"
     idx = indexes[0]
     for field_name in (
@@ -874,10 +1228,28 @@ def _index_pins(indexes: list[dict[str, Any]]) -> str:
 
 
 def _ready(indexes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Internal helper for the ready step.
+
+    Args:
+        indexes (list[dict[str, Any]]): The indexes.
+
+    Returns:
+        list[dict[str, Any]]: The result.
+    """
     return [i for i in indexes if i.get("status") in ("ready", "active", "inactive")]
 
 
 def _activate(api: Api, cid: str, indexes: list[dict[str, Any]]) -> str:
+    """Internal helper for the activate step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        indexes (list[dict[str, Any]]): The indexes.
+
+    Returns:
+        str: The result.
+    """
     ready = _ready(indexes)
     assert ready, "no ready index to activate"
     coll = api.jpost(
@@ -888,6 +1260,16 @@ def _activate(api: Api, cid: str, indexes: list[dict[str, Any]]) -> str:
 
 
 def _switch(api: Api, cid: str, indexes: list[dict[str, Any]]) -> str:
+    """Internal helper for the switch step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        indexes (list[dict[str, Any]]): The indexes.
+
+    Returns:
+        str: The result.
+    """
     ready = _ready(indexes)
     assert len(ready) >= 2, "need two ready indexes"
     api.jpost(f"/api/knowledge/collections/{cid}/indexes/{ready[0]['index_id']}/activate", {})
@@ -897,10 +1279,28 @@ def _switch(api: Api, cid: str, indexes: list[dict[str, Any]]) -> str:
 
 
 def _chunks(out: dict[str, Any]) -> list[dict[str, Any]]:
+    """Internal helper for the chunks step.
+
+    Args:
+        out (dict[str, Any]): The out.
+
+    Returns:
+        list[dict[str, Any]]: The result.
+    """
     return out.get("chunks") or out.get("results") or []
 
 
 def _rerank(api: Api, cid: str, query: str) -> str:
+    """Internal helper for the rerank step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+
+    Returns:
+        str: The result.
+    """
     base = {"collection_id": cid, "query": query, "strategy": "hybrid", "final_count": 5}
     plain = _chunks(api.jpost("/api/retrieval/search", {**base, "rerank": False}))
     ranked = _chunks(api.jpost("/api/retrieval/search", {**base, "rerank": True}))
@@ -909,6 +1309,16 @@ def _rerank(api: Api, cid: str, query: str) -> str:
 
 
 def _filters(api: Api, cid: str, query: str) -> str:
+    """Internal helper for the filters step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+
+    Returns:
+        str: The result.
+    """
     out = api.jpost(
         "/api/retrieval/search",
         {"collection_id": cid, "query": query, "strategy": "hybrid", "rerank": False,
@@ -919,6 +1329,16 @@ def _filters(api: Api, cid: str, query: str) -> str:
 
 
 def _bad_filter(api: Api, cid: str, query: str) -> str:
+    """Internal helper for the bad filter step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+
+    Returns:
+        str: The filter.
+    """
     r = api.post(
         "/api/retrieval/search",
         json={"collection_id": cid, "query": query, "filters": {"no_such_field": "x"}},
@@ -928,6 +1348,16 @@ def _bad_filter(api: Api, cid: str, query: str) -> str:
 
 
 def _reserved_filter(api: Api, cid: str, query: str) -> str:
+    """Internal helper for the reserved filter step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+
+    Returns:
+        str: The filter.
+    """
     for reserved in ("owner_scope_id", "workspace_id", "collection_id", "index_id"):
         r = api.post(
             "/api/retrieval/search",
@@ -938,6 +1368,16 @@ def _reserved_filter(api: Api, cid: str, query: str) -> str:
 
 
 def _compare(api: Api, cid: str, query: str) -> str:
+    """Compare the result.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+
+    Returns:
+        str: The result.
+    """
     base = {"collection_id": cid, "query": query, "final_count": 5}
     out = api.jpost(
         "/api/retrieval/compare",
@@ -953,6 +1393,17 @@ def _compare(api: Api, cid: str, query: str) -> str:
 
 
 def _pinned_index(api: Api, cid: str, query: str, indexes: list[dict[str, Any]]) -> str:
+    """Internal helper for the pinned index step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+        indexes (list[dict[str, Any]]): The indexes.
+
+    Returns:
+        str: The index.
+    """
     ready = _ready(indexes)
     assert ready, "no ready index"
     out = api.jpost(
@@ -965,12 +1416,31 @@ def _pinned_index(api: Api, cid: str, query: str, indexes: list[dict[str, Any]])
 
 
 def _inspect(api: Api, cid: str, query: str) -> str:
+    """Internal helper for the inspect step.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        query (str): Query filter.
+
+    Returns:
+        str: The result.
+    """
     r = api.post("/api/inspect/retrieve", json={"collection_id": cid, "query": query, "top_k": 5})
     assert r.status_code == 200, f"HTTP {r.status_code}: {r.text[:200]}"
     return "200"
 
 
 def _trace_detail(api: Api, traces: list[dict[str, Any]]) -> str:
+    """Internal helper for the trace detail step.
+
+    Args:
+        api (Api): The api.
+        traces (list[dict[str, Any]]): The traces.
+
+    Returns:
+        str: The detail.
+    """
     assert traces, "no traces"
     key = traces[0].get("retrieval_request_id") or traces[0].get("request_id")
     assert key, f"trace has no id field :: {list(traces[0])}"
@@ -985,6 +1455,18 @@ def _trace_detail(api: Api, traces: list[dict[str, Any]]) -> str:
 
 
 def _make_agent(api: Api, cid: str, defaults: Any, stamp: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Build the agent.
+
+    Args:
+        api (Api): The api.
+        cid (str): The cid.
+        defaults (Any): The defaults.
+        stamp (str): The stamp.
+        state (dict[str, Any]): Current workflow state.
+
+    Returns:
+        dict[str, Any]: The agent.
+    """
     assert defaults, "no default profiles"
     agent = api.jpost(
         "/api/rag-agents",
@@ -1001,6 +1483,16 @@ def _make_agent(api: Api, cid: str, defaults: Any, stamp: str, state: dict[str, 
 
 
 def _agent_query(api: Api, agent: dict[str, Any], query: str) -> str:
+    """Internal helper for the agent query step.
+
+    Args:
+        api (Api): The api.
+        agent (dict[str, Any]): The agent.
+        query (str): Query filter.
+
+    Returns:
+        str: The query.
+    """
     out = api.jpost(f"/api/rag-agents/{agent['rag_agent_id']}/query", {"query": query})
     answer = out.get("answer") or out.get("output") or ""
     assert answer, f"no answer :: {list(out)}"
@@ -1010,6 +1502,16 @@ def _agent_query(api: Api, agent: dict[str, Any], query: str) -> str:
 
 
 def _agent_resolution(api: Api, agent: dict[str, Any], query: str) -> str:
+    """Internal helper for the agent resolution step.
+
+    Args:
+        api (Api): The api.
+        agent (dict[str, Any]): The agent.
+        query (str): Query filter.
+
+    Returns:
+        str: The resolution.
+    """
     out = api.jpost(f"/api/rag-agents/{agent['rag_agent_id']}/query", {"query": query})
     blob = json.dumps(out)
     for token in ("col_", "idx_", "retprof_"):
@@ -1018,6 +1520,16 @@ def _agent_resolution(api: Api, agent: dict[str, Any], query: str) -> str:
 
 
 def _evidence_boundary(api: Api, agent: dict[str, Any], query: str) -> str:
+    """Internal helper for the evidence boundary step.
+
+    Args:
+        api (Api): The api.
+        agent (dict[str, Any]): The agent.
+        query (str): Query filter.
+
+    Returns:
+        str: The boundary.
+    """
     out = api.jpost(f"/api/rag-agents/{agent['rag_agent_id']}/query", {"query": query})
     blob = json.dumps(out)
     assert "VerifiedClaim" not in blob, "RAG output must not mint VerifiedClaim"
@@ -1026,6 +1538,15 @@ def _evidence_boundary(api: Api, agent: dict[str, Any], query: str) -> str:
 
 
 def _anon(base: str, cid: str) -> str:
+    """Internal helper for the anon step.
+
+    Args:
+        base (str): The base.
+        cid (str): The cid.
+
+    Returns:
+        str: The result.
+    """
     with httpx.Client(base_url=base, timeout=TIMEOUT) as anon:
         r = anon.get(f"/api/knowledge/collections/{cid}")
     assert r.status_code in (401, 403), f"anonymous read allowed ({r.status_code})"
@@ -1033,6 +1554,14 @@ def _anon(base: str, cid: str) -> str:
 
 
 def _foreign(api: Api) -> str:
+    """Internal helper for the foreign step.
+
+    Args:
+        api (Api): The api.
+
+    Returns:
+        str: The result.
+    """
     r = api.post(
         "/api/retrieval/search",
         json={"collection_id": "col_someone_elses_collection", "query": "secrets"},
@@ -1048,6 +1577,14 @@ def _foreign(api: Api) -> str:
 
 
 def _catalog(api: Api) -> str:
+    """Internal helper for the catalog step.
+
+    Args:
+        api (Api): The api.
+
+    Returns:
+        str: The result.
+    """
     for path in ("/api/node-types", "/api/builder/node-types", "/api/builder/catalog", "/api/nodes"):
         r = api.get(path)
         if r.status_code == 200:
@@ -1083,6 +1620,15 @@ def _validate(api: Api, yaml_text: str) -> httpx.Response:
     # check_services=true is what turns on the zero-token resource probes
     # (RAG agent / collection / profile existence); without it only the
     # schema-level contract is validated.
+    """Validate the result.
+
+    Args:
+        api (Api): The api.
+        yaml_text (str): Workflow YAML text.
+
+    Returns:
+        httpx.Response: The result.
+    """
     body = {
         "workflow_yaml": yaml_text,
         "check_services": True,
@@ -1100,6 +1646,16 @@ def _validate(api: Api, yaml_text: str) -> httpx.Response:
 
 
 def _preflight_ok(api: Api, agent: dict[str, Any], cid: str) -> str:
+    """Internal helper for the preflight ok step.
+
+    Args:
+        api (Api): The api.
+        agent (dict[str, Any]): The agent.
+        cid (str): The cid.
+
+    Returns:
+        str: The ok.
+    """
     text = WORKFLOW_TEMPLATE.format(suffix="ok", agent_id=agent["rag_agent_id"])
     r = _validate(api, text)
     assert r.status_code == 200, f"HTTP {r.status_code}: {r.text[:300]}"
@@ -1110,6 +1666,14 @@ def _preflight_ok(api: Api, agent: dict[str, Any], cid: str) -> str:
 
 
 def _preflight_bad(api: Api) -> str:
+    """Internal helper for the preflight bad step.
+
+    Args:
+        api (Api): The api.
+
+    Returns:
+        str: The bad.
+    """
     text = WORKFLOW_TEMPLATE.format(suffix="bad", agent_id="rag_01DOESNOTEXIST")
     r = _validate(api, text)
     assert r.status_code in (200, 400, 422), f"HTTP {r.status_code}"
@@ -1123,6 +1687,11 @@ def _preflight_bad(api: Api) -> str:
 
 
 def main() -> int:
+    """Compute the main.
+
+    Returns:
+        int: The result.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="http://localhost:8000")
     parser.add_argument("--user", default="ayush")

@@ -51,6 +51,11 @@ _backend: DynamicsBackend | None = None
 
 
 def backend() -> DynamicsBackend:
+    """Compute the backend.
+
+    Returns:
+        DynamicsBackend: The result.
+    """
     global _backend
     if _backend is None:
         log.info("d365_finance.backend.mock", fixtures=str(DEFAULT_FIXTURES))
@@ -60,6 +65,11 @@ def backend() -> DynamicsBackend:
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
+    """List the tools.
+
+    Returns:
+        list[types.Tool]: The tools.
+    """
     return [
         types.Tool(
             name=definition["name"],
@@ -87,6 +97,15 @@ async def list_tools() -> list[types.Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
+    """Compute the call tool.
+
+    Args:
+        name (str): Workflow or resource name.
+        arguments (dict[str, Any] | None): The arguments.
+
+    Returns:
+        Any: The tool.
+    """
     definition = TOOLS_BY_NAME.get(name)
     handler = HANDLERS.get(name)
     if definition is None or handler is None:
@@ -128,6 +147,14 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
 
 
 def _error_result(error: dict[str, Any]) -> types.CallToolResult:
+    """Internal helper for the error result step.
+
+    Args:
+        error (dict[str, Any]): Error value or message.
+
+    Returns:
+        types.CallToolResult: The result.
+    """
     body = {"error": error}
     return types.CallToolResult(
         content=[types.TextContent(type="text", text=json.dumps(body, ensure_ascii=False))],
@@ -137,6 +164,7 @@ def _error_result(error: dict[str, Any]) -> types.CallToolResult:
 
 
 async def main() -> None:
+    """Compute the main."""
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())
 

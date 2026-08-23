@@ -23,6 +23,7 @@ from .executor import _PAUSED_GRAPHS, _project_output, run_workflow
 
 
 class HITLResumeError(KeyError):
+    """Exception raised for the HITLResumeError case."""
     pass
 
 
@@ -70,6 +71,12 @@ def _validate_saved_decision(
     checkpoint: dict[str, Any],
     decision: dict[str, Any],
 ) -> None:
+    """Validate the saved decision.
+
+    Args:
+        checkpoint (dict[str, Any]): Checkpoint document.
+        decision (dict[str, Any]): Human decision mapping.
+    """
     if checkpoint.get("pause_kind") in ("user_requested", "subprocess"):
         # Neither is a HITL gate: "user_requested" is a cooperative pause
         # requested from run history, and "subprocess" is a Subprocess node

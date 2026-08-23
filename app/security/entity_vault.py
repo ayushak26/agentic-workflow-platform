@@ -74,6 +74,14 @@ def _load_kek() -> bytes:
 
 
 def _normalize(value: str) -> str:
+    """Normalize the result.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        str: The result.
+    """
     return " ".join(value.strip().casefold().split())
 
 
@@ -84,14 +92,39 @@ def entity_hash(entity_type: str, value: str) -> str:
 
 
 def _mapping_id(session_id: str, collection_id: str, ehash: str) -> str:
+    """Internal helper for the mapping id step.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+        collection_id (str): Knowledge collection identifier.
+        ehash (str): The ehash.
+
+    Returns:
+        str: The id.
+    """
     return f"{session_id}::{collection_id}::{ehash}"
 
 
 def _counter_id(session_id: str, collection_id: str, entity_type: str) -> str:
+    """Internal helper for the counter id step.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+        collection_id (str): Knowledge collection identifier.
+        entity_type (str): The entity type.
+
+    Returns:
+        str: The id.
+    """
     return f"{session_id}::{collection_id}::{entity_type}"
 
 
 def _expiry() -> datetime:
+    """Internal helper for the expiry step.
+
+    Returns:
+        datetime: The result.
+    """
     return datetime.now(timezone.utc) + timedelta(
         seconds=settings.entity_mapping_ttl_seconds
     )
@@ -100,6 +133,17 @@ def _expiry() -> datetime:
 def _seal(
     real_value: str, *, session_id: str, collection_id: str, placeholder: str
 ) -> dict[str, bytes]:
+    """Internal helper for the seal step.
+
+    Args:
+        real_value (str): The real value.
+        session_id (str): Session scope the record belongs to.
+        collection_id (str): Knowledge collection identifier.
+        placeholder (str): The placeholder.
+
+    Returns:
+        dict[str, bytes]: The result.
+    """
     dek = os.urandom(32)
     dek_nonce = os.urandom(12)
     wrapped_dek = AESGCM(_load_kek()).encrypt(dek_nonce, dek, None)
@@ -117,6 +161,17 @@ def _seal(
 def _unseal(
     doc: dict[str, Any], *, session_id: str, collection_id: str, placeholder: str
 ) -> str:
+    """Internal helper for the unseal step.
+
+    Args:
+        doc (dict[str, Any]): Document.
+        session_id (str): Session scope the record belongs to.
+        collection_id (str): Knowledge collection identifier.
+        placeholder (str): The placeholder.
+
+    Returns:
+        str: The result.
+    """
     dek = AESGCM(_load_kek()).decrypt(
         bytes(doc["dek_nonce"]), bytes(doc["wrapped_dek"]), None
     )
@@ -129,17 +184,25 @@ class EntityVault:
     """Mongo-backed envelope-encrypted mapping vault, scoped per (session, collection)."""
 
     def __init__(self, db: Any) -> None:
+        """Initialize the EntityVault.
+
+        Args:
+            db (Any): Mongo database handle.
+        """
         self._db = db
 
     @property
     def _mappings(self):
+        """The mappings."""
         return self._db[ENTITY_MAPPINGS_COLLECTION]
 
     @property
     def _counters(self):
+        """The counters."""
         return self._db[ENTITY_COUNTERS_COLLECTION]
 
     async def ensure_indexes(self) -> None:
+        """Ensure the indexes."""
         try:
             await self._mappings.create_index(
                 [("expires_at", 1)], expireAfterSeconds=0
@@ -300,6 +363,17 @@ class EntityVault:
     async def delete_entity(
         self, *, session_id: str, collection_id: str, entity_type: str, value: str
     ) -> bool:
+        """Delete the entity.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier.
+            entity_type (str): The entity type.
+            value (str): Value to process.
+
+        Returns:
+            bool: The entity.
+        """
         ehash = entity_hash(entity_type, value)
         _id = _mapping_id(session_id, collection_id, ehash)
         try:

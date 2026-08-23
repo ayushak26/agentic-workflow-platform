@@ -24,14 +24,33 @@ _MAX_DRAFT_BYTES = 5 * 1024 * 1024
 
 
 def _utc_now() -> str:
+    """Internal helper for the utc now step.
+
+    Returns:
+        str: The now.
+    """
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _digest(text: str) -> str:
+    """Internal helper for the digest step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        str: The result.
+    """
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _atomic_write(path: Path, text: str) -> None:
+    """Internal helper for the atomic write step.
+
+    Args:
+        path (Path): Filesystem path.
+        text (str): The text.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     temporary.write_text(text, encoding="utf-8")
@@ -42,28 +61,73 @@ class WorkflowBuilderStore:
     """Own autosave drafts and immutable versions for one workflows root."""
 
     def __init__(self, workflows_dir: Path):
+        """Initialize the WorkflowBuilderStore.
+
+        Args:
+            workflows_dir (Path): The workflows dir.
+        """
         self.workflows_dir = Path(workflows_dir)
         self.state_dir = self.workflows_dir / ".builder"
 
     @staticmethod
     def validate_name(name: str) -> str:
+        """Validate the name.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            str: The name.
+        """
         if not _SAFE_NAME.fullmatch(name):
             raise ValueError("name must be alphanumeric + _ -")
         return name
 
     @staticmethod
     def validate_version_id(version_id: str) -> str:
+        """Validate the version id.
+
+        Args:
+            version_id (str): Version identifier.
+
+        Returns:
+            str: The version id.
+        """
         if not _SAFE_VERSION.fullmatch(version_id):
             raise ValueError("invalid workflow version id")
         return version_id
 
     def workflow_path(self, name: str) -> Path:
+        """Compute the workflow path.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            Path: The path.
+        """
         return self.workflows_dir / f"{self.validate_name(name)}.yaml"
 
     def draft_path(self, name: str) -> Path:
+        """Draft the path.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            Path: The path.
+        """
         return self.state_dir / "drafts" / f"{self.validate_name(name)}.json"
 
     def versions_dir(self, name: str) -> Path:
+        """Compute the versions dir.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            Path: The dir.
+        """
         return self.state_dir / "versions" / self.validate_name(name)
 
     def save_draft(
@@ -73,6 +137,16 @@ class WorkflowBuilderStore:
         *,
         canvas: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Save the draft.
+
+        Args:
+            name (str): Workflow or resource name.
+            yaml_text (str): Workflow YAML text.
+            canvas (dict[str, Any] | None): The canvas (optional, default None).
+
+        Returns:
+            dict[str, Any]: The draft.
+        """
         if len(yaml_text.encode("utf-8")) > _MAX_DRAFT_BYTES:
             raise ValueError("workflow draft exceeds the 5 MB Builder limit")
         workflow_path = self.workflow_path(name)
@@ -96,6 +170,14 @@ class WorkflowBuilderStore:
         return document
 
     def read_draft(self, name: str) -> dict[str, Any] | None:
+        """Read the draft.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            dict[str, Any] | None: The draft.
+        """
         path = self.draft_path(name)
         if not path.exists():
             return None
@@ -115,6 +197,14 @@ class WorkflowBuilderStore:
         return document
 
     def delete_draft(self, name: str) -> bool:
+        """Delete the draft.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            bool: The draft.
+        """
         path = self.draft_path(name)
         if not path.exists():
             return False
@@ -122,6 +212,15 @@ class WorkflowBuilderStore:
         return True
 
     def record_version(self, name: str, yaml_text: str) -> str:
+        """Record the version.
+
+        Args:
+            name (str): Workflow or resource name.
+            yaml_text (str): Workflow YAML text.
+
+        Returns:
+            str: The version.
+        """
         digest = _digest(yaml_text)
         directory = self.versions_dir(name)
         existing = sorted(directory.glob(f"*-{digest[:12]}.yaml"))
@@ -133,6 +232,15 @@ class WorkflowBuilderStore:
         return version_id
 
     def save_workflow(self, name: str, yaml_text: str) -> str:
+        """Save the workflow.
+
+        Args:
+            name (str): Workflow or resource name.
+            yaml_text (str): Workflow YAML text.
+
+        Returns:
+            str: The workflow.
+        """
         path = self.workflow_path(name)
         if path.exists():
             current = path.read_text(encoding="utf-8")
@@ -144,6 +252,15 @@ class WorkflowBuilderStore:
         return version_id
 
     def get_version(self, name: str, version_id: str) -> str:
+        """Return the version.
+
+        Args:
+            name (str): Workflow or resource name.
+            version_id (str): Version identifier.
+
+        Returns:
+            str: The version.
+        """
         safe_version = self.validate_version_id(version_id)
         path = self.versions_dir(name) / f"{safe_version}.yaml"
         if not path.exists():
@@ -151,6 +268,14 @@ class WorkflowBuilderStore:
         return path.read_text(encoding="utf-8")
 
     def list_versions(self, name: str) -> list[dict[str, Any]]:
+        """List the versions.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            list[dict[str, Any]]: The versions.
+        """
         workflow_path = self.workflow_path(name)
         current_yaml = (
             workflow_path.read_text(encoding="utf-8")
@@ -192,6 +317,15 @@ class WorkflowBuilderStore:
         return versions
 
     def restore_version(self, name: str, version_id: str) -> tuple[str, str]:
+        """Restore the version.
+
+        Args:
+            name (str): Workflow or resource name.
+            version_id (str): Version identifier.
+
+        Returns:
+            tuple[str, str]: The version.
+        """
         yaml_text = self.get_version(name, version_id)
         restored_version_id = self.save_workflow(name, yaml_text)
         return yaml_text, restored_version_id

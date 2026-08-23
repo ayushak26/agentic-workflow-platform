@@ -146,6 +146,11 @@ class WeaviateClient:
     """
 
     def __init__(self, url: str | None = None):
+        """Initialize the WeaviateClient.
+
+        Args:
+            url (str | None): Target URL (optional, default None).
+        """
         self._url = url or f"http://{settings.weaviate_host}:{settings.weaviate_port}"
         self._client: weaviate.WeaviateClient | None = None
 

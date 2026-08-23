@@ -179,6 +179,7 @@ class RetryPolicy:
     jitter_ratio: float = 0.2
 
     def __post_init__(self) -> None:
+        """Implement the ``__post_init__`` protocol."""
         if self.max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
         if self.base_delay_seconds < 0 or self.max_delay_seconds < 0:
@@ -198,6 +199,14 @@ class ModelAccessResult:
 
 
 def _status_code(exc: BaseException) -> int | None:
+    """Internal helper for the status code step.
+
+    Args:
+        exc (BaseException): Exception that was raised.
+
+    Returns:
+        int | None: The code.
+    """
     direct = getattr(exc, "status_code", None)
     if isinstance(direct, int):
         return direct
@@ -309,6 +318,14 @@ def _is_model_unavailable_error(exc: BaseException) -> bool:
 
 
 def _retry_after_seconds(exc: BaseException) -> float | None:
+    """Retry the after seconds.
+
+    Args:
+        exc (BaseException): Exception that was raised.
+
+    Returns:
+        float | None: The after seconds.
+    """
     response = getattr(exc, "response", None)
     headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
     if not headers:
@@ -366,6 +383,14 @@ def get_gateway(model_name: str) -> tuple[LLMGateway, str]:
 
 
 def _gateway_class_for(model_name: str) -> type[LLMGateway]:
+    """Internal helper for the gateway class for step.
+
+    Args:
+        model_name (str): The model name.
+
+    Returns:
+        type[LLMGateway]: The class for.
+    """
     definition = OPENAI_MODEL_BY_NAME.get(model_name)
     if definition is not None and definition.kind != "llm":
         raise ValueError(
@@ -383,6 +408,14 @@ def _gateway_class_for(model_name: str) -> type[LLMGateway]:
 
 
 def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
+    """Internal helper for the construct step.
+
+    Args:
+        gw_cls (type[LLMGateway]): The gw cls.
+
+    Returns:
+        LLMGateway: The result.
+    """
     if gw_cls is OpenAIGateway:
         return OpenAIGateway(api_key=settings.openai_api_key)
     if gw_cls is AnthropicGateway:
@@ -397,6 +430,11 @@ def _construct(gw_cls: type[LLMGateway]) -> LLMGateway:
 
 
 def _kimi_profile() -> LocalModelProfile:
+    """Internal helper for the kimi profile step.
+
+    Returns:
+        LocalModelProfile: The profile.
+    """
     return LocalModelProfile(
         alias="local-kimi-k3",
         provider="moonshot-local",
@@ -411,6 +449,11 @@ def _kimi_profile() -> LocalModelProfile:
 
 
 def _glm_profile() -> LocalModelProfile:
+    """Internal helper for the glm profile step.
+
+    Returns:
+        LocalModelProfile: The profile.
+    """
     return LocalModelProfile(
         alias="local-glm-5",
         provider="zai-local",
@@ -437,6 +480,14 @@ _PROVIDER_NAME_BY_GATEWAY: dict[type[LLMGateway], str] = {
 
 
 def _provider_name_for(model: str) -> str:
+    """Internal helper for the provider name for step.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        str: The name for.
+    """
     try:
         return _PROVIDER_NAME_BY_GATEWAY.get(_gateway_class_for(model), "unknown")
     except ValueError:
@@ -454,6 +505,14 @@ def _safe_task_kind(
 
 
 def local_model_enabled(model: str) -> bool:
+    """Compute the local model enabled.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        bool: The model enabled.
+    """
     if model == "local-kimi-k3":
         return settings.local_kimi_enabled
     if model == "local-glm-5":
@@ -475,6 +534,14 @@ def configured_local_model_probes() -> dict[str, Callable[[], Awaitable[bool]]]:
 
 
 async def probe_local_model(model: str) -> dict[str, Any]:
+    """Probe the local model.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        dict[str, Any]: The local model.
+    """
     if not is_local_model(model):
         raise ValueError(f"{model!r} is not a local model")
     gateway, _ = get_gateway(model)
@@ -578,6 +645,13 @@ class RegistryLLMGateway(LLMGateway):
         random_value: Callable[[], float] = random.random,
     ) -> None:
         # Context injected per-run via with_context(). None = no cost tracking.
+        """Initialize the RegistryLLMGateway.
+
+        Args:
+            retry_policy (RetryPolicy | None): The retry policy (optional, default None).
+            sleep (Callable[[float], Awaitable[None]]): The sleep (optional, default asyncio.sleep).
+            random_value (Callable[[], float]): The random value (optional, default random.random).
+        """
         self._run_id:     str | None = None
         self._session_id: str | None = None
         self._node_id:    str | None = None
@@ -717,6 +791,14 @@ class RegistryLLMGateway(LLMGateway):
     # below the renamed *_impl methods.
 
     async def _tokenize_text(self, text: str | None) -> str | None:
+        """Tokenize the text.
+
+        Args:
+            text (str | None): The text.
+
+        Returns:
+            str | None: The text.
+        """
         if text is None or self._entity_tokenizer is None or self._session_id is None:
             return text
         result = await self._entity_tokenizer.tokenize(
@@ -728,6 +810,14 @@ class RegistryLLMGateway(LLMGateway):
         return result.text
 
     async def _tokenize_value(self, value: Any) -> Any:
+        """Tokenize the value.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The value.
+        """
         if isinstance(value, str):
             return await self._tokenize_text(value)
         if isinstance(value, dict):
@@ -740,6 +830,14 @@ class RegistryLLMGateway(LLMGateway):
         return value
 
     async def _tokenize_messages(self, messages: list[dict]) -> list[dict]:
+        """Tokenize the messages.
+
+        Args:
+            messages (list[dict]): The messages.
+
+        Returns:
+            list[dict]: The messages.
+        """
         tokenized: list[dict] = []
         for msg in messages:
             new_msg = dict(msg)
@@ -761,6 +859,14 @@ class RegistryLLMGateway(LLMGateway):
         return tokenized
 
     async def _detokenize_value(self, value: Any) -> Any:
+        """Detokenize the value.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The value.
+        """
         if self._entity_tokenizer is None or self._session_id is None:
             return value
         result = await self._entity_tokenizer.detokenize(
@@ -771,6 +877,14 @@ class RegistryLLMGateway(LLMGateway):
         return result.value
 
     def _cached_model_access(self, model: str) -> ModelAccessResult | None:
+        """Internal helper for the cached model access step.
+
+        Args:
+            model (str): Model name.
+
+        Returns:
+            ModelAccessResult | None: The model access.
+        """
         cached = self._model_access_cache.get(model)
         if cached is None:
             return None
@@ -909,6 +1023,11 @@ class RegistryLLMGateway(LLMGateway):
         return self._selection_history
 
     def _next_call_id(self) -> int:
+        """Internal helper for the next call id step.
+
+        Returns:
+            int: The call id.
+        """
         self._call_seq += 1
         return self._call_seq
 
@@ -948,6 +1067,11 @@ class RegistryLLMGateway(LLMGateway):
         )
 
     async def _publish(self, evt: RunEvent) -> None:
+        """Publish the result.
+
+        Args:
+            evt (RunEvent): Run event.
+        """
         if self._event_bus is not None:
             await self._event_bus.publish(evt)
 
@@ -1086,6 +1210,15 @@ class RegistryLLMGateway(LLMGateway):
         return available or list(pool)
 
     def _delay_for(self, attempt: int, exc: BaseException) -> float:
+        """Internal helper for the delay for step.
+
+        Args:
+            attempt (int): Attempt number.
+            exc (BaseException): Exception that was raised.
+
+        Returns:
+            float: The for.
+        """
         policy = self._retry_policy
         server_delay = _retry_after_seconds(exc)
         if server_delay is not None:
@@ -1267,6 +1400,13 @@ class RegistryLLMGateway(LLMGateway):
         # Fast path: no routing context bound (executor's plain calls, scripts,
         # and the existing test suite). Behaviour is exactly as before —
         # no selection, no events, no on_token injection.
+        """Complete the impl.
+
+        Args:
+            model (str): Model name.
+            stage (str | None): Pipeline stage label (optional, default None).
+            **kwargs: Keyword arguments.
+        """
         if self._event_bus is None and self._allowed_models is None:
             cache = self._semantic_cache
             use_cache = (
@@ -1352,6 +1492,11 @@ class RegistryLLMGateway(LLMGateway):
         )
 
         async def _emit_token(token: str) -> None:
+            """Emit the token.
+
+            Args:
+                token (str): Token value.
+            """
             await self._publish(
                 RunEvent(
                     type="llm_token",
@@ -1404,6 +1549,13 @@ class RegistryLLMGateway(LLMGateway):
         return response_model.model_validate(walked)
 
     async def _complete_structured_impl(self, *, model: str, stage: str | None = None, **kwargs):
+        """Complete the structured impl.
+
+        Args:
+            model (str): Model name.
+            stage (str | None): Pipeline stage label (optional, default None).
+            **kwargs: Keyword arguments.
+        """
         if self._event_bus is None and self._allowed_models is None:
             resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
                 "complete_structured",
@@ -1500,6 +1652,12 @@ class RegistryLLMGateway(LLMGateway):
         )
 
     async def _chat_with_tools_impl(self, *, model: str, **kwargs):
+        """Internal helper for the chat with tools impl step.
+
+        Args:
+            model (str): Model name.
+            **kwargs: Keyword arguments.
+        """
         if self._event_bus is None and self._allowed_models is None:
             resp, resolved, latency_ms, fallback_reason = await self._call_resilient(
                 "chat_with_tools",

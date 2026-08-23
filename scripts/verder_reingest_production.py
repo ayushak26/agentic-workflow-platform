@@ -71,6 +71,7 @@ def ensure_physical_class_with_product(client: weaviate.WeaviateClient, name: st
 
 
 async def main() -> None:
+    """Compute the main."""
     mongo_client = AsyncIOMotorClient(settings.mongo_uri)
     db = mongo_client[settings.mongo_db]
     repository = KnowledgeRepository(db)

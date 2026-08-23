@@ -65,6 +65,7 @@ class RouterFinding:
 
     @property
     def route_label(self) -> str:
+        """The route label."""
         return humanize_route(self.route)
 
 
@@ -105,6 +106,14 @@ def _group_paths(group: Any) -> list[str]:
 
 
 def _common_subject(paths: list[str]) -> str | None:
+    """Internal helper for the common subject step.
+
+    Args:
+        paths (list[str]): The paths.
+
+    Returns:
+        str | None: The subject.
+    """
     unique = list(dict.fromkeys(path for path in paths if path))
     return unique[0] if len(unique) == 1 else None
 
@@ -153,6 +162,14 @@ def read_router(node: NodeView, run: RunView) -> RouterFinding | None:
 
 
 def _outputs_of(run: RunView) -> dict[str, Any]:
+    """Internal helper for the outputs of step.
+
+    Args:
+        run (RunView): The run.
+
+    Returns:
+        dict[str, Any]: The of.
+    """
     return {node.node_id: node.output for node in run.nodes if node.output is not None}
 
 

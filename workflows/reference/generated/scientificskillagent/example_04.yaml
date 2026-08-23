@@ -1,0 +1,1115 @@
+name: Reference ScientificSkillAgent 04
+description: 'Final stage of the gated Horizon Europe RIA/IA Part B pipeline. The
+  six human-approved section drafts (1.1, 1.2, 2.1, 2.2 [+optional 2.3], 3.1, 3.2)
+  plus the approved truth graph, locked blueprint, verified evidence and call context
+  are supplied directly; this workflow does not re-run discovery, evidence verification
+  or drafting. It compiles the drafts into one coherent Part B, runs a K-Dense-guided
+  scientific peer review plus an independent evaluation and red-team pass, applies
+  a single controlled revision tuned to the authoritative page budget, runs an independent
+  final evaluation and deterministic submission gate, splices generated figures into
+  the four "[[IMAGE PROMPT: ...]]" markers the drafts stage''s sections were told
+  to emit, and renders both an editable DOCX and a submission PDF. The evidence- stage
+  graph consistency verdict is reused because proposal domain state is scoped to a
+  workflow run. A readiness router blocks rendering when evidence, evaluation, headings
+  or placeholders fail. A final human gate inspects the actual DOCX/PDF page counts,
+  warnings, figure status and hashes before release.'
+version: '5.0'
+use_case: eu_proposal
+inputs:
+  metadata:
+    type: json
+    required: true
+    description: '[LIVE] partb_metadata.parsed - proposal title, acronym, call_id,
+      action_type, funding_model, consortium_name, part_label, version. Used by the
+      DOCX renderer.'
+  citation_registry:
+    type: json
+    required: true
+    description: '[LIVE] verify_evidence.citation_registry - verified citation IDs
+      used across the section drafts. Used by final_revision and the renderer bibliography.'
+  evidence_qa:
+    type: json
+    required: true
+    description: '[LIVE] verify_evidence.qa_report - evidence QA summary. Used by
+      the red-team pass and the renderer.'
+  evidence_blockers:
+    type: json
+    required: true
+    description: '[LIVE] verify_evidence.blocking_issues - unresolved evidence blockers.
+      Used by the submission gate.'
+  verified_claims:
+    type: json
+    required: false
+    description: '[LIVE] verify_evidence.verified_claims - full verified claim records
+      (claim -> evidence -> locator -> verification). Given to the red-team pass so
+      it can check citation/claim fit precisely.'
+  scientific_synthesis:
+    type: text
+    required: false
+    description: '[LIVE] scientific_synthesis.answer - proposal-engineering evidence
+      synthesis. Given to final_revision so evidence-safe expansions stay grounded.'
+  call_intelligence:
+    type: json
+    required: false
+    description: '[LIVE] call_intelligence.parsed - atomic call checklist (expected
+      outcomes, scope, mandatory conditions, evaluation priorities, exclusions, page/format
+      rules). Given to compile_v1 and red_team_v1 to check coverage and format rules.'
+  call_coverage:
+    type: json
+    required: true
+    description: '[LIVE] call_coverage output - requirement -> section coverage matrix.
+      Used by the red-team pass.'
+  proposal_blueprint:
+    type: json
+    required: false
+    description: '[LIVE] proposal_blueprint.parsed - the locked single source of truth
+      (objective->result->outcome->impact chain, page budget, WP/task/deliverable/KPI/risk
+      registers, figure/table plan). Given to compile_v1, red_team_v1 and final_revision
+      to keep every section aligned to the frozen model.'
+  truth_graph:
+    type: json
+    required: true
+    description: '[GATED] ProposalTruthGraphAgent output approved after evidence review.
+      .truth_graph is the only external factual authority for compilation, peer review,
+      red-team and revision.'
+  evidence_consistency:
+    type: json
+    required: true
+    description: '[GATED] Evidence stage''s ConsistencyChecker output, computed while
+      the Proposal Graph is present in workflow domain state.'
+  concept_note:
+    type: file
+    required: true
+    multiple: true
+    max_files: 5
+    accept:
+    - pdf
+    - document
+    - markdown
+    - presentation
+    description: '[LIVE] The selected project concept note file(s). Loaded and given
+      to final_revision so revisions stay faithful to the actual concept, not the
+      drafts alone.'
+  draft_1_1:
+    type: text
+    required: true
+    description: '[LIVE] draft_1_1_objectives_ambition.raw - Markdown for ''1.1 Objectives
+      and ambition''.'
+  draft_1_2:
+    type: text
+    required: true
+    description: '[LIVE] draft_1_2_methodology.raw - Markdown for ''1.2 Methodology''.'
+  draft_2_1:
+    type: text
+    required: true
+    description: '[LIVE] draft_2_1_pathways.raw - Markdown for ''2.1 Project''s pathways
+      towards impact''.'
+  draft_2_2_2_3:
+    type: text
+    required: true
+    description: '[LIVE] draft_2_2_measures_and_2_3_summary.raw - Markdown for ''2.2
+      Measures to maximise impact'' and optional ''2.3 Summary''.'
+  draft_3_1:
+    type: text
+    required: true
+    description: '[LIVE] draft_3_1_workplan_resources.raw - Markdown for ''3.1 Work
+      plan and resources'', including Tables 3.1a-3.1h.'
+  draft_3_2:
+    type: text
+    required: true
+    description: '[LIVE] draft_3_2_consortium.raw - Markdown for ''3.2 Capacity of
+      participants and consortium as a whole''.'
+  generate_figure_oro_chain:
+    type: json
+    required: false
+    description: '[LIVE] drafts stage''s generate_figure_oro_chain output ({generated,
+      minio_key, content_type, ...}) - embedded in place of the ''Figure 1 - Objective-Result-Outcome-Impact
+      Chain'' marker draft_1_1 was told to emit.'
+  generate_figure_impact_pathways:
+    type: json
+    required: false
+    description: '[LIVE] drafts stage''s generate_figure_impact_pathways output -
+      embedded in place of the ''Figure 2 - Impact Pathways'' marker draft_2_1 was
+      told to emit.'
+  generate_figure_workplan:
+    type: json
+    required: false
+    description: '[LIVE] drafts stage''s generate_figure_workplan output - embedded
+      in place of the ''Figure 3 - Work Package Structure'' marker draft_3_1 was told
+      to emit.'
+  generate_figure_methodology:
+    type: json
+    required: false
+    description: '[LIVE] drafts stage''s generate_figure_methodology output - embedded
+      in place of the ''Figure 4 - Methodology Architecture'' marker draft_1_2 was
+      told to emit.'
+nodes:
+- id: load_concept
+  type: WorkflowFileLoader
+  config:
+    files: '{{inputs.concept_note}}'
+    max_chars_per_file: 500000
+    fail_on_unreadable: false
+- id: compile_excellence
+  type: TransformAgent
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 20000
+    input_fields:
+    - name: proposal_blueprint
+      description: The locked blueprint - single source of truth for objectives, results
+        and methodology.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph. External factual claims must exist here
+        and retain their qualifications. Raw research dossiers are not drafting inputs.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: call_checklist
+      description: The call checklist, used to confirm the official headings and that
+        every mandatory requirement is present.
+      type: string
+      value: '{{ inputs.call_intelligence }}'
+    - name: draft_1_1
+      description: Draft of section 1.1 Objectives and ambition.
+      type: string
+      value: '{{ inputs.draft_1_1 }}'
+    - name: draft_1_2
+      description: Draft of section 1.2 Methodology.
+      type: string
+      value: '{{ inputs.draft_1_2 }}'
+    instructions: 'Assemble the coherent "1. Excellence" section (1.1 and 1.2 only)
+      of
+
+      the Horizon Europe Part B Markdown document from the two supplied
+
+      drafts. Do not add Part A, annexes or extra numbered sections.
+
+
+      Use the locked blueprint as the single source of truth for
+
+      objectives, results and methodology. Use the call checklist to
+
+      confirm the official headings and that every mandatory requirement
+
+      is present.
+
+
+      Remove duplication between 1.1 and 1.2, align terminology, keep
+
+      every valid citation identifier and every [INPUT NEEDED] marker, and
+
+      add no facts. Preserve every `[[IMAGE PROMPT: ...]]` marker exactly
+
+      as it appears, verbatim, on its own line - never paraphrase,
+
+      reformat, or drop it. Aim for a full, evaluator-dense 1.1+1.2. Start
+
+      with the "# 1. Excellence" heading.'
+- id: compile_impact
+  type: TransformAgent
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 12000
+    input_fields:
+    - name: proposal_blueprint
+      description: The locked blueprint - single source of truth for impact pathways
+        and KPIs.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph. External factual claims must exist here
+        and retain their qualifications. Raw research dossiers are not drafting inputs.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: call_checklist
+      description: The call checklist, used to confirm the official headings and that
+        every mandatory requirement is present.
+      type: string
+      value: '{{ inputs.call_intelligence }}'
+    - name: draft_2_1
+      description: Draft of section 2.1 Project's pathways towards impact.
+      type: string
+      value: '{{ inputs.draft_2_1 }}'
+    - name: draft_2_2_2_3
+      description: Draft of section 2.2 Measures to maximise impact and optional 2.3
+        Summary.
+      type: string
+      value: '{{ inputs.draft_2_2_2_3 }}'
+    instructions: 'Assemble the coherent "2. Impact" section (2.1, 2.2 and optional
+      2.3
+
+      only) of the Horizon Europe Part B Markdown document from the two
+
+      supplied drafts. Do not add Part A, annexes or extra numbered
+
+      sections.
+
+
+      Use the locked blueprint as the single source of truth for impact
+
+      pathways and KPIs. Use the call checklist to confirm the official
+
+      headings and that every mandatory requirement is present.
+
+
+      Remove duplication, align terminology, keep every valid citation
+
+      identifier and every [INPUT NEEDED] marker, and add no facts.
+
+      Preserve every `[[IMAGE PROMPT: ...]]` marker exactly as it appears,
+
+      verbatim, on its own line - never paraphrase, reformat, or drop it.
+
+      Aim for a full, evaluator-dense 2.1+2.2(+2.3). Start with the "# 2.
+
+      Impact" heading.'
+- id: compile_implementation
+  type: TransformAgent
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 20000
+    input_fields:
+    - name: proposal_blueprint
+      description: The locked blueprint - every WP, task, deliverable, milestone,
+        KPI, risk and partner must agree with it.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph. External factual claims must exist here
+        and retain their qualifications. Raw research dossiers are not drafting inputs.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: call_checklist
+      description: The call checklist, used to confirm the official headings and that
+        every mandatory requirement is present.
+      type: string
+      value: '{{ inputs.call_intelligence }}'
+    - name: draft_3_1
+      description: Draft of section 3.1 Work plan and resources, including Tables
+        3.1a-3.1h.
+      type: string
+      value: '{{ inputs.draft_3_1 }}'
+    - name: draft_3_2
+      description: Draft of section 3.2 Capacity of participants and consortium as
+        a whole.
+      type: string
+      value: '{{ inputs.draft_3_2 }}'
+    instructions: 'Assemble the coherent "3. Quality and efficiency of the
+
+      implementation" section (3.1 and 3.2 only) of the Horizon Europe
+
+      Part B Markdown document from the two supplied drafts. Do not add
+
+      Part A, annexes or extra numbered sections.
+
+
+      Use the locked blueprint as the single source of truth: every WP,
+
+      task, deliverable, milestone, KPI, risk and partner must agree with
+
+      it. Use the call checklist to confirm the official headings and
+
+      that every mandatory requirement is present.
+
+
+      Remove duplication, align WPs/tasks/deliverables/milestones/risks/
+
+      KPIs/partners, keep every valid citation identifier, every [INPUT
+
+      NEEDED] marker and the official Tables 3.1a-3.1h as plain text
+
+      tables, and add no facts. Preserve every `[[IMAGE PROMPT: ...]]`
+
+      marker exactly as it appears, verbatim, on its own line - never
+
+      paraphrase, reformat, or drop it. Aim for a full, evaluator-dense
+
+      3.1+3.2. Start with the "# 3. Quality and efficiency of the
+
+      implementation" heading.'
+- id: compile_v1
+  type: TextAssemblerAgent
+  config:
+    separator: '
+
+
+      '
+    parts:
+    - '{{compile_excellence.raw}}'
+    - '{{compile_impact.raw}}'
+    - '{{compile_implementation.raw}}'
+- id: scientific_peer_review
+  type: ScientificSkillAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    skills:
+    - peer-review
+    - scientific-critical-thinking
+    - research-grants
+    - scientific-writing
+    auto_select: false
+    max_skills: 4
+    temperature: 0.0
+    max_tokens: 12000
+    system_prompt: Act as a skeptical scientific peer reviewer of a Horizon Europe
+      Part B proposal. Check whether the draft overstates evidence, ignores contradictory
+      findings, confuses correlation with causation, omits validation or uncertainty,
+      or makes claims outside the approved truth graph. Produce actionable review
+      findings only. Do not rewrite the proposal and do not introduce new facts or
+      citations.
+    objective: 'Review the compiled proposal against the approved truth graph,
+
+      verified claim records, call checklist, and evidence QA. For every
+
+      issue, cite the Part B subsection and distinguish a scientific defect,
+
+      a missing input, an unsupported statement, or a presentation issue.
+
+      Preserve project commitments but flag them when they are presented as
+
+      externally validated facts.
+
+
+      COMPILED PROPOSAL:
+
+      {{compile_v1.text}}
+
+
+      APPROVED TRUTH GRAPH:
+
+      {{ inputs.truth_graph.truth_graph }}
+
+
+      VERIFIED CLAIM RECORDS:
+
+      {{ inputs.verified_claims }}
+
+
+      CALL CHECKLIST:
+
+      {{ inputs.call_intelligence }}
+
+
+      EVIDENCE QA:
+
+      {{ inputs.evidence_qa }}
+
+      '
+- id: evaluate_v1
+  type: HorizonEvaluationAgent
+  config:
+    proposal_text: '{{compile_v1.text}}'
+    generator_model: auto
+    evaluator_models:
+    - claude-opus-5
+    - gpt-5.6-sol
+    criterion_threshold: 4.0
+    total_threshold: 12.0
+- id: red_team_v1
+  type: TransformAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    max_tokens: 12000
+    input_fields:
+    - name: compiled_draft
+      description: The compiled Part B draft to red-team.
+      type: string
+      value: '{{compile_v1.text}}'
+    - name: proposal_blueprint
+      description: The locked blueprint - source of truth for WPs, tasks, deliverables,
+        milestones, KPIs, risks and partners.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: scientific_peer_review
+      description: The K-Dense-guided scientific peer review findings.
+      type: string
+      value: '{{scientific_peer_review.answer}}'
+    - name: call_checklist
+      description: The call checklist.
+      type: string
+      value: '{{ inputs.call_intelligence }}'
+    - name: call_coverage
+      description: Requirement -> section coverage matrix.
+      type: string
+      value: '{{ inputs.call_coverage }}'
+    - name: verified_claims
+      description: Verified claim records (claim -> evidence -> locator -> verification).
+      type: string
+      value: '{{ inputs.verified_claims }}'
+    - name: evidence_qa
+      description: Evidence QA summary.
+      type: string
+      value: '{{ inputs.evidence_qa }}'
+    instructions: 'Red-team this compiled Part B draft as a strict Horizon evaluator
+      and
+
+      proposal engineer. Find only concrete, actionable defects. Check call
+
+      coverage against the coverage matrix, causal logic, measurable ambition,
+
+      evidence/citation fit against the verified claim records, partner and
+
+      work-package consistency against the blueprint, person-month and budget
+
+      contradictions, official Tables 3.1a-3.1h, milestones, risks, gender
+
+      dimension, SSH, open science and multi-actor requirements.
+
+
+      Also assess PAGE FILL explicitly. The target is a full ~44-page proposal
+
+      within a 45-page hard limit. Never invent facts to fill space. A
+
+      missing fact is a blocker or input request, not permission to invent.
+
+      Tag each finding to its owning criterion so it lands in the matching
+
+      *_risks list - cross-cutting findings that do not belong to one
+
+      criterion (evidence, numerical, page-budget) go in their own
+
+      dedicated lists instead. The field descriptions below define exactly
+
+      what each output list should contain.'
+    output_fields:
+    - name: blocking_gaps
+      type: list
+      item_type: string
+      description: Concrete, actionable blockers - missing required facts or content
+        that must be resolved before submission. A missing fact is a blocker or input
+        request, not permission to invent.
+    - name: excellence_risks
+      type: list
+      item_type: string
+      description: Findings tagged to the Excellence criterion (1.1/1.2). Confirm
+        the gender-dimension content (1.2.6) addresses research-content relevance,
+        not only team or workforce balance.
+    - name: impact_risks
+      type: list
+      item_type: string
+      description: Findings tagged to the Impact criterion (2.1/2.2/2.3). Confirm
+        PESTEL barriers (2.1.3) are never duplicated as implementation risks (3.1)
+        and vice versa; confirm every KER (2.2.4) has a distinct owner, target users,
+        value proposition and exploitation route.
+    - name: implementation_risks
+      type: list
+      item_type: string
+      description: 'Findings tagged to the Implementation criterion (3.1/3.2): work-package/task/deliverable/milestone/risk/KPI/partner
+        consistency against the blueprint, person-month and budget contradictions,
+        and the official Tables 3.1a-3.1h. Confirm PESTEL barriers (2.1.3) are never
+        duplicated here as implementation risks.'
+    - name: evidence_and_citation_risks
+      type: list
+      item_type: string
+      description: Cross-cutting evidence/citation-fit findings against the verified
+        claim records that do not belong to one criterion.
+    - name: numerical_inconsistencies
+      type: list
+      item_type: string
+      description: Cross-cutting numerical contradictions (e.g. person-months vs budget,
+        KPI figures) that do not belong to one criterion.
+    - name: page_budget_actions
+      type: list
+      item_type: string
+      description: 'For each official subsection, whether it is under-developed, about
+        right, or over the ~44-page target within the 45-page hard limit, with specific,
+        evidence-safe expansions for any subsection that is thin (for example: add
+        a validation-criteria table, expand a WP description, add missing risk rows)
+        - never invent facts to fill space. Also flags any non-official section, any
+        content outside Part B, any likely breach of the 45-page limit, and any misuse
+        of Part A information.'
+    - name: safe_revision_instructions
+      type: list
+      item_type: string
+      description: Concrete, evidence-safe instructions the downstream per-criterion
+        revision stages (revise_excellence/revise_impact/ revise_implementation) can
+        apply directly to fix a finding without fabricating facts.
+- id: revise_excellence
+  type: TransformAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    max_tokens: 20000
+    input_fields:
+    - name: section_draft
+      description: Compiled draft of the Excellence section (1.1+1.2) to revise.
+      type: string
+      value: '{{compile_excellence.raw}}'
+    - name: proposal_blueprint
+      description: The locked blueprint.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: concept_note
+      description: The original project concept note text, so revisions stay faithful
+        to the actual concept, not the drafts alone.
+      type: string
+      value: '{{ load_concept.text }}'
+    - name: scientific_synthesis
+      description: Proposal-engineering evidence synthesis, so evidence-safe expansions
+        stay grounded.
+      type: string
+      value: '{{ inputs.scientific_synthesis }}'
+    - name: independent_evaluation
+      description: The independent evaluation of the compiled proposal.
+      type: string
+      value: '{{evaluate_v1}}'
+    - name: red_team_report
+      description: Full red-team report - apply only the excellence_risks, evidence_and_citation_risks,
+        numerical_inconsistencies and page_budget_actions entries relevant to 1.1/1.2.
+      type: string
+      value: '{{red_team_v1.parsed}}'
+    - name: verified_citations
+      description: Verified citation registry.
+      type: string
+      value: '{{ inputs.citation_registry }}'
+    instructions: 'Produce the final submission candidate for ONLY the "1. Excellence"
+
+      section (1.1 and 1.2). Apply the evaluator and red-team
+
+      recommendations relevant to this section only when they can be
+
+      resolved from the supplied draft, blueprint, concept note,
+
+      scientific synthesis, citation registry or evidence QA. Improve
+
+      logic, specificity, consistency and evaluator readability. Keep this
+
+      section faithful to the locked blueprint and the actual concept note.
+
+
+      Fill this section''s page budget toward a full, evaluator-dense
+
+      1.1+1.2, following the page_budget_actions from the red-team pass
+
+      that apply here. Expand thin passages only with evidence-safe
+
+      content already grounded in the draft, blueprint and verified
+
+      evidence. Never fabricate a missing number, partner fact, result,
+
+      source, KPI, TRL, budget or timeline to reach a page count -
+
+      preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
+
+      citation identifiers intact. Preserve every `[[IMAGE PROMPT: ...]]`
+
+      marker exactly as it appears, verbatim, on its own line - never
+
+      paraphrase, reformat, or drop it. Preserve the exact official
+
+      headings. Return only this section - do not draft Impact or
+
+      Implementation.'
+- id: revise_impact
+  type: TransformAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    max_tokens: 12000
+    input_fields:
+    - name: section_draft
+      description: Compiled draft of the Impact section (2.1+2.2+optional 2.3) to
+        revise.
+      type: string
+      value: '{{compile_impact.raw}}'
+    - name: proposal_blueprint
+      description: The locked blueprint.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: concept_note
+      description: The original project concept note text, so revisions stay faithful
+        to the actual concept, not the drafts alone.
+      type: string
+      value: '{{ load_concept.text }}'
+    - name: scientific_synthesis
+      description: Proposal-engineering evidence synthesis, so evidence-safe expansions
+        stay grounded.
+      type: string
+      value: '{{ inputs.scientific_synthesis }}'
+    - name: independent_evaluation
+      description: The independent evaluation of the compiled proposal.
+      type: string
+      value: '{{evaluate_v1}}'
+    - name: red_team_report
+      description: Full red-team report - apply only the impact_risks, evidence_and_citation_risks,
+        numerical_inconsistencies and page_budget_actions entries relevant to 2.1/2.2/2.3.
+      type: string
+      value: '{{red_team_v1.parsed}}'
+    - name: verified_citations
+      description: Verified citation registry.
+      type: string
+      value: '{{ inputs.citation_registry }}'
+    instructions: 'Produce the final submission candidate for ONLY the "2. Impact"
+
+      section (2.1, 2.2 and optional 2.3). Apply the evaluator and
+
+      red-team recommendations relevant to this section only when they can
+
+      be resolved from the supplied draft, blueprint, concept note,
+
+      scientific synthesis, citation registry or evidence QA. Improve
+
+      logic, specificity, consistency and evaluator readability. Keep this
+
+      section faithful to the locked blueprint and the actual concept note.
+
+
+      Fill this section''s page budget toward a full, evaluator-dense
+
+      2.1+2.2(+2.3), following the page_budget_actions from the red-team
+
+      pass that apply here. Expand thin passages only with evidence-safe
+
+      content already grounded in the draft, blueprint and verified
+
+      evidence. Never fabricate a missing number, partner fact, result,
+
+      source, KPI, TRL, budget or timeline to reach a page count -
+
+      preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
+
+      citation identifiers intact. Preserve every `[[IMAGE PROMPT: ...]]`
+
+      marker exactly as it appears, verbatim, on its own line - never
+
+      paraphrase, reformat, or drop it. Preserve the exact official
+
+      headings. Return only this section - do not draft Excellence or
+
+      Implementation.'
+- id: revise_implementation
+  type: TransformAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    max_tokens: 20000
+    input_fields:
+    - name: section_draft
+      description: Compiled draft of the Implementation section (3.1+3.2) to revise.
+      type: string
+      value: '{{compile_implementation.raw}}'
+    - name: proposal_blueprint
+      description: The locked blueprint.
+      type: string
+      value: '{{ inputs.proposal_blueprint }}'
+    - name: truth_graph
+      description: The approved truth graph.
+      type: string
+      value: '{{ inputs.truth_graph.truth_graph }}'
+    - name: concept_note
+      description: The original project concept note text, so revisions stay faithful
+        to the actual concept, not the drafts alone.
+      type: string
+      value: '{{ load_concept.text }}'
+    - name: scientific_synthesis
+      description: Proposal-engineering evidence synthesis, so evidence-safe expansions
+        stay grounded.
+      type: string
+      value: '{{ inputs.scientific_synthesis }}'
+    - name: independent_evaluation
+      description: The independent evaluation of the compiled proposal.
+      type: string
+      value: '{{evaluate_v1}}'
+    - name: red_team_report
+      description: Full red-team report - apply only the implementation_risks, evidence_and_citation_risks,
+        numerical_inconsistencies and page_budget_actions entries relevant to 3.1/3.2.
+      type: string
+      value: '{{red_team_v1.parsed}}'
+    - name: verified_citations
+      description: Verified citation registry.
+      type: string
+      value: '{{ inputs.citation_registry }}'
+    instructions: 'Produce the final submission candidate for ONLY the "3. Quality
+      and
+
+      efficiency of the implementation" section (3.1 and 3.2). Apply the
+
+      evaluator and red-team recommendations relevant to this section only
+
+      when they can be resolved from the supplied draft, blueprint,
+
+      concept note, scientific synthesis, citation registry or evidence
+
+      QA. Improve logic, specificity, consistency and evaluator
+
+      readability. Keep this section faithful to the locked blueprint and
+
+      the actual concept note.
+
+
+      Fill this section''s page budget toward a full, evaluator-dense
+
+      3.1+3.2, following the page_budget_actions from the red-team pass
+
+      that apply here. Expand thin passages only with evidence-safe
+
+      content already grounded in the draft, blueprint and verified
+
+      evidence. Never fabricate a missing number, partner fact, result,
+
+      source, KPI, TRL, budget or timeline to reach a page count -
+
+      preserve unresolved facts as [INPUT NEEDED: ...]. Keep all valid
+
+      citation identifiers and the official Tables 3.1a-3.1h intact.
+
+      Preserve every `[[IMAGE PROMPT: ...]]` marker exactly as it appears,
+
+      verbatim, on its own line - never paraphrase, reformat, or drop it.
+
+      Preserve the exact official headings. Return only this section - do
+
+      not draft Excellence or Impact.'
+- id: final_revision
+  type: TextAssemblerAgent
+  config:
+    separator: '
+
+
+      '
+    parts:
+    - '{{revise_excellence.raw}}'
+    - '{{revise_impact.raw}}'
+    - '{{revise_implementation.raw}}'
+- id: evaluate_final
+  type: HorizonEvaluationAgent
+  config:
+    proposal_text: '{{final_revision.text}}'
+    generator_model: auto
+    evaluator_models:
+    - claude-opus-5
+    - gpt-5.6-sol
+    criterion_threshold: 4.0
+    total_threshold: 12.0
+- id: submission_gate
+  type: ProposalSubmissionGate
+  config:
+    proposal_text: '{{final_revision.text}}'
+    evidence_blockers: '{{ inputs.evidence_blockers }}'
+    consistency_gate: '{{inputs.evidence_consistency.gate}}'
+    consistency_findings: '{{inputs.evidence_consistency.findings}}'
+    evaluation_threshold_passed: '{{evaluate_final.threshold_passed}}'
+    evaluation_total_score: '{{evaluate_final.total_score}}'
+    evaluation_blockers: '{{evaluate_final.deterministic_blockers}}'
+    required_headings:
+    - 1.1 Objectives and ambition
+    - 1.2 Methodology
+    - 2.1 Project's pathways towards impact
+    - 2.2 Measures to maximise impact
+    - 3.1 Work plan and resources
+    - 3.2 Capacity of participants and consortium as a whole
+    minimum_proposal_characters: 20000
+    require_evaluation_pass: true
+    block_on_input_needed: true
+- id: submission_readiness_router
+  type: RouterAgent
+  config:
+    mode: rule
+    rules:
+    - name: READY
+      condition: submission_gate.submission_ready == true
+    - name: BLOCKED
+      default: true
+- id: submission_blocked
+  type: HumanInLoopAgent
+  config:
+    question: The proposal failed the deterministic pre-render submission gate. Reject
+      this run and return to the relevant earlier stage to close the listed blockers.
+      Rendering is deliberately disabled on this branch.
+    context_fields:
+    - submission_gate.report
+    - submission_gate.blockers
+    - evaluate_final
+    - inputs.evidence_consistency
+    allow_document_override: false
+    allowed_actions:
+    - reject
+- id: figure_embedder
+  type: FigureEmbedder
+  config:
+    content: '{{final_revision.text}}'
+    figures:
+    - marker: Figure 1 - Objective-Result-Outcome-Impact Chain
+      image: '{{ inputs.generate_figure_oro_chain }}'
+      alt_text: Objective-result-outcome-impact chain diagram
+    - marker: Figure 2 - Impact Pathways
+      image: '{{ inputs.generate_figure_impact_pathways }}'
+      alt_text: Impact pathways diagram
+    - marker: Figure 3 - Work Package Structure
+      image: '{{ inputs.generate_figure_workplan }}'
+      alt_text: Work package structure diagram
+    - marker: Figure 4 - Methodology Architecture
+      image: '{{ inputs.generate_figure_methodology }}'
+      alt_text: Methodology architecture diagram
+- id: page_limit_router
+  type: RouterAgent
+  config:
+    mode: rule
+    rules:
+    - name: PAGE_45
+      condition: inputs.proposal_blueprint.hard_page_limit == 45
+    - name: PAGE_40
+      default: true
+- id: render_45_start
+  type: Literal
+  config:
+    value: true
+- id: render_40_start
+  type: Literal
+  config:
+    value: true
+- id: render_submission_docx_45
+  type: HorizonDOCXProposalRenderer
+  config:
+    content: '{{figure_embedder.content}}'
+    content_format: markdown
+    metadata: '{{ inputs.metadata }}'
+    citation_registry: '{{ inputs.citation_registry }}'
+    evidence_qa: '{{ inputs.evidence_qa }}'
+    evidence_blockers: '{{inputs.evidence_blockers}}'
+    include_toc: false
+    include_bibliography: true
+    include_evidence_annex: false
+    page_limit: 45
+    enforce_page_limit: true
+    enable_footnotes: true
+- id: render_submission_pdf_45
+  type: HorizonHTMLProposalRenderer
+  config:
+    content: '{{figure_embedder.content}}'
+    content_format: markdown
+    metadata: '{{inputs.metadata}}'
+    citation_registry: '{{inputs.citation_registry}}'
+    evidence_qa: '{{inputs.evidence_qa}}'
+    evidence_blockers: '{{inputs.evidence_blockers}}'
+    include_toc: false
+    include_bibliography: true
+    include_evidence_annex: false
+    page_limit: 45
+    enforce_page_limit: true
+- id: render_submission_docx_40
+  type: HorizonDOCXProposalRenderer
+  config:
+    content: '{{figure_embedder.content}}'
+    content_format: markdown
+    metadata: '{{inputs.metadata}}'
+    citation_registry: '{{inputs.citation_registry}}'
+    evidence_qa: '{{inputs.evidence_qa}}'
+    evidence_blockers: '{{inputs.evidence_blockers}}'
+    include_toc: false
+    include_bibliography: true
+    include_evidence_annex: false
+    page_limit: 40
+    enforce_page_limit: true
+    enable_footnotes: true
+- id: render_submission_pdf_40
+  type: HorizonHTMLProposalRenderer
+  config:
+    content: '{{figure_embedder.content}}'
+    content_format: markdown
+    metadata: '{{inputs.metadata}}'
+    citation_registry: '{{inputs.citation_registry}}'
+    evidence_qa: '{{inputs.evidence_qa}}'
+    evidence_blockers: '{{inputs.evidence_blockers}}'
+    include_toc: false
+    include_bibliography: true
+    include_evidence_annex: false
+    page_limit: 40
+    enforce_page_limit: true
+- id: approve_submission_package_45
+  type: HumanInLoopAgent
+  config:
+    question: Final release gate for the 45-page profile — inspect the rendered DOCX
+      and PDF before treating this proposal as submission-ready. Approve only when
+      both renderers report submission_ready, the PDF is within 45 pages, no figure
+      is missing or unmatched, no warning affects submission, and the hashes and files
+      are present. Reject to revise.
+    context_fields:
+    - submission_gate.report
+    - figure_embedder.embedded_count
+    - figure_embedder.unmatched_figures
+    - figure_embedder.missing_images
+    - render_submission_docx_45
+    - render_submission_pdf_45
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+- id: approve_submission_package_40
+  type: HumanInLoopAgent
+  config:
+    question: Final release gate for the 40-page profile — inspect the rendered DOCX
+      and PDF before treating this proposal as submission-ready. Approve only when
+      both renderers report submission_ready, the PDF is within 40 pages, no figure
+      is missing or unmatched, no warning affects submission, and the hashes and files
+      are present. Reject to revise.
+    context_fields:
+    - submission_gate.report
+    - figure_embedder.embedded_count
+    - figure_embedder.unmatched_figures
+    - figure_embedder.missing_images
+    - render_submission_docx_40
+    - render_submission_pdf_40
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+edges:
+- from: load_concept
+  to:
+  - compile_excellence
+  - compile_impact
+  - compile_implementation
+- from: compile_excellence
+  to: compile_v1
+- from: compile_impact
+  to: compile_v1
+- from: compile_implementation
+  to: compile_v1
+- from: compile_v1
+  to:
+  - evaluate_v1
+  - scientific_peer_review
+- from: scientific_peer_review
+  to: red_team_v1
+- from: evaluate_v1
+  to:
+  - revise_excellence
+  - revise_impact
+  - revise_implementation
+- from: red_team_v1
+  to:
+  - revise_excellence
+  - revise_impact
+  - revise_implementation
+- from: revise_excellence
+  to: final_revision
+- from: revise_impact
+  to: final_revision
+- from: revise_implementation
+  to: final_revision
+- from: final_revision
+  to: evaluate_final
+- from: evaluate_final
+  to: submission_gate
+- from: submission_gate
+  to: submission_readiness_router
+- from: submission_readiness_router
+  condition: route
+  branches:
+    READY: figure_embedder
+    BLOCKED: submission_blocked
+- from: figure_embedder
+  to: page_limit_router
+- from: page_limit_router
+  condition: route
+  branches:
+    PAGE_45: render_45_start
+    PAGE_40: render_40_start
+- from: render_45_start
+  to:
+  - render_submission_docx_45
+  - render_submission_pdf_45
+- from: render_40_start
+  to:
+  - render_submission_docx_40
+  - render_submission_pdf_40
+- from: render_submission_docx_45
+  to: approve_submission_package_45
+- from: render_submission_pdf_45
+  to: approve_submission_package_45
+- from: render_submission_docx_40
+  to: approve_submission_package_40
+- from: render_submission_pdf_40
+  to: approve_submission_package_40
+entry: load_concept
+exit:
+- approve_submission_package_45
+- approve_submission_package_40
+- submission_blocked
+output:
+  include_input: false
+  nodes:
+  - node_id: evaluate_final
+    flatten: false
+  - node_id: submission_gate
+    flatten: false
+  - node_id: figure_embedder
+    flatten: false
+  - node_id: render_submission_docx_45
+    flatten: false
+  - node_id: render_submission_pdf_45
+    flatten: false
+  - node_id: render_submission_docx_40
+    flatten: false
+  - node_id: render_submission_pdf_40
+    flatten: false
+  - node_id: approve_submission_package_45
+    flatten: false
+  - node_id: approve_submission_package_40
+    flatten: false

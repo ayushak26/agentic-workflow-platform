@@ -19,11 +19,16 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
 from app.integrations.operations import (
     AmbiguousOperationFailure,
     ExternalOperationLedger,
     OperationInFlight,
     operation_key,
+)
+from app.integrations.url_guard import (
+    ExternalActionUrlError,
+    validate_external_action_url,
 )
 from app.observability.logging import get_logger
 
@@ -42,24 +47,56 @@ class ExternalActionError(RuntimeError):
         code: str = "EXTERNAL_ACTION_ERROR",
         retryable: bool = False,
     ):
+        """Initialize the ExternalActionError.
+
+        Args:
+            message (str): Message text.
+            code (str): The code (optional, default 'EXTERNAL_ACTION_ERROR').
+            retryable (bool): The retryable (optional, default False).
+        """
         self.code = code
         self.retryable = retryable
         super().__init__(message)
 
 
 class ExternalActionService:
+    """Provides the ExternalActionService behaviour."""
     def __init__(
         self,
         *,
         http_client: httpx.AsyncClient | None = None,
         ledger: ExternalOperationLedger | None = None,
         db: Any = None,
+        url_validator: Any = None,
     ) -> None:
         # Injected only by tests, against a real httpx.MockTransport — in
         # production a fresh client is opened per call so each call's own
         # timeout is the one actually enforced.
+        """Initialize the ExternalActionService.
+
+        Args:
+            http_client (httpx.AsyncClient | None): The http client (optional, default None).
+            ledger (ExternalOperationLedger | None): Operation ledger (optional, default None).
+            db (Any): Mongo database handle (optional, default None).
+            url_validator (Any): SSRF guard callable (optional). Tests inject
+                a stub; production resolves DNS and refuses private/internal
+                targets (app/integrations/url_guard.py).
+        """
         self._http_client = http_client
         self.ledger = ledger or ExternalOperationLedger(db, collection="external_actions")
+        self._url_validator = url_validator or self._default_url_validator
+
+    @staticmethod
+    def _default_url_validator(url: str) -> str:
+        """Apply the SSRF guard, translating violations into node errors."""
+        try:
+            return validate_external_action_url(
+                url, allow_http=settings.external_action_allow_http
+            )
+        except ExternalActionUrlError as exc:
+            raise ExternalActionError(
+                str(exc), code="EXTERNAL_ACTION_URL_FORBIDDEN"
+            ) from exc
 
     async def call(
         self,
@@ -74,6 +111,22 @@ class ExternalActionService:
         timeout_seconds: float,
         approval_satisfied: bool,
     ) -> dict[str, Any]:
+        """Compute the call.
+
+        Args:
+            run_id (str): Workflow run identifier.
+            node_id (str): Workflow node identifier.
+            safety_class (str): The safety class.
+            method (str): The method.
+            url (str): Target URL.
+            headers (dict[str, str]): HTTP headers.
+            body (Any): Request body.
+            timeout_seconds (float): Timeout in seconds.
+            approval_satisfied (bool): The approval satisfied.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         url = (url or "").strip()
         if not url:
             raise ExternalActionError(
@@ -81,6 +134,9 @@ class ExternalActionService:
                 "resolves it.",
                 code="EXTERNAL_ACTION_NO_URL",
             )
+        # SSRF guard: refuse internal/private/metadata targets before any
+        # reservation or request, for reads and writes alike.
+        url = self._url_validator(url)
 
         writing = safety_class in _WRITE_CLASSES
         if writing and not approval_satisfied:
@@ -190,6 +246,15 @@ class ExternalActionService:
         }
 
     def _replay_or_refuse(self, existing: dict[str, Any], key: str) -> dict[str, Any]:
+        """Internal helper for the replay or refuse step.
+
+        Args:
+            existing (dict[str, Any]): The existing.
+            key (str): Lookup key.
+
+        Returns:
+            dict[str, Any]: The or refuse.
+        """
         status = existing.get("status")
         if status == "completed":
             return {
@@ -210,6 +275,14 @@ class ExternalActionService:
 
 
 def _parse_body(response: httpx.Response) -> Any:
+    """Parse the body.
+
+    Args:
+        response (httpx.Response): Outgoing FastAPI response.
+
+    Returns:
+        Any: The body.
+    """
     content_type = response.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
@@ -225,6 +298,11 @@ _default_service: ExternalActionService | None = None
 
 
 def get_external_action_service() -> ExternalActionService:
+    """Return the external action service.
+
+    Returns:
+        ExternalActionService: The external action service.
+    """
     global _default_service
     if _default_service is None:
         _default_service = ExternalActionService()

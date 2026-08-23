@@ -1,0 +1,321 @@
+name: Reference EmailAgent 02
+description: A customer asks where their order is. The workflow checks the sales order,
+  the shipment, the fulfilment status, and inventory availability in parallel — genuinely
+  unconditional fan-out, since every one of these checks always applies to an order-status
+  question — joins them into one readable summary, and decides deterministically whether
+  this needs a person before replying.
+version: '1.0'
+use_case: customer_operations
+library:
+  title: W04 — Order Status and Delivery Exception Management
+  summary: Check order, shipment, fulfilment, and inventory in parallel, then decide
+    if a person needs to review before replying.
+  purpose:
+  - Demonstrate the SAFE parallel-fan-out-then-Join shape — every branch here always
+    runs, which is what makes the Join afterward safe
+  - Keep "does this need a person" a deterministic rule, on real fulfilment codes,
+    not a model's impression of the situation
+  suitable_for:
+  - Any order-status or delivery-exception inquiry from an existing customer
+  not_suitable_for:
+  - A first-contact inquiry with no order reference yet — see Workflow 01
+  outputs:
+  - A delivery status assessment and a customer reply, sent directly or after review
+  input_types:
+  - A free-text message naming an order
+  human_reviews:
+    count: 1
+    labels:
+    - Delivery Exception Review
+  visibility_status: draft
+entry: start
+exit:
+- end_direct
+- end_after_review
+nodes:
+- id: start
+  type: StartAgent
+  config:
+    mode: input_form
+    title: Order Status Enquiry
+    fields:
+    - name: message
+      label: Your Question
+      type: text
+      required: true
+    - name: customer_email
+      label: Email
+      type: string
+      required: true
+      format: email
+  experience:
+    display_name: Order Status Enquiry
+    purpose: Take in the customer's question in their own words.
+    contribution: One entry point, regardless of how the order reference is phrased.
+    expected_output: A message and an email address to reply to.
+    failure_message: The enquiry could not be read.
+- id: understand
+  type: SubprocessAgent
+  config:
+    workflow: sp01_multilingual_message_understanding
+    inputs:
+      message: '{{outputs.start.data.message}}'
+    result_from: workflow_output
+  experience:
+    display_name: Extract Order Reference
+    purpose: Read the order reference and urgency out of the customer's own words.
+    contribution: The order reference is read with an honest certainty status, never
+      guessed.
+    expected_output: An order reference (status-tagged) and urgency.
+    failure_message: The enquiry could not be understood.
+- id: get_order
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_sales_order
+    fail_on_error: false
+    arguments:
+      order_number: '{{outputs.understand.result.order_reference.value?}}'
+  experience:
+    display_name: Get Sales Order
+    purpose: Confirm the order exists and its current status.
+    contribution: A real order record, not a guess from the message alone.
+    expected_output: The order's status and fulfilment code.
+    failure_message: The order could not be looked up.
+- id: get_shipment
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_shipment
+    fail_on_error: false
+    arguments:
+      order_number: '{{outputs.understand.result.order_reference.value?}}'
+  experience:
+    display_name: Get Shipment Status
+    purpose: Check whether this order has actually shipped, and its tracking status.
+    contribution: An order can be "in production" and still have no shipment — checked,
+      not assumed.
+    expected_output: The shipment's status and delivery status, if one exists.
+    failure_message: The shipment could not be looked up.
+- id: get_fulfilment_status
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_order_fulfilment_status
+    fail_on_error: false
+    arguments:
+      order_number: '{{outputs.understand.result.order_reference.value?}}'
+  experience:
+    display_name: Get Fulfilment Reason
+    purpose: Find out WHY the order is where it is, not just where it is.
+    contribution: A material shortage and a quality hold read identically to a customer
+      — this tells them apart.
+    expected_output: The specific fulfilment reason code.
+    failure_message: The fulfilment status could not be looked up.
+- id: get_inventory
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_inventory_availability
+    fail_on_error: false
+    arguments:
+      pump_model: '{{outputs.get_order.first.pump_model?}}'
+  experience:
+    display_name: Check Inventory
+    purpose: See whether the ordered pump model itself is available at all.
+    contribution: Distinguishes "this specific order is delayed" from "this whole
+      model is unavailable."
+    expected_output: The pump model's availability status and lead time.
+    failure_message: Inventory could not be checked.
+- id: join_delivery_summary
+  type: TextAssemblerAgent
+  config:
+    separator: '
+
+      '
+    parts:
+    - 'Order {{outputs.get_order.first.order_number?}}: {{outputs.get_order.first.order_status?}}
+      (fulfilment: {{outputs.get_order.first.fulfilment_status?}})'
+    - 'Shipment: {{outputs.get_shipment.first.delivery_status?}}'
+    - 'Why: {{outputs.get_fulfilment_status.data.fulfilment.delivery_status?}}'
+    - 'Inventory for {{outputs.get_order.first.pump_model?}}: {{outputs.get_inventory.first.availability_status?}},
+      lead time {{outputs.get_inventory.first.lead_time_days?}} days'
+  experience:
+    display_name: Join Delivery Checks
+    purpose: Combine the four independent checks above into one readable summary.
+    contribution: Every branch above always ran, so this always has all four to combine
+      — nothing to wait on that might not arrive.
+    expected_output: One combined delivery summary.
+    failure_message: The delivery summary could not be assembled.
+- id: decide_delivery
+  type: DecisionAgent
+  config:
+    defaults:
+      delivery_status: ON_TIME
+      needs_review: false
+    rules:
+    - name: A known fulfilment problem is at risk
+      when:
+        operator: and
+        conditions:
+        - field: get_order.first.fulfilment_status
+          operator: in
+          value:
+          - MATERIAL_SHORTAGE
+          - QUALITY_HOLD
+          - PRODUCTION_DELAY
+      then:
+      - field: delivery_status
+        value: AT_RISK
+      - field: needs_review
+        value: true
+    - name: The pump model itself is unavailable
+      when:
+        operator: and
+        conditions:
+        - field: get_inventory.first.availability_status
+          operator: equals
+          value: NOT_AVAILABLE
+      then:
+      - field: delivery_status
+        value: AT_RISK
+      - field: needs_review
+        value: true
+  experience:
+    display_name: Assess Delivery
+    purpose: Decide, on real fulfilment codes, whether this order is genuinely at
+      risk.
+    contribution: The same assessment every time on the same codes — never a model's
+      impression.
+    expected_output: ON_TIME or AT_RISK, and whether a person should review before
+      replying.
+    failure_message: The delivery could not be assessed.
+- id: review_router
+  type: RouterAgent
+  config:
+    mode: conditions
+    cases:
+    - route: REVIEW
+      when:
+        operator: and
+        conditions:
+        - field: decide_delivery.decisions.needs_review
+          operator: is_true
+    fallback: DIRECT
+  experience:
+    display_name: Does This Need A Person First?
+    purpose: Only pause for a person when the order is genuinely at risk.
+    contribution: A routine on-time order gets an instant reply — nothing waits unnecessarily.
+    expected_output: REVIEW or DIRECT.
+    failure_message: This enquiry could not be routed.
+- id: exception_review
+  type: HumanInLoopAgent
+  config:
+    question: This order is at risk. Approve the reply below before it's sent?
+    review_purpose: A delivery problem reaching a customer should be worded by a person,
+      not sent automatically.
+    review_panels:
+    - label: Delivery Summary
+      field: join_delivery_summary.text
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Delivery Exception Review
+    purpose: Let a person approve the explanation before an at-risk customer hears
+      it.
+    contribution: Nothing about a delay reaches a customer without a person having
+      read it first.
+    expected_output: Approve or reject.
+    failure_message: The review could not be recorded.
+- id: notify_after_review
+  type: EmailAgent
+  config:
+    connection: default
+    operation: create_draft
+    to:
+    - email: '{{outputs.start.data.customer_email}}'
+    subject: Update on your order
+    body: '{{outputs.join_delivery_summary.text}}'
+  experience:
+    display_name: Draft Reply (After Review)
+    purpose: Prepare the reviewed delivery update for sending.
+    contribution: Only reached after a person has approved it.
+    expected_output: A drafted email.
+    failure_message: The reply could not be drafted.
+- id: end_after_review
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: delivery_status
+      value_from: '{{outputs.decide_delivery.decisions.delivery_status}}'
+    - key: draft_id
+      value_from: '{{outputs.notify_after_review.draft_id}}'
+  experience:
+    display_name: Reviewed Outcome
+    purpose: Return the reviewed delivery update outcome.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The delivery status and the drafted reply's id.
+    failure_message: The result could not be produced.
+- id: notify_direct
+  type: EmailAgent
+  config:
+    connection: default
+    operation: create_draft
+    to:
+    - email: '{{outputs.start.data.customer_email}}'
+    subject: Update on your order
+    body: '{{outputs.join_delivery_summary.text}}'
+  experience:
+    display_name: Draft Reply (Direct)
+    purpose: Prepare the on-time delivery update for sending.
+    contribution: No delay here — no need to wait for a review.
+    expected_output: A drafted email.
+    failure_message: The reply could not be drafted.
+- id: end_direct
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: delivery_status
+      value_from: '{{outputs.decide_delivery.decisions.delivery_status}}'
+    - key: draft_id
+      value_from: '{{outputs.notify_direct.draft_id}}'
+  experience:
+    display_name: Direct Outcome
+    purpose: Return the on-time delivery update outcome.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The delivery status and the drafted reply's id.
+    failure_message: The result could not be produced.
+edges:
+- from: start
+  to: understand
+- from: understand
+  to:
+  - get_order
+  - get_shipment
+  - get_fulfilment_status
+- from: get_order
+  to: get_inventory
+- from: get_shipment
+  to: join_delivery_summary
+- from: get_fulfilment_status
+  to: join_delivery_summary
+- from: get_inventory
+  to: join_delivery_summary
+- from: join_delivery_summary
+  to: decide_delivery
+- from: decide_delivery
+  to: review_router
+- from: review_router
+  condition: route
+  branches:
+    REVIEW: exception_review
+    DIRECT: notify_direct
+- from: exception_review
+  to: notify_after_review
+- from: notify_after_review
+  to: end_after_review
+- from: notify_direct
+  to: end_direct

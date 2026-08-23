@@ -36,6 +36,18 @@ class ReviewPanel(BaseModel):
 
 
 class HITLConfig(BaseModel):
+    """Pydantic model defining the HITLConfig shape.
+
+    Attributes:
+        question (str).
+        context_fields (list[str]).
+        review_panels (list[ReviewPanel]).
+        review_purpose (str).
+        editable_content_field (str | None).
+        allow_document_override (bool).
+        max_edit_chars (int).
+        allowed_actions (list[Literal['approve', 'reject', 'edit']]).
+    """
     question: str = Field(description="The question shown to the reviewer, templated with upstream values.")
     context_fields: list[str] = Field(
         default_factory=list,
@@ -83,6 +95,7 @@ class HITLConfig(BaseModel):
 
 
 class HITLInput(BaseModel):
+    """Pydantic model defining the HITLInput shape."""
     pass
 
 
@@ -98,6 +111,15 @@ class HITLReviewContent(BaseModel):
 
 
 class HITLOutput(BaseModel):
+    """Pydantic model defining the HITLOutput shape.
+
+    Attributes:
+        decision (Literal['approve', 'reject', 'edit']).
+        reason (str | None).
+        content (HITLReviewContent | None).
+        edited_content (HITLReviewContent | None).
+        content_overridden (bool).
+    """
     decision: Literal["approve", "reject", "edit"]
     reason: str | None = None                      # set on reject
     content: HITLReviewContent | None = None
@@ -133,6 +155,7 @@ class HITLInterruptPayload(BaseModel):
 
 @NodeRegistry.register
 class HumanInLoopAgent(NodeType):
+    """Workflow node type implementing the HumanInLoopAgent capability."""
     type_name = "HumanInLoopAgent"
     description = "Pause for human approval, rejection, or edit."
     input_schema = HITLInput
@@ -173,11 +196,28 @@ class HumanInLoopAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         if config.get("allow_document_override", True):
             return {"object_store"}
         return set()
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = HITLConfig(**resolved_config)
 
         # Collect requested context for the Cockpit display
@@ -287,6 +327,15 @@ class HumanInLoopAgent(NodeType):
 
 
 def _resolve_path(path: str, state: dict) -> Any:
+    """Resolve the path.
+
+    Args:
+        path (str): Filesystem path.
+        state (dict): Current workflow state.
+
+    Returns:
+        Any: The path.
+    """
     parts = path.split(".")
     node_outputs = state.get("node_outputs", {})
     cursor: Any = node_outputs if parts[0] in node_outputs else state
@@ -332,6 +381,16 @@ def _review_content(
     state: dict[str, Any],
     context: dict[str, Any],
 ) -> HITLReviewContent | None:
+    """Internal helper for the review content step.
+
+    Args:
+        cfg (HITLConfig): The cfg.
+        state (dict[str, Any]): Current workflow state.
+        context (dict[str, Any]): The context.
+
+    Returns:
+        HITLReviewContent | None: The content.
+    """
     candidates = (
         [cfg.editable_content_field]
         if cfg.editable_content_field
@@ -398,10 +457,26 @@ def _review_content(
 
 
 def _content_format(value: Any) -> Literal["text", "json"]:
+    """Internal helper for the content format step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        Literal['text', 'json']: The format.
+    """
     return "text" if isinstance(value, (str, bytes)) else "json"
 
 
 def _content_as_text(value: Any) -> str:
+    """Internal helper for the content as text step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        str: The as text.
+    """
     if isinstance(value, str):
         return value
     if isinstance(value, bytes):
@@ -458,6 +533,13 @@ def _patch_reviewed_content(
 
 
 def _set_nested(container: Any, parts: list[str], value: Any) -> None:
+    """Set the nested.
+
+    Args:
+        container (Any): The container.
+        parts (list[str]): Path segments.
+        value (Any): Value to process.
+    """
     cursor = container
     for part in parts[:-1]:
         if not isinstance(cursor, dict) or part not in cursor:
@@ -482,6 +564,7 @@ class _RichTextSanitizer(HTMLParser):
     void_tags = {"br", "hr"}
 
     def __init__(self) -> None:
+        """Initialize the _RichTextSanitizer."""
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
 
@@ -490,6 +573,12 @@ class _RichTextSanitizer(HTMLParser):
         tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
+        """Handle the starttag.
+
+        Args:
+            tag (str): The tag.
+            attrs (list[tuple[str, str | None]]): The attrs.
+        """
         del attrs
         if tag in self.allowed_tags:
             self.parts.append(f"<{tag}>")
@@ -499,19 +588,43 @@ class _RichTextSanitizer(HTMLParser):
         tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
+        """Handle the startendtag.
+
+        Args:
+            tag (str): The tag.
+            attrs (list[tuple[str, str | None]]): The attrs.
+        """
         del attrs
         if tag in self.void_tags:
             self.parts.append(f"<{tag}>")
 
     def handle_endtag(self, tag: str) -> None:
+        """Handle the endtag.
+
+        Args:
+            tag (str): The tag.
+        """
         if tag in self.allowed_tags and tag not in self.void_tags:
             self.parts.append(f"</{tag}>")
 
     def handle_data(self, data: str) -> None:
+        """Handle the data.
+
+        Args:
+            data (str): Data mapping.
+        """
         self.parts.append(escape(data))
 
 
 def sanitize_rich_html(value: str | None) -> str | None:
+    """Sanitize the rich html.
+
+    Args:
+        value (str | None): Value to process.
+
+    Returns:
+        str | None: The rich html.
+    """
     if not value:
         return None
     parser = _RichTextSanitizer()

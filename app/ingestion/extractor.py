@@ -79,6 +79,14 @@ class PdfExtractor:
     """Extract text from a PDF, one ExtractedUnit per page."""
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         units: list[ExtractedUnit] = []
         metadata: dict[str, str] = {}
 
@@ -138,6 +146,14 @@ class XlsxExtractor:
     """Extract data from an Excel workbook, one ExtractedUnit per worksheet."""
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         wb = openpyxl.load_workbook(filename=path, read_only=True, data_only=True)
         units: list[ExtractedUnit] = []
 
@@ -172,6 +188,14 @@ class DocxExtractor:
     """
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         doc = DocxDocument(str(path))
 
         parts: list[str] = []
@@ -230,6 +254,14 @@ class PptxExtractor:
     """
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         prs = Presentation(str(path))
         units: list[ExtractedUnit] = []
 
@@ -280,6 +312,14 @@ class PlainTextExtractor:
     """
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         text = path.read_text(encoding="utf-8", errors="replace")
 
         ext = path.suffix.lower()
@@ -315,6 +355,14 @@ class MarkdownExtractor:
     _md = MarkdownIt()
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         raw = path.read_text(encoding="utf-8", errors="replace")
         tokens = self._md.parse(raw)
 
@@ -354,10 +402,24 @@ class DelimitedTextExtractor:
     ROWS_PER_UNIT = 50
 
     def __init__(self, delimiter: str | None = None, source_format: str = "csv"):
+        """Initialize the DelimitedTextExtractor.
+
+        Args:
+            delimiter (str | None): The delimiter (optional, default None).
+            source_format (str): Source format (optional, default 'csv').
+        """
         self._delimiter = delimiter
         self._source_format = source_format
 
     def extract(self, path: Path) -> ExtractedDocument:
+        """Extract the result.
+
+        Args:
+            path (Path): Filesystem path.
+
+        Returns:
+            ExtractedDocument: The result.
+        """
         raw = path.read_text(encoding="utf-8", errors="replace")
         sample = raw[:8192]
         delimiter = self._delimiter
@@ -425,6 +487,14 @@ class DelimitedTextExtractor:
 
 
 def _is_number(value: str) -> bool:
+    """Return whether number.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        bool: True when number.
+    """
     try:
         float(value.replace(",", ""))
     except ValueError:

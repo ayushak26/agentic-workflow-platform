@@ -11,6 +11,7 @@ from app.retrieval.weaviate_client import COLLECTION_NAME
 
 
 def main():
+    """Compute the main."""
     client = weaviate.connect_to_local(host="localhost", port=8080)
     try:
         coll = client.collections.get(COLLECTION_NAME)

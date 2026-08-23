@@ -25,6 +25,11 @@ _MIN_SAMPLE_FOR_ESTIMATES = 5
 
 
 async def ensure_indexes(db: Any) -> None:
+    """Ensure the indexes.
+
+    Args:
+        db (Any): Mongo database handle.
+    """
     if db is None:
         return
     await db["preflight_stats"].create_index([("created_at", -1)])
@@ -43,6 +48,19 @@ async def record_attempt(
     llm_attempts: int = 0,
     total_attempts: int = 1,
 ) -> None:
+    """Record the attempt.
+
+    Args:
+        db (Any): Mongo database handle.
+        source (AttemptSource): Source value.
+        workflow_name (str | None): Workflow name.
+        success (bool): The success.
+        error_codes (list[str]): The error codes.
+        initial_error_codes (list[str] | None): The initial error codes (optional, default None).
+        deterministic_fixes_applied (int): The deterministic fixes applied (optional, default 0).
+        llm_attempts (int): The llm attempts (optional, default 0).
+        total_attempts (int): The total attempts (optional, default 1).
+    """
     if db is None:
         return
     try:
@@ -66,6 +84,16 @@ async def record_attempt(
 async def preflight_stats(
     db: Any, *, since: datetime | None = None, sample_limit: int = 2000,
 ) -> dict[str, Any]:
+    """Compute the preflight stats.
+
+    Args:
+        db (Any): Mongo database handle.
+        since (datetime | None): The since (optional, default None).
+        sample_limit (int): The sample limit (optional, default 2000).
+
+    Returns:
+        dict[str, Any]: The stats.
+    """
     if db is None:
         return {"available": False, "reason": "audit database unavailable"}
 

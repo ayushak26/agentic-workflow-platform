@@ -1,0 +1,171 @@
+# REFERENCE EXEMPLAR — chat workflow with a human approval gate.
+# The canonical Business Chat capability shape: a chatbot Start collects the
+# question, KnowledgeRetrieval grounds it, a TransformAgent drafts an answer,
+# a HumanInLoopAgent durably pauses the run for approve/edit/reject, and the
+# router sends the approved (possibly edited) draft or the rejection to their
+# own chat responses. The edit patches the draft's state path, so the send
+# branch reads the reviewed value without any extra wiring.
+name: Reference — Reviewed Knowledge Answer
+description: >-
+  Chat question, grounded draft, human review gate, and branched chat
+  replies: the approved or edited answer is sent; a rejection asks for new
+  instructions.
+version: '1.0'
+use_case: reference_exemplar
+library:
+  title: Reference — Reviewed Knowledge Answer
+  summary: Grounded draft with human approval before the chat reply.
+  visibility_status: draft
+entry: start
+exit:
+  - end_send
+  - end_rejected
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+      chatbot_name: Policy Assistant
+      welcome_message: >-
+        Ask about our policies — I'll draft an answer from the knowledge
+        base and have a colleague review it before replying.
+      allow_attachments: false
+      suggested_questions:
+        - Prepare an answer explaining our cancellation policy.
+        - What is the warranty period for enterprise contracts?
+    experience:
+      display_name: Chat Input
+      purpose: Collect the customer's question.
+      contribution: The conversational entry point.
+      expected_output: The question text.
+      failure_message: The question could not be collected.
+
+  - id: search_knowledge
+    type: KnowledgeRetrieval
+    config:
+      collection_id: internal-knowledge-base
+      retrieval_profile_id: default
+      query: "{{outputs.start.message}}"
+    experience:
+      display_name: Search Knowledge
+      purpose: Find the policy passages relevant to the question.
+      contribution: Grounds the draft in approved sources.
+      expected_output: Retrieved chunks with citations.
+      failure_message: The knowledge base could not be searched.
+
+  - id: draft
+    type: TransformAgent
+    config:
+      mode: ai
+      model: auto
+      input_fields:
+        - name: question
+          type: string
+          value: "{{outputs.start.message}}"
+        - name: knowledge
+          type: string
+          value: "{{search_knowledge.context}}"
+      instructions: >-
+        Draft a reply to the customer's question using ONLY the supplied
+        knowledge. Cite the source document for each claim. If the
+        knowledge does not contain the answer, draft a reply that says so
+        plainly.
+      output_fields:
+        - name: draft
+          type: text
+          description: The drafted customer reply.
+          required: true
+    experience:
+      display_name: Draft Answer
+      purpose: Compose the reply a human will review.
+      contribution: The proposed content for the approval gate.
+      expected_output: A drafted reply.
+      failure_message: The draft could not be generated.
+
+  - id: review
+    type: HumanInLoopAgent
+    config:
+      question: Approve the drafted answer before it is sent to the customer?
+      review_purpose: >-
+        Customer-facing policy answers must be checked by a person before
+        they leave the building.
+      context_fields:
+        - draft.parsed.draft
+        - search_knowledge.context_count
+      editable_content_field: draft.parsed.draft
+      allow_document_override: false
+      allowed_actions: [approve, edit, reject]
+      review_panels:
+        - label: Drafted answer
+          field: draft.parsed.draft
+          hint: The reply the customer will receive. Edit it if needed.
+          editable: true
+        - label: Knowledge match
+          field: search_knowledge.context_count
+          hint: How many knowledge passages supported this draft.
+    experience:
+      display_name: Human Review
+      purpose: A person approves, edits, or rejects the drafted answer.
+      contribution: The accountability gate before anything is sent.
+      expected_output: An approve, edit, or reject decision.
+      failure_message: The review could not be completed.
+
+  - id: route_by_decision
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: review.decision
+      branches:
+        approve: end_send
+        edit: end_send
+        reject: end_rejected
+      fallback: end_rejected
+    experience:
+      display_name: Route Decision
+      purpose: Send the reviewed draft, or report the rejection.
+      contribution: Deterministic branch selection on the review outcome.
+      expected_output: One branch taken.
+      failure_message: The decision could not be routed.
+
+  - id: end_send
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: "{{draft.parsed.draft}}"
+      sources: "{{search_knowledge.citations}}"
+      outcome: reply
+    experience:
+      display_name: Send Reviewed Answer
+      purpose: Reply in the chat with the approved or edited answer.
+      contribution: The customer receives a human-reviewed answer with sources.
+      expected_output: A chat reply.
+      failure_message: The reply could not be sent.
+
+  - id: end_rejected
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: >-
+        The drafted answer was rejected in review, so nothing was sent.
+        Tell me what to change or add, and I'll prepare a new draft.
+      outcome: reply
+    experience:
+      display_name: Report Rejection
+      purpose: Tell the customer the draft did not pass review.
+      contribution: An honest reply instead of unreviewed content.
+      expected_output: A chat reply.
+      failure_message: The reply could not be sent.
+edges:
+  - from: start
+    to: search_knowledge
+  - from: search_knowledge
+    to: draft
+  - from: draft
+    to: review
+  - from: review
+    to: route_by_decision
+  - from: route_by_decision
+    condition: route
+    branches:
+      end_send: end_send
+      end_rejected: end_rejected

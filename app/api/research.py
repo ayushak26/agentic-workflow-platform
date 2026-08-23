@@ -11,6 +11,12 @@ async def list_scientific_skills(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """List the scientific skills.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     del user
     catalog = request.app.state.services.get(
         "scientific_skill_catalog"

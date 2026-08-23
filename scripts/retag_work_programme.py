@@ -1,4 +1,8 @@
 # scripts/retag_work_programme.py
+"""Retag work programme module.
+
+Part of the operational and development scripts.
+"""
 import weaviate
 client = weaviate.connect_to_local()   # match your app's client config
 coll = client.collections.get("DocumentChunk")   # <-- confirm collection name

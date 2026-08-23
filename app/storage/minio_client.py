@@ -86,6 +86,14 @@ class ObjectStore:
         secret_key: str | None = None,
         bucket: str | None = None,
     ):
+        """Initialize the ObjectStore.
+
+        Args:
+            endpoint_url (str | None): The endpoint url (optional, default None).
+            access_key (str | None): The access key (optional, default None).
+            secret_key (str | None): The secret key (optional, default None).
+            bucket (str | None): Object-store bucket name (optional, default None).
+        """
         self.bucket = bucket or settings.minio_bucket
         self.client = boto3.client(
             "s3",

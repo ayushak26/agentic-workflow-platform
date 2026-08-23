@@ -23,11 +23,21 @@ _REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,128}$")
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
+    """Provides the RequestContextMiddleware behaviour."""
     async def dispatch(
         self,
         request: Request,
         call_next: Callable,
     ) -> Response:
+        """Dispatch the result.
+
+        Args:
+            request (Request): Incoming FastAPI request.
+            call_next (Callable): The call next.
+
+        Returns:
+            Response: The result.
+        """
         supplied = request.headers.get("x-request-id", "")
         request_id = supplied if _REQUEST_ID.fullmatch(supplied) else str(uuid.uuid4())
         started = time.perf_counter()
@@ -75,11 +85,21 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    """Provides the RequestSizeLimitMiddleware behaviour."""
     async def dispatch(
         self,
         request: Request,
         call_next: Callable,
     ) -> Response:
+        """Dispatch the result.
+
+        Args:
+            request (Request): Incoming FastAPI request.
+            call_next (Callable): The call next.
+
+        Returns:
+            Response: The result.
+        """
         content_length = request.headers.get("content-length")
         if content_length:
             try:
@@ -103,6 +123,7 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 class RedisRateLimitMiddleware(BaseHTTPMiddleware):
+    """Provides the RedisRateLimitMiddleware behaviour."""
     _EXEMPT = frozenset({"/health", "/ready", "/metrics"})
 
     async def dispatch(
@@ -110,6 +131,15 @@ class RedisRateLimitMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: Callable,
     ) -> Response:
+        """Dispatch the result.
+
+        Args:
+            request (Request): Incoming FastAPI request.
+            call_next (Callable): The call next.
+
+        Returns:
+            Response: The result.
+        """
         if (
             not settings.rate_limit_enabled
             or request.method == "OPTIONS"
@@ -177,6 +207,14 @@ class RedisRateLimitMiddleware(BaseHTTPMiddleware):
 
 
 def _rate_limit_subject(request: Request) -> str:
+    """Internal helper for the rate limit subject step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        str: The limit subject.
+    """
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
         try:
@@ -189,5 +227,13 @@ def _rate_limit_subject(request: Request) -> str:
 
 
 def _route_label(request: Request) -> str:
+    """Internal helper for the route label step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        str: The label.
+    """
     route = request.scope.get("route")
     return getattr(route, "path", None) or request.url.path

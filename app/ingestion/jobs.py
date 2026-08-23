@@ -29,6 +29,7 @@ log = get_logger(__name__)
 
 
 class IngestionCancelled(Exception):
+    """Exception raised for the IngestionCancelled case."""
     pass
 
 
@@ -49,6 +50,15 @@ class IngestionJobRunner:
         search_index: SearchIndex,
         stages: StageRegistry | None = None,
     ) -> None:
+        """Initialize the IngestionJobRunner.
+
+        Args:
+            repository (KnowledgeRepository): The repository.
+            object_store (ObjectStore): The object store.
+            embedder (EmbeddingProvider): The embedder.
+            search_index (SearchIndex): The search index.
+            stages (StageRegistry | None): The stages (optional, default None).
+        """
         self.repository = repository
         self.object_store = object_store
         self.embedder = embedder
@@ -89,6 +99,11 @@ class IngestionJobRunner:
         return cached
 
     async def _raise_if_cancelled(self, job: IngestionJob) -> None:
+        """Raise the if cancelled.
+
+        Args:
+            job (IngestionJob): The job.
+        """
         latest = await self.repository.get_ingestion_job(
             job.owner_scope_id, job.ingestion_job_id
         )
@@ -104,6 +119,16 @@ class IngestionJobRunner:
         *,
         metadata: dict[str, Any] | None = None,
     ) -> IngestionJob:
+        """Run the result.
+
+        Args:
+            job (IngestionJob): The job.
+            paths (list[Path]): The paths.
+            metadata (dict[str, Any] | None): Metadata mapping (optional, default None).
+
+        Returns:
+            IngestionJob: The result.
+        """
         metadata = metadata or {}
         job.documents_total = len(paths)
         # Recovered jobs resume from authoritative per-index mappings instead

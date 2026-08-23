@@ -29,6 +29,14 @@ _COMPOSE_ONLY = (
 
 
 def parse_env(path: Path) -> dict[str, str]:
+    """Parse the env.
+
+    Args:
+        path (Path): Filesystem path.
+
+    Returns:
+        dict[str, str]: The env.
+    """
     values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -42,6 +50,7 @@ def parse_env(path: Path) -> dict[str, str]:
 
 
 def main() -> None:
+    """Compute the main."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--env-file",

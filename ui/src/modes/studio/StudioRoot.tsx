@@ -1,10 +1,10 @@
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { StudioLayout } from './StudioLayout';
-import { MyWork } from './MyWork';
 import { Library } from './Library';
 import { Builder } from './Builder';
 import { Cockpit } from './Cockpit';
 import { BusinessView } from './BusinessView';
+import { BusinessChat } from './business-chat/BusinessChat';
 import { RunHistory } from './RunHistory';
 import { RunCandidates } from './RunCandidates';
 import { ProposalReview } from './ProposalReview';
@@ -21,12 +21,14 @@ export function StudioRoot() {
   return (
     <Routes>
       <Route element={<StudioLayout />}>
-        <Route index element={<Navigate to="my-work" replace />} />
-        <Route path="my-work" element={<MyWork />} />
+        <Route index element={<Navigate to="business-chat" replace />} />
+        <Route path="my-work" element={<Navigate to="/business-chat" replace />} />
         <Route path="library" element={<Library />} />
         <Route path="builder/:name" element={<Builder />} />
         <Route path="builder" element={<Builder />} />
         <Route path="business/:runId" element={<BusinessView />} />
+        <Route path="business-chat" element={<BusinessChat />} />
+        <Route path="business-chat/:workflowName" element={<BusinessChat />} />
         <Route path="guided/:runId" element={<GuidedRunRedirect />} />
         <Route path="cockpit/:runId" element={<Cockpit />} />
         <Route path="history" element={<RunHistory />} />

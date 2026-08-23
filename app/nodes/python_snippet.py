@@ -34,6 +34,17 @@ log = get_logger(__name__)
 
 
 class PythonSnippetConfig(BaseModel):
+    """Pydantic model defining the PythonSnippetConfig shape.
+
+    Attributes:
+        code (str).
+        input_fields (dict[str, Any]).
+        output_fields (list[FieldSpec]).
+        timeout_seconds (float).
+        memory_mb (int).
+        max_output_bytes (int).
+        fail_on_error (bool).
+    """
     model_config = ConfigDict(extra="forbid")
 
     code: str = Field(
@@ -62,10 +73,21 @@ class PythonSnippetConfig(BaseModel):
 
 
 class PythonSnippetInput(BaseModel):
+    """Pydantic model defining the PythonSnippetInput shape."""
     pass
 
 
 class PythonSnippetOutput(BaseModel):
+    """Pydantic model defining the PythonSnippetOutput shape.
+
+    Attributes:
+        status (str).
+        result (dict[str, Any]).
+        stdout (str).
+        stderr (str).
+        error (str | None).
+        duration_s (float).
+    """
     status: str = "ok"  # ok | error | timeout | limit_exceeded | output_too_large
     result: dict[str, Any] = Field(default_factory=dict)
     stdout: str = ""
@@ -76,6 +98,13 @@ class PythonSnippetOutput(BaseModel):
 
 @NodeRegistry.register
 class PythonSnippetAgent(NodeType):
+    """Workflow node type implementing the PythonSnippetAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "PythonSnippetAgent"
     description = (
         "Run a short Python snippet as a workflow step, in an isolated "
@@ -110,6 +139,14 @@ class PythonSnippetAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"python_runner"}
 
     @classmethod
@@ -118,11 +155,28 @@ class PythonSnippetAgent(NodeType):
         # any provable field — a bare {{...result...}} reference (not a
         # sub-path) resolves to {} exactly like TransformAgent's own
         # no-schema case.
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if not (config.get("output_fields") or []):
             return {"result": {}}
         return {}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = PythonSnippetConfig(**resolved_config)
         runner = self.services.get("python_runner")
         if runner is None:
@@ -177,6 +231,19 @@ class PythonSnippetAgent(NodeType):
         self, cfg: PythonSnippetConfig, code: str, message: str,
         *, stdout: str = "", stderr: str = "", duration_s: float = 0.0,
     ) -> dict[str, Any]:
+        """Internal helper for the failure step.
+
+        Args:
+            cfg (PythonSnippetConfig): The cfg.
+            code (str): The code.
+            message (str): Message text.
+            stdout (str): The stdout (optional, default '').
+            stderr (str): The stderr (optional, default '').
+            duration_s (float): The duration s (optional, default 0.0).
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         log.warning("python_snippet.failed", node_id=self.node_id, code=code)
         if cfg.fail_on_error:
             raise RuntimeError(

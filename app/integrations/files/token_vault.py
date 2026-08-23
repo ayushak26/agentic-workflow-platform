@@ -66,6 +66,15 @@ def _load_kek() -> bytes:
 
 
 def _seal(payload: dict[str, Any], *, connection_id: str) -> dict[str, bytes]:
+    """Internal helper for the seal step.
+
+    Args:
+        payload (dict[str, Any]): Event or audit payload.
+        connection_id (str): The connection id.
+
+    Returns:
+        dict[str, bytes]: The result.
+    """
     import json
 
     dek = os.urandom(32)
@@ -84,6 +93,15 @@ def _seal(payload: dict[str, Any], *, connection_id: str) -> dict[str, bytes]:
 
 
 def _unseal(doc: dict[str, Any], *, connection_id: str) -> dict[str, Any]:
+    """Internal helper for the unseal step.
+
+    Args:
+        doc (dict[str, Any]): Document.
+        connection_id (str): The connection id.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     import json
 
     dek = AESGCM(_load_kek()).decrypt(
@@ -98,10 +116,16 @@ class TokenVault:
     """Mongo-backed envelope-encrypted store for one connection's OAuth tokens."""
 
     def __init__(self, db: Any) -> None:
+        """Initialize the TokenVault.
+
+        Args:
+            db (Any): Mongo database handle.
+        """
         self._db = db
 
     @property
     def _tokens(self):
+        """The tokens."""
         return self._db[TOKENS_COLLECTION]
 
     async def store(
@@ -112,6 +136,14 @@ class TokenVault:
         refresh_token: str | None,
         expires_in_seconds: int,
     ) -> None:
+        """Compute the store.
+
+        Args:
+            connection_id (str): The connection id.
+            access_token (str): The access token.
+            refresh_token (str | None): The refresh token.
+            expires_in_seconds (int): The expires in seconds.
+        """
         expires_at = datetime.now(UTC) + timedelta(seconds=expires_in_seconds)
         sealed = _seal(
             {
@@ -144,6 +176,11 @@ class TokenVault:
         return payload
 
     async def forget(self, connection_id: str) -> None:
+        """Compute the forget.
+
+        Args:
+            connection_id (str): The connection id.
+        """
         try:
             await self._tokens.delete_one({"_id": connection_id})
         except Exception as exc:

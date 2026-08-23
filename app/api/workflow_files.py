@@ -38,6 +38,14 @@ router = APIRouter(
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return getattr(user, "session_id", None) or user.username
 
 
@@ -126,6 +134,12 @@ async def upload_workflow_input_files(
 
 
 class ExtractWorkflowFileRequest(BaseModel):
+    """Pydantic model defining the ExtractWorkflowFileRequest shape.
+
+    Attributes:
+        file (WorkflowFileRef).
+        max_chars (int).
+    """
     file: WorkflowFileRef
     max_chars: int = Field(default=1_000_000, ge=1_000, le=2_000_000)
 

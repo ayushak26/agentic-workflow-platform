@@ -61,6 +61,7 @@ DATASHEETS = [
 
 
 async def main() -> None:
+    """Compute the main."""
     knowledge_client = AsyncIOMotorClient(settings.mongo_uri)
     db = knowledge_client[settings.mongo_db]
     knowledge = KnowledgeService(KnowledgeRepository(db))

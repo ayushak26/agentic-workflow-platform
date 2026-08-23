@@ -74,16 +74,38 @@ _PROVIDER_BY_GATEWAY: dict[str, tuple[str, Backend]] = {
 
 
 def provider_and_backend_for_gateway(gateway_class_name: str) -> tuple[str, Backend]:
+    """Compute the provider and backend for gateway.
+
+    Args:
+        gateway_class_name (str): The gateway class name.
+
+    Returns:
+        tuple[str, Backend]: The and backend for gateway.
+    """
     return _PROVIDER_BY_GATEWAY.get(gateway_class_name, ("unknown", "unknown"))
 
 
 @dataclass(frozen=True)
 class ProviderComplianceMetadata:
+    """Provides the ProviderComplianceMetadata behaviour.
+
+    Attributes:
+        zdr (bool | None).
+        data_collection (bool | None).
+    """
     zdr: bool | None
     data_collection: bool | None
 
 
 def _parse_csv_env(name: str) -> frozenset[str]:
+    """Parse the csv env.
+
+    Args:
+        name (str): Workflow or resource name.
+
+    Returns:
+        frozenset[str]: The csv env.
+    """
     raw = os.environ.get(name, "")
     return frozenset(entry.strip().lower() for entry in raw.split(",") if entry.strip())
 
@@ -107,6 +129,14 @@ def get_provider_compliance_metadata(provider: str | None) -> ProviderCompliance
 
 @dataclass(frozen=True)
 class PolicyDecision:
+    """Provides the PolicyDecision behaviour.
+
+    Attributes:
+        allow (bool).
+        reason_codes (tuple[str, ...]).
+        constraints (dict[str, bool]).
+        policy_version (str | None).
+    """
     allow: bool
     reason_codes: tuple[str, ...] = field(default_factory=tuple)
     constraints: dict[str, bool] = field(default_factory=dict)
@@ -128,12 +158,28 @@ class OpaClient:
         timeout_seconds: float = 2.0,
         client: httpx.AsyncClient | None = None,
     ) -> None:
+        """Initialize the OpaClient.
+
+        Args:
+            opa_url (str | None): The opa url (optional, default None).
+            policy_path (str | None): The policy path (optional, default None).
+            timeout_seconds (float): Timeout in seconds (optional, default 2.0).
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+        """
         self._opa_url = (opa_url or os.environ.get("OPA_URL") or "http://localhost:8181").rstrip("/")
         self._policy_path = policy_path or os.environ.get("OPA_POLICY_PATH") or "eurskem/routing/decision"
         self._timeout = timeout_seconds
         self._client = client
 
     async def evaluate(self, policy_input: dict) -> PolicyDecision:
+        """Compute the evaluate.
+
+        Args:
+            policy_input (dict): The policy input.
+
+        Returns:
+            PolicyDecision: The result.
+        """
         url = f"{self._opa_url}/v1/data/{self._policy_path}"
         owns_client = self._client is None
         client = self._client or httpx.AsyncClient(timeout=self._timeout)
@@ -169,6 +215,11 @@ _default_client: OpaClient | None = None
 
 
 def get_default_opa_client() -> OpaClient:
+    """Return the default opa client.
+
+    Returns:
+        OpaClient: The default opa client.
+    """
     global _default_client
     if _default_client is None:
         _default_client = OpaClient()

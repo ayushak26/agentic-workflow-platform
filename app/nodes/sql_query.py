@@ -34,6 +34,16 @@ log = get_logger(__name__)
 
 
 class SQLQueryConfig(BaseModel):
+    """Pydantic model defining the SQLQueryConfig shape.
+
+    Attributes:
+        server_id (str).
+        sql (str).
+        params (dict[str, Any]).
+        max_rows (int).
+        timeout_seconds (float).
+        fail_on_error (bool).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: Fixed to the one SQL-capable connection in this deployment today —
@@ -66,10 +76,23 @@ class SQLQueryConfig(BaseModel):
 
 
 class SQLQueryInput(BaseModel):
+    """Pydantic model defining the SQLQueryInput shape."""
     pass
 
 
 class SQLQueryOutput(BaseModel):
+    """Pydantic model defining the SQLQueryOutput shape.
+
+    Attributes:
+        status (str).
+        rows (list[dict[str, Any]]).
+        count (int).
+        found (bool).
+        first (dict[str, Any]).
+        truncated (bool).
+        error (str | None).
+        error_code (str | None).
+    """
     status: str = "ok"  # ok | error
     rows: list[dict[str, Any]] = Field(default_factory=list)
     count: int = 0
@@ -83,6 +106,13 @@ class SQLQueryOutput(BaseModel):
 
 @NodeRegistry.register
 class SQLQueryAgent(NodeType):
+    """Workflow node type implementing the SQLQueryAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "SQLQueryAgent"
     description = (
         "Run a read-only SQL query against the business-records database, "
@@ -115,6 +145,14 @@ class SQLQueryAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"mcp"}
 
     @classmethod
@@ -122,9 +160,26 @@ class SQLQueryAgent(NodeType):
         # `rows`/`first` hold whatever columns the author's own SELECT list
         # names — never knowable statically (unlike a classified tool's
         # fixed output_schema), so only the fixed envelope is authorised.
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         return set(SQLQueryOutput.model_fields)
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = SQLQueryConfig(**resolved_config)
         service = self.services.get("mcp")
         if service is None:
@@ -174,6 +229,15 @@ class SQLQueryAgent(NodeType):
         }
 
     def _failure(self, cfg: SQLQueryConfig, error: MCPToolError) -> dict[str, Any]:
+        """Internal helper for the failure step.
+
+        Args:
+            cfg (SQLQueryConfig): The cfg.
+            error (MCPToolError): Error value or message.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         code = getattr(error, "code", None) or type(error).__name__
         log.warning("sql_query.failed", node_id=self.node_id, code=code)
 

@@ -27,10 +27,22 @@ from app.proposal_graph.state import proposal_graph_from_state
 
 
 class PaperQAEvidenceSynthesizerInput(BaseModel):
+    """Pydantic model defining the PaperQAEvidenceSynthesizerInput shape."""
     pass
 
 
 class PaperQAEvidenceSynthesizerConfig(BaseModel):
+    """Pydantic model defining the PaperQAEvidenceSynthesizerConfig shape.
+
+    Attributes:
+        documents (str | list[FullTextDocument]).
+        llm_model (str).
+        summary_llm_model (str).
+        embedding_model (str).
+        evidence_k (int).
+        max_claims (int).
+        max_documents_per_claim (int).
+    """
     documents: str | list[FullTextDocument]
     llm_model: str = "gpt-5.6-luna"
     summary_llm_model: str = "gpt-5.6-luna"
@@ -42,10 +54,26 @@ class PaperQAEvidenceSynthesizerConfig(BaseModel):
     @field_validator("documents", mode="before")
     @classmethod
     def _coerce_documents(cls, value: Any) -> Any:
+        """Internal helper for the coerce documents step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The documents.
+        """
         return coerce_typed_list_field(value, FullTextDocument, "documents")
 
 
 class DocumentCoverage(BaseModel):
+    """Pydantic model defining the DocumentCoverage shape.
+
+    Attributes:
+        document_id (str).
+        citation (str).
+        used (bool).
+        best_score (int).
+    """
     document_id: str
     citation: str
     used: bool
@@ -53,6 +81,18 @@ class DocumentCoverage(BaseModel):
 
 
 class ClaimSynthesis(BaseModel):
+    """Pydantic model defining the ClaimSynthesis shape.
+
+    Attributes:
+        claim_id (str).
+        question (str).
+        answer (str).
+        formatted_answer (str).
+        documents_total (int).
+        documents_used (int).
+        document_coverage (list[DocumentCoverage]).
+        cost_usd (float).
+    """
     claim_id: str
     question: str
     answer: str = ""
@@ -65,6 +105,16 @@ class ClaimSynthesis(BaseModel):
 
 
 class PaperQAEvidenceSynthesizerOutput(BaseModel):
+    """Pydantic model defining the PaperQAEvidenceSynthesizerOutput shape.
+
+    Attributes:
+        results (list[ClaimSynthesis]).
+        claims_processed (int).
+        claims_skipped_no_claim_text (int).
+        total_cost_usd (float).
+        verification_status (str).
+        note (str).
+    """
     results: list[ClaimSynthesis] = Field(default_factory=list)
     claims_processed: int = 0
     claims_skipped_no_claim_text: int = 0
@@ -79,6 +129,7 @@ class PaperQAEvidenceSynthesizerOutput(BaseModel):
 
 @NodeRegistry.register
 class PaperQAEvidenceSynthesizerAgent(NodeType):
+    """Workflow node type implementing the PaperQAEvidenceSynthesizerAgent capability."""
     type_name = "PaperQAEvidenceSynthesizerAgent"
     description = (
         "Run PaperQA2 over already-acquired full-text documents, per claim, "
@@ -91,6 +142,14 @@ class PaperQAEvidenceSynthesizerAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(
@@ -98,6 +157,15 @@ class PaperQAEvidenceSynthesizerAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = PaperQAEvidenceSynthesizerConfig(**resolved_config)
         if isinstance(cfg.documents, str):
             raise ValueError(
@@ -160,6 +228,19 @@ class PaperQAEvidenceSynthesizerAgent(NodeType):
         settings: Any,
         paperqa: Any,
     ) -> ClaimSynthesis:
+        """Internal helper for the synthesize claim step.
+
+        Args:
+            claim_id (str): The claim id.
+            question (str): Question text.
+            documents (list[FullTextDocument]): The documents.
+            store (Any): Store instance.
+            settings (Any): Application settings.
+            paperqa (Any): The paperqa.
+
+        Returns:
+            ClaimSynthesis: The claim.
+        """
         try:
             docs = paperqa.Docs()
             for document in documents:

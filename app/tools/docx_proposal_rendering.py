@@ -69,6 +69,18 @@ _BOOKMARK_SAFE = re.compile(r"[^A-Za-z0-9_]+")
 
 @dataclass(frozen=True)
 class ProposalDocxRenderResult:
+    """Provides the ProposalDocxRenderResult behaviour.
+
+    Attributes:
+        docx (bytes).
+        source_html (str).
+        estimated_page_count (int).
+        page_count_basis (str).
+        docx_sha256 (str).
+        source_html_sha256 (str).
+        table_of_contents (list[dict[str, Any]]).
+        warnings (list[str]).
+    """
     docx: bytes
     source_html: str
     estimated_page_count: int
@@ -83,6 +95,18 @@ class ProposalDocxRenderResult:
 
 @dataclass
 class _InlineStyle:
+    """Provides the InlineStyle behaviour.
+
+    Attributes:
+        bold (bool).
+        italic (bool).
+        underline (bool).
+        strike (bool).
+        code (bool).
+        superscript (bool).
+        subscript (bool).
+        input_needed (bool).
+    """
     bold: bool = False
     italic: bool = False
     underline: bool = False
@@ -96,6 +120,16 @@ class _InlineStyle:
 
 @dataclass
 class _TablePlacement:
+    """Provides the TablePlacement behaviour.
+
+    Attributes:
+        row (int).
+        column (int).
+        rowspan (int).
+        colspan (int).
+        tag (Tag).
+        header (bool).
+    """
     row: int
     column: int
     rowspan: int
@@ -106,6 +140,16 @@ class _TablePlacement:
 
 @dataclass
 class _BuildState:
+    """Provides the BuildState behaviour.
+
+    Attributes:
+        warnings (list[str]).
+        embedded_images (int).
+        image_placeholders (int).
+        body_h1_count (int).
+        bookmark_id (int).
+        footnote_bodies (dict[int, str]).
+    """
     warnings: list[str] = field(default_factory=list)
     embedded_images: int = 0
     image_placeholders: int = 0
@@ -126,6 +170,16 @@ def _set_run_font(
     bold: bool | None = None,
     italic: bool | None = None,
 ) -> None:
+    """Set the run font.
+
+    Args:
+        run: The run.
+        name (str): Workflow or resource name (optional, default 'Arial').
+        size (float | None): The size (optional, default None).
+        color (str | None): The color (optional, default None).
+        bold (bool | None): The bold (optional, default None).
+        italic (bool | None): The italic (optional, default None).
+    """
     run.font.name = name
     r_pr = run._element.get_or_add_rPr()
     r_fonts = r_pr.rFonts
@@ -145,6 +199,12 @@ def _set_run_font(
 
 
 def _set_shading(element, fill: str) -> None:
+    """Set the shading.
+
+    Args:
+        element: The element.
+        fill (str): The fill.
+    """
     properties = (
         element.get_or_add_pPr()
         if element.tag == qn("w:p")
@@ -161,6 +221,12 @@ def _set_shading(element, fill: str) -> None:
 
 
 def _set_run_shading(run, fill: str) -> None:
+    """Set the run shading.
+
+    Args:
+        run: The run.
+        fill (str): The fill.
+    """
     r_pr = run._r.get_or_add_rPr()
     existing = r_pr.find(qn("w:shd"))
     if existing is not None:
@@ -173,6 +239,13 @@ def _set_run_shading(run, fill: str) -> None:
 
 
 def _append_styled_text(paragraph, text: str, style: "_InlineStyle") -> None:
+    """Append the styled text.
+
+    Args:
+        paragraph: The paragraph.
+        text (str): The text.
+        style ('_InlineStyle'): The style.
+    """
     if not text:
         return
     run = paragraph.add_run(text)
@@ -206,6 +279,13 @@ def _set_paragraph_borders(
     left: tuple[str, int, int] | None = None,
     bottom: tuple[str, int, int] | None = None,
 ) -> None:
+    """Set the paragraph borders.
+
+    Args:
+        paragraph: The paragraph.
+        left (tuple[str, int, int] | None): The left (optional, default None).
+        bottom (tuple[str, int, int] | None): The bottom (optional, default None).
+    """
     p_pr = paragraph._p.get_or_add_pPr()
     borders = p_pr.find(qn("w:pBdr"))
     if borders is None:
@@ -226,10 +306,22 @@ def _set_paragraph_borders(
 
 
 def _set_cell_shading(cell, fill: str) -> None:
+    """Set the cell shading.
+
+    Args:
+        cell: The cell.
+        fill (str): The fill.
+    """
     _set_shading(cell._tc, fill)
 
 
 def _set_cell_margins(cell, margins: dict[str, int] | None = None) -> None:
+    """Set the cell margins.
+
+    Args:
+        cell: The cell.
+        margins (dict[str, int] | None): The margins (optional, default None).
+    """
     margins = margins or _CELL_MARGIN_DXA
     tc_pr = cell._tc.get_or_add_tcPr()
     tc_mar = tc_pr.find(qn("w:tcMar"))
@@ -246,6 +338,12 @@ def _set_cell_margins(cell, margins: dict[str, int] | None = None) -> None:
 
 
 def _set_cell_width(cell, width_dxa: int) -> None:
+    """Set the cell width.
+
+    Args:
+        cell: The cell.
+        width_dxa (int): The width dxa.
+    """
     tc_pr = cell._tc.get_or_add_tcPr()
     tc_w = tc_pr.find(qn("w:tcW"))
     if tc_w is None:
@@ -256,6 +354,11 @@ def _set_cell_width(cell, width_dxa: int) -> None:
 
 
 def _set_repeat_header(row) -> None:
+    """Set the repeat header.
+
+    Args:
+        row: Table row.
+    """
     tr_pr = row._tr.get_or_add_trPr()
     marker = tr_pr.find(qn("w:tblHeader"))
     if marker is None:
@@ -271,6 +374,14 @@ def _set_table_borders(
     color: str = _BORDER,
     size: int = 4,
 ) -> None:
+    """Set the table borders.
+
+    Args:
+        table: Table name.
+        style (str): The style (optional, default 'single').
+        color (str): The color (optional, default _BORDER).
+        size (int): The size (optional, default 4).
+    """
     tbl_pr = table._tbl.tblPr
     borders = tbl_pr.find(qn("w:tblBorders"))
     if borders is None:
@@ -342,6 +453,16 @@ def _column_widths(
     *,
     total_width: int = _TABLE_WIDTH_DXA,
 ) -> list[int]:
+    """Internal helper for the column widths step.
+
+    Args:
+        rows (list[list[str]]): Table rows.
+        column_count (int): The column count.
+        total_width (int): The total width (optional, default _TABLE_WIDTH_DXA).
+
+    Returns:
+        list[int]: The widths.
+    """
     if column_count <= 1:
         return [total_width]
     weights: list[int] = []
@@ -368,6 +489,11 @@ def _column_widths(
 
 
 def _set_update_fields(doc: DocxDocument) -> None:
+    """Set the update fields.
+
+    Args:
+        doc (DocxDocument): Document.
+    """
     settings = doc.settings._element
     marker = settings.find(qn("w:updateFields"))
     if marker is None:
@@ -377,6 +503,13 @@ def _set_update_fields(doc: DocxDocument) -> None:
 
 
 def _add_field(paragraph, instruction: str, fallback: str = "") -> None:
+    """Add the field.
+
+    Args:
+        paragraph: The paragraph.
+        instruction (str): The instruction.
+        fallback (str): The fallback (optional, default '').
+    """
     run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
@@ -393,6 +526,11 @@ def _add_field(paragraph, instruction: str, fallback: str = "") -> None:
 
 
 def _add_toc_field(paragraph) -> None:
+    """Add the toc field.
+
+    Args:
+        paragraph: The paragraph.
+    """
     _add_field(
         paragraph,
         'TOC \\o "1-3" \\h \\z \\u',
@@ -408,6 +546,15 @@ def _add_external_hyperlink(
     bold: bool = False,
     italic: bool = False,
 ) -> None:
+    """Add the external hyperlink.
+
+    Args:
+        paragraph: The paragraph.
+        text (str): The text.
+        url (str): Target URL.
+        bold (bool): The bold (optional, default False).
+        italic (bool): The italic (optional, default False).
+    """
     relation_id = paragraph.part.relate_to(
         url,
         RT.HYPERLINK,
@@ -435,6 +582,15 @@ def _add_external_hyperlink(
 
 
 def _bookmark_name(name: str, bookmark_id: int) -> str:
+    """Internal helper for the bookmark name step.
+
+    Args:
+        name (str): Workflow or resource name.
+        bookmark_id (int): The bookmark id.
+
+    Returns:
+        str: The name.
+    """
     safe_name = _BOOKMARK_SAFE.sub("_", name).strip("_")[:38]
     if not safe_name:
         safe_name = f"section_{bookmark_id}"
@@ -452,6 +608,16 @@ def _add_internal_hyperlink(
     bold: bool = False,
     size: float = 10,
 ) -> None:
+    """Add the internal hyperlink.
+
+    Args:
+        paragraph: The paragraph.
+        text (str): The text.
+        anchor (str): The anchor.
+        bookmark_id (int): The bookmark id.
+        bold (bool): The bold (optional, default False).
+        size (float): The size (optional, default 10).
+    """
     hyperlink = OxmlElement("w:hyperlink")
     hyperlink.set(qn("w:anchor"), _bookmark_name(anchor, bookmark_id))
     hyperlink.set(qn("w:history"), "1")
@@ -474,6 +640,13 @@ def _add_internal_hyperlink(
 
 
 def _add_bookmark(paragraph, name: str, bookmark_id: int) -> None:
+    """Add the bookmark.
+
+    Args:
+        paragraph: The paragraph.
+        name (str): Workflow or resource name.
+        bookmark_id (int): The bookmark id.
+    """
     safe_name = _bookmark_name(name, bookmark_id)
     start = OxmlElement("w:bookmarkStart")
     start.set(qn("w:id"), str(bookmark_id))
@@ -485,6 +658,12 @@ def _add_bookmark(paragraph, name: str, bookmark_id: int) -> None:
 
 
 def _add_footnote_reference(paragraph, footnote_id: int) -> None:
+    """Add the footnote reference.
+
+    Args:
+        paragraph: The paragraph.
+        footnote_id (int): The footnote id.
+    """
     run = paragraph.add_run()
     r_pr = OxmlElement("w:rPr")
     r_style = OxmlElement("w:rStyle")
@@ -497,6 +676,15 @@ def _add_footnote_reference(paragraph, footnote_id: int) -> None:
 
 
 def _footnote_body_text(number: int, citation: dict[str, Any]) -> str:
+    """Internal helper for the footnote body text step.
+
+    Args:
+        number (int): The number.
+        citation (dict[str, Any]): The citation.
+
+    Returns:
+        str: The body text.
+    """
     text = (
         citation.get("formatted_citation")
         or citation.get("title")
@@ -507,6 +695,14 @@ def _footnote_body_text(number: int, citation: dict[str, Any]) -> str:
 
 
 def _build_footnotes_part_xml(footnote_bodies: dict[int, str]) -> bytes:
+    """Build the footnotes part xml.
+
+    Args:
+        footnote_bodies (dict[int, str]): The footnote bodies.
+
+    Returns:
+        bytes: The footnotes part xml.
+    """
     footnotes = OxmlElement("w:footnotes")
 
     separator = OxmlElement("w:footnote")
@@ -570,6 +766,12 @@ def _attach_footnotes_part(
     doc: DocxDocument,
     footnote_bodies: dict[int, str],
 ) -> None:
+    """Internal helper for the attach footnotes part step.
+
+    Args:
+        doc (DocxDocument): Document.
+        footnote_bodies (dict[int, str]): The footnote bodies.
+    """
     if not footnote_bodies:
         return
     document_part = doc.part
@@ -619,12 +821,26 @@ def _toc_with_pdf_pages(
 
 
 def _set_alt_text(inline_shape, alt_text: str) -> None:
+    """Set the alt text.
+
+    Args:
+        inline_shape: The inline shape.
+        alt_text (str): The alt text.
+    """
     description = (alt_text or "Proposal figure").strip()[:1000]
     inline_shape._inline.docPr.set("descr", description)
     inline_shape._inline.docPr.set("title", description[:255])
 
 
 def _normalise_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the normalise metadata step.
+
+    Args:
+        metadata (dict[str, Any]): Metadata mapping.
+
+    Returns:
+        dict[str, Any]: The metadata.
+    """
     return {
         "proposal_title": "Untitled proposal",
         "acronym": "",
@@ -642,6 +858,7 @@ def _normalise_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
 
 
 class _HorizonDocxBuilder:
+    """Provides the HorizonDocxBuilder behaviour."""
     def __init__(
         self,
         *,
@@ -650,6 +867,14 @@ class _HorizonDocxBuilder:
         citation_registry: list[dict[str, Any]] | None = None,
         enable_footnotes: bool = False,
     ) -> None:
+        """Initialize the _HorizonDocxBuilder.
+
+        Args:
+            metadata (dict[str, Any]): Metadata mapping.
+            max_embedded_image_bytes (int): The max embedded image bytes.
+            citation_registry (list[dict[str, Any]] | None): The citation registry (optional, default None).
+            enable_footnotes (bool): The enable footnotes (optional, default False).
+        """
         self.metadata = _normalise_metadata(metadata)
         self.max_embedded_image_bytes = max_embedded_image_bytes
         self.state = _BuildState()
@@ -666,6 +891,7 @@ class _HorizonDocxBuilder:
         self._configure_document()
 
     def _configure_document(self) -> None:
+        """Configure the document."""
         section = self.doc.sections[0]
         section.page_width = Mm(210)
         section.page_height = Mm(297)
@@ -692,6 +918,7 @@ class _HorizonDocxBuilder:
         )
 
     def _configure_styles(self) -> None:
+        """Configure the styles."""
         styles = self.doc.styles
         normal = styles["Normal"]
         normal.font.name = "Arial"
@@ -766,6 +993,12 @@ class _HorizonDocxBuilder:
                 self._footnotes_enabled = False
 
     def _configure_footnote_styles(self, styles, normal) -> None:
+        """Configure the footnote styles.
+
+        Args:
+            styles: The styles.
+            normal: The normal.
+        """
         if "Footnote Text" not in styles:
             footnote_text = styles.add_style(
                 "Footnote Text",
@@ -792,6 +1025,11 @@ class _HorizonDocxBuilder:
         footnote_reference.font.superscript = True
 
     def _configure_header_footer(self, section) -> None:
+        """Configure the header footer.
+
+        Args:
+            section: The section.
+        """
         header = section.header
         header.is_linked_to_previous = False
         paragraph = header.paragraphs[0]
@@ -850,6 +1088,11 @@ class _HorizonDocxBuilder:
         first_footer.paragraphs[0].text = ""
 
     def add_cover(self, evidence_blockers: list[str]) -> None:
+        """Add the cover.
+
+        Args:
+            evidence_blockers (list[str]): The evidence blockers.
+        """
         rule = self.doc.add_paragraph()
         rule.paragraph_format.space_before = Pt(0)
         rule.paragraph_format.space_after = Pt(36)
@@ -942,6 +1185,11 @@ class _HorizonDocxBuilder:
         self.doc.add_page_break()
 
     def add_toc(self, entries: list[dict[str, Any]]) -> None:
+        """Add the toc.
+
+        Args:
+            entries (list[dict[str, Any]]): Entries to process.
+        """
         heading = self.doc.add_paragraph(style="Proposal TOC Heading")
         heading.add_run("Table of contents")
         _set_paragraph_borders(
@@ -991,11 +1239,22 @@ class _HorizonDocxBuilder:
         self.doc.add_page_break()
 
     def add_fragment(self, fragment: str) -> None:
+        """Add the fragment.
+
+        Args:
+            fragment (str): The fragment.
+        """
         soup = BeautifulSoup(fragment, "html.parser")
         for child in soup.contents:
             self._render_block(child)
 
     def _render_block(self, node, *, list_level: int = 0) -> None:
+        """Render the block.
+
+        Args:
+            node: The node.
+            list_level (int): The list level (optional, default 0).
+        """
         if isinstance(node, NavigableString):
             text = str(node).strip()
             if text:
@@ -1121,6 +1380,13 @@ class _HorizonDocxBuilder:
         text: str,
         style: _InlineStyle,
     ) -> None:
+        """Append the text with footnotes.
+
+        Args:
+            paragraph: The paragraph.
+            text (str): The text.
+            style (_InlineStyle): The style.
+        """
         last_end = 0
         matched = False
         for match in _CITATION_MARKER_RE.finditer(text):
@@ -1150,6 +1416,13 @@ class _HorizonDocxBuilder:
         container,
         style: _InlineStyle | None = None,
     ) -> None:
+        """Append the inline.
+
+        Args:
+            paragraph: The paragraph.
+            container: The container.
+            style (_InlineStyle | None): The style (optional, default None).
+        """
         style = style or _InlineStyle()
         children = (
             container.children
@@ -1210,6 +1483,12 @@ class _HorizonDocxBuilder:
             self._append_inline(paragraph, child, next_style)
 
     def _render_list(self, list_tag: Tag, *, list_level: int) -> None:
+        """Render the list.
+
+        Args:
+            list_tag (Tag): The list tag.
+            list_level (int): The list level.
+        """
         ordered = list_tag.name.lower() == "ol"
         for item in list_tag.find_all("li", recursive=False):
             paragraph = self.doc.add_paragraph(
@@ -1227,6 +1506,14 @@ class _HorizonDocxBuilder:
         self,
         table_tag: Tag,
     ) -> tuple[list[_TablePlacement], int, int]:
+        """Internal helper for the table placements step.
+
+        Args:
+            table_tag (Tag): The table tag.
+
+        Returns:
+            tuple[list[_TablePlacement], int, int]: The placements.
+        """
         rows = table_tag.find_all("tr")
         placements: list[_TablePlacement] = []
         occupied: set[tuple[int, int]] = set()
@@ -1261,6 +1548,11 @@ class _HorizonDocxBuilder:
         return placements, len(rows), max_column
 
     def _render_table(self, table_tag: Tag) -> None:
+        """Render the table.
+
+        Args:
+            table_tag (Tag): The table tag.
+        """
         caption = table_tag.find("caption", recursive=False)
         if caption is not None:
             paragraph = self.doc.add_paragraph(style="Caption")
@@ -1337,6 +1629,14 @@ class _HorizonDocxBuilder:
         spacer.paragraph_format.space_after = Pt(1)
 
     def _placeholder_text(self, figure: Tag) -> str:
+        """Internal helper for the placeholder text step.
+
+        Args:
+            figure (Tag): The figure.
+
+        Returns:
+            str: The text.
+        """
         prompt = str(figure.get("data-image-prompt") or "").strip()
         if not prompt:
             prompt = figure.get_text(" ", strip=True)
@@ -1349,6 +1649,11 @@ class _HorizonDocxBuilder:
         return prompt or "Visual to be supplied"
 
     def _render_placeholder(self, prompt: str) -> None:
+        """Render the placeholder.
+
+        Args:
+            prompt (str): Prompt text.
+        """
         self.state.image_placeholders += 1
         table = self.doc.add_table(rows=1, cols=1)
         _set_table_geometry(table, [_TABLE_WIDTH_DXA])
@@ -1377,6 +1682,14 @@ class _HorizonDocxBuilder:
         spacer.paragraph_format.space_after = Pt(1)
 
     def _decode_data_image(self, source: str) -> bytes:
+        """Decode the data image.
+
+        Args:
+            source (str): Source value.
+
+        Returns:
+            bytes: The data image.
+        """
         header, separator, payload = source.partition(",")
         if not separator or ";base64" not in header.lower():
             raise ValueError("embedded image must use base64 data URI")
@@ -1397,6 +1710,12 @@ class _HorizonDocxBuilder:
         return raw
 
     def _render_image(self, image: Tag, caption: Tag | None = None) -> None:
+        """Render the image.
+
+        Args:
+            image (Tag): The image.
+            caption (Tag | None): The caption (optional, default None).
+        """
         source = str(image.get("src") or "")
         alt = str(
             image.get("alt")
@@ -1427,6 +1746,11 @@ class _HorizonDocxBuilder:
             self._append_inline(caption_paragraph, caption)
 
     def _render_figure(self, figure: Tag) -> None:
+        """Render the figure.
+
+        Args:
+            figure (Tag): The figure.
+        """
         classes = set(figure.get("class") or [])
         if (
             "image-placeholder" in classes
@@ -1448,6 +1772,11 @@ class _HorizonDocxBuilder:
         self,
         citation_registry: list[dict[str, Any]],
     ) -> None:
+        """Add the bibliography.
+
+        Args:
+            citation_registry (list[dict[str, Any]]): The citation registry.
+        """
         if not citation_registry:
             return
         heading = self.doc.add_paragraph(style="Heading 1")
@@ -1489,6 +1818,12 @@ class _HorizonDocxBuilder:
         evidence_qa: dict[str, Any],
         evidence_blockers: list[str],
     ) -> None:
+        """Add the evidence annex.
+
+        Args:
+            evidence_qa (dict[str, Any]): The evidence qa.
+            evidence_blockers (list[str]): The evidence blockers.
+        """
         heading = self.doc.add_paragraph(style="Heading 1")
         heading.paragraph_format.page_break_before = True
         heading.add_run("Evidence integrity annex")
@@ -1537,6 +1872,11 @@ class _HorizonDocxBuilder:
                 _set_run_font(value_run, size=8.5, color=_INK)
 
     def save(self) -> bytes:
+        """Save the result.
+
+        Returns:
+            bytes: The result.
+        """
         if self._footnotes_enabled and self.state.footnote_bodies:
             _attach_footnotes_part(self.doc, self.state.footnote_bodies)
         buffer = io.BytesIO()

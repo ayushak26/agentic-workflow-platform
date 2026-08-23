@@ -60,10 +60,26 @@ def _split_pascal_case(name: str) -> str:
 
 
 def _tokens(text: str) -> set[str]:
+    """Internal helper for the tokens step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        set[str]: The result.
+    """
     return {word for word in _WORD_RE.findall(text.lower()) if word not in _STOPWORDS and len(word) > 2}
 
 
 def _entry_text(entry: dict[str, Any]) -> str:
+    """Internal helper for the entry text step.
+
+    Args:
+        entry (dict[str, Any]): Ledger entry.
+
+    Returns:
+        str: The text.
+    """
     about = entry.get("about") or {}
     about_text = " ".join(str(value) for value in about.values() if isinstance(value, str))
     return " ".join([

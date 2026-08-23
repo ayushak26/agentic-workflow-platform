@@ -18,6 +18,14 @@ from app.proposal_graph.models import EvidenceRelation, EvidenceStance
 
 
 class ClaimSupportVerdict(BaseModel):
+    """Pydantic model defining the ClaimSupportVerdict shape.
+
+    Attributes:
+        stance (EvidenceStance).
+        confidence (float).
+        reason (str).
+        supporting_quote (str).
+    """
     stance: EvidenceStance
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str
@@ -25,6 +33,14 @@ class ClaimSupportVerdict(BaseModel):
 
 
 def _normalise_space(value: str) -> str:
+    """Internal helper for the normalise space step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        str: The space.
+    """
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -100,6 +116,20 @@ def relation_from_verdict(
     verifier_model: str,
     verdict: ClaimSupportVerdict,
 ) -> EvidenceRelation:
+    """Compute the relation from verdict.
+
+    Args:
+        relation_id (str): The relation id.
+        claim_id (str): The claim id.
+        source_id (str): The source id.
+        source_version_id (str | None): The source version id.
+        locator (str): The locator.
+        verifier_model (str): The verifier model.
+        verdict (ClaimSupportVerdict): The verdict.
+
+    Returns:
+        EvidenceRelation: The from verdict.
+    """
     passage = verdict.supporting_quote.strip()
     return EvidenceRelation(
         id=relation_id,

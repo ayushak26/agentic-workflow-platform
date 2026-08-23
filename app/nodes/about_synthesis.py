@@ -33,6 +33,11 @@ _WORKFLOW_GLOBS = (
     "workflows/pipelines/*.yaml",
     "workflows/test_fixtures/*.yaml",
     "workflows/test_fixtures/**/*.yaml",
+    # Reference exemplars come LAST on purpose: `examples` is filled with
+    # setdefault, so a shipped workflow demonstrating a node type always
+    # wins; the reference corpus grounds the types no shipped workflow uses.
+    "workflows/reference/*.yaml",
+    "workflows/reference/**/*.yaml",
 )
 
 _MAX_NEIGHBOURS = 3
@@ -40,10 +45,23 @@ _MAX_NEIGHBOURS = 3
 
 def _repo_root() -> Path:
     # app/nodes/about_synthesis.py -> app/nodes -> app -> repo root
+    """Internal helper for the repo root step.
+
+    Returns:
+        Path: The root.
+    """
     return Path(__file__).resolve().parents[2]
 
 
 def _edge_targets(edge: dict[str, Any]) -> list[str]:
+    """Internal helper for the edge targets step.
+
+    Args:
+        edge (dict[str, Any]): The edge.
+
+    Returns:
+        list[str]: The targets.
+    """
     targets: list[str] = []
     to = edge.get("to")
     if isinstance(to, str):
@@ -110,6 +128,14 @@ def _adjacency() -> dict[str, dict[str, Any]]:
                     upstream_counts[dst_type][src_type] = upstream_counts[dst_type].get(src_type, 0) + 1
 
     def _ranked(counts: dict[str, int]) -> list[str]:
+        """Internal helper for the ranked step.
+
+        Args:
+            counts (dict[str, int]): The counts.
+
+        Returns:
+            list[str]: The result.
+        """
         return [name for name, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))][:_MAX_NEIGHBOURS]
 
     result: dict[str, dict[str, Any]] = {}
@@ -123,6 +149,14 @@ def _adjacency() -> dict[str, dict[str, Any]]:
 
 
 def _schema_fields_summary(schema: Type[Any] | None) -> str:
+    """Internal helper for the schema fields summary step.
+
+    Args:
+        schema (Type[Any] | None): Schema definition.
+
+    Returns:
+        str: The fields summary.
+    """
     if schema is None:
         return ""
     fields = getattr(schema, "model_fields", {}) or {}
@@ -134,6 +168,14 @@ def _schema_fields_summary(schema: Type[Any] | None) -> str:
 
 
 def _important_config_fields(config_schema: Type[Any] | None) -> list[str]:
+    """Internal helper for the important config fields step.
+
+    Args:
+        config_schema (Type[Any] | None): The config schema.
+
+    Returns:
+        list[str]: The config fields.
+    """
     if config_schema is None:
         return []
     fields = getattr(config_schema, "model_fields", {}) or {}

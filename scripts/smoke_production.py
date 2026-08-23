@@ -8,6 +8,14 @@ import urllib.request
 
 
 def request(url: str) -> tuple[int, dict[str, str], bytes]:
+    """Compute the request.
+
+    Args:
+        url (str): Target URL.
+
+    Returns:
+        tuple[int, dict[str, str], bytes]: The result.
+    """
     try:
         with urllib.request.urlopen(url, timeout=15) as response:
             return response.status, dict(response.headers), response.read()
@@ -16,6 +24,7 @@ def request(url: str) -> tuple[int, dict[str, str], bytes]:
 
 
 def main() -> None:
+    """Compute the main."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", required=True)
     args = parser.parse_args()

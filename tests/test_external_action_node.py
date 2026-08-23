@@ -31,7 +31,10 @@ async def run(instance: ExternalActionAgent, *, run_id: str = "run-1", state=Non
 
 def service(handler) -> ExternalActionService:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    return ExternalActionService(http_client=client)
+    # The SSRF guard does real DNS resolution; these orchestration tests use
+    # MockTransport and a passthrough validator, and the guard itself is
+    # covered in tests/test_external_action_url_guard.py.
+    return ExternalActionService(http_client=client, url_validator=lambda url: url)
 
 
 READ_CONFIG = {

@@ -22,10 +22,22 @@ from app.proposal_graph.state import proposal_graph_from_state
 
 
 class ProposalTruthGraphInput(BaseModel):
+    """Pydantic model defining the ProposalTruthGraphInput shape."""
     pass
 
 
 class ProposalTruthGraphConfig(BaseModel):
+    """Pydantic model defining the ProposalTruthGraphConfig shape.
+
+    Attributes:
+        verified_claims (str | list[VerifiedClaim]).
+        evidence_gaps (str | list[EvidenceGap]).
+        blocking_issues (Any).
+        research_manifest (Any).
+        structured_data_records (str | list[StructuredDataEvidenceRecord]).
+        internal_evidence_records (str | list[InternalEvidenceRecord]).
+        evidence_approval_decision (str).
+    """
     verified_claims: str | list[VerifiedClaim]
     evidence_gaps: str | list[EvidenceGap] = Field(default_factory=list)
     blocking_issues: Any = Field(default_factory=list)
@@ -41,6 +53,14 @@ class ProposalTruthGraphConfig(BaseModel):
     @field_validator("verified_claims", mode="before")
     @classmethod
     def _coerce_verified_claims(cls, value: Any) -> Any:
+        """Internal helper for the coerce verified claims step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The verified claims.
+        """
         return coerce_typed_list_field(
             value,
             VerifiedClaim,
@@ -50,6 +70,14 @@ class ProposalTruthGraphConfig(BaseModel):
     @field_validator("evidence_gaps", mode="before")
     @classmethod
     def _coerce_evidence_gaps(cls, value: Any) -> Any:
+        """Internal helper for the coerce evidence gaps step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The evidence gaps.
+        """
         return coerce_typed_list_field(
             value,
             EvidenceGap,
@@ -59,6 +87,14 @@ class ProposalTruthGraphConfig(BaseModel):
     @field_validator("structured_data_records", mode="before")
     @classmethod
     def _coerce_structured_data_records(cls, value: Any) -> Any:
+        """Internal helper for the coerce structured data records step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The structured data records.
+        """
         return coerce_typed_list_field(
             value,
             StructuredDataEvidenceRecord,
@@ -68,6 +104,14 @@ class ProposalTruthGraphConfig(BaseModel):
     @field_validator("internal_evidence_records", mode="before")
     @classmethod
     def _coerce_internal_evidence_records(cls, value: Any) -> Any:
+        """Internal helper for the coerce internal evidence records step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The internal evidence records.
+        """
         return coerce_typed_list_field(
             value,
             InternalEvidenceRecord,
@@ -76,6 +120,18 @@ class ProposalTruthGraphConfig(BaseModel):
 
 
 class ProposalTruthGraphOutput(BaseModel):
+    """Pydantic model defining the ProposalTruthGraphOutput shape.
+
+    Attributes:
+        truth_graph (dict[str, Any]).
+        integrity_sha256 (str).
+        verified_claim_ids (list[str]).
+        qualified_claim_ids (list[str]).
+        excluded_claim_ids (list[str]).
+        human_review_queue (list[dict[str, Any]]).
+        evidence_gaps (list[EvidenceGap]).
+        blocking_issues (list[str]).
+    """
     truth_graph: dict[str, Any] = Field(default_factory=dict)
     integrity_sha256: str
     verified_claim_ids: list[str] = Field(default_factory=list)
@@ -91,6 +147,7 @@ class ProposalTruthGraphOutput(BaseModel):
 
 @NodeRegistry.register
 class ProposalTruthGraphAgent(NodeType):
+    """Workflow node type implementing the ProposalTruthGraphAgent capability."""
     type_name = "ProposalTruthGraphAgent"
     description = (
         "Freeze a drafting-safe truth graph containing only verified or "
@@ -105,6 +162,15 @@ class ProposalTruthGraphAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ProposalTruthGraphConfig(**resolved_config)
         if (
             isinstance(cfg.verified_claims, str)
@@ -261,6 +327,16 @@ def _review_queue(
     gaps: list[EvidenceGap],
     graph: Any,
 ) -> list[dict[str, Any]]:
+    """Internal helper for the review queue step.
+
+    Args:
+        claims (list[VerifiedClaim]): The claims.
+        gaps (list[EvidenceGap]): The gaps.
+        graph (Any): Compiled LangGraph graph.
+
+    Returns:
+        list[dict[str, Any]]: The queue.
+    """
     queue: list[dict[str, Any]] = []
     for item in claims:
         if item.human_review_required or item.final_status not in {
@@ -305,6 +381,14 @@ def _review_queue(
 
 
 def _string_list(value: Any) -> list[str]:
+    """Internal helper for the string list step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        list[str]: The list.
+    """
     if value is None:
         return []
     if isinstance(value, list):

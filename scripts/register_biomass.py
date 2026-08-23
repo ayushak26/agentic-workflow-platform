@@ -1,8 +1,15 @@
+"""Register biomass module.
+
+Part of the operational and development scripts.
+
+Public symbols: main.
+"""
 import asyncio
 from app.db.mongo import get_mongo_client
 from app.ingestion.collections import CollectionConfig, CollectionRegistry
 
 async def main():
+    """Compute the main."""
     mongo = get_mongo_client()
     try:
         registry = CollectionRegistry(mongo)

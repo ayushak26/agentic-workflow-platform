@@ -40,12 +40,23 @@ IDEMPOTENT_OPERATIONS: frozenset[str] = frozenset({"search", "read"})
 
 
 class EmailAddress(BaseModel):
+    """Pydantic model defining the EmailAddress shape.
+
+    Attributes:
+        email (str).
+        name (str | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     email: str
     name: str | None = None
 
     def render(self) -> str:
+        """Render the result.
+
+        Returns:
+            str: The result.
+        """
         return f"{self.name} <{self.email}>" if self.name else self.email
 
 
@@ -183,12 +194,30 @@ class EmailAdapter(ABC):
     async def search(
         self, connection: EmailConnection, criteria: EmailSearchCriteria
     ) -> list[EmailMessage]:
+        """Search the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            criteria (EmailSearchCriteria): The criteria.
+
+        Returns:
+            list[EmailMessage]: The result.
+        """
         ...
 
     @abstractmethod
     async def read(
         self, connection: EmailConnection, message_id: str
     ) -> EmailMessage:
+        """Read the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            message_id (str): The message id.
+
+        Returns:
+            EmailMessage: The result.
+        """
         ...
 
     @abstractmethod

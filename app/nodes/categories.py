@@ -90,6 +90,14 @@ DEFAULT_CATEGORY = "Other"
 
 
 def category_for(type_name: str) -> str:
+    """Compute the category for.
+
+    Args:
+        type_name (str): Node type name.
+
+    Returns:
+        str: The for.
+    """
     return NODE_CATEGORIES.get(type_name, DEFAULT_CATEGORY)
 
 
@@ -111,6 +119,14 @@ DEFAULT_ICON = "topology"
 
 
 def icon_for(type_name: str) -> str:
+    """Compute the icon for.
+
+    Args:
+        type_name (str): Node type name.
+
+    Returns:
+        str: The for.
+    """
     return CATEGORY_ICONS.get(category_for(type_name), DEFAULT_ICON)
 
 
@@ -171,10 +187,27 @@ _EXECUTION_KINDS: dict[str, str] = {
 
 
 def family_for(type_name: str) -> str:
+    """Compute the family for.
+
+    Args:
+        type_name (str): Node type name.
+
+    Returns:
+        str: The for.
+    """
     return "core" if type_name in CORE_NODE_TYPES else "specialized"
 
 
 def execution_kind_for(type_name: str, *, uses_llm: bool) -> str:
+    """Compute the execution kind for.
+
+    Args:
+        type_name (str): Node type name.
+        uses_llm (bool): The uses llm.
+
+    Returns:
+        str: The kind for.
+    """
     declared = _EXECUTION_KINDS.get(type_name)
     if declared:
         return declared

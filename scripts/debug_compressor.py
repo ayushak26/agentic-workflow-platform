@@ -18,6 +18,7 @@ from app.retrieval.models import RetrievalFilters
 
 
 async def main():
+    """Compute the main."""
     weaviate_client = weaviate.use_async_with_local(host="weaviate", port=8080)
     await weaviate_client.connect()
     embedder = Embedder()

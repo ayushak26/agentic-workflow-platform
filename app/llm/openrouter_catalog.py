@@ -32,6 +32,18 @@ _CACHE_TTL_SECONDS = 600.0
 
 @dataclass(frozen=True)
 class OpenRouterModelInfo:
+    """Provides the OpenRouterModelInfo behaviour.
+
+    Attributes:
+        id (str).
+        display_name (str).
+        context_length (int | None).
+        max_output_tokens (int | None).
+        input_usd_per_million (float | None).
+        output_usd_per_million (float | None).
+        supports_tool_calling (bool).
+        supports_vision (bool).
+    """
     id: str
     display_name: str
     context_length: int | None
@@ -43,6 +55,11 @@ class OpenRouterModelInfo:
     supports_reasoning: bool
 
     def as_dict(self) -> dict[str, Any]:
+        """Compute the as dict.
+
+        Returns:
+            dict[str, Any]: The dict.
+        """
         return {
             "id": self.id,
             "display_name": self.display_name,
@@ -75,6 +92,14 @@ def _price_per_million(raw: Any) -> float | None:
 
 
 def _to_model_info(entry: dict[str, Any]) -> OpenRouterModelInfo | None:
+    """Internal helper for the to model info step.
+
+    Args:
+        entry (dict[str, Any]): Ledger entry.
+
+    Returns:
+        OpenRouterModelInfo | None: The model info.
+    """
     bare_id = entry.get("id")
     if not isinstance(bare_id, str) or not bare_id:
         return None
@@ -98,6 +123,14 @@ def _to_model_info(entry: dict[str, Any]) -> OpenRouterModelInfo | None:
 
 
 async def _fetch_raw_catalog(client: httpx.AsyncClient | None) -> list[dict[str, Any]]:
+    """Fetch the raw catalog.
+
+    Args:
+        client (httpx.AsyncClient | None): Client instance.
+
+    Returns:
+        list[dict[str, Any]]: The raw catalog.
+    """
     owns_client = client is None
     active_client = client or httpx.AsyncClient(
         base_url=settings.openrouter_base_url,
@@ -119,16 +152,35 @@ class OpenRouterCatalogCache:
     construct isolated caches instead of monkeypatching shared state."""
 
     def __init__(self, *, ttl_seconds: float = _CACHE_TTL_SECONDS) -> None:
+        """Initialize the OpenRouterCatalogCache.
+
+        Args:
+            ttl_seconds (float): Lease TTL in seconds (optional, default _CACHE_TTL_SECONDS).
+        """
         self._ttl_seconds = ttl_seconds
         self._models: tuple[OpenRouterModelInfo, ...] = ()
         self._fetched_at: float = 0.0
 
     def _is_stale(self) -> bool:
+        """Return whether stale.
+
+        Returns:
+            bool: True when stale.
+        """
         return (time.monotonic() - self._fetched_at) >= self._ttl_seconds
 
     async def get_models(
         self, *, client: httpx.AsyncClient | None = None, force_refresh: bool = False
     ) -> tuple[OpenRouterModelInfo, ...]:
+        """Return the models.
+
+        Args:
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+            force_refresh (bool): The force refresh (optional, default False).
+
+        Returns:
+            tuple[OpenRouterModelInfo, ...]: The models.
+        """
         if force_refresh or self._is_stale():
             raw_models = await _fetch_raw_catalog(client)
             parsed = (_to_model_info(entry) for entry in raw_models)
@@ -143,6 +195,16 @@ class OpenRouterCatalogCache:
         limit: int = 50,
         client: httpx.AsyncClient | None = None,
     ) -> list[OpenRouterModelInfo]:
+        """Search the result.
+
+        Args:
+            query (str | None): Query filter (optional, default None).
+            limit (int): Maximum number of items to return (optional, default 50).
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+
+        Returns:
+            list[OpenRouterModelInfo]: The result.
+        """
         models = await self.get_models(client=client)
         if query:
             needle = query.strip().lower()
@@ -158,4 +220,9 @@ _default_cache = OpenRouterCatalogCache()
 
 
 def get_default_cache() -> OpenRouterCatalogCache:
+    """Return the default cache.
+
+    Returns:
+        OpenRouterCatalogCache: The default cache.
+    """
     return _default_cache

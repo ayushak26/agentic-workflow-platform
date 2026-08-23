@@ -66,6 +66,14 @@ def _execution_kinds() -> dict[str, str]:
 
 
 def execution_kind_of(type_name: str) -> str:
+    """Compute the execution kind of.
+
+    Args:
+        type_name (str): Node type name.
+
+    Returns:
+        str: The kind of.
+    """
     if not type_name:
         return "deterministic"
     known = _execution_kinds().get(type_name)
@@ -91,33 +99,45 @@ class NodeView:
 
     @property
     def ran(self) -> bool:
+        """The ran."""
         return self.status in ("done", "reused", "failed", "paused", "active")
 
     @property
     def succeeded(self) -> bool:
+        """The succeeded."""
         return self.status in ("done", "reused")
 
     @property
     def source(self) -> BusinessSource:
+        """The source."""
         return _KIND_TO_SOURCE.get(self.execution_kind, BusinessSource.WORKFLOW)
 
     @property
     def status_label(self) -> str:
+        """The status label."""
         return _STATUS_LABEL.get(self.status, self.status)
 
     @property
     def duration_ms(self) -> int | None:
+        """The duration ms."""
         return duration_ms(self.started_at, self.ended_at)
 
     @property
     def started_iso(self) -> str | None:
+        """The started iso."""
         return timestamp_iso(self.started_at)
 
     @property
     def ended_iso(self) -> str | None:
+        """The ended iso."""
         return timestamp_iso(self.ended_at)
 
     def output_dict(self) -> dict[str, Any]:
+        """Compute the output dict.
+
+        Returns:
+            dict[str, Any]: The dict.
+        """
         return self.output if isinstance(self.output, dict) else {}
 
 
@@ -168,34 +188,76 @@ class RunView:
     spec: WorkflowSpec | None
 
     def __post_init__(self) -> None:
+        """Implement the ``__post_init__`` protocol."""
         self._by_id = {node.node_id: node for node in self.nodes}
 
     def node(self, node_id: str) -> NodeView | None:
+        """Compute the node.
+
+        Args:
+            node_id (str): Workflow node identifier.
+
+        Returns:
+            NodeView | None: The result.
+        """
         return self._by_id.get(node_id)
 
     def ran_nodes(self) -> list[NodeView]:
+        """Compute the ran nodes.
+
+        Returns:
+            list[NodeView]: The nodes.
+        """
         return [node for node in self.nodes if node.ran]
 
     def of_kind(self, *kinds: str) -> list[NodeView]:
+        """Compute the of kind.
+
+        Args:
+            *kinds (str): The kinds.
+
+        Returns:
+            list[NodeView]: The kind.
+        """
         return [node for node in self.nodes if node.execution_kind in kinds]
 
     def of_type(self, *type_names: str) -> list[NodeView]:
+        """Compute the of type.
+
+        Args:
+            *type_names (str): The type names.
+
+        Returns:
+            list[NodeView]: The type.
+        """
         return [node for node in self.nodes if node.type_name in type_names]
 
     @property
     def is_paused(self) -> bool:
+        """The is paused."""
         return bool(self.gate and self.gate.get("paused"))
 
     @property
     def awaits_approval(self) -> bool:
+        """The awaits approval."""
         return self.is_paused and (self.gate or {}).get("pause_kind") != "user_requested"
 
     @property
     def is_finished(self) -> bool:
+        """The is finished."""
         return self.run_status in _TERMINAL_RUN_STATUSES
 
 
 def _display_name(node_id: str, spec: NodeSpec | None) -> str:
+    """Internal helper for the display name step.
+
+    Args:
+        node_id (str): Workflow node identifier.
+        spec (NodeSpec | None): Parsed workflow specification.
+
+    Returns:
+        str: The name.
+    """
     experience = spec.experience if spec is not None else None
     return (experience.display_name if experience else None) or humanize_identifier(node_id)
 

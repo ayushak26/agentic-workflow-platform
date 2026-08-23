@@ -38,6 +38,18 @@ router = APIRouter(prefix="/api/inspect", tags=["inspect"])
 # Response models                                                             #
 # --------------------------------------------------------------------------- #
 class ChunkView(BaseModel):
+    """Pydantic model defining the ChunkView shape.
+
+    Attributes:
+        chunk_id (str).
+        text (str).
+        token_count (int).
+        chunk_index (int).
+        doc_type (str).
+        industry (str).
+        language (str).
+        session_id (str).
+    """
     chunk_id: str
     text: str
     token_count: int = 0
@@ -50,6 +62,16 @@ class ChunkView(BaseModel):
 
 
 class SourceGroup(BaseModel):
+    """Pydantic model defining the SourceGroup shape.
+
+    Attributes:
+        source_path (str).
+        source_format (str).
+        doc_type (str).
+        chunk_count (int).
+        total_tokens (int).
+        chunks (list[ChunkView]).
+    """
     source_path: str
     source_format: str = ""
     doc_type: str = ""
@@ -59,6 +81,15 @@ class SourceGroup(BaseModel):
 
 
 class ChunksResponse(BaseModel):
+    """Pydantic model defining the ChunksResponse shape.
+
+    Attributes:
+        collection_id (Optional[str]).
+        session_id (Optional[str]).
+        total_chunks (int).
+        source_count (int).
+        sources (list[SourceGroup]).
+    """
     collection_id: Optional[str] = None
     session_id: Optional[str] = None
     total_chunks: int
@@ -67,6 +98,15 @@ class ChunksResponse(BaseModel):
 
 
 class RetrieveRequest(BaseModel):
+    """Pydantic model defining the RetrieveRequest shape.
+
+    Attributes:
+        query (str).
+        collection_id (str).
+        session_id (str).
+        doc_types (list[str]).
+        top_k (int).
+    """
     query: str = Field(..., min_length=1)
     collection_id: str = Field(..., min_length=1)
     session_id: str = "default"
@@ -75,6 +115,18 @@ class RetrieveRequest(BaseModel):
 
 
 class RetrievedView(BaseModel):
+    """Pydantic model defining the RetrievedView shape.
+
+    Attributes:
+        rank (int).
+        chunk_id (str).
+        text (str).
+        score (Optional[float]).
+        doc_type (str).
+        source_path (str).
+        session_id (str).
+        collection_id (str).
+    """
     rank: int
     chunk_id: str = ""
     text: str
@@ -86,6 +138,15 @@ class RetrievedView(BaseModel):
 
 
 class RetrieveResponse(BaseModel):
+    """Pydantic model defining the RetrieveResponse shape.
+
+    Attributes:
+        query (str).
+        collection_id (str).
+        session_id (str).
+        returned (int).
+        results (list[RetrievedView]).
+    """
     query: str
     collection_id: str
     session_id: str

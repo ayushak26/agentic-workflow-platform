@@ -109,6 +109,14 @@ def any_of(*filters: str) -> str:
 
 
 def all_of(*filters: str) -> str:
+    """Compute the all of.
+
+    Args:
+        *filters (str): The filters.
+
+    Returns:
+        str: The of.
+    """
     usable = [item for item in filters if item]
     if not usable:
         raise ODataValueError("at least one filter is required")
@@ -166,12 +174,28 @@ _COLUMN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,127}$")
 
 
 def _column(name: str) -> str:
+    """Internal helper for the column step.
+
+    Args:
+        name (str): Workflow or resource name.
+
+    Returns:
+        str: The result.
+    """
     if not _COLUMN.fullmatch(name):
         raise ODataValueError(f"invalid column name {name!r}")
     return name
 
 
 def _order_by(clause: str) -> str:
+    """Internal helper for the order by step.
+
+    Args:
+        clause (str): The clause.
+
+    Returns:
+        str: The by.
+    """
     parts = clause.split()
     if not parts or len(parts) > 2:
         raise ODataValueError(f"invalid order by clause {clause!r}")

@@ -53,10 +53,23 @@ _SOURCE_RULES: dict[str, dict[str, Any]] = {
 
 
 class PriorProjectRetrieverInput(BaseModel):
+    """Pydantic model defining the PriorProjectRetrieverInput shape."""
     pass
 
 
 class PriorProjectRetrieverConfig(BaseModel):
+    """Pydantic model defining the PriorProjectRetrieverConfig shape.
+
+    Attributes:
+        research_briefs (str | list[ResearchBrief]).
+        sources (list[PriorProjectSource]).
+        provider (Literal['auto', 'tavily', 'openai', 'kimi']).
+        max_briefs (int).
+        max_results_per_source (int).
+        max_candidates_per_claim (int).
+        max_total_searches (int).
+        max_parallel_searches (int).
+    """
     research_briefs: str | list[ResearchBrief]
     sources: list[PriorProjectSource] = Field(
         default_factory=lambda: ["cordis", "life", "eip_agri"]
@@ -72,6 +85,14 @@ class PriorProjectRetrieverConfig(BaseModel):
     @field_validator("research_briefs", mode="before")
     @classmethod
     def _coerce_briefs(cls, value: Any) -> Any:
+        """Internal helper for the coerce briefs step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The briefs.
+        """
         if isinstance(value, str):
             text = value.strip()
             if "{{" in text and "}}" in text:
@@ -88,6 +109,18 @@ class PriorProjectRetrieverConfig(BaseModel):
 
 
 class PriorProjectRetrieverOutput(BaseModel):
+    """Pydantic model defining the PriorProjectRetrieverOutput shape.
+
+    Attributes:
+        candidates (list[CandidateSource]).
+        search_audit (list[SearchAuditRecord]).
+        projects_found (int).
+        searches_completed (int).
+        searches_failed (int).
+        verification_status (Literal['candidate_only']).
+        note (str).
+        report (str).
+    """
     candidates: list[CandidateSource] = Field(default_factory=list)
     search_audit: list[SearchAuditRecord] = Field(default_factory=list)
     projects_found: int = 0
@@ -104,6 +137,7 @@ class PriorProjectRetrieverOutput(BaseModel):
 
 @NodeRegistry.register
 class PriorProjectRetrieverAgent(NodeType):
+    """Workflow node type implementing the PriorProjectRetrieverAgent capability."""
     type_name = "PriorProjectRetrieverAgent"
     description = (
         "Search official CORDIS, LIFE and EIP-AGRI project records for "
@@ -116,6 +150,14 @@ class PriorProjectRetrieverAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"web_search"}
 
     async def run(
@@ -123,6 +165,15 @@ class PriorProjectRetrieverAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         del state
         cfg = PriorProjectRetrieverConfig(**resolved_config)
         if isinstance(cfg.research_briefs, str):
@@ -154,6 +205,12 @@ class PriorProjectRetrieverAgent(NodeType):
             brief: ResearchBrief,
             source: str,
         ) -> None:
+            """Search the one.
+
+            Args:
+                brief (ResearchBrief): The brief.
+                source (str): Source value.
+            """
             nonlocal failures
             rule = _SOURCE_RULES[source]
             query = f"{rule['query_prefix']} {brief.question}".strip()
@@ -287,6 +344,15 @@ class PriorProjectRetrieverAgent(NodeType):
 
 
 def _allowed_official_url(url: str, hosts: tuple[str, ...]) -> bool:
+    """Internal helper for the allowed official url step.
+
+    Args:
+        url (str): Target URL.
+        hosts (tuple[str, ...]): The hosts.
+
+    Returns:
+        bool: The official url.
+    """
     parsed = urlsplit(url)
     if parsed.scheme != "https" or not parsed.hostname:
         return False

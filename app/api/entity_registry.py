@@ -23,10 +23,23 @@ router = APIRouter(prefix="/api/entity-registry", tags=["entity-registry"])
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return getattr(user, "session_id", None) or user.username
 
 
 def _service(request: Request):
+    """Internal helper for the service step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+    """
     service = getattr(request.app.state, "services", {}).get("entity_tokenizer")
     if service is None:
         raise HTTPException(status_code=503, detail="entity registry unavailable")
@@ -34,12 +47,26 @@ def _service(request: Request):
 
 
 class RegisterEntityRequest(BaseModel):
+    """Pydantic model defining the RegisterEntityRequest shape.
+
+    Attributes:
+        entity_type (str).
+        value (str).
+        collection_id (str).
+    """
     entity_type: str
     value: str
     collection_id: str = "default"
 
 
 class DeleteEntityRequest(BaseModel):
+    """Pydantic model defining the DeleteEntityRequest shape.
+
+    Attributes:
+        entity_type (str).
+        value (str).
+        collection_id (str).
+    """
     entity_type: str
     value: str
     collection_id: str = "default"
@@ -47,6 +74,11 @@ class DeleteEntityRequest(BaseModel):
 
 @router.get("/entity-types")
 def list_entity_types() -> dict[str, list[str]]:
+    """List the entity types.
+
+    Returns:
+        dict[str, list[str]]: The entity types.
+    """
     return {"entity_types": sorted(ENTITY_TYPES)}
 
 
@@ -56,6 +88,16 @@ async def list_entities(
     collection_id: str = "default",
     user: CurrentUser = Depends(require_consultant),
 ) -> dict[str, Any]:
+    """List the entities.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        collection_id (str): Knowledge collection identifier (optional, default 'default').
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+
+    Returns:
+        dict[str, Any]: The entities.
+    """
     service = _service(request)
     try:
         entities = await service.registry.list_entities(
@@ -72,6 +114,16 @@ async def register_entity(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ) -> dict[str, str]:
+    """Register the entity.
+
+    Args:
+        req (RegisterEntityRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+
+    Returns:
+        dict[str, str]: The entity.
+    """
     service = _service(request)
     try:
         placeholder = await service.registry.register(
@@ -94,6 +146,16 @@ async def delete_entity(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ) -> dict[str, bool]:
+    """Delete the entity.
+
+    Args:
+        req (DeleteEntityRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+
+    Returns:
+        dict[str, bool]: The entity.
+    """
     service = _service(request)
     try:
         deleted = await service.registry.delete(

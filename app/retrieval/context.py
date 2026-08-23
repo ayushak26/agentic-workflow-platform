@@ -18,6 +18,7 @@ _ENCODING = tiktoken.get_encoding("cl100k_base")
 
 
 class GraphContextProvider(Protocol):
+    """Provides the GraphContextProvider behaviour."""
     async def expand(
         self, chunks: list[RetrievedChunk], *, query: str
     ) -> list[RetrievedChunk]: ...

@@ -56,10 +56,23 @@ class CollectionRegistry:
     that callers get named collections."""
 
     def __init__(self, mongo) -> None:        # mongo: MongoClient (the wrapper)
+        """Initialize the CollectionRegistry.
+
+        Args:
+            mongo: The mongo.
+        """
         self._col = mongo.collections          # the named accessor, not a raw db
         self._cache: dict[str, CollectionConfig] = {}
 
     async def get(self, collection_id: str) -> CollectionConfig:
+        """Return the result.
+
+        Args:
+            collection_id (str): Knowledge collection identifier.
+
+        Returns:
+            CollectionConfig: The result.
+        """
         if collection_id in self._cache:
             return self._cache[collection_id]
         doc = await self._col.find_one({"collection_id": collection_id})
@@ -75,6 +88,11 @@ class CollectionRegistry:
         return cfg
 
     async def upsert(self, cfg: CollectionConfig) -> None:
+        """Upsert the result.
+
+        Args:
+            cfg (CollectionConfig): The cfg.
+        """
         from datetime import datetime, timezone
         await self._col.update_one(
             {"collection_id": cfg.collection_id},
@@ -84,6 +102,11 @@ class CollectionRegistry:
         self._cache[cfg.collection_id] = cfg
 
     async def list_all(self) -> list[CollectionConfig]:
+        """List the all.
+
+        Returns:
+            list[CollectionConfig]: The all.
+        """
         out: list[CollectionConfig] = []
         async for doc in self._col.find({}):
             doc.pop("_id", None)

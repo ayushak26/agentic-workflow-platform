@@ -266,7 +266,7 @@ export function NodeInspector({
   // keeping whatever tab was open for the previous node — Errors staying
   // open on a healthy node would be a confusing carry-over.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setTab('overview');
   }, [selectedNode?.id]);
 

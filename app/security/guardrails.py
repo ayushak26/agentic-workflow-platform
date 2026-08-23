@@ -28,12 +28,24 @@ class GuardrailViolation(ValueError):
 
 @dataclass(frozen=True)
 class GuardrailFinding:
+    """Provides the GuardrailFinding behaviour.
+
+    Attributes:
+        kind (str).
+        path (str).
+    """
     kind: str
     path: str
 
 
 @dataclass
 class GuardrailResult:
+    """Provides the GuardrailResult behaviour.
+
+    Attributes:
+        value (Any).
+        findings (list[GuardrailFinding]).
+    """
     value: Any
     findings: list[GuardrailFinding] = field(default_factory=list)
 
@@ -85,6 +97,16 @@ def _redact_matches(
     *,
     path: str,
 ) -> tuple[str, list[GuardrailFinding]]:
+    """Redact the matches.
+
+    Args:
+        text (str): The text.
+        patterns (tuple[tuple[str, re.Pattern[str]], ...]): The patterns.
+        path (str): Filesystem path.
+
+    Returns:
+        tuple[str, list[GuardrailFinding]]: The matches.
+    """
     findings: list[GuardrailFinding] = []
     updated = text
     for kind, pattern in patterns:
@@ -100,6 +122,16 @@ def _walk(
     path: str,
     transform,
 ) -> tuple[Any, list[GuardrailFinding]]:
+    """Internal helper for the walk step.
+
+    Args:
+        value (Any): Value to process.
+        path (str): Filesystem path.
+        transform: The transform.
+
+    Returns:
+        tuple[Any, list[GuardrailFinding]]: The result.
+    """
     if isinstance(value, str):
         return transform(value, path)
     if isinstance(value, dict):
@@ -136,6 +168,15 @@ def check_workflow_inputs(value: Any) -> GuardrailResult:
         return GuardrailResult(value=value)
 
     def transform(text: str, path: str) -> tuple[str, list[GuardrailFinding]]:
+        """Compute the transform.
+
+        Args:
+            text (str): The text.
+            path (str): Filesystem path.
+
+        Returns:
+            tuple[str, list[GuardrailFinding]]: The result.
+        """
         if len(text) > settings.guardrail_max_text_chars:
             raise GuardrailViolation(
                 f"Text input at {path} exceeds the "
@@ -182,6 +223,15 @@ def check_generated_output(value: Any) -> GuardrailResult:
         return GuardrailResult(value=value)
 
     def transform(text: str, path: str) -> tuple[str, list[GuardrailFinding]]:
+        """Compute the transform.
+
+        Args:
+            text (str): The text.
+            path (str): Filesystem path.
+
+        Returns:
+            tuple[str, list[GuardrailFinding]]: The result.
+        """
         if len(text) > settings.guardrail_max_text_chars:
             raise GuardrailViolation(
                 f"Generated text at {path} exceeds the output safety limit"

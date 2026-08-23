@@ -38,6 +38,15 @@ LANGUAGE = {
 
 
 def build(repo: Path, output: Path) -> tuple[Path, Path]:
+    """Build the result.
+
+    Args:
+        repo (Path): The repo.
+        output (Path): Node output mapping.
+
+    Returns:
+        tuple[Path, Path]: The result.
+    """
     output.mkdir(parents=True, exist_ok=True)
     missing = [relative for relative in FILES if not (repo / relative).is_file()]
     if missing:
@@ -78,6 +87,7 @@ def build(repo: Path, output: Path) -> tuple[Path, Path]:
 
 
 def main() -> None:
+    """Compute the main."""
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path)
     args = parser.parse_args()

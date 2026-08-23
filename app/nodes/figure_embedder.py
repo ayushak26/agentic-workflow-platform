@@ -28,6 +28,13 @@ from app.nodes.registry import NodeRegistry
 class FigureSpec(BaseModel):
     # Exact text inside "[[IMAGE PROMPT: <marker>]]" the drafting node was
     # instructed to emit verbatim — matched case-insensitively.
+    """Pydantic model defining the FigureSpec shape.
+
+    Attributes:
+        marker (str).
+        image (str | dict[str, Any] | None).
+        alt_text (str).
+    """
     marker: str
     # The WHOLE upstream image-generation node's output object (e.g.
     # OpenAIImageGenerationAgent's {generated, minio_key, content_type, ...}),
@@ -48,15 +55,30 @@ class FigureSpec(BaseModel):
 
 
 class FigureEmbedderInput(BaseModel):
+    """Pydantic model defining the FigureEmbedderInput shape."""
     pass
 
 
 class FigureEmbedderConfig(BaseModel):
+    """Pydantic model defining the FigureEmbedderConfig shape.
+
+    Attributes:
+        content (str).
+        figures (list[FigureSpec]).
+    """
     content: str
     figures: list[FigureSpec] = Field(default_factory=list)
 
 
 class FigureEmbedderOutput(BaseModel):
+    """Pydantic model defining the FigureEmbedderOutput shape.
+
+    Attributes:
+        content (str).
+        embedded_count (int).
+        unmatched_figures (list[str]).
+        missing_images (list[str]).
+    """
     content: str
     embedded_count: int = 0
     # Configured figures whose marker never appeared in `content` — usually
@@ -70,6 +92,14 @@ class FigureEmbedderOutput(BaseModel):
 
 
 def _marker_pattern(marker: str) -> re.Pattern[str]:
+    """Internal helper for the marker pattern step.
+
+    Args:
+        marker (str): The marker.
+
+    Returns:
+        re.Pattern[str]: The pattern.
+    """
     return re.compile(
         r"\[\[IMAGE PROMPT:\s*" + re.escape(marker) + r"\s*\]\]",
         re.IGNORECASE,
@@ -78,6 +108,7 @@ def _marker_pattern(marker: str) -> re.Pattern[str]:
 
 @NodeRegistry.register
 class FigureEmbedder(NodeType):
+    """Workflow node type implementing the FigureEmbedder capability."""
     type_name = "FigureEmbedder"
     description = (
         "Replace [[IMAGE PROMPT: marker]] placeholders with real embedded "
@@ -92,6 +123,15 @@ class FigureEmbedder(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = FigureEmbedderConfig(**resolved_config)
         store = self.services.get("object_store")
         if store is None and cfg.figures:

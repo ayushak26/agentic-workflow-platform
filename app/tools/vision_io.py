@@ -26,6 +26,14 @@ KIMI_VISION_CONTENT_TYPES = frozenset(
 
 @dataclass(frozen=True)
 class VisionAnalysis:
+    """Provides the VisionAnalysis behaviour.
+
+    Attributes:
+        text (str).
+        model (str).
+        input_tokens (int).
+        output_tokens (int).
+    """
     text: str
     model: str
     input_tokens: int = 0
@@ -41,10 +49,21 @@ class KimiVisionService:
         *,
         client: Any | None = None,
     ) -> None:
+        """Initialize the KimiVisionService.
+
+        Args:
+            app_settings (Settings): The app settings (optional, default settings).
+            client (Any | None): Client instance (optional, default None).
+        """
         self.settings = app_settings
         self._client = client
 
     def available(self) -> bool:
+        """Compute the available.
+
+        Returns:
+            bool: The result.
+        """
         return bool(self.settings.moonshot_api_key.strip())
 
     async def analyze(
@@ -56,6 +75,18 @@ class KimiVisionService:
         model: KimiVisionModel = "kimi-k3",
         max_completion_tokens: int = 8192,
     ) -> VisionAnalysis:
+        """Compute the analyze.
+
+        Args:
+            image_bytes (bytes): The image bytes.
+            content_type (str): The content type.
+            prompt (str): Prompt text.
+            model (KimiVisionModel): Model name (optional, default 'kimi-k3').
+            max_completion_tokens (int): The max completion tokens (optional, default 8192).
+
+        Returns:
+            VisionAnalysis: The result.
+        """
         prompt = prompt.strip()
         if not prompt:
             raise ValueError("vision prompt cannot be empty")
@@ -126,6 +157,11 @@ _default_service: KimiVisionService | None = None
 
 
 def get_kimi_vision_service() -> KimiVisionService:
+    """Return the kimi vision service.
+
+    Returns:
+        KimiVisionService: The kimi vision service.
+    """
     global _default_service
     if _default_service is None:
         _default_service = KimiVisionService()

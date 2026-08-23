@@ -7,6 +7,18 @@ from pydantic import BaseModel, Field
 
 
 class RAGCitation(BaseModel):
+    """Pydantic model defining the RAGCitation shape.
+
+    Attributes:
+        label (int).
+        chunk_id (str).
+        document_id (str | None).
+        source_id (str | None).
+        source_version_id (str | None).
+        filename (str).
+        page (int | None).
+        section (str | None).
+    """
     label: int                          # the [N] used in the generated answer
     chunk_id: str
     document_id: str | None = None
@@ -20,6 +32,18 @@ class RAGCitation(BaseModel):
 
 
 class RAGQueryResponse(BaseModel):
+    """Pydantic model defining the RAGQueryResponse shape.
+
+    Attributes:
+        request_id (str).
+        rag_agent_id (str).
+        collection_id (str).
+        index_id (str).
+        retrieval_profile_id (str).
+        retrieval_profile_version (int).
+        generation_profile_id (str).
+        generation_profile_version (int).
+    """
     request_id: str
     rag_agent_id: str
     collection_id: str

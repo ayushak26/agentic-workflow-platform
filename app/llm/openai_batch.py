@@ -62,6 +62,11 @@ class OpenAIBatchService:
     """Submit, poll, and read back an OpenAI Batch."""
 
     def __init__(self, api_key: str | None = None):
+        """Initialize the OpenAIBatchService.
+
+        Args:
+            api_key (str | None): API key (optional, default None).
+        """
         self._client = AsyncOpenAI(
             api_key=api_key or settings.openai_api_key,
             max_retries=0,
@@ -92,6 +97,14 @@ class OpenAIBatchService:
         return batch.id
 
     async def status(self, batch_id: str) -> BatchStatus:
+        """Compute the status.
+
+        Args:
+            batch_id (str): The batch id.
+
+        Returns:
+            BatchStatus: The result.
+        """
         batch = await self._client.batches.retrieve(batch_id)
         counts = batch.request_counts
         return BatchStatus(
@@ -147,6 +160,14 @@ class OpenAIBatchService:
 
 
 def _parse_jsonl(text: str) -> list[dict]:
+    """Parse the jsonl.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        list[dict]: The jsonl.
+    """
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
@@ -154,6 +175,15 @@ def _result_from_output_row(
     row: dict,
     response_models: dict[str, Type[BaseModel]],
 ) -> BatchResultItem:
+    """Internal helper for the result from output row step.
+
+    Args:
+        row (dict): Table row.
+        response_models (dict[str, Type[BaseModel]]): The response models.
+
+    Returns:
+        BatchResultItem: The from output row.
+    """
     custom_id = row["custom_id"]
     response = row.get("response")
     if response is None or response.get("status_code") != 200:

@@ -18,10 +18,23 @@ log = get_logger(__name__)
 
 
 class HorizonHTMLProposalRendererInput(BaseModel):
+    """Pydantic model defining the HorizonHTMLProposalRendererInput shape."""
     pass
 
 
 class HorizonHTMLProposalRendererConfig(BaseModel):
+    """Pydantic model defining the HorizonHTMLProposalRendererConfig shape.
+
+    Attributes:
+        content (str).
+        content_format (Literal['markdown', 'html']).
+        metadata (str | dict[str, Any]).
+        citation_registry (str | list[dict[str, Any]]).
+        evidence_qa (str | dict[str, Any]).
+        evidence_blockers (str | list[str]).
+        include_toc (bool).
+        include_bibliography (bool).
+    """
     content: str
     content_format: Literal["markdown", "html"] = "markdown"
     metadata: str | dict[str, Any] = Field(default_factory=dict)
@@ -41,6 +54,18 @@ class HorizonHTMLProposalRendererConfig(BaseModel):
 
 
 class HorizonHTMLProposalRendererOutput(BaseModel):
+    """Pydantic model defining the HorizonHTMLProposalRendererOutput shape.
+
+    Attributes:
+        minio_key (str).
+        pdf_key (str).
+        html_key (str).
+        byte_size (int).
+        html_byte_size (int).
+        page_count (int).
+        page_limit (int | None).
+        html_sha256 (str).
+    """
     minio_key: str
     pdf_key: str
     html_key: str
@@ -58,11 +83,20 @@ class HorizonHTMLProposalRendererOutput(BaseModel):
 
 
 def _safe_component(value: str) -> str:
+    """Internal helper for the safe component step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        str: The component.
+    """
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")[:100] or "run"
 
 
 @NodeRegistry.register
 class HorizonHTMLProposalRenderer(NodeType):
+    """Workflow node type implementing the HorizonHTMLProposalRenderer capability."""
     type_name = "HorizonHTMLProposalRenderer"
     description = (
         "Convert proposal HTML or Markdown into a citation-aware Horizon "
@@ -74,6 +108,14 @@ class HorizonHTMLProposalRenderer(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(
@@ -81,6 +123,15 @@ class HorizonHTMLProposalRenderer(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = HorizonHTMLProposalRendererConfig(**resolved_config)
         unresolved = [
             name

@@ -1,0 +1,131 @@
+# REFERENCE EXEMPLAR — structured research brief pipeline.
+# Pattern: structured input → Knowledge Retrieval → deterministic extraction
+# → AI summary → structured workflow result. Demonstrates chaining
+# deterministic TransformAgent steps with AI ones, and an End node that
+# emits a structured result rather than a chat reply.
+name: Reference — Research Brief
+description: >-
+  Takes a research topic, retrieves relevant knowledge, deterministically
+  extracts the key facts, then summarizes them into a structured brief.
+version: '1.0'
+use_case: reference_exemplar
+library:
+  title: Reference — Research Brief
+  summary: Retrieve knowledge, extract facts, summarize into a brief.
+  visibility_status: draft
+inputs:
+  topic:
+    type: text
+    required: true
+    description: The research topic.
+entry: intake
+exit:
+  - brief
+nodes:
+  - id: intake
+    type: StartAgent
+    config:
+      mode: input_form
+      fields:
+        - name: topic
+          label: Research topic
+          type: string
+          required: true
+    experience:
+      display_name: Topic Intake
+      purpose: Collect the research topic.
+      contribution: Structured entry point.
+      expected_output: The topic text.
+      failure_message: The topic could not be collected.
+
+  - id: gather
+    type: KnowledgeRetrieval
+    config:
+      collection_id: internal-knowledge-base
+      retrieval_profile_id: default
+      query: "{{inputs.topic}}"
+    experience:
+      display_name: Gather Knowledge
+      purpose: Retrieve the passages relevant to the topic.
+      contribution: The evidence base for the brief.
+      expected_output: Retrieved chunks with citations.
+      failure_message: The knowledge base could not be searched.
+
+  - id: extract
+    type: TransformAgent
+    config:
+      mode: ai
+      model: auto
+      input_fields:
+        - name: source_text
+          type: string
+          value: "{{gather.context}}"
+      instructions: >-
+        Extract the key facts from the supplied text. Record only what the
+        text states; return an empty list when nothing qualifies.
+      output_fields:
+        - name: key_facts
+          type: list
+          item_type: string
+          description: The key facts stated in the source text.
+          required: true
+    experience:
+      display_name: Extract Key Facts
+      purpose: Reduce the retrieved text to discrete facts.
+      contribution: A fact base the summary cannot drift from.
+      expected_output: A list of facts.
+      failure_message: The facts could not be extracted.
+
+  - id: summarize
+    type: TransformAgent
+    config:
+      mode: ai
+      model: auto
+      input_fields:
+        - name: topic
+          type: string
+          value: "{{inputs.topic}}"
+        - name: facts
+          type: string
+          value: "{{extract.parsed.key_facts}}"
+      instructions: >-
+        Write a short research brief on the topic using only the supplied
+        facts. State plainly when the facts are insufficient.
+      output_fields:
+        - name: brief
+          type: text
+          description: The research brief.
+          required: true
+    experience:
+      display_name: Write Brief
+      purpose: Compose the final brief from the extracted facts.
+      contribution: The deliverable.
+      expected_output: A short brief.
+      failure_message: The brief could not be written.
+
+  - id: brief
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: topic
+          value_from: "{{inputs.topic}}"
+        - key: brief
+          value_from: "{{summarize.parsed.brief}}"
+        - key: sources
+          value_from: "{{gather.citations}}"
+    experience:
+      display_name: Research Brief
+      purpose: Emit the structured brief with sources.
+      contribution: The terminal deliverable.
+      expected_output: A structured result.
+      failure_message: The result could not be recorded.
+edges:
+  - from: intake
+    to: gather
+  - from: gather
+    to: extract
+  - from: extract
+    to: summarize
+  - from: summarize
+    to: brief

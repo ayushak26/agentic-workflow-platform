@@ -1,0 +1,34 @@
+name: Reference AITaskAgent 02
+description: Smallest valid workflow exercising AITaskAgent — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production. AITaskAgent is deprecated in favor of TransformAgent's new-style
+  editor; this fixture exists only to keep coverage complete while the type remains
+  registered.
+version: '1.0'
+inputs:
+  message:
+    type: text
+    required: true
+nodes:
+- id: extract_intent
+  type: AITaskAgent
+  config:
+    task: extract
+    model: auto
+    instruction: Extract the customer's intent and language from the message.
+    input: '{{inputs.message}}'
+    output_fields:
+    - name: intent
+      type: string
+      required: true
+    - name: language
+      type: string
+      required: true
+- id: report
+  type: Echo
+  config:
+    template: 'Intent: {{extract_intent.result.intent}}'
+edges:
+- from: extract_intent
+  to: report
+entry: extract_intent
+exit: report

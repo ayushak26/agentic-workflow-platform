@@ -1,0 +1,145 @@
+# REFERENCE EXEMPLAR — knowledge-informed routing.
+# Pattern: structured input → Knowledge Retrieval → AI classification →
+# deterministic routing on the classified field. Branches never reconverge;
+# each ends in its own exit (the platform's safe-routing rule).
+name: Reference — Knowledge-Informed Triage
+description: >-
+  Structured intake retrieves relevant knowledge, classifies the request with
+  an AI task, and routes on the classification; each branch terminates in its
+  own End node.
+version: '1.0'
+use_case: reference_exemplar
+library:
+  title: Reference — Knowledge-Informed Triage
+  summary: Retrieve knowledge, classify with AI, route deterministically.
+  visibility_status: draft
+inputs:
+  request:
+    type: text
+    required: true
+    description: The request to triage.
+entry: intake
+exit:
+  - end_sales
+  - end_support
+nodes:
+  - id: intake
+    type: StartAgent
+    config:
+      mode: input_form
+      fields:
+        - name: request
+          label: Request
+          type: string
+          required: true
+    experience:
+      display_name: Intake
+      purpose: Collect the request to triage.
+      contribution: Structured entry point.
+      expected_output: The request text.
+      failure_message: The request could not be collected.
+
+  - id: search_knowledge
+    type: KnowledgeRetrieval
+    config:
+      collection_id: internal-knowledge-base
+      retrieval_profile_id: default
+      query: "{{inputs.request}}"
+    experience:
+      display_name: Search Knowledge
+      purpose: Pull the policy passages relevant to the request.
+      contribution: Gives classification an evidence base.
+      expected_output: Retrieved chunks.
+      failure_message: The knowledge base could not be searched.
+
+  - id: classify
+    type: TransformAgent
+    config:
+      mode: ai
+      model: auto
+      input_fields:
+        - name: request
+          type: string
+          value: "{{inputs.request}}"
+        - name: policy_context
+          type: string
+          value: "{{search_knowledge.context}}"
+      instructions: >-
+        Classify the request as either sales or support. Use the policy
+        context to disambiguate; choose support when unsure.
+      output_fields:
+        - name: category
+          type: enum
+          enum_values: [sales, support]
+          description: Which team owns this request.
+          required: true
+    experience:
+      display_name: Classify Request
+      purpose: Decide sales vs support from the request and policy context.
+      contribution: A deterministic routing decision.
+      expected_output: A category value.
+      failure_message: The request could not be classified.
+
+  - id: route_by_category
+    type: RouterAgent
+    config:
+      mode: field
+      route_field: classify.parsed.category
+      branches:
+        sales: end_sales
+        support: end_support
+      fallback: end_support
+    experience:
+      display_name: Route
+      purpose: Send the request to the owning team.
+      contribution: Deterministic branch selection.
+      expected_output: One branch taken.
+      failure_message: The request could not be routed.
+
+  - id: end_sales
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: routed_to
+          value_from: sales
+        - key: category
+          value_from: "{{classify.parsed.category}}"
+        - key: request
+          value_from: "{{inputs.request}}"
+    experience:
+      display_name: Routed to Sales
+      purpose: Record the sales routing outcome.
+      contribution: Terminal record for the sales branch.
+      expected_output: A routing record.
+      failure_message: The outcome could not be recorded.
+
+  - id: end_support
+    type: EndAgent
+    config:
+      mode: workflow_result
+      outputs:
+        - key: routed_to
+          value_from: support
+        - key: category
+          value_from: "{{classify.parsed.category}}"
+        - key: request
+          value_from: "{{inputs.request}}"
+    experience:
+      display_name: Routed to Support
+      purpose: Record the support routing outcome.
+      contribution: Terminal record for the support branch.
+      expected_output: A routing record.
+      failure_message: The outcome could not be recorded.
+edges:
+  - from: intake
+    to: search_knowledge
+  - from: search_knowledge
+    to: classify
+  - from: classify
+    to: route_by_category
+  - from: route_by_category
+    condition: route
+    branches:
+      end_sales: end_sales
+      end_support: end_support

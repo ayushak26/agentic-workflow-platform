@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState, type ChangeEvent } from 'react';
 import { AskAiDialog } from './builder/AskAiDialog';
+import { ResourceSelect } from './builder/ResourceSelect';
 import { PromptDraftAssistant } from './PromptDraftAssistant';
 
 // Treat these field names as multiline regardless of schema (the schema
@@ -115,6 +116,24 @@ function FieldRenderer({
   // Resolve anyOf with null → optional field of the non-null branch
   const effective = resolveOptional(schema);
   const isOptional = effective !== schema;
+
+  // Knowledge Studio-backed resources (x-resource marker from the backend
+  // config schema) → live registry select, not a raw identifier input.
+  const resourceKind = effective['x-resource'];
+  if (resourceKind === 'collection' || resourceKind === 'retrieval_profile') {
+    return (
+      <div>
+        {label}
+        <ResourceSelect
+          resource={resourceKind}
+          value={typeof value === 'string' ? value : ''}
+          onChange={onChange}
+        />
+        {effective.description && <Hint text={effective.description} />}
+        {askAiDialog}
+      </div>
+    );
+  }
 
   // Enum → select
   if (effective.enum && Array.isArray(effective.enum)) {

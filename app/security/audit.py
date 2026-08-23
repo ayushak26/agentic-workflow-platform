@@ -81,6 +81,17 @@ async def write_audit_event(
     actor: str = "system",
     payload: dict[str, Any] | None = None,
 ) -> None:
+    """Write the audit event.
+
+    Args:
+        db: Mongo database handle.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+        node_id (str): Workflow node identifier.
+        event_type (str): The event type.
+        actor (str): Acting username (optional, default 'system').
+        payload (dict[str, Any] | None): Event or audit payload (optional, default None).
+    """
     _require_session(session_id)  # hard-fail on blank BEFORE building the record
     record = {
         "run_id": run_id,

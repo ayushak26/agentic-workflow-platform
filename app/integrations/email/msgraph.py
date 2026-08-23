@@ -39,14 +39,28 @@ _MESSAGE_FIELDS = (
 
 
 class MicrosoftGraphAdapter(EmailAdapter):
+    """Provides the MicrosoftGraphAdapter behaviour."""
     provider = "microsoft"
 
     def __init__(self, client: httpx.AsyncClient | None = None):
+        """Initialize the MicrosoftGraphAdapter.
+
+        Args:
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+        """
         self._client = client
 
     # -- transport ------------------------------------------------------
 
     def _headers(self, connection: EmailConnection) -> dict[str, str]:
+        """Internal helper for the headers step.
+
+        Args:
+            connection (EmailConnection): The connection.
+
+        Returns:
+            dict[str, str]: The result.
+        """
         token = connection.credentials.get("access_token")
         if not token:
             raise EmailAdapterError(
@@ -78,6 +92,18 @@ class MicrosoftGraphAdapter(EmailAdapter):
         side_effect: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        """Internal helper for the request step.
+
+        Args:
+            connection (EmailConnection): The connection.
+            method (str): The method.
+            path (str): Filesystem path.
+            side_effect (bool): The side effect (optional, default False).
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         client = self._client or httpx.AsyncClient(timeout=_TIMEOUT)
         owns_client = self._client is None
         try:
@@ -115,6 +141,15 @@ class MicrosoftGraphAdapter(EmailAdapter):
     async def search(
         self, connection: EmailConnection, criteria: EmailSearchCriteria
     ) -> list[EmailMessage]:
+        """Search the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            criteria (EmailSearchCriteria): The criteria.
+
+        Returns:
+            list[EmailMessage]: The result.
+        """
         params: dict[str, Any] = {
             "$top": criteria.max_results,
             "$select": _MESSAGE_FIELDS,
@@ -141,6 +176,15 @@ class MicrosoftGraphAdapter(EmailAdapter):
     async def read(
         self, connection: EmailConnection, message_id: str
     ) -> EmailMessage:
+        """Read the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            message_id (str): The message id.
+
+        Returns:
+            EmailMessage: The result.
+        """
         raw = await self._request(
             connection,
             "GET",
@@ -170,6 +214,15 @@ class MicrosoftGraphAdapter(EmailAdapter):
     async def create_draft(
         self, connection: EmailConnection, draft: EmailDraft
     ) -> str:
+        """Create the draft.
+
+        Args:
+            connection (EmailConnection): The connection.
+            draft (EmailDraft): The draft.
+
+        Returns:
+            str: The draft.
+        """
         created = await self._request(
             connection,
             "POST",
@@ -183,6 +236,15 @@ class MicrosoftGraphAdapter(EmailAdapter):
         # sendMail returns 202 with an empty body — no message id. Creating the
         # draft first and sending it means the caller gets a real id back, which
         # is what makes an operation auditable after the fact.
+        """Send the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            draft (EmailDraft): The draft.
+
+        Returns:
+            str: The result.
+        """
         message_id = await self.create_draft(connection, draft)
         await self._request(
             connection,
@@ -220,6 +282,14 @@ class MicrosoftGraphAdapter(EmailAdapter):
 
 
 def _graph_filters(criteria: EmailSearchCriteria) -> list[str]:
+    """Internal helper for the graph filters step.
+
+    Args:
+        criteria (EmailSearchCriteria): The criteria.
+
+    Returns:
+        list[str]: The filters.
+    """
     filters: list[str] = []
     if criteria.unread_only:
         filters.append("isRead eq false")
@@ -241,6 +311,14 @@ def _graph_filters(criteria: EmailSearchCriteria) -> list[str]:
 
 
 def _recipient(address: EmailAddress) -> dict[str, Any]:
+    """Internal helper for the recipient step.
+
+    Args:
+        address (EmailAddress): The address.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     entry: dict[str, Any] = {"emailAddress": {"address": address.email}}
     if address.name:
         entry["emailAddress"]["name"] = address.name
@@ -248,6 +326,14 @@ def _recipient(address: EmailAddress) -> dict[str, Any]:
 
 
 def _draft_payload(draft: EmailDraft) -> dict[str, Any]:
+    """Draft the payload.
+
+    Args:
+        draft (EmailDraft): The draft.
+
+    Returns:
+        dict[str, Any]: The payload.
+    """
     payload: dict[str, Any] = {
         "subject": draft.subject,
         "body": {
@@ -268,6 +354,14 @@ def _draft_payload(draft: EmailDraft) -> dict[str, Any]:
 
 
 def _address(raw: dict[str, Any] | None) -> EmailAddress | None:
+    """Internal helper for the address step.
+
+    Args:
+        raw (dict[str, Any] | None): Raw value.
+
+    Returns:
+        EmailAddress | None: The result.
+    """
     if not raw:
         return None
     inner = raw.get("emailAddress") or {}
@@ -278,11 +372,27 @@ def _address(raw: dict[str, Any] | None) -> EmailAddress | None:
 
 
 def _addresses(raw: list[dict[str, Any]] | None) -> list[EmailAddress]:
+    """Internal helper for the addresses step.
+
+    Args:
+        raw (list[dict[str, Any]] | None): Raw value.
+
+    Returns:
+        list[EmailAddress]: The result.
+    """
     parsed = [_address(item) for item in raw or []]
     return [item for item in parsed if item is not None]
 
 
 def _to_message(raw: dict[str, Any]) -> EmailMessage:
+    """Internal helper for the to message step.
+
+    Args:
+        raw (dict[str, Any]): Raw value.
+
+    Returns:
+        EmailMessage: The message.
+    """
     body = raw.get("body") or {}
     is_html = str(body.get("contentType", "")).lower() == "html"
     content = body.get("content") or ""
@@ -306,6 +416,14 @@ def _to_message(raw: dict[str, Any]) -> EmailMessage:
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
+    """Parse the timestamp.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        datetime | None: The timestamp.
+    """
     if not value:
         return None
     try:

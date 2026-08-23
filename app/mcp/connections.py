@@ -69,6 +69,14 @@ def _dynamics_tool_policies() -> dict[str, MCPToolPolicy]:
 
 
 def dynamics_connection(app_settings: Settings = settings) -> MCPServerConnection:
+    """Compute the dynamics connection.
+
+    Args:
+        app_settings (Settings): The app settings (optional, default settings).
+
+    Returns:
+        MCPServerConnection: The connection.
+    """
     is_mock = app_settings.dynamics_mcp_mode.strip().lower() != "live"
     return MCPServerConnection(
         id="dynamics365",
@@ -301,6 +309,16 @@ def build_mcp_service(
     db: Any = None,
     app_settings: Settings = settings,
 ) -> MCPIntegrationService:
+    """Build the mcp service.
+
+    Args:
+        client (Any): Client instance.
+        db (Any): Mongo database handle (optional, default None).
+        app_settings (Settings): The app settings (optional, default settings).
+
+    Returns:
+        MCPIntegrationService: The mcp service.
+    """
     return MCPIntegrationService(
         registry=build_registry(app_settings),
         client=client,

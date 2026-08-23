@@ -10,7 +10,7 @@ export function useRunSocket(runId: string | null) {
   useEffect(() => {
     if (!runId) return;
     // Reset state because this effect owns a new external WebSocket lifecycle.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setEvents([]);
     setOpen(false);
     setError(null);

@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const tabs = [
-  { to: 'my-work', label: 'My Work' },
+  { to: 'business-chat', label: 'Chatbot' },
   { to: 'library', label: 'Library' },
   { to: 'builder', label: 'Builder' },
   { to: 'history', label: 'Run history' },

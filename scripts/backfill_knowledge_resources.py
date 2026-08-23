@@ -50,6 +50,14 @@ DEFAULT_LEGACY_OWNER = "default"
 
 
 async def _load_legacy_collection_configs(db) -> dict[str, dict]:
+    """Load the legacy collection configs.
+
+    Args:
+        db: Mongo database handle.
+
+    Returns:
+        dict[str, dict]: The legacy collection configs.
+    """
     configs: dict[str, dict] = {}
     async for doc in db["collections"].find({}):
         configs[doc["collection_id"]] = doc
@@ -57,6 +65,14 @@ async def _load_legacy_collection_configs(db) -> dict[str, dict]:
 
 
 async def _group_manifests_by_owner_and_collection(db) -> dict[tuple[str, str], list[dict]]:
+    """Group the manifests by owner and collection.
+
+    Args:
+        db: Mongo database handle.
+
+    Returns:
+        dict[tuple[str, str], list[dict]]: The manifests by owner and collection.
+    """
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     async for manifest in db["manifests"].find({}):
         metadata = manifest.get("metadata") or {}
@@ -67,6 +83,15 @@ async def _group_manifests_by_owner_and_collection(db) -> dict[tuple[str, str], 
 
 
 async def backfill(*, apply: bool, db=None) -> dict[str, int]:
+    """Backfill the result.
+
+    Args:
+        apply (bool): The apply.
+        db: Mongo database handle (optional, default None).
+
+    Returns:
+        dict[str, int]: The result.
+    """
     if db is None:
         mongo = get_mongo_client()
         db = mongo._ensure_client()[DB_NAME]
@@ -190,6 +215,7 @@ async def backfill(*, apply: bool, db=None) -> dict[str, int]:
 
 
 async def main() -> None:
+    """Compute the main."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Write changes. Omit for a dry-run preview.")
     args = parser.parse_args()

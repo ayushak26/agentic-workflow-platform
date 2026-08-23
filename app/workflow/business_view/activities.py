@@ -79,6 +79,15 @@ DELIVERABLE = "deliverable"
 
 @dataclass(frozen=True)
 class _ActivityDef:
+    """Provides the ActivityDef behaviour.
+
+    Attributes:
+        id (str).
+        title (str).
+        order (int).
+        kind (ActivityKind).
+        running_headline (str).
+    """
     id: str
     title: str
     order: int
@@ -120,6 +129,15 @@ _KIND_LABELS: dict[ActivityKind, str] = {
 
 @dataclass
 class _Group:
+    """Provides the Group behaviour.
+
+    Attributes:
+        key (str).
+        definition (_ActivityDef | None).
+        title (str).
+        order (int).
+        nodes (list[NodeView]).
+    """
     key: str
     definition: _ActivityDef | None
     title: str
@@ -188,6 +206,14 @@ def group_nodes(run: RunView) -> list[_Group]:
 
 
 def _group_status(nodes: list[NodeView]) -> str:
+    """Group the status.
+
+    Args:
+        nodes (list[NodeView]): The nodes.
+
+    Returns:
+        str: The status.
+    """
     statuses = {node.status for node in nodes}
     if "failed" in statuses:
         return "attention"
@@ -201,6 +227,14 @@ def _group_status(nodes: list[NodeView]) -> str:
 
 
 def _group_kind(group: _Group) -> ActivityKind:
+    """Group the kind.
+
+    Args:
+        group (_Group): The group.
+
+    Returns:
+        ActivityKind: The kind.
+    """
     if group.definition is not None:
         return group.definition.kind
     kinds = {node.execution_kind for node in group.nodes}
@@ -390,6 +424,15 @@ def _technical(group: _Group, ai: AIModelUsage | None) -> TechnicalActivityDetai
 
 
 def _summary_for(group: _Group, facts: list[BusinessFact]) -> str | None:
+    """Internal helper for the summary for step.
+
+    Args:
+        group (_Group): The group.
+        facts (list[BusinessFact]): The facts.
+
+    Returns:
+        str | None: The for.
+    """
     key = group.key
     if key == UNDERSTAND:
         for node in group.nodes:
@@ -497,10 +540,26 @@ def build_activities(run: RunView, factory: ActionFactory) -> list[BusinessActiv
 
 
 def active_activity(activities: list[BusinessActivityView]) -> BusinessActivityView | None:
+    """Compute the active activity.
+
+    Args:
+        activities (list[BusinessActivityView]): The activities.
+
+    Returns:
+        BusinessActivityView | None: The activity.
+    """
     return next((activity for activity in activities if activity.status == "active"), None)
 
 
 def running_headline(activity_id: str) -> str | None:
+    """Compute the running headline.
+
+    Args:
+        activity_id (str): The activity id.
+
+    Returns:
+        str | None: The headline.
+    """
     definition = _DEFS.get(activity_id)
     return definition.running_headline if definition else None
 

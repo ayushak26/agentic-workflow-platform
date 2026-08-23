@@ -14,14 +14,27 @@ log = get_logger(__name__)
 
 
 class ExcelInput(BaseModel):
+    """Pydantic model defining the ExcelInput shape."""
     pass
 
 
 class ExcelConfig(BaseModel):
+    """Pydantic model defining the ExcelConfig shape.
+
+    Attributes:
+        minio_key (str).
+    """
     minio_key: str   # templated; the upstream node provides this
 
 
 class ExcelOutput(BaseModel):
+    """Pydantic model defining the ExcelOutput shape.
+
+    Attributes:
+        tables (dict[str, list[list[Any]]]).
+        sheet_count (int).
+        total_rows (int).
+    """
     tables: dict[str, list[list[Any]]]
     sheet_count: int
     total_rows: int
@@ -29,6 +42,7 @@ class ExcelOutput(BaseModel):
 
 @NodeRegistry.register
 class ExcelTableExtractor(NodeType):
+    """Workflow node type implementing the ExcelTableExtractor capability."""
     type_name = "ExcelTableExtractor"
     description = "Extract tables from an .xlsx in object storage."
     input_schema = ExcelInput
@@ -37,9 +51,26 @@ class ExcelTableExtractor(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         store = self.services["object_store"]
         cfg = ExcelConfig(**resolved_config)
 

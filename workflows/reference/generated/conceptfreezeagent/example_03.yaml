@@ -1,0 +1,595 @@
+name: Reference ConceptFreezeAgent 03
+description: A research/consulting team turns a call document and a concept note into
+  a submitted proposal — extracting the call, planning research, gathering candidates
+  from three independent sources, acquiring and verifying evidence, freezing a concept
+  only after a human approves the evidence, drafting two sections in parallel and
+  joining them safely (unconditional fan-out, not Multi-Route), checking consistency
+  and call coverage, scoring with independent evaluators, and gating submission on
+  every hard signal at once before rendering final documents.
+version: '1.0'
+use_case: proposal_engineering
+library:
+  title: W10 — Evidence-Grounded Business Proposal Document
+  summary: Research, verify, draft, evaluate, and render a proposal — with a human
+    approval gate before evidence can be used.
+  purpose:
+  - Demonstrate the platform's specialized research/evidence/proposal/rendering families
+    together, in business order
+  - Keep parallel drafting safely joined (unconditional fan-out), never through Multi-Route
+  suitable_for:
+  - A research or consulting team responding to a funding call or business opportunity
+  not_suitable_for:
+  - A quick internal memo — this pipeline's overhead only pays off for a real submission
+  outputs:
+  - A submission-ready (or blocked) proposal, rendered as DOCX, PDF, and slides
+  input_types:
+  - A call document and a concept note
+  human_reviews:
+    count: 2
+    labels:
+    - Evidence Approval
+    - Final Submission Approval
+  visibility_status: draft
+entry: start
+exit:
+- end_blocked
+- end_submitted
+nodes:
+- id: start
+  type: StartAgent
+  config:
+    mode: input_form
+    title: New Proposal
+    fields:
+    - name: concept_note
+      label: Concept Note
+      type: text
+      required: true
+    file_fields:
+    - name: call_document
+      label: Call Document
+      required: true
+  experience:
+    display_name: New Proposal
+    purpose: Take in the call document and the team's initial concept.
+    contribution: One entry point for the whole pipeline below.
+    expected_output: A call document and a concept note.
+    failure_message: The proposal request could not be read.
+- id: extract_call
+  type: WorkflowFileLoader
+  config:
+    files: '{{outputs.start.data.call_document}}'
+    fail_on_unreadable: false
+  experience:
+    display_name: Extract Call Document
+    purpose: Turn the uploaded call document into readable text.
+    contribution: Works whichever format the call was published in.
+    expected_output: The call document's extracted text.
+    failure_message: The call document could not be read.
+- id: graph_normalizer
+  type: GraphNormalizer
+  config:
+    concept_note: '{{outputs.start.data.concept_note}}'
+    call_facts: '{{outputs.extract_call.text}}'
+  experience:
+    display_name: Extract Structure
+    purpose: Turn the concept note and call into the typed proposal graph everything
+      below reads from.
+    contribution: The keystone step — nothing invented, anything absent goes to open
+      questions.
+    expected_output: A populated proposal graph.
+    failure_message: The proposal structure could not be extracted.
+- id: research_planner
+  type: ScientificResearchPlannerAgent
+  config:
+    call_context: '{{outputs.extract_call.text}}'
+    concept_context: '{{outputs.start.data.concept_note}}'
+    max_briefs: 4
+  experience:
+    display_name: Plan Research
+    purpose: Turn the call and concept into a handful of bounded research briefs.
+    contribution: Only the tracks that materially apply, each with its own tool-call
+      budget.
+    expected_output: A small set of bounded research briefs.
+    failure_message: The research could not be planned.
+- id: scholarly_discovery
+  type: ScholarlyCandidateDiscoveryAgent
+  config:
+    max_claims: 8
+  experience:
+    display_name: Academic Discovery
+    purpose: Search academic databases for candidate sources.
+    contribution: Broadens what the human reviewer sees beyond the primary research
+      path.
+    expected_output: Candidate academic sources — never verified evidence.
+    failure_message: Academic discovery could not be completed.
+- id: web_search
+  type: WebSearchAgent
+  config:
+    query: '{{outputs.start.data.concept_note}}'
+    top_k: 5
+  experience:
+    display_name: Public Web Check
+    purpose: See what's already publicly known about this concept.
+    contribution: A cheap, independent sanity check alongside the academic and bounded
+      research paths.
+    expected_output: A handful of public search results, explicitly candidate-only.
+    failure_message: The public web could not be searched.
+- id: bounded_research
+  type: BoundedDeepResearchAgent
+  config:
+    research_briefs: '{{outputs.research_planner.research_briefs}}'
+    max_jobs: 4
+    max_parallel_jobs: 2
+    max_total_tool_calls: 40
+  experience:
+    display_name: Bounded Deep Research
+    purpose: Run the budgeted, multi-brief research loop that becomes the primary
+      evidence path.
+    contribution: Hard job/tool-call/cost/duration limits — the most expensive step
+      per call, spent deliberately.
+    expected_output: Research dossiers and candidate sources.
+    failure_message: The bounded research could not be completed.
+- id: acquire_sources
+  type: ResearchSourceAcquirer
+  config:
+    candidates: '{{outputs.bounded_research.candidates}}'
+    max_total_sources: 30
+  experience:
+    display_name: Acquire Full Text
+    purpose: Fetch the bounded-research candidates into immutable, hash-stamped documents.
+    contribution: Only a public, safely-fetched source ever becomes usable evidence.
+    expected_output: Acquired full-text documents.
+    failure_message: The sources could not be acquired.
+- id: verify_evidence
+  type: ProposalEvidenceFactoryAgent
+  config:
+    candidates: '{{outputs.bounded_research.candidates}}'
+    documents: '{{outputs.acquire_sources.documents}}'
+  experience:
+    display_name: Verify Evidence
+    purpose: Turn acquired candidates into a fail-closed, auditable verified-claim
+      set.
+    contribution: A claim is only verified if every applicable gate passes — never
+      on one supporting link alone.
+    expected_output: Verified claims, a citation registry, and any evidence gaps.
+    failure_message: The evidence could not be verified.
+- id: evidence_review
+  type: HumanInLoopAgent
+  config:
+    question: Approve this evidence for drafting?
+    review_purpose: Nothing may be drafted from evidence until a person has explicitly
+      approved this exact snapshot.
+    review_panels:
+    - label: Evidence QA Report
+      field: verify_evidence.qa_report
+    - label: Additional Academic Candidates (for awareness)
+      field: scholarly_discovery.candidates_found
+    - label: Public Web Signal (for awareness)
+      field: web_search.result_count
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Evidence Approval
+    purpose: Let a person approve the verified evidence before anything is drafted
+      from it.
+    contribution: The one point where a person's sign-off unlocks drafting — enforced
+      in code, not convention.
+    expected_output: Approve or reject.
+    failure_message: The evidence review could not be recorded.
+- id: freeze_truth_graph
+  type: ProposalTruthGraphAgent
+  config:
+    verified_claims: '{{outputs.verify_evidence.verified_claims}}'
+    evidence_approval_decision: '{{outputs.evidence_review.decision}}'
+  experience:
+    display_name: Freeze Truth Graph
+    purpose: Freeze the drafting-safe snapshot of only verified evidence.
+    contribution: A hash-stamped snapshot — drafting reads from this, never from raw
+      candidate lists.
+    expected_output: A frozen truth graph, or drafting_allowed = false if not approved.
+    failure_message: The truth graph could not be frozen.
+- id: concept_alternatives
+  type: ConceptAlternativesAgent
+  config:
+    concept_note: '{{outputs.start.data.concept_note}}'
+  experience:
+    display_name: Generate Concept Alternatives
+    purpose: Draft three independently-scored postures — conservative, balanced, ambitious.
+    contribution: Each posture is drafted in isolation so later ones can't anchor
+      on the first.
+    expected_output: Three scored concept alternatives and a recommendation.
+    failure_message: The concept alternatives could not be generated.
+- id: concept_review
+  type: HumanInLoopAgent
+  config:
+    question: Approve drafting the recommended concept alternative, or edit this field
+      with a different alternative's id (conservative / balanced / ambitious) to override
+      it?
+    review_purpose: Which posture the proposal commits to is a person's call, not
+      the model's own recommendation standing unchecked.
+    review_panels:
+    - label: Recommended Concept
+      field: concept_alternatives.recommended_concept_id
+    - label: All Generated Alternatives (for reference, to override with)
+      field: concept_alternatives.alternatives
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+  experience:
+    display_name: Concept Approval
+    purpose: Let a person confirm the recommended concept before it's frozen, or override
+      it with a different alternative.
+    contribution: Nothing is frozen without a person having actually looked at the
+      recommendation — and the recommendation is never the only option they can pick.
+    expected_output: Approve, reject, or edit with a different alternative's id.
+    failure_message: The concept review could not be recorded.
+- id: resolve_concept_choice
+  type: TransformAgent
+  config:
+    mode: deterministic
+    operations:
+    - target: selected_concept_id
+      operation: copy
+      source: concept_review.edited_content.text
+      default: '{{outputs.concept_alternatives.recommended_concept_id}}'
+  experience:
+    display_name: Resolve Concept Choice
+    purpose: Use the human's overriding alternative id when they edited the review,
+      otherwise the original recommendation.
+    contribution: An approve keeps the recommendation; an edit genuinely picks a different
+      alternative — never silently ignored.
+    expected_output: The concept id that should actually be frozen.
+    failure_message: The concept choice could not be resolved.
+- id: concept_freeze
+  type: ConceptFreezeAgent
+  config:
+    alternatives: '{{outputs.concept_alternatives.alternatives}}'
+    selected_concept_id: '{{outputs.resolve_concept_choice.data.selected_concept_id}}'
+  experience:
+    display_name: Freeze Concept
+    purpose: Resolve the approved concept choice — fails closed on any mismatch, no
+      model call.
+    contribution: Only reached after a person approved the recommendation above.
+    expected_output: The frozen, selected concept.
+    failure_message: The concept could not be frozen.
+- id: methodology
+  type: MethodologyEngineeringAgent
+  config:
+    selected_concept: '{{outputs.concept_freeze.selected_concept}}'
+    max_objectives: 6
+  experience:
+    display_name: Engineer Methodology
+    purpose: Produce one skill-guided Method Card per objective.
+    contribution: Grounded only in verified claims and known research questions —
+      never a fabricated method.
+    expected_output: One Method Card per objective.
+    failure_message: The methodology could not be engineered.
+- id: draft_excellence
+  type: TransformAgent
+  config:
+    mode: ai
+    model: claude-sonnet-4-5
+    temperature: 0.2
+    input_fields:
+    - name: methodology
+      type: string
+      value: '{{outputs.methodology.method_cards}}'
+    instructions: 'Draft the Excellence section of the proposal from the Method Cards
+
+      provided. Ground every claim in the methodology given — never invent
+
+      a result or figure not present in it.'
+  experience:
+    display_name: Draft Excellence Section
+    purpose: Draft the Excellence section from the engineered methodology.
+    contribution: Runs independently of the Impact section, in parallel.
+    expected_output: A drafted Excellence section.
+    failure_message: The Excellence section could not be drafted.
+- id: draft_impact
+  type: TransformAgent
+  config:
+    mode: ai
+    model: claude-sonnet-4-5
+    temperature: 0.2
+    input_fields:
+    - name: methodology
+      type: string
+      value: '{{outputs.methodology.method_cards}}'
+    instructions: 'Draft the Impact section of the proposal from the Method Cards
+
+      provided. Ground every claim in the methodology given — never invent
+
+      a result or figure not present in it.'
+  experience:
+    display_name: Draft Impact Section
+    purpose: Draft the Impact section from the engineered methodology.
+    contribution: Runs independently of the Excellence section, in parallel.
+    expected_output: A drafted Impact section.
+    failure_message: The Impact section could not be drafted.
+- id: draft_implementation
+  type: TransformAgent
+  config:
+    mode: ai
+    model: claude-sonnet-4-5
+    temperature: 0.2
+    input_fields:
+    - name: methodology
+      type: string
+      value: '{{outputs.methodology.method_cards}}'
+    instructions: 'Draft the Implementation section of the proposal from the Method
+
+      Cards provided: work plan, timeline, and risk management. Ground
+
+      every claim in the methodology given — never invent a result or
+
+      figure not present in it.'
+  experience:
+    display_name: Draft Implementation Section
+    purpose: Draft the Implementation section from the engineered methodology.
+    contribution: Runs independently of Excellence and Impact, in parallel — the evaluator
+      and submission gate both expect this section to exist.
+    expected_output: A drafted Implementation section.
+    failure_message: The Implementation section could not be drafted.
+- id: assemble_proposal
+  type: TextAssemblerAgent
+  config:
+    separator: '
+
+
+      '
+    parts:
+    - '{{outputs.draft_excellence.raw}}'
+    - '{{outputs.draft_impact.raw}}'
+    - '{{outputs.draft_implementation.raw}}'
+  experience:
+    display_name: Join Drafted Sections
+    purpose: Combine the two independently-drafted sections into one proposal text.
+    contribution: All three sections always ran, so this always has all three to combine
+      — nothing to wait on that might not arrive.
+    expected_output: One assembled proposal text.
+    failure_message: The sections could not be assembled.
+- id: consistency_check
+  type: ConsistencyChecker
+  config: {}
+  experience:
+    display_name: Check Consistency
+    purpose: Run the nine hard rules over the typed proposal graph.
+    contribution: A pure, no-LLM gate — KPIs, work packages, partners, compliance,
+      all checked deterministically.
+    expected_output: PASS, WARN, or BLOCK, with findings.
+    failure_message: Consistency could not be checked.
+- id: call_coverage
+  type: CallCoverageMatrixAgent
+  config: {}
+  experience:
+    display_name: Check Call Coverage
+    purpose: Compute, per call requirement, whether it's addressed, partial, or missing.
+    contribution: Entirely a function of the graph's current state — no config to
+      drift.
+    expected_output: A per-requirement coverage matrix.
+    failure_message: Call coverage could not be computed.
+- id: horizon_evaluation
+  type: HorizonEvaluationAgent
+  config:
+    proposal_text: '{{outputs.assemble_proposal.text}}'
+    generator_model: claude-sonnet-4-5
+    evaluator_models:
+    - gpt-5
+    - local-glm-5
+  experience:
+    display_name: Score The Proposal
+    purpose: Score Excellence, Impact, and Implementation with two independent, cross-provider
+      evaluators.
+    contribution: Neither evaluator is the model that drafted this — the model never
+      grades its own writing.
+    expected_output: A per-criterion score and a pass/fail threshold result.
+    failure_message: The proposal could not be scored.
+- id: submission_gate
+  type: ProposalSubmissionGate
+  config:
+    proposal_text: '{{outputs.assemble_proposal.text}}'
+    evidence_blockers: '{{outputs.verify_evidence.blocking_issues}}'
+    consistency_gate: '{{outputs.consistency_check.gate}}'
+    consistency_findings: '{{outputs.consistency_check.findings}}'
+    evaluation_threshold_passed: '{{outputs.horizon_evaluation.threshold_passed}}'
+    evaluation_total_score: '{{outputs.horizon_evaluation.total_score}}'
+  experience:
+    display_name: Submission Gate
+    purpose: Combine every hard, auditable signal into one release decision.
+    contribution: A high evaluator score can never hide missing evidence or a failed
+      consistency check.
+    expected_output: READY or BLOCKED.
+    failure_message: The submission gate could not be evaluated.
+- id: gate_router
+  type: RouterAgent
+  config:
+    mode: field
+    route_field: submission_gate.status
+    branches:
+      READY: READY
+      BLOCKED: BLOCKED
+    fallback: BLOCKED
+  experience:
+    display_name: Ready To Submit?
+    purpose: Only proceed to final approval and rendering when the gate says READY.
+    contribution: A blocked proposal stops here, visibly, rather than being rendered
+      anyway.
+    expected_output: READY or BLOCKED.
+    failure_message: The gate result could not be routed.
+- id: end_blocked
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: status
+      value_from: BLOCKED
+    - key: blockers
+      value_from: '{{outputs.submission_gate.blockers}}'
+  experience:
+    display_name: Blocked Outcome
+    purpose: Return why the proposal was blocked from submission.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The blocking reasons.
+    failure_message: The result could not be produced.
+- id: final_approval
+  type: HumanInLoopAgent
+  config:
+    question: The proposal passed every automated gate. Approve final submission?
+    review_purpose: Submission is a business decision, not an automatic action, regardless
+      of how many gates passed.
+    review_panels:
+    - label: Evaluation Score
+      field: horizon_evaluation.total_score
+    - label: Call Coverage
+      field: call_coverage.coverage_percent
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Final Submission Approval
+    purpose: Let a person make the final call before anything is rendered and submitted.
+    contribution: The last human checkpoint, after every deterministic and AI signal
+      has already passed.
+    expected_output: Approve or reject.
+    failure_message: The final approval could not be recorded.
+- id: render_docx
+  type: HorizonDOCXProposalRenderer
+  config:
+    content: '{{outputs.assemble_proposal.text}}'
+    content_format: markdown
+    citation_registry: '{{outputs.verify_evidence.citation_registry}}'
+    include_toc: true
+    include_bibliography: true
+  experience:
+    display_name: Render DOCX
+    purpose: Produce the editable, citation-aware Word document.
+    contribution: Native TOC, page fields, and a page-limit estimate.
+    expected_output: A rendered DOCX file.
+    failure_message: The DOCX could not be rendered.
+- id: render_pdf
+  type: HorizonHTMLProposalRenderer
+  config:
+    content: '{{outputs.assemble_proposal.text}}'
+    content_format: markdown
+    citation_registry: '{{outputs.verify_evidence.citation_registry}}'
+    include_toc: true
+    include_bibliography: true
+  experience:
+    display_name: Render PDF
+    purpose: Produce the submission-ready PDF, with a real measured page count.
+    contribution: The same citation/TOC handling as the DOCX, in the format most calls
+      actually require.
+    expected_output: A rendered PDF file.
+    failure_message: The PDF could not be rendered.
+- id: render_pptx
+  type: PowerPointProposalSlides
+  config:
+    sections:
+      Excellence: '{{outputs.draft_excellence.raw}}'
+      Impact: '{{outputs.draft_impact.raw}}'
+      Implementation: '{{outputs.draft_implementation.raw}}'
+    proposal_title: '{{outputs.start.data.concept_note}}'
+    client_name: Internal Review Board
+  experience:
+    display_name: Render Slides
+    purpose: Produce a slide deck for the internal review board.
+    contribution: One slide per section, plus a title slide — for the meeting the
+      document isn't read in.
+    expected_output: A rendered PowerPoint deck.
+    failure_message: The slides could not be rendered.
+- id: end_submitted
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: status
+      value_from: SUBMITTED
+    - key: docx_key
+      value_from: '{{outputs.render_docx.docx_key}}'
+    - key: pdf_key
+      value_from: '{{outputs.render_pdf.pdf_key}}'
+    - key: pptx_key
+      value_from: '{{outputs.render_pptx.minio_key}}'
+  experience:
+    display_name: Submitted Outcome
+    purpose: Return the rendered document references.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The DOCX, PDF, and slide deck references.
+    failure_message: The result could not be produced.
+edges:
+- from: start
+  to: extract_call
+- from: extract_call
+  to: graph_normalizer
+- from: graph_normalizer
+  to: research_planner
+- from: research_planner
+  to:
+  - scholarly_discovery
+  - web_search
+  - bounded_research
+- from: bounded_research
+  to: acquire_sources
+- from: acquire_sources
+  to: verify_evidence
+- from: scholarly_discovery
+  to: evidence_review
+- from: web_search
+  to: evidence_review
+- from: verify_evidence
+  to: evidence_review
+- from: evidence_review
+  to: freeze_truth_graph
+- from: freeze_truth_graph
+  to: concept_alternatives
+- from: concept_alternatives
+  to: concept_review
+- from: concept_review
+  to: resolve_concept_choice
+- from: resolve_concept_choice
+  to: concept_freeze
+- from: concept_freeze
+  to: methodology
+- from: methodology
+  to:
+  - draft_excellence
+  - draft_impact
+  - draft_implementation
+- from: draft_excellence
+  to: assemble_proposal
+- from: draft_impact
+  to: assemble_proposal
+- from: draft_implementation
+  to: assemble_proposal
+- from: assemble_proposal
+  to:
+  - consistency_check
+  - call_coverage
+  - horizon_evaluation
+- from: consistency_check
+  to: submission_gate
+- from: call_coverage
+  to: submission_gate
+- from: horizon_evaluation
+  to: submission_gate
+- from: submission_gate
+  to: gate_router
+- from: gate_router
+  condition: route
+  branches:
+    READY: final_approval
+    BLOCKED: end_blocked
+- from: final_approval
+  to:
+  - render_docx
+  - render_pdf
+  - render_pptx
+- from: render_docx
+  to: end_submitted
+- from: render_pdf
+  to: end_submitted
+- from: render_pptx
+  to: end_submitted

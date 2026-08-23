@@ -33,6 +33,17 @@ async def ensure_business_view_indexes(db: Any) -> None:
 async def get_cached_narration(
     db: Any, *, run_id: str, session_id: str, state_version: str,
 ) -> dict[str, Any] | None:
+    """Return the cached narration.
+
+    Args:
+        db (Any): Mongo database handle.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+        state_version (str): The state version.
+
+    Returns:
+        dict[str, Any] | None: The cached narration.
+    """
     if db is None or not state_version:
         return None
     try:
@@ -58,6 +69,19 @@ async def put_cached_narration(
     source: str,
     model: str | None,
 ) -> None:
+    """Store the cached narration.
+
+    Args:
+        db (Any): Mongo database handle.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+        state_version (str): The state version.
+        headline (str): The headline.
+        summary (str): The summary.
+        next_step (str): The next step.
+        source (str): Source value.
+        model (str | None): Model name.
+    """
     if db is None or not state_version:
         return
     try:
@@ -82,6 +106,18 @@ async def put_cached_narration(
 async def _append_to_run(
     db: Any, *, run_id: str, session_id: str, field: str, record: dict[str, Any],
 ) -> dict[str, Any]:
+    """Append the to run.
+
+    Args:
+        db (Any): Mongo database handle.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+        field (str): The field.
+        record (dict[str, Any]): Record.
+
+    Returns:
+        dict[str, Any]: The to run.
+    """
     result = await db["run_history"].update_one(
         {"run_id": run_id, "session_id": session_id},
         {"$push": {field: record}, "$set": {"updated_at": datetime.now(timezone.utc)}},

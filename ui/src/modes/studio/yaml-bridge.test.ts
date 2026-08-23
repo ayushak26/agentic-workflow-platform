@@ -197,7 +197,11 @@ describe('yaml-bridge round trip', () => {
     expect(result.nodes[1].data_protection_mode).toBeUndefined();
   });
 
-  it('derives a required Start file field into workflow.inputs', () => {
+  it('does not materialize Start-derived inputs into the saved YAML', () => {
+    // Deriving runnable inputs from the Start node is a read-time concern
+    // (backend at load time, RunDialog from the YAML) — the save path must
+    // not add an `inputs:` block the author never wrote, or every
+    // open-and-save would mutate shipped workflows.
     const workflow: YamlWorkflow = {
       name: 'Start workflow',
       version: '1.0',
@@ -217,11 +221,37 @@ describe('yaml-bridge round trip', () => {
     };
 
     const result = roundTrip(workflow);
-    expect(result.inputs?.question).toEqual({ type: 'json', required: true });
-    expect(result.inputs?.spec_file).toMatchObject({ type: 'file', required: true, multiple: false });
+    expect(result.inputs).toBeUndefined();
   });
 
-  it('derives an attachments file input for a chatbot-mode Start node', () => {
+  it('preserves Builder-authored Business Chat progress messages', () => {
+    const workflow: YamlWorkflow = {
+      name: 'Progress copy workflow',
+      version: '1.0',
+      nodes: [
+        {
+          id: 'search',
+          type: 'KnowledgeRetrieval',
+          config: {},
+          experience: {
+            display_name: 'Search Knowledge',
+            running_message: 'Searching approved knowledge…',
+            completed_message: 'Relevant passages found',
+          },
+        },
+      ],
+      edges: [],
+    };
+
+    const result = roundTrip(workflow);
+    expect(result.nodes[0].experience).toMatchObject({
+      display_name: 'Search Knowledge',
+      running_message: 'Searching approved knowledge…',
+      completed_message: 'Relevant passages found',
+    });
+  });
+
+  it('does not add an attachments input for a chatbot-mode Start node on save', () => {
     const workflow: YamlWorkflow = {
       name: 'Chatbot workflow',
       version: '1.0',
@@ -233,7 +263,7 @@ describe('yaml-bridge round trip', () => {
     };
 
     const result = roundTrip(workflow);
-    expect(result.inputs?.attachments).toMatchObject({ type: 'file', multiple: true });
+    expect(result.inputs).toBeUndefined();
   });
 
   it('never overrides an explicitly declared workflow input with a derived one', () => {

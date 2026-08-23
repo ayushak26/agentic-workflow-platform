@@ -32,6 +32,11 @@ CRITERIA: tuple[str, ...] = (
 
 
 def _now_iso() -> str:
+    """Internal helper for the now iso step.
+
+    Returns:
+        str: The iso.
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -51,6 +56,7 @@ class ExampleResult(BaseModel):
 
     @property
     def mean(self) -> float:
+        """The mean."""
         if not self.scores:
             return 0.0
         return sum(s.score for s in self.scores) / len(self.scores)

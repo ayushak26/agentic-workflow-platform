@@ -52,10 +52,20 @@ def registered_routes() -> set[tuple[str, str]]:
 
 
 def missing_required_routes() -> set[tuple[str, str]]:
+    """Compute the missing required routes.
+
+    Returns:
+        set[tuple[str, str]]: The required routes.
+    """
     return REQUIRED_ROUTES - registered_routes()
 
 
 def main() -> int:
+    """Compute the main.
+
+    Returns:
+        int: The result.
+    """
     loaded_from = Path(app.main.__file__).resolve()
     missing = missing_required_routes()
 

@@ -127,6 +127,14 @@ OPERATORS_BY_TYPE: dict[str, tuple[str, ...]] = {
 
 
 def operators_for_type(field_type: str) -> tuple[str, ...]:
+    """Compute the operators for type.
+
+    Args:
+        field_type (str): The field type.
+
+    Returns:
+        tuple[str, ...]: The for type.
+    """
     return OPERATORS_BY_TYPE.get(field_type, OPERATORS_BY_TYPE["unknown"])
 
 
@@ -172,10 +180,28 @@ def resolve_path(context: dict[str, Any], path: str) -> Any:
 
 
 def path_exists(context: dict[str, Any], path: str) -> bool:
+    """Compute the path exists.
+
+    Args:
+        context (dict[str, Any]): The context.
+        path (str): Filesystem path.
+
+    Returns:
+        bool: The exists.
+    """
     return _resolve(context, path) is not _MISSING
 
 
 def _resolve(context: dict[str, Any], path: str) -> Any:
+    """Resolve the result.
+
+    Args:
+        context (dict[str, Any]): The context.
+        path (str): Filesystem path.
+
+    Returns:
+        Any: The result.
+    """
     parts = [part for part in path.split(".") if part]
     if not parts:
         return _MISSING
@@ -239,6 +265,11 @@ class Condition(BaseModel):
 
     @model_validator(mode="after")
     def value_present_when_needed(self) -> "Condition":
+        """Compute the value present when needed.
+
+        Returns:
+            'Condition': The present when needed.
+        """
         if self.operator in UNARY_OPERATORS:
             return self
         if self.operator in SET_OPERATORS:
@@ -267,6 +298,11 @@ class ConditionGroup(BaseModel):
 
     @model_validator(mode="after")
     def group_is_usable(self) -> "ConditionGroup":
+        """Group the is usable.
+
+        Returns:
+            'ConditionGroup': The is usable.
+        """
         if not self.conditions:
             raise ValueError("a condition group must contain at least one condition")
         if self.operator == "not" and len(self.conditions) != 1:
@@ -309,6 +345,11 @@ class Action(BaseModel):
 
     @model_validator(mode="after")
     def value_matches_operation(self) -> "Action":
+        """Compute the value matches operation.
+
+        Returns:
+            'Action': The matches operation.
+        """
         if self.operation in ("increase", "decrease") and not isinstance(
             self.value, (int, float)
         ):
@@ -335,6 +376,11 @@ class Rule(BaseModel):
 
     @model_validator(mode="after")
     def rule_is_decidable(self) -> "Rule":
+        """Compute the rule is decidable.
+
+        Returns:
+            'Rule': The is decidable.
+        """
         if self.when is None and not self.default:
             raise ValueError(
                 f"rule {self.name!r} needs conditions, or default: true to "
@@ -371,6 +417,13 @@ class ConditionTrace(BaseModel):
 
 
 class GroupTrace(BaseModel):
+    """Pydantic model defining the GroupTrace shape.
+
+    Attributes:
+        operator (Literal['and', 'or', 'not']).
+        matched (bool).
+        children (list[Union[ConditionTrace, 'GroupTrace']]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     operator: Literal["and", "or", "not"]
@@ -384,6 +437,16 @@ GroupTrace.model_rebuild()
 
 
 class RuleTrace(BaseModel):
+    """Pydantic model defining the RuleTrace shape.
+
+    Attributes:
+        name (str).
+        matched (bool).
+        default (bool).
+        trace (GroupTrace | None).
+        applied (list[dict[str, Any]]).
+        description (str).
+    """
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -425,6 +488,14 @@ class RuleEvaluation(BaseModel):
 def _leaf_traces(
     node: GroupTrace | ConditionTrace | None,
 ) -> Iterable[ConditionTrace]:
+    """Internal helper for the leaf traces step.
+
+    Args:
+        node (GroupTrace | ConditionTrace | None): The node.
+
+    Returns:
+        Iterable[ConditionTrace]: The traces.
+    """
     if node is None:
         return []
     if isinstance(node, ConditionTrace):
@@ -436,6 +507,14 @@ def _leaf_traces(
 
 
 def _as_number(value: Any) -> float | None:
+    """Internal helper for the as number step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        float | None: The number.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -449,6 +528,14 @@ def _as_number(value: Any) -> float | None:
 
 
 def _is_empty(value: Any) -> bool:
+    """Return whether empty.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        bool: True when empty.
+    """
     if value is None:
         return True
     if isinstance(value, (str, bytes)):
@@ -459,6 +546,15 @@ def _is_empty(value: Any) -> bool:
 
 
 def _contains(haystack: Any, needle: Any) -> bool:
+    """Internal helper for the contains step.
+
+    Args:
+        haystack (Any): The haystack.
+        needle (Any): The needle.
+
+    Returns:
+        bool: The result.
+    """
     if haystack is None:
         return False
     if isinstance(haystack, (list, tuple, set)):
@@ -496,6 +592,15 @@ def _boolish(value: Any) -> bool | None:
 
 
 def _equals(actual: Any, expected: Any) -> bool:
+    """Internal helper for the equals step.
+
+    Args:
+        actual (Any): Actual value.
+        expected (Any): Expected value.
+
+    Returns:
+        bool: The result.
+    """
     left_bool, right_bool = _boolish(actual), _boolish(expected)
     if left_bool is not None and right_bool is not None:
         return left_bool == right_bool
@@ -512,6 +617,14 @@ def _equals(actual: Any, expected: Any) -> bool:
 
 
 def _truthy(value: Any) -> bool:
+    """Internal helper for the truthy step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        bool: The result.
+    """
     resolved = _boolish(value)
     if resolved is not None:
         return resolved
@@ -521,6 +634,15 @@ def _truthy(value: Any) -> bool:
 def evaluate_condition(
     condition: Condition, context: dict[str, Any]
 ) -> ConditionTrace:
+    """Compute the evaluate condition.
+
+    Args:
+        condition (Condition): The condition.
+        context (dict[str, Any]): The context.
+
+    Returns:
+        ConditionTrace: The condition.
+    """
     raw = _resolve(context, condition.field)
     missing = raw is _MISSING
     actual = None if missing else raw
@@ -597,6 +719,17 @@ def _previewable(value: Any) -> Any:
 def _summarise(
     condition: Condition, actual: Any, missing: bool, matched: bool
 ) -> str:
+    """Internal helper for the summarise step.
+
+    Args:
+        condition (Condition): The condition.
+        actual (Any): Actual value.
+        missing (bool): The missing.
+        matched (bool): The matched.
+
+    Returns:
+        str: The result.
+    """
     label = OPERATOR_LABELS.get(condition.operator, condition.operator)
     if condition.operator in UNARY_OPERATORS:
         core = f"{condition.field} {label}"
@@ -614,6 +747,15 @@ def _summarise(
 def evaluate_group(
     group: ConditionGroup, context: dict[str, Any]
 ) -> GroupTrace:
+    """Compute the evaluate group.
+
+    Args:
+        group (ConditionGroup): The group.
+        context (dict[str, Any]): The context.
+
+    Returns:
+        GroupTrace: The group.
+    """
     children: list[ConditionTrace | GroupTrace] = []
     for item in group.conditions:
         if isinstance(item, ConditionGroup):

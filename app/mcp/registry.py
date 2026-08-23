@@ -120,6 +120,14 @@ class MCPServerConnection(BaseModel):
     @field_validator("id")
     @classmethod
     def id_is_safe(cls, value: str) -> str:
+        """Compute the id is safe.
+
+        Args:
+            value (str): Value to process.
+
+        Returns:
+            str: The is safe.
+        """
         if not _SAFE_ID.fullmatch(value):
             raise ValueError(
                 f"server id {value!r} must be lowercase alphanumeric with _ or -"
@@ -128,6 +136,11 @@ class MCPServerConnection(BaseModel):
 
     @model_validator(mode="after")
     def stdio_needs_a_command(self) -> "MCPServerConnection":
+        """Compute the stdio needs a command.
+
+        Returns:
+            'MCPServerConnection': The needs a command.
+        """
         if self.transport == "stdio" and not self.command.strip():
             raise ValueError(f"server {self.id!r} needs a command to launch")
         return self
@@ -151,6 +164,7 @@ class MCPServerConnection(BaseModel):
 
     @property
     def label(self) -> str:
+        """The label."""
         return self.display_name or self.id
 
     def resolve_environment(self) -> dict[str, str]:
@@ -199,6 +213,14 @@ class MCPServerConnection(BaseModel):
         }
 
     def permits_tool(self, tool_name: str) -> bool:
+        """Compute the permits tool.
+
+        Args:
+            tool_name (str): The tool name.
+
+        Returns:
+            bool: The tool.
+        """
         if tool_name in self.tool_denylist:
             return False
         if self.tool_allowlist and tool_name not in self.tool_allowlist:
@@ -206,6 +228,14 @@ class MCPServerConnection(BaseModel):
         return True
 
     def policy_for(self, tool_name: str) -> MCPToolPolicy:
+        """Compute the policy for.
+
+        Args:
+            tool_name (str): The tool name.
+
+        Returns:
+            MCPToolPolicy: The for.
+        """
         return self.tool_policies.get(tool_name, MCPToolPolicy())
 
 
@@ -213,26 +243,66 @@ class MCPServerRegistry:
     """The set of configured servers, keyed by id."""
 
     def __init__(self, servers: dict[str, MCPServerConnection] | None = None):
+        """Initialize the MCPServerRegistry.
+
+        Args:
+            servers (dict[str, MCPServerConnection] | None): The servers (optional, default None).
+        """
         self._servers = dict(servers or {})
         self._health: dict[str, dict[str, Any]] = {}
 
     def __contains__(self, server_id: str) -> bool:
+        """Implement the ``__contains__`` protocol.
+
+        Args:
+            server_id (str): The server id.
+
+        Returns:
+            bool: The result.
+        """
         return server_id in self._servers
 
     def __len__(self) -> int:
+        """Implement the ``__len__`` protocol.
+
+        Returns:
+            int: The result.
+        """
         return len(self._servers)
 
     @property
     def ids(self) -> tuple[str, ...]:
+        """The ids."""
         return tuple(self._servers)
 
     def add(self, connection: MCPServerConnection) -> None:
+        """Add the result.
+
+        Args:
+            connection (MCPServerConnection): The connection.
+        """
         self._servers[connection.id] = connection
 
     def get(self, server_id: str) -> MCPServerConnection | None:
+        """Return the result.
+
+        Args:
+            server_id (str): The server id.
+
+        Returns:
+            MCPServerConnection | None: The result.
+        """
         return self._servers.get(server_id)
 
     def require(self, server_id: str) -> MCPServerConnection:
+        """Compute the require.
+
+        Args:
+            server_id (str): The server id.
+
+        Returns:
+            MCPServerConnection: The result.
+        """
         found = self._servers.get(server_id)
         if found is None:
             raise KeyError(
@@ -242,6 +312,11 @@ class MCPServerRegistry:
         return found
 
     def all(self) -> list[MCPServerConnection]:
+        """Compute the all.
+
+        Returns:
+            list[MCPServerConnection]: The result.
+        """
         return [self._servers[key] for key in sorted(self._servers)]
 
     def record_health(
@@ -252,6 +327,14 @@ class MCPServerRegistry:
         tool_count: int = 0,
         error: str | None = None,
     ) -> None:
+        """Record the health.
+
+        Args:
+            server_id (str): The server id.
+            healthy (bool): The healthy.
+            tool_count (int): The tool count (optional, default 0).
+            error (str | None): Error value or message (optional, default None).
+        """
         self._health[server_id] = {
             "healthy": healthy,
             "tool_count": tool_count,
@@ -260,12 +343,25 @@ class MCPServerRegistry:
         }
 
     def health(self, server_id: str) -> dict[str, Any]:
+        """Compute the health.
+
+        Args:
+            server_id (str): The server id.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         return self._health.get(
             server_id,
             {"healthy": None, "tool_count": 0, "error": None, "checked_at": None},
         )
 
     def describe_all(self) -> list[dict[str, Any]]:
+        """Compute the describe all.
+
+        Returns:
+            list[dict[str, Any]]: The all.
+        """
         return [
             {**connection.describe(), "status": self.health(connection.id)}
             for connection in self.all()

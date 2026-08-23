@@ -55,6 +55,17 @@ _IMAGE_PROMPT_MARKER = re.compile(
 
 @dataclass(frozen=True)
 class ProposalRenderResult:
+    """Provides the ProposalRenderResult behaviour.
+
+    Attributes:
+        html (str).
+        pdf (bytes).
+        page_count (int).
+        html_sha256 (str).
+        pdf_sha256 (str).
+        table_of_contents (list[dict[str, Any]]).
+        warnings (list[str]).
+    """
     html: str
     pdf: bytes
     page_count: int
@@ -65,6 +76,11 @@ class ProposalRenderResult:
 
 
 def _markdown() -> MarkdownIt:
+    """Internal helper for the markdown step.
+
+    Returns:
+        MarkdownIt: The result.
+    """
     renderer = MarkdownIt(
         "commonmark",
         {
@@ -79,11 +95,28 @@ def _markdown() -> MarkdownIt:
 
 
 def _slug(value: str) -> str:
+    """Internal helper for the slug step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        str: The result.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug[:80] or "section"
 
 
 def _unique_id(base: str, used: set[str]) -> str:
+    """Internal helper for the unique id step.
+
+    Args:
+        base (str): The base.
+        used (set[str]): The used.
+
+    Returns:
+        str: The id.
+    """
     candidate = base
     suffix = 2
     while candidate in used:
@@ -94,6 +127,15 @@ def _unique_id(base: str, used: set[str]) -> str:
 
 
 def _sanitise_fragment(value: str, content_format: str) -> str:
+    """Internal helper for the sanitise fragment step.
+
+    Args:
+        value (str): Value to process.
+        content_format (str): The content format.
+
+    Returns:
+        str: The fragment.
+    """
     if content_format == "markdown":
         value = _markdown().render(value)
     elif content_format != "html":
@@ -166,6 +208,14 @@ def _sanitise_fragment(value: str, content_format: str) -> str:
 
 
 def _toc(fragment: str) -> list[dict[str, Any]]:
+    """Internal helper for the toc step.
+
+    Args:
+        fragment (str): The fragment.
+
+    Returns:
+        list[dict[str, Any]]: The result.
+    """
     soup = BeautifulSoup(fragment, "html.parser")
     entries: list[dict[str, Any]] = []
     for heading in soup.find_all(["h1", "h2", "h3"]):

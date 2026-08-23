@@ -36,6 +36,15 @@ _RUBRICS = {
 
 
 class HorizonJudgeVerdict(BaseModel):
+    """Pydantic model defining the HorizonJudgeVerdict shape.
+
+    Attributes:
+        score (float).
+        strengths (list[str]).
+        weaknesses (list[str]).
+        recommendations (list[str]).
+        reasoning (str).
+    """
     score: float = Field(ge=0.0, le=5.0)
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
@@ -44,11 +53,25 @@ class HorizonJudgeVerdict(BaseModel):
 
 
 class HorizonJudgeResult(HorizonJudgeVerdict):
+    """Provides the HorizonJudgeResult behaviour.
+
+    Attributes:
+        criterion (str).
+        evaluator_model (str).
+    """
     criterion: str
     evaluator_model: str
 
 
 class HorizonCriterionPanel(BaseModel):
+    """Pydantic model defining the HorizonCriterionPanel shape.
+
+    Attributes:
+        criterion (str).
+        mean_score (float).
+        disagreement (float).
+        judge_results (list[HorizonJudgeResult]).
+    """
     criterion: str
     mean_score: float
     disagreement: float
@@ -56,6 +79,18 @@ class HorizonCriterionPanel(BaseModel):
 
 
 class HorizonEvaluationReport(BaseModel):
+    """Pydantic model defining the HorizonEvaluationReport shape.
+
+    Attributes:
+        prompt_version (str).
+        generator_model (str | None).
+        evaluator_models (list[str]).
+        criteria (list[HorizonCriterionPanel]).
+        total_score (float).
+        threshold_passed (bool).
+        coverage_percent (float).
+        deterministic_blockers (list[str]).
+    """
     prompt_version: str
     generator_model: str | None = None
     evaluator_models: list[str]
@@ -68,6 +103,14 @@ class HorizonEvaluationReport(BaseModel):
 
 
 def _provider(model: str) -> str:
+    """Internal helper for the provider step.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        str: The result.
+    """
     try:
         return provider_for_model(model)
     except ValueError:
@@ -78,6 +121,12 @@ def validate_independent_models(
     evaluator_models: list[str],
     generator_model: str | None,
 ) -> None:
+    """Validate the independent models.
+
+    Args:
+        evaluator_models (list[str]): The evaluator models.
+        generator_model (str | None): The generator model.
+    """
     if len(evaluator_models) != 2 or len(set(evaluator_models)) != 2:
         raise ValueError("exactly two different evaluator models are required")
     if len({_provider(model) for model in evaluator_models}) != 2:
@@ -91,6 +140,14 @@ def validate_independent_models(
 
 
 def deterministic_horizon_blockers(graph: ProposalGraph) -> tuple[float, list[str]]:
+    """Compute the deterministic horizon blockers.
+
+    Args:
+        graph (ProposalGraph): Compiled LangGraph graph.
+
+    Returns:
+        tuple[float, list[str]]: The horizon blockers.
+    """
     matrix = build_call_coverage_matrix(graph)
     blockers = [
         f"Call requirement {item} is not fully covered."
@@ -141,6 +198,20 @@ async def evaluate_horizon_proposal(
     criterion_threshold: float = 3.0,
     total_threshold: float = 10.0,
 ) -> HorizonEvaluationReport:
+    """Compute the evaluate horizon proposal.
+
+    Args:
+        llm (Any): The llm.
+        proposal_text (str): The proposal text.
+        graph (ProposalGraph): Compiled LangGraph graph.
+        generator_model (str | None): The generator model.
+        evaluator_models (list[str]): The evaluator models.
+        criterion_threshold (float): The criterion threshold (optional, default 3.0).
+        total_threshold (float): The total threshold (optional, default 10.0).
+
+    Returns:
+        HorizonEvaluationReport: The horizon proposal.
+    """
     validate_independent_models(evaluator_models, generator_model)
     if not proposal_text.strip():
         raise ValueError("proposal_text cannot be empty")
@@ -165,6 +236,15 @@ async def evaluate_horizon_proposal(
     }
 
     async def judge(model: str, criterion: str) -> HorizonJudgeResult:
+        """Compute the judge.
+
+        Args:
+            model (str): Model name.
+            criterion (str): The criterion.
+
+        Returns:
+            HorizonJudgeResult: The result.
+        """
         verdict = await llm.complete_structured(
             model=model,
             system=(

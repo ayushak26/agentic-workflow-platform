@@ -36,7 +36,13 @@ ENTITY_TYPES = frozenset(
 
 
 class EntityRegistry:
+    """Provides the EntityRegistry behaviour."""
     def __init__(self, vault: EntityVault) -> None:
+        """Initialize the EntityRegistry.
+
+        Args:
+            vault (EntityVault): The vault.
+        """
         self._vault = vault
 
     async def register(
@@ -48,6 +54,18 @@ class EntityRegistry:
         value: str,
         source: str = "manual",
     ) -> str:
+        """Register the result.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier.
+            entity_type (str): The entity type.
+            value (str): Value to process.
+            source (str): Source value (optional, default 'manual').
+
+        Returns:
+            str: The result.
+        """
         if entity_type not in ENTITY_TYPES:
             raise ValueError(
                 f"unknown entity_type {entity_type!r}; must be one of {sorted(ENTITY_TYPES)}"
@@ -66,6 +84,15 @@ class EntityRegistry:
     async def list_entities(
         self, *, session_id: str, collection_id: str
     ) -> list[dict[str, str]]:
+        """List the entities.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier.
+
+        Returns:
+            list[dict[str, str]]: The entities.
+        """
         return await self._vault.list_scope_entities(
             session_id=session_id, collection_id=collection_id
         )
@@ -73,6 +100,17 @@ class EntityRegistry:
     async def delete(
         self, *, session_id: str, collection_id: str, entity_type: str, value: str
     ) -> bool:
+        """Delete the result.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier.
+            entity_type (str): The entity type.
+            value (str): Value to process.
+
+        Returns:
+            bool: The result.
+        """
         return await self._vault.delete_entity(
             session_id=session_id,
             collection_id=collection_id,

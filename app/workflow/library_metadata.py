@@ -33,17 +33,41 @@ _OUTPUT_TYPE_HINTS: dict[str, str] = {
 
 
 def _humanize(identifier: str) -> str:
+    """Internal helper for the humanize step.
+
+    Args:
+        identifier (str): The identifier.
+
+    Returns:
+        str: The result.
+    """
     spaced = identifier.replace("_", " ").replace("-", " ").strip()
     return spaced[:1].upper() + spaced[1:] if spaced else identifier
 
 
 def _terminal_node_types(spec: WorkflowSpec) -> list[str]:
+    """Internal helper for the terminal node types step.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+
+    Returns:
+        list[str]: The node types.
+    """
     sources = {edge.from_ for edge in spec.edges}
     terminal = [node.type for node in spec.nodes if node.id not in sources]
     return terminal or [node.type for node in spec.nodes]
 
 
 def infer_output_types(spec: WorkflowSpec) -> list[str]:
+    """Compute the infer output types.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+
+    Returns:
+        list[str]: The output types.
+    """
     found: list[str] = []
     for type_name in _terminal_node_types(spec):
         lowered = type_name.lower()
@@ -54,6 +78,14 @@ def infer_output_types(spec: WorkflowSpec) -> list[str]:
 
 
 def _default_human_review_count(spec: WorkflowSpec) -> int:
+    """Internal helper for the default human review count step.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+
+    Returns:
+        int: The human review count.
+    """
     return sum(1 for node in spec.nodes if node.type == "HumanInLoopAgent")
 
 

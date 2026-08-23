@@ -17,15 +17,18 @@ from app.proposal_graph.state import (
 
 
 class CallCoverageInput(BaseModel):
+    """Pydantic model defining the CallCoverageInput shape."""
     pass
 
 
 class CallCoverageConfig(BaseModel):
+    """Pydantic model defining the CallCoverageConfig shape."""
     pass
 
 
 @NodeRegistry.register
 class CallCoverageMatrixAgent(NodeType):
+    """Workflow node type implementing the CallCoverageMatrixAgent capability."""
     type_name = "CallCoverageMatrixAgent"
     description = (
         "Build a deterministic requirement-by-requirement Horizon call "
@@ -36,6 +39,15 @@ class CallCoverageMatrixAgent(NodeType):
     output_schema = CallCoverageMatrix
 
     async def run(self, state: dict, resolved_config: dict) -> dict:
+        """Run the result.
+
+        Args:
+            state (dict): Current workflow state.
+            resolved_config (dict): Configuration after template resolution.
+
+        Returns:
+            dict: The result.
+        """
         graph = proposal_graph_from_state(state)
         matrix = build_call_coverage_matrix(graph)
         updated = {

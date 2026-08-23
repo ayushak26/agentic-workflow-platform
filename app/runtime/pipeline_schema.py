@@ -32,6 +32,14 @@ RESERVED_STAGE_IDS = {"inputs", "outputs", "variables"}
 
 
 class PipelineStageSpec(BaseModel):
+    """Pydantic model defining the PipelineStageSpec shape.
+
+    Attributes:
+        id (str).
+        workflow (str).
+        description (str | None).
+        inputs (dict[str, str]).
+    """
     id: str
     workflow: str
     description: str | None = None
@@ -42,6 +50,11 @@ class PipelineStageSpec(BaseModel):
 
     @model_validator(mode="after")
     def id_is_not_reserved(self) -> "PipelineStageSpec":
+        """Compute the id is not reserved.
+
+        Returns:
+            'PipelineStageSpec': The is not reserved.
+        """
         if self.id in RESERVED_STAGE_IDS:
             raise ValueError(
                 f"stage id {self.id!r} is reserved (clashes with the "
@@ -61,6 +74,11 @@ class PipelineSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_stages(self) -> "PipelineSpec":
+        """Validate the stages.
+
+        Returns:
+            'PipelineSpec': The stages.
+        """
         if not self.stages:
             raise ValueError("pipeline must contain at least one stage")
         stage_ids = [stage.id for stage in self.stages]

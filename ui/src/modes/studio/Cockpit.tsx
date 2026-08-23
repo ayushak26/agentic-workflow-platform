@@ -39,7 +39,7 @@ import {
 import { STAGE_BAND_TYPE, StageBandNode } from './cockpit/StageBandNode';
 import { StagePlaceholderNode } from './cockpit/StagePlaceholderNode';
 import { api } from '../../api/client';
-import type { NodeTypeManifest, PipelineRunDetail } from '../../api/types';
+import type { NodeTypeManifest, PipelineRunDetail, WorkflowPreflightReport } from '../../api/types';
 
 const nodeTypes = {
   workflow: CockpitNode,
@@ -64,7 +64,11 @@ export function Cockpit() {
     finished, streamError, cockpit, activeNodeId, reusedNodeCount,
     applyResumeResult, pipelineDoc, continueToNextStage, continuingStage,
     continueError, liveRunNodeStatus, costSummary,
+    streamOpen, runTriggered, requestRun,
   } = run;
+
+  // Keep launch-state fields grouped above: they all come from one stable
+  // useCockpitRun result and must describe the same run snapshot.
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
@@ -79,6 +83,9 @@ export function Cockpit() {
   const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth < 1150);
   const [graphOptionsOpen, setGraphOptionsOpen] = useState(false);
   const [nodeTypesByName, setNodeTypesByName] = useState<Record<string, NodeTypeManifest>>({});
+  const [testingWorkflow, setTestingWorkflow] = useState(false);
+  const [testReport, setTestReport] = useState<WorkflowPreflightReport | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
 
   // Same manifest NodePalette fetches — cached here so the inspector can
   // show each node's category + description without a per-node request.
@@ -110,7 +117,7 @@ export function Cockpit() {
     // Structural graph state derived from parsedWf (which itself never
     // changes after mount) — a legitimate case of syncing derived state,
     // not a cascading-render risk.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setStages(laidOut.stages);
   }, [parsedWf, setEdges, setNodes]);
 
@@ -278,7 +285,7 @@ export function Cockpit() {
     appliedInitialSelection.current = true;
     // One-time selection carried over from Run History, guarded above so
     // it can only ever run once per mount — not a cascading-render risk.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     focusNode(navState.selectedNodeId);
   }, [navState.selectedNodeId, rfInstance, nodes, focusNode]);
 
@@ -368,6 +375,24 @@ export function Cockpit() {
     outputs: liveRun?.outputs ?? {},
   }), [liveRun, navState.inputs, parsedWf]);
 
+  const testWorkflow = useCallback(async () => {
+    if (!navState.workflowYaml) return;
+    setTestingWorkflow(true);
+    setTestError(null);
+    try {
+      setTestReport(await api.validateWorkflow(
+        navState.workflowYaml,
+        navState.inputs ?? {},
+        true,
+      ));
+    } catch (error: unknown) {
+      setTestReport(null);
+      setTestError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setTestingWorkflow(false);
+    }
+  }, [navState.inputs, navState.workflowYaml]);
+
   const pipelineBanner = navState.pipeline && (
     <PipelineStageBanner
       pipeline={navState.pipeline}
@@ -437,6 +462,22 @@ export function Cockpit() {
       <div className="p-8">
         <div className="text-ink-500">Parsing workflow…</div>
       </div>
+    );
+  }
+
+  if (navState.awaitLaunch && !runTriggered) {
+    return (
+      <CockpitLaunchPanel
+        workflowName={navState.workflowName ?? parsedWf.name}
+        inputs={navState.inputs ?? {}}
+        testing={testingWorkflow}
+        report={testReport}
+        error={testError}
+        streamReady={streamOpen}
+        onTest={() => void testWorkflow()}
+        onRun={requestRun}
+        onBack={() => navigate(navState.builderReturnPath ?? '/library')}
+      />
     );
   }
 
@@ -677,6 +718,132 @@ export function Cockpit() {
             </aside>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function CockpitLaunchPanel({
+  workflowName,
+  inputs,
+  testing,
+  report,
+  error,
+  streamReady,
+  onTest,
+  onRun,
+  onBack,
+}: {
+  workflowName: string;
+  inputs: Record<string, unknown>;
+  testing: boolean;
+  report: WorkflowPreflightReport | null;
+  error: string | null;
+  streamReady: boolean;
+  onTest: () => void;
+  onRun: () => void;
+  onBack: () => void;
+}) {
+  const entries = Object.entries(inputs);
+  const issues = report?.issues ?? [];
+  const errors = issues.filter(issue => issue.severity === 'error');
+  const warnings = issues.filter(issue => issue.severity === 'warning');
+
+  return (
+    <div className="h-full overflow-y-auto bg-slate-50 px-6 py-10">
+      <div className="mx-auto max-w-3xl rounded-xl border border-slate-200 bg-white shadow-panel">
+        <div className="border-b border-slate-200 px-6 py-5">
+          <p className="text-xs font-semibold uppercase tracking-wide text-accent-700">Cockpit launch</p>
+          <h1 className="mt-1 text-xl font-semibold text-ink-900">{workflowName}</h1>
+          <p className="mt-1 text-sm text-ink-500">
+            Review the prepared inputs, then test the workflow or run it directly.
+          </p>
+        </div>
+
+        <div className="space-y-5 p-6">
+          <section>
+            <h2 className="text-sm font-semibold text-ink-900">Prepared inputs</h2>
+            {entries.length === 0 ? (
+              <p className="mt-2 rounded-md border border-dashed border-slate-300 p-3 text-sm text-ink-500">
+                This workflow has no supplied inputs.
+              </p>
+            ) : (
+              <dl className="mt-2 divide-y divide-slate-100 rounded-md border border-slate-200">
+                {entries.map(([name, value]) => (
+                  <div key={name} className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 px-3 py-2 text-sm">
+                    <dt className="font-mono text-ink-700">{name}</dt>
+                    <dd className="truncate text-ink-500" title={typeof value === 'string' ? value : JSON.stringify(value)}>
+                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            )}
+          </section>
+
+          <section className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={onTest}
+              disabled={testing}
+              className="rounded-lg border border-accent-300 bg-white px-4 py-3 text-left hover:bg-accent-50 disabled:opacity-50"
+            >
+              <span className="block font-semibold text-accent-800">
+                {testing ? 'Testing workflow…' : 'Test workflow'}
+              </span>
+              <span className="mt-1 block text-xs text-ink-500">
+                Runs zero-token preflight, input, service, and compatibility checks. It does not execute nodes.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onRun}
+              disabled={!streamReady}
+              className="rounded-lg bg-accent-600 px-4 py-3 text-left text-white hover:bg-accent-500 disabled:opacity-50"
+            >
+              <span className="block font-semibold">Run workflow</span>
+              <span className="mt-1 block text-xs text-white/80">
+                Starts execution directly without first invoking the optional preflight action.
+              </span>
+            </button>
+          </section>
+
+          {report && (
+            <section className={`rounded-lg border p-4 ${
+              report.valid ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+            }`} aria-live="polite">
+              <h2 className={`text-sm font-semibold ${report.valid ? 'text-green-800' : 'text-bad'}`}>
+                {report.valid
+                  ? `Preflight passed${warnings.length ? ` with ${warnings.length} warning${warnings.length === 1 ? '' : 's'}` : ''}`
+                  : `Preflight failed with ${errors.length} error${errors.length === 1 ? '' : 's'}`}
+              </h2>
+              {issues.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs text-ink-700">
+                  {issues.slice(0, 8).map((issue, index) => (
+                    <li key={`${issue.code}-${issue.node_id ?? ''}-${index}`}>
+                      <strong>{issue.code}</strong>{issue.node_id ? ` (${issue.node_id})` : ''}: {issue.message}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-2 text-xs text-ink-500">
+                {report.node_count} nodes · {report.edge_count} edges · {report.tokens_spent} generation tokens
+              </p>
+            </section>
+          )}
+
+          {error && (
+            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-bad" role="alert">
+              Could not test the workflow: {error}
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-slate-200 px-6 py-4">
+          <button type="button" onClick={onBack} className="text-sm text-ink-600 hover:text-ink-900">
+            ← Back
+          </button>
+        </div>
       </div>
     </div>
   );

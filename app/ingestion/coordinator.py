@@ -24,6 +24,7 @@ log = get_logger(__name__)
 
 
 class IngestionCoordinator:
+    """Provides the IngestionCoordinator behaviour."""
     def __init__(
         self,
         *,
@@ -33,6 +34,15 @@ class IngestionCoordinator:
         weaviate_client: Any,
         redis: Any | None = None,
     ) -> None:
+        """Initialize the IngestionCoordinator.
+
+        Args:
+            repository (KnowledgeRepository): The repository.
+            object_store (ObjectStore): The object store.
+            embedder (Any): The embedder.
+            weaviate_client (Any): The weaviate client.
+            redis (Any | None): Redis client (optional, default None).
+        """
         self.repository = repository
         self.object_store = object_store
         self.embedder = embedder
@@ -81,6 +91,11 @@ class IngestionCoordinator:
         return paths
 
     async def _run_safely(self, job: IngestionJob) -> None:
+        """Run the safely.
+
+        Args:
+            job (IngestionJob): The job.
+        """
         directory: Path | None = None
         try:
             paths = await self._materialize_sources(job)

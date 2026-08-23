@@ -27,6 +27,14 @@ _PAUSED_GRAPHS: dict[str, Any] = {}
 
 
 def _find_rejection(state: dict[str, Any]) -> dict[str, Any] | None:
+    """Find the rejection.
+
+    Args:
+        state (dict[str, Any]): Current workflow state.
+
+    Returns:
+        dict[str, Any] | None: The rejection.
+    """
     for node_id, output in (state.get("node_outputs") or {}).items():
         if isinstance(output, dict) and output.get("decision") == "reject":
             return {"node_id": node_id, "reason": output.get("reason")}
@@ -87,6 +95,23 @@ async def run_workflow(
     # Final in-process safety net. API routes perform a stricter service probe
     # before creating history/checkpoints; this structural pass protects direct
     # callers, durable HITL replay, scripts, and tests as well.
+    """Run the workflow.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        inputs (dict[str, Any]): Workflow input mapping.
+        session_id (str | None): Session scope the record belongs to (optional, default None).
+        collection_id (str): Knowledge collection identifier (optional, default 'default').
+        services (dict[str, Any] | None): Shared application services dict (optional, default None).
+        run_id (str | None): Workflow run identifier (optional, default None).
+        reused_node_results (dict[str, dict[str, Any]] | None): The reused node results (optional, default None).
+        retry_source_run_id (str | None): The retry source run id (optional, default None).
+        hitl_resume_decisions (dict[str, dict[str, Any]] | None): The hitl resume decisions (optional, default None).
+        resume_replay (bool): The resume replay (optional, default False).
+
+    Returns:
+        dict[str, Any]: The workflow.
+    """
     require_preflight(
         preflight_workflow_spec(
             spec,

@@ -72,6 +72,14 @@ def _make_runtime_fn(instance, bus: RunEventBus | None, services: dict):
     type_name = instance.type_name
 
     async def runtime_fn(state: dict) -> dict:
+        """Compute the runtime fn.
+
+        Args:
+            state (dict): Current workflow state.
+
+        Returns:
+            dict: The fn.
+        """
         run_id = state.get("inputs", {}).get("SYSTEM.run_id")
         session_id = state.get("session_id", "unknown")
         started = time.time()
@@ -504,10 +512,24 @@ def _wire_edges(
     join_gates_by_target: dict[str, list[str]] = {}
 
     def _register_join_gate(gate_id: str, target: str) -> None:
+        """Register the join gate.
+
+        Args:
+            gate_id (str): The gate id.
+            target (str): Target value.
+        """
         if gate_id in join_gates_by_target.get(target, []):
             return  # already registered (e.g. two branches of one router share a target)
 
         async def _join_gate(state: dict) -> dict:
+            """Join the gate.
+
+            Args:
+                state (dict): Current workflow state.
+
+            Returns:
+                dict: The gate.
+            """
             return {}
 
         graph.add_node(gate_id, _join_gate)
@@ -526,6 +548,13 @@ def _wire_edges(
                 dispatch_targets.append(target)
 
         def _hitl_router(state: dict, _targets=dispatch_targets, _hid=hitl_id):
+            """Internal helper for the hitl router step.
+
+            Args:
+                state (dict): Current workflow state.
+                _targets: The targets (optional, default dispatch_targets).
+                _hid: The hid (optional, default hitl_id).
+            """
             decision = (
                 state.get("node_outputs", {})
                 .get(_hid, {})
@@ -563,6 +592,16 @@ def _wire_edges(
             # gate path here is a correctness backstop, not something a
             # passing workflow actually exercises.
             def _multi_router(state: dict, _edge=edge, _branch_map=branch_map) -> list[str]:
+                """Internal helper for the multi router step.
+
+                Args:
+                    state (dict): Current workflow state.
+                    _edge: The edge (optional, default edge).
+                    _branch_map: The branch map (optional, default branch_map).
+
+                Returns:
+                    list[str]: The router.
+                """
                 selected = state["node_outputs"][_edge.from_].get("routes") or []
                 if isinstance(selected, str):
                     selected = [selected]
@@ -590,6 +629,16 @@ def _wire_edges(
             continue
 
         def _router(state: dict, _edge=edge, _branch_map=branch_map) -> str:
+            """Internal helper for the router step.
+
+            Args:
+                state (dict): Current workflow state.
+                _edge: The edge (optional, default edge).
+                _branch_map: The branch map (optional, default branch_map).
+
+            Returns:
+                str: The result.
+            """
             decision = state["node_outputs"][_edge.from_].get("route")
             if decision not in _edge.branches:
                 raise ValueError(
@@ -619,6 +668,13 @@ def _wire_edges(
 
 
 def compile_workflow(spec: WorkflowSpec, checkpointer=None, services=None):
+    """Compute the compile workflow.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        checkpointer: The checkpointer (optional, default None).
+        services: Shared application services dict (optional, default None).
+    """
     graph = StateGraph(WorkflowState)
     services = services or {}
     bus: RunEventBus | None = services.get("event_bus")

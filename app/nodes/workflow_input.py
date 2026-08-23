@@ -192,10 +192,22 @@ class InputFieldBinding(FieldSpec):
         return data
 
     def resolved_source(self) -> str:
+        """Compute the resolved source.
+
+        Returns:
+            str: The source.
+        """
         return self.source or f"inputs.{self.name}"
 
 
 class WorkflowInputConfig(BaseModel):
+    """Pydantic model defining the WorkflowInputConfig shape.
+
+    Attributes:
+        source (InputSource).
+        fields (list[InputFieldBinding]).
+        sample (dict[str, Any]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     source: InputSource = Field(default="manual", description="Where this workflow's input data comes from.")
@@ -229,10 +241,18 @@ class WorkflowInputConfig(BaseModel):
 
 
 class WorkflowInputInput(BaseModel):
+    """Pydantic model defining the WorkflowInputInput shape."""
     pass
 
 
 class WorkflowInputOutput(BaseModel):
+    """Pydantic model defining the WorkflowInputOutput shape.
+
+    Attributes:
+        data (dict[str, Any]).
+        source (str).
+        missing (list[str]).
+    """
     data: dict[str, Any] = Field(default_factory=dict)
     source: str = "manual"
     #: Declared-but-absent required fields. A workflow can route on this rather
@@ -242,6 +262,13 @@ class WorkflowInputOutput(BaseModel):
 
 @NodeRegistry.register
 class WorkflowInputAgent(NodeType):
+    """Workflow node type implementing the WorkflowInputAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "WorkflowInputAgent"
     description = (
         "Information entering the workflow: manual, API, document, email or a "
@@ -279,10 +306,26 @@ class WorkflowInputAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return set()
 
     @classmethod
     def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         declared = set(WorkflowInputOutput.model_fields)
         try:
             specs = WorkflowInputConfig(**config).as_field_specs()
@@ -296,11 +339,28 @@ class WorkflowInputAgent(NodeType):
 
     @classmethod
     def preflight_static_output_values(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if not (config.get("fields") or []):
             return {"data": {}}
         return {}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = WorkflowInputConfig(**resolved_config)
         data, missing = resolve_field_bindings(cfg.fields, cfg.sample, state)
         data, missing = apply_conditional_fields(cfg.fields, data, missing)

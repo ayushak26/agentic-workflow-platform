@@ -41,6 +41,18 @@ log = get_logger(__name__)
 
 
 class MCPToolConfig(BaseModel):
+    """Pydantic model defining the MCPToolConfig shape.
+
+    Attributes:
+        server_id (str).
+        tool (str).
+        arguments (dict[str, Any]).
+        fail_on_error (bool).
+        timeout_seconds (float | None).
+        allow_unattended_write (bool).
+        approved_by (str | None).
+        max_read_retries (int).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: Configured connection id — never a URL, never a credential.
@@ -99,6 +111,7 @@ class MCPToolConfig(BaseModel):
 
 
 class MCPToolInput(BaseModel):
+    """Pydantic model defining the MCPToolInput shape."""
     pass
 
 
@@ -139,6 +152,13 @@ class MCPToolOutput(BaseModel):
 
 @NodeRegistry.register
 class MCPToolAgent(NodeType):
+    """Workflow node type implementing the MCPToolAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "MCPToolAgent"
     description = (
         "Call one capability on a connected MCP server — CRM, ERP, or any other "
@@ -174,6 +194,14 @@ class MCPToolAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"mcp"}
 
     @classmethod
@@ -194,6 +222,15 @@ class MCPToolAgent(NodeType):
         return set(MCPToolOutput.model_fields) | {"data", "data.*", "first", "first.*"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = MCPToolConfig(**resolved_config)
         service = self.services.get("mcp")
         if service is None:
@@ -333,6 +370,15 @@ class MCPToolAgent(NodeType):
         return names
 
     def _skipped(self, cfg: MCPToolConfig, missing: list[str]) -> dict[str, Any]:
+        """Internal helper for the skipped step.
+
+        Args:
+            cfg (MCPToolConfig): The cfg.
+            missing (list[str]): The missing.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         return {
             "server": cfg.server_id,
             "tool": cfg.tool,
@@ -360,6 +406,15 @@ class MCPToolAgent(NodeType):
         }
 
     def _failure(self, cfg: MCPToolConfig, error: Exception) -> dict[str, Any]:
+        """Internal helper for the failure step.
+
+        Args:
+            cfg (MCPToolConfig): The cfg.
+            error (Exception): Error value or message.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         code = getattr(error, "code", None) or type(error).__name__
         status = {
             "MCP_APPROVAL_REQUIRED": "needs_approval",

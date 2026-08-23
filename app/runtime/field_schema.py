@@ -120,6 +120,14 @@ class FieldSpec(BaseModel):
     @field_validator("name")
     @classmethod
     def name_is_an_identifier(cls, value: str) -> str:
+        """Compute the name is an identifier.
+
+        Args:
+            value (str): Value to process.
+
+        Returns:
+            str: The is an identifier.
+        """
         stripped = value.strip()
         if not stripped:
             raise ValueError("field name cannot be empty")
@@ -133,6 +141,11 @@ class FieldSpec(BaseModel):
 
     @model_validator(mode="after")
     def shape_is_coherent(self) -> "FieldSpec":
+        """Compute the shape is coherent.
+
+        Returns:
+            'FieldSpec': The is coherent.
+        """
         if self.type == "enum" and not self.enum_values:
             raise ValueError(
                 f"enum field {self.name!r} must declare at least one allowed value"
@@ -185,6 +198,13 @@ def validate_fields(fields: list[FieldSpec], *, where: str = "output") -> None:
     """
 
     def walk(items: list[FieldSpec], path: str, depth: int) -> None:
+        """Compute the walk.
+
+        Args:
+            items (list[FieldSpec]): Items to process.
+            path (str): Filesystem path.
+            depth (int): The depth.
+        """
         if depth > _MAX_DEPTH:
             raise ValueError(
                 f"{where} schema nests deeper than {_MAX_DEPTH} levels at {path}"
@@ -218,6 +238,15 @@ _SCALAR_PY_TYPES: dict[str, Any] = {
 
 
 def _scalar_annotation(kind: str, enum_values: list[str]) -> Any:
+    """Internal helper for the scalar annotation step.
+
+    Args:
+        kind (str): The kind.
+        enum_values (list[str]): The enum values.
+
+    Returns:
+        Any: The annotation.
+    """
     if kind == "enum":
         # Literal over the declared values, so the provider's structured-output
         # mode constrains generation to the allowed set instead of the model
@@ -232,6 +261,16 @@ def _annotation_for(
     *,
     permit_none: bool,
 ) -> Any:
+    """Internal helper for the annotation for step.
+
+    Args:
+        spec (FieldSpec): Parsed workflow specification.
+        model_name (str): The model name.
+        permit_none (bool): The permit none.
+
+    Returns:
+        Any: The for.
+    """
     if spec.type == "object":
         annotation: Any = _build_model(model_name, spec.fields)
     elif spec.type == "list":
@@ -256,6 +295,15 @@ def _annotation_for(
 
 
 def _build_model(name: str, fields: list[FieldSpec]) -> Type[BaseModel]:
+    """Build the model.
+
+    Args:
+        name (str): Workflow or resource name.
+        fields (list[FieldSpec]): Field names.
+
+    Returns:
+        Type[BaseModel]: The model.
+    """
     definitions: dict[str, Any] = {}
     for spec in fields:
         # An optional field is compiled as nullable-with-a-None-default (lists
@@ -286,6 +334,14 @@ def _build_model(name: str, fields: list[FieldSpec]) -> Type[BaseModel]:
 
 
 def _safe_model_name(name: str) -> str:
+    """Internal helper for the safe model name step.
+
+    Args:
+        name (str): Workflow or resource name.
+
+    Returns:
+        str: The model name.
+    """
     cleaned = "".join(char if char in _IDENTIFIER else "_" for char in name)
     if not cleaned or cleaned[0].isdigit():
         cleaned = f"F{cleaned}"
@@ -360,6 +416,16 @@ def _field_paths(
     *,
     parent_unavailable: bool,
 ) -> list[FieldPath]:
+    """Internal helper for the field paths step.
+
+    Args:
+        fields (list[FieldSpec]): Field names.
+        prefix (str): Prefix string.
+        parent_unavailable (bool): The parent unavailable.
+
+    Returns:
+        list[FieldPath]: The paths.
+    """
     result: list[FieldPath] = []
     for spec in fields:
         path = f"{prefix}.{spec.name}" if prefix else spec.name
@@ -422,6 +488,12 @@ def describe_schema(fields: list[FieldSpec]) -> str:
     lines: list[str] = []
 
     def walk(items: list[FieldSpec], indent: int) -> None:
+        """Compute the walk.
+
+        Args:
+            items (list[FieldSpec]): Items to process.
+            indent (int): The indent.
+        """
         pad = "  " * indent
         for spec in items:
             bits = [spec.type]

@@ -1149,14 +1149,16 @@ nodes:
               type: enum
               description: >-
                 Select the stated installation environment when provided; use other only when an
-                explicitly stated environment does not fit the listed values.
+                explicitly stated environment does not fit the listed values, and not_stated when
+                the message does not address the installation environment at all.
               required: true
-              nullable: true
+              nullable: false
               enum_values:
                 - indoor
                 - outdoor
                 - indoor_and_outdoor
                 - other
+                - not_stated
               fields: []
               item_type: null
               item_enum_values: []

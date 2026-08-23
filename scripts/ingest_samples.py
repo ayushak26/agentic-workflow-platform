@@ -70,6 +70,7 @@ PER_FILE_METADATA: dict[str, dict] = {
 
 
 async def main():
+    """Compute the main."""
     if not SAMPLES_DIR.exists():
         raise SystemExit(f"samples dir not found: {SAMPLES_DIR.resolve()}")
 

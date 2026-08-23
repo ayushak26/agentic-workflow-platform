@@ -10,9 +10,23 @@ from typing import Any, ClassVar, Type
 from app.runtime.state import WorkflowState  # Adjust the import path as necessary
 from pydantic import BaseModel
 
+from .contracts import DataType, NodeConstraint, NodeDefinition, data_types_from_schema
+
 
 class NodeType(ABC):
     # ----- declared by every subclass -----
+    """Abstract base defining the NodeType contract.
+
+    Attributes:
+        type_name (ClassVar[str]).
+        input_schema (ClassVar[Type[BaseModel]]).
+        output_schema (ClassVar[Type[BaseModel]]).
+        config_schema (ClassVar[Type[BaseModel]]).
+        description (ClassVar[str]).
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name: ClassVar[str]                    # registry key, e.g. "TransformAgent"
     input_schema: ClassVar[Type[BaseModel]]     # what this node reads from state
     output_schema: ClassVar[Type[BaseModel]]    # what this node writes back
@@ -40,9 +54,57 @@ class NodeType(ABC):
     # types) and `operators`.
     about: ClassVar[dict[str, Any]] = {}
 
+    # Optional compatibility overrides. Every existing node is standardized
+    # automatically from its schemas; specialized types only declare these
+    # when their transport/runtime envelope is narrower than shared state.
+    contract_version: ClassVar[str] = "1"
+    accepts: ClassVar[set[DataType] | None] = None
+    produces: ClassVar[set[DataType] | None] = None
+    provides_capabilities: ClassVar[set[str]] = set()
+    permissions: ClassVar[set[str]] = set()
+    environment: ClassVar[set[str]] = set()
+    constraints: ClassVar[tuple[NodeConstraint, ...]] = ()
+    incompatible_with: ClassVar[set[str]] = set()
+    streaming: ClassVar[bool] = False
+    async_safe: ClassVar[bool] = True
+    max_payload_bytes: ClassVar[int | None] = None
+
+    @classmethod
+    def definition(cls, config: dict[str, Any] | None = None) -> NodeDefinition:
+        """Return the complete standardized contract for this node type."""
+
+        config = config or {}
+        accepted = cls.accepts or set(data_types_from_schema(cls.input_schema))
+        produced = cls.produces or set(data_types_from_schema(cls.output_schema))
+        supports_files = DataType.FILE in accepted | produced
+        return NodeDefinition(
+            version=cls.contract_version,
+            type_name=cls.type_name,
+            accepts=frozenset(accepted),
+            produces=frozenset(produced),
+            requires_capabilities=frozenset(cls.required_services(config)),
+            provides_capabilities=frozenset(cls.provides_capabilities),
+            execution_kind=cls.execution_kind,
+            streaming=cls.streaming,
+            async_safe=cls.async_safe,
+            supports_files=supports_files,
+            max_payload_bytes=cls.max_payload_bytes,
+            permissions=frozenset(cls.permissions),
+            environment=frozenset(cls.environment),
+            constraints=cls.constraints,
+            incompatible_with=frozenset(cls.incompatible_with),
+        )
+
     def __init__(self, node_id: str, raw_config: dict[str, Any],services: dict[str, Any] | None = None):
         # Pydantic validates the config on construction. If the YAML is wrong,
         # we fail at compile time, not in the middle of an LLM call.
+        """Initialize the NodeType.
+
+        Args:
+            node_id (str): Workflow node identifier.
+            raw_config (dict[str, Any]): The raw config.
+            services (dict[str, Any] | None): Shared application services dict (optional, default None).
+        """
         self.node_id = node_id
         self.config = self.config_schema(**raw_config)
         self.services = services or {}

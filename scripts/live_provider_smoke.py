@@ -13,6 +13,7 @@ from app.llm.anthropic_gw import AnthropicGateway
 
 
 async def smoke_anthropic() -> None:
+    """Compute the smoke anthropic."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         raise SystemExit(
@@ -41,6 +42,7 @@ async def smoke_anthropic() -> None:
 
 
 def main() -> None:
+    """Compute the main."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--provider",

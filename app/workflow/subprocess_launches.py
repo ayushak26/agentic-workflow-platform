@@ -40,6 +40,11 @@ _RECORD_TTL_SLACK = timedelta(hours=1)
 
 
 async def ensure_indexes(db: Any) -> None:
+    """Ensure the indexes.
+
+    Args:
+        db (Any): Mongo database handle.
+    """
     await db[_COLLECTION].create_index("token", unique=True)
     await db[_COLLECTION].create_index("child_run_id", unique=True)
     await db[_COLLECTION].create_index([("expires_at", 1)], expireAfterSeconds=0)
@@ -63,6 +68,15 @@ async def ensure_indexes(db: Any) -> None:
 
 
 async def find_by_launch_key(db: Any, launch_key: str) -> dict[str, Any] | None:
+    """Find the by launch key.
+
+    Args:
+        db (Any): Mongo database handle.
+        launch_key (str): The launch key.
+
+    Returns:
+        dict[str, Any] | None: The by launch key.
+    """
     return await db[_COLLECTION].find_one({"_id": launch_key})
 
 
@@ -116,10 +130,28 @@ async def reserve_launch(
 
 
 async def find_by_child_run_id(db: Any, child_run_id: str) -> dict[str, Any] | None:
+    """Find the by child run id.
+
+    Args:
+        db (Any): Mongo database handle.
+        child_run_id (str): The child run id.
+
+    Returns:
+        dict[str, Any] | None: The by child run id.
+    """
     return await db[_COLLECTION].find_one({"child_run_id": child_run_id})
 
 
 async def find_by_token(db: Any, token: str) -> dict[str, Any] | None:
+    """Find the by token.
+
+    Args:
+        db (Any): Mongo database handle.
+        token (str): Token value.
+
+    Returns:
+        dict[str, Any] | None: The by token.
+    """
     return await db[_COLLECTION].find_one({"token": token})
 
 

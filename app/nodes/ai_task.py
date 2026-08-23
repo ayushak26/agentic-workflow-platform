@@ -205,6 +205,11 @@ class LanguagePolicy(BaseModel):
     preserve_original: bool = True
 
     def directive(self) -> str:
+        """Compute the directive.
+
+        Returns:
+            str: The result.
+        """
         lines: list[str] = []
         if self.input_language == "auto":
             lines.append(
@@ -247,6 +252,18 @@ class AITaskExample(BaseModel):
 
 
 class AITaskConfig(BaseModel):
+    """Pydantic model defining the AITaskConfig shape.
+
+    Attributes:
+        task (AITaskKind).
+        instruction (str).
+        input (str).
+        context (dict[str, str]).
+        model (str).
+        output_fields (list[FieldSpec]).
+        language (LanguagePolicy).
+        examples (list[AITaskExample]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     task: AITaskKind = Field(
@@ -311,6 +328,11 @@ class AITaskConfig(BaseModel):
 
     @model_validator(mode="after")
     def structured_tasks_declare_a_schema(self) -> "AITaskConfig":
+        """Compute the structured tasks declare a schema.
+
+        Returns:
+            'AITaskConfig': The tasks declare a schema.
+        """
         if self.task in ("extract", "classify") and not self.output_fields:
             raise ValueError(
                 f"task {self.task!r} needs an output schema — add at least one "
@@ -320,6 +342,7 @@ class AITaskConfig(BaseModel):
 
 
 class AITaskInput(BaseModel):
+    """Pydantic model defining the AITaskInput shape."""
     pass
 
 
@@ -343,6 +366,14 @@ class AITaskOutput(BaseModel):
 
 
 def _confidence_fields(fields: list[FieldSpec]) -> list[FieldSpec]:
+    """Internal helper for the confidence fields step.
+
+    Args:
+        fields (list[FieldSpec]): Field names.
+
+    Returns:
+        list[FieldSpec]: The fields.
+    """
     declared = {field.name for field in fields}
     generated: list[FieldSpec] = []
     if "confidence" not in declared:
@@ -391,6 +422,13 @@ def effective_fields(config: dict[str, Any]) -> list[FieldSpec]:
 
 @NodeRegistry.register
 class AITaskAgent(NodeType):
+    """Workflow node type implementing the AITaskAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "AITaskAgent"
     description = (
         "Deprecated — use TransformAgent's Inputs/Instructions/Outputs editor "
@@ -429,6 +467,14 @@ class AITaskAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger"}
 
     @classmethod
@@ -459,6 +505,14 @@ class AITaskAgent(NodeType):
         # With no schema declared, `result` is always {} — a bare reference to it
         # can only ever substitute an empty object, which is an authoring error
         # rather than a runtime surprise.
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if not (config.get("output_fields") or []):
             return {"result": {}}
         return {}
@@ -470,6 +524,15 @@ class AITaskAgent(NodeType):
     async def run(
         self, state, resolved_config: dict[str, Any]
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = AITaskConfig(**resolved_config)
         llm = self.services["llm"]
         fields = effective_fields(resolved_config)
@@ -484,6 +547,15 @@ class AITaskAgent(NodeType):
     # -- prompt construction -------------------------------------------
 
     def _system_prompt(self, cfg: AITaskConfig, fields: list[FieldSpec]) -> str:
+        """Internal helper for the system prompt step.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+            fields (list[FieldSpec]): Field names.
+
+        Returns:
+            str: The prompt.
+        """
         parts = [
             "You are a precise business-process assistant inside an automated "
             "workflow. Your output is consumed by deterministic business rules, "
@@ -505,6 +577,15 @@ class AITaskAgent(NodeType):
         return "\n\n".join(part for part in parts if part.strip())
 
     def _user_prompt(self, cfg: AITaskConfig, fields: list[FieldSpec]) -> str:
+        """Internal helper for the user prompt step.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+            fields (list[FieldSpec]): Field names.
+
+        Returns:
+            str: The prompt.
+        """
         blocks: list[str] = []
         if cfg.instruction.strip():
             blocks.append(f"# Instruction\n{cfg.instruction.strip()}")
@@ -523,6 +604,14 @@ class AITaskAgent(NodeType):
 
     @staticmethod
     def _examples_block(cfg: AITaskConfig) -> str:
+        """Internal helper for the examples block step.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+
+        Returns:
+            str: The block.
+        """
         rendered: list[str] = ["# Examples"]
         for index, example in enumerate(cfg.examples, start=1):
             output = (
@@ -542,6 +631,17 @@ class AITaskAgent(NodeType):
     async def _run_text(
         self, cfg: AITaskConfig, llm: Any, system: str, user: str
     ) -> dict[str, Any]:
+        """Run the text.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+            llm (Any): The llm.
+            system (str): The system.
+            user (str): Authenticated current user.
+
+        Returns:
+            dict[str, Any]: The text.
+        """
         try:
             response = await llm.complete(
                 model=cfg.model,
@@ -577,6 +677,18 @@ class AITaskAgent(NodeType):
         user: str,
         fields: list[FieldSpec],
     ) -> dict[str, Any]:
+        """Run the structured.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+            llm (Any): The llm.
+            system (str): The system.
+            user (str): Authenticated current user.
+            fields (list[FieldSpec]): Field names.
+
+        Returns:
+            dict[str, Any]: The structured.
+        """
         response_model = build_response_model(
             fields, model_name=f"{self.node_id}_Result"
         )
@@ -652,6 +764,16 @@ class AITaskAgent(NodeType):
         parsed: dict[str, Any],
         attempt: int,
     ) -> dict[str, Any]:
+        """Internal helper for the success step.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+            parsed (dict[str, Any]): The parsed.
+            attempt (int): Attempt number.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         confidence = parsed.get("confidence")
         reasoning = parsed.get("reasoning")
         return {
@@ -671,6 +793,17 @@ class AITaskAgent(NodeType):
     def _failure(
         self, cfg: AITaskConfig, status: str, message: str, *, attempts: int
     ) -> dict[str, Any]:
+        """Internal helper for the failure step.
+
+        Args:
+            cfg (AITaskConfig): The cfg.
+            status (str): Status value.
+            message (str): Message text.
+            attempts (int): The attempts.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         if cfg.fail_on_error:
             raise RuntimeError(
                 f"AITaskAgent '{self.node_id}' failed ({status}): {message}"

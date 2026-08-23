@@ -32,6 +32,18 @@ _TERMINAL_EVENTS = {"run_completed", "run_rejected", "run_failed"}
 
 @dataclass
 class RunEvent:
+    """Provides the RunEvent behaviour.
+
+    Attributes:
+        type (EventType).
+        run_id (str).
+        session_id (str | None).
+        node_id (str | None).
+        output_preview (str | None).
+        context (dict[str, Any] | None).
+        error (str | None).
+        ts (str).
+    """
     type: EventType
     run_id: str
     session_id: str | None = None
@@ -43,14 +55,21 @@ class RunEvent:
     event_id: int | None = None
     token: str | None = None
     def __post_init__(self) -> None:
+        """Implement the ``__post_init__`` protocol."""
         if not self.ts:
             self.ts = datetime.now(timezone.utc).isoformat()
 
     @property
     def terminal(self) -> bool:
+        """The terminal."""
         return self.type in _TERMINAL_EVENTS
 
     def to_json(self) -> dict[str, Any]:
+        """Compute the to json.
+
+        Returns:
+            dict[str, Any]: The json.
+        """
         data = asdict(self)
         data.pop("session_id", None)
         return {
@@ -61,6 +80,7 @@ class RunEvent:
 
 
 class RunEventBus:
+    """Provides the RunEventBus behaviour."""
     def __init__(
         self,
         *,
@@ -69,6 +89,14 @@ class RunEventBus:
         max_run_histories: int = 1000,
         replay_ttl_seconds: int = 86_400,
     ) -> None:
+        """Initialize the RunEventBus.
+
+        Args:
+            redis (Any | None): Redis client (optional, default None).
+            max_events_per_run (int): The max events per run (optional, default 1000).
+            max_run_histories (int): The max run histories (optional, default 1000).
+            replay_ttl_seconds (int): The replay ttl seconds (optional, default 86400).
+        """
         self._redis = redis
         self._subscribers: dict[
             tuple[str, str],
@@ -90,9 +118,23 @@ class RunEventBus:
 
     @staticmethod
     def _key(run_id: str, session_id: str | None) -> tuple[str, str]:
+        """Internal helper for the key step.
+
+        Args:
+            run_id (str): Workflow run identifier.
+            session_id (str | None): Session scope the record belongs to.
+
+        Returns:
+            tuple[str, str]: The result.
+        """
         return (session_id or "", run_id)
 
     async def publish(self, evt: RunEvent) -> None:
+        """Publish the result.
+
+        Args:
+            evt (RunEvent): Run event.
+        """
         if self._redis is not None:
             await self._publish_redis(evt)
             return
@@ -134,6 +176,11 @@ class RunEventBus:
         return f"{prefix}:stream", f"{prefix}:sequence", f"{prefix}:channel"
 
     async def _publish_redis(self, evt: RunEvent) -> None:
+        """Publish the redis.
+
+        Args:
+            evt (RunEvent): Run event.
+        """
         stream, sequence, channel = self._redis_names(
             evt.run_id,
             evt.session_id,
@@ -159,6 +206,16 @@ class RunEventBus:
         *,
         after_event_id: int | None = None,
     ) -> asyncio.Queue[RunEvent]:
+        """Subscribe the result.
+
+        Args:
+            run_id (str): Workflow run identifier.
+            session_id (str | None): Session scope the record belongs to (optional, default None).
+            after_event_id (int | None): The after event id (optional, default None).
+
+        Returns:
+            asyncio.Queue[RunEvent]: The result.
+        """
         if self._redis is not None:
             return await self._subscribe_redis(
                 run_id,
@@ -189,6 +246,16 @@ class RunEventBus:
         *,
         after_event_id: int | None,
     ) -> asyncio.Queue[RunEvent]:
+        """Subscribe the redis.
+
+        Args:
+            run_id (str): Workflow run identifier.
+            session_id (str | None): Session scope the record belongs to.
+            after_event_id (int | None): The after event id.
+
+        Returns:
+            asyncio.Queue[RunEvent]: The redis.
+        """
         stream, _, channel = self._redis_names(run_id, session_id)
         queue: asyncio.Queue[RunEvent] = asyncio.Queue(
             maxsize=self._max_events_per_run
@@ -219,6 +286,14 @@ class RunEventBus:
 
     @staticmethod
     def _decode_redis_event(fields: dict[Any, Any]) -> RunEvent:
+        """Decode the redis event.
+
+        Args:
+            fields (dict[Any, Any]): Field names.
+
+        Returns:
+            RunEvent: The redis event.
+        """
         payload = fields.get("event")
         if payload is None:
             payload = fields.get(b"event")
@@ -230,6 +305,12 @@ class RunEventBus:
 
     @staticmethod
     def _offer(queue: asyncio.Queue[RunEvent], event: RunEvent) -> None:
+        """Internal helper for the offer step.
+
+        Args:
+            queue (asyncio.Queue[RunEvent]): Asyncio queue.
+            event (RunEvent): Run event.
+        """
         if queue.full():
             with contextlib.suppress(asyncio.QueueEmpty):
                 queue.get_nowait()
@@ -241,6 +322,13 @@ class RunEventBus:
         queue: asyncio.Queue[RunEvent],
         last_seen: int,
     ) -> None:
+        """Internal helper for the pump redis step.
+
+        Args:
+            pubsub (Any): The pubsub.
+            queue (asyncio.Queue[RunEvent]): Asyncio queue.
+            last_seen (int): The last seen.
+        """
         try:
             while True:
                 message = await pubsub.get_message(
@@ -268,6 +356,13 @@ class RunEventBus:
         queue: asyncio.Queue[RunEvent],
         session_id: str | None = None,
     ) -> None:
+        """Unsubscribe the result.
+
+        Args:
+            run_id (str): Workflow run identifier.
+            queue (asyncio.Queue[RunEvent]): Asyncio queue.
+            session_id (str | None): Session scope the record belongs to (optional, default None).
+        """
         if self._redis is not None:
             subscription = self._redis_subscriptions.pop(id(queue), None)
             if subscription is None:

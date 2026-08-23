@@ -19,6 +19,14 @@ from app.config import Settings, settings
 
 
 def connect(app_settings: Settings = settings) -> MySQLConnectionAbstract:
+    """Compute the connect.
+
+    Args:
+        app_settings (Settings): The app settings (optional, default settings).
+
+    Returns:
+        MySQLConnectionAbstract: The result.
+    """
     return mysql.connector.connect(
         host=app_settings.business_records_mysql_host,
         port=app_settings.business_records_mysql_port,

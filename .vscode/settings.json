@@ -1,0 +1,34 @@
+{
+  // The user-level VS Code setting points at /usr/local/bin/python3, which
+  // does not contain this project's dependencies. Keep Pylance, test
+  // discovery, terminals, and run/debug actions on the checked-in project's
+  // virtual environment instead.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.analysis.autoSearchPaths": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}"
+  ],
+  // Ignore dependency/build/cache trees and Claude's copied worktree. These
+  // are not independently maintained source and otherwise duplicate every
+  // diagnostic from the real repository.
+  "python.analysis.exclude": [
+    "**/.*",
+    "**/.claude/**",
+    "**/.git/**",
+    "**/.pytest_cache/**",
+    "**/.venv/**",
+    "**/__pycache__/**",
+    "**/docs/pdf/**",
+    "**/node_modules/**",
+    "**/ui/dist/**"
+  ],
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "js/ts.tsdk.path": "${workspaceFolder}/ui/node_modules/typescript/lib",
+  "eslint.workingDirectories": [
+    "${workspaceFolder}/ui"
+  ]
+}

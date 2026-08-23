@@ -153,6 +153,14 @@ _UNKNOWN = object()
 
 
 def _union_members(annotation: Any) -> list[Any]:
+    """Internal helper for the union members step.
+
+    Args:
+        annotation (Any): The annotation.
+
+    Returns:
+        list[Any]: The members.
+    """
     if get_origin(annotation) in (Union, UnionType):
         return list(get_args(annotation))
     return [annotation]

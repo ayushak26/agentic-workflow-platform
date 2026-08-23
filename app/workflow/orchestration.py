@@ -243,6 +243,12 @@ class BackgroundRunManager:
     """
 
     def __init__(self, redis: Any | None, *, lease_seconds: int = 120) -> None:
+        """Initialize the BackgroundRunManager.
+
+        Args:
+            redis (Any | None): Redis client.
+            lease_seconds (int): The lease seconds (optional, default 120).
+        """
         self._redis = redis
         self._lease_seconds = max(30, lease_seconds)
         self._tasks: set[asyncio.Task[None]] = set()
@@ -257,6 +263,16 @@ class BackgroundRunManager:
         record_rejection_reason: bool = False,
         services: dict[str, Any] | None = None,
     ) -> None:
+        """Launch the result.
+
+        Args:
+            coro (Awaitable[dict[str, Any]]): The coro.
+            db (Any): Mongo database handle.
+            run_id (str): Workflow run identifier.
+            session (str): Session scope the record belongs to.
+            record_rejection_reason (bool): The record rejection reason (optional, default False).
+            services (dict[str, Any] | None): Shared application services dict (optional, default None).
+        """
         task = asyncio.create_task(
             self._run_owned(
                 coro,
@@ -271,6 +287,11 @@ class BackgroundRunManager:
         self._tasks.add(task)
 
         def _on_done(done: asyncio.Task[None]) -> None:
+            """Internal helper for the on done step.
+
+            Args:
+                done (asyncio.Task[None]): The done.
+            """
             self._tasks.discard(done)
             if done.cancelled():
                 return
@@ -294,6 +315,16 @@ class BackgroundRunManager:
         record_rejection_reason: bool,
         services: dict[str, Any] | None = None,
     ) -> None:
+        """Run the owned.
+
+        Args:
+            coro (Awaitable[dict[str, Any]]): The coro.
+            db (Any): Mongo database handle.
+            run_id (str): Workflow run identifier.
+            session (str): Session scope the record belongs to.
+            record_rejection_reason (bool): The record rejection reason.
+            services (dict[str, Any] | None): Shared application services dict (optional, default None).
+        """
         if self._redis is None:
             await run_and_finalize(
                 coro,

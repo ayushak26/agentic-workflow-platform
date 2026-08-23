@@ -99,6 +99,11 @@ def build_backend() -> DynamicsBackend:
 
 
 def backend() -> DynamicsBackend:
+    """Compute the backend.
+
+    Returns:
+        DynamicsBackend: The result.
+    """
     global _backend
     if _backend is None:
         _backend = build_backend()
@@ -129,6 +134,11 @@ def _annotations(definition: dict[str, Any]) -> types.ToolAnnotations:
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
+    """List the tools.
+
+    Returns:
+        list[types.Tool]: The tools.
+    """
     return [
         types.Tool(
             name=definition["name"],
@@ -224,6 +234,14 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> Any:
 
 
 def _error_result(error: dict[str, Any]) -> types.CallToolResult:
+    """Internal helper for the error result step.
+
+    Args:
+        error (dict[str, Any]): Error value or message.
+
+    Returns:
+        types.CallToolResult: The result.
+    """
     body = {"error": error}
     return types.CallToolResult(
         content=[
@@ -237,6 +255,7 @@ def _error_result(error: dict[str, Any]) -> types.CallToolResult:
 
 
 async def main() -> None:
+    """Compute the main."""
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())
 

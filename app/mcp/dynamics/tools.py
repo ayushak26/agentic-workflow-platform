@@ -53,10 +53,24 @@ CASE_UPDATE_FIELDS: dict[str, str] = {
 
 
 def _string(description: str, **extra: Any) -> dict[str, Any]:
+    """Internal helper for the string step.
+
+    Args:
+        description (str): The description.
+        **extra (Any): The extra.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {"type": "string", "description": description, **extra}
 
 
 def _account_summary() -> dict[str, Any]:
+    """Internal helper for the account summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -90,6 +104,11 @@ def _account_summary() -> dict[str, Any]:
 
 
 def _contact_summary() -> dict[str, Any]:
+    """Internal helper for the contact summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -105,6 +124,11 @@ def _contact_summary() -> dict[str, Any]:
 
 
 def _opportunity_summary() -> dict[str, Any]:
+    """Internal helper for the opportunity summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -126,6 +150,11 @@ def _opportunity_summary() -> dict[str, Any]:
 
 
 def _product_summary() -> dict[str, Any]:
+    """Internal helper for the product summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -139,6 +168,11 @@ def _product_summary() -> dict[str, Any]:
 
 
 def _order_summary() -> dict[str, Any]:
+    """Internal helper for the order summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -175,6 +209,11 @@ def _order_summary() -> dict[str, Any]:
 
 
 def _activity_summary() -> dict[str, Any]:
+    """Internal helper for the activity summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -190,6 +229,11 @@ def _activity_summary() -> dict[str, Any]:
 
 
 def _owner_summary() -> dict[str, Any]:
+    """Internal helper for the owner summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -203,6 +247,11 @@ def _owner_summary() -> dict[str, Any]:
 
 
 def _quote_summary() -> dict[str, Any]:
+    """Internal helper for the quote summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -218,6 +267,11 @@ def _quote_summary() -> dict[str, Any]:
 
 
 def _shipment_summary() -> dict[str, Any]:
+    """Internal helper for the shipment summary step.
+
+    Returns:
+        dict[str, Any]: The summary.
+    """
     return {
         "type": "object",
         "properties": {
@@ -234,6 +288,11 @@ def _shipment_summary() -> dict[str, Any]:
 
 
 def _service_case_summary() -> dict[str, Any]:
+    """Internal helper for the service case summary step.
+
+    Returns:
+        dict[str, Any]: The case summary.
+    """
     return {
         "type": "object",
         "properties": {

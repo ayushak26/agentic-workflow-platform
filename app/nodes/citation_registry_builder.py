@@ -45,12 +45,19 @@ from app.nodes.registry import NodeRegistry
 
 
 class CitationRegistryBuilderInput(BaseModel):
+    """Pydantic model defining the CitationRegistryBuilderInput shape."""
     pass
 
 
 class CitationRegistryBuilderConfig(BaseModel):
     # ``documents`` is templated from ``inputs.candidates_processed.documents``.
     # Accept the whole ``candidates_processed`` object too, for convenience.
+    """Pydantic model defining the CitationRegistryBuilderConfig shape.
+
+    Attributes:
+        documents (str | list[dict[str, Any]]).
+        require_full_text (bool).
+    """
     documents: str | list[dict[str, Any]] = Field(default_factory=list)
     # When True, only documents whose evidence_access == "full_text" become
     # citable footnotes. Acquired-but-partial sources are excluded rather than
@@ -62,12 +69,32 @@ class CitationRegistryBuilderConfig(BaseModel):
     def _coerce_documents(cls, value: Any) -> Any:
         # Allow either the raw documents list, or the full candidates_processed
         # object ({"documents": [...]}) so the YAML can wire either one.
+        """Internal helper for the coerce documents step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The documents.
+        """
         if isinstance(value, dict) and "documents" in value:
             return value["documents"]
         return value
 
 
 class CitationEntry(BaseModel):
+    """Pydantic model defining the CitationEntry shape.
+
+    Attributes:
+        display_number (int).
+        citation_id (str).
+        title (str).
+        formatted_citation (str).
+        canonical_url (str).
+        identifier (str).
+        source_type (str).
+        authority (str).
+    """
     display_number: int
     citation_id: str
     title: str
@@ -81,6 +108,16 @@ class CitationEntry(BaseModel):
 
 class CitationRegistryBuilderOutput(BaseModel):
     # ``citation_registry`` is the list the renderer consumes directly.
+    """Pydantic model defining the CitationRegistryBuilderOutput shape.
+
+    Attributes:
+        citation_registry (list[CitationEntry]).
+        claim_to_numbers (dict[str, list[int]]).
+        drafting_guide (str).
+        total_sources (int).
+        total_documents_considered (int).
+        excluded_documents (int).
+    """
     citation_registry: list[CitationEntry] = Field(default_factory=list)
     # ``claim_to_numbers`` maps each claim id -> the [N] display numbers that
     # support it, so drafters emit the correct integer markers.
@@ -95,6 +132,13 @@ class CitationRegistryBuilderOutput(BaseModel):
 
 @NodeRegistry.register
 class CitationRegistryBuilder(NodeType):
+    """Workflow node type implementing the CitationRegistryBuilder capability.
+
+    Attributes:
+        input_schema (ClassVar[type[BaseModel]]).
+        config_schema (ClassVar[type[BaseModel]]).
+        output_schema (ClassVar[type[BaseModel]]).
+    """
     type_name = "CitationRegistryBuilder"
     description = (
         "Deterministically reshape acquired full-text documents into a "
@@ -110,6 +154,15 @@ class CitationRegistryBuilder(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = CitationRegistryBuilderConfig(**resolved_config)
         if isinstance(cfg.documents, str):
             raise ValueError(

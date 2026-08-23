@@ -1,0 +1,19 @@
+name: Reference ExcelTableExtractor 04
+description: Smallest valid workflow exercising ExcelTableExtractor — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production.
+version: '1.0'
+nodes:
+- id: extract_tables
+  type: ExcelTableExtractor
+  config:
+    minio_key: uploads/sample.xlsx
+- id: summarize
+  type: Echo
+  config:
+    template: Extracted {{extract_tables.sheet_count}} sheets, {{extract_tables.total_rows}}
+      rows.
+edges:
+- from: extract_tables
+  to: summarize
+entry: extract_tables
+exit: summarize

@@ -115,6 +115,11 @@ class AnthropicGateway(LLMGateway):
     """Live Anthropic Claude gateway. One AsyncAnthropic client per instance."""
 
     def __init__(self, api_key: str):
+        """Initialize the AnthropicGateway.
+
+        Args:
+            api_key (str): API key.
+        """
         self._client = AsyncAnthropic(
             api_key=api_key,
             timeout=settings.llm_request_timeout_seconds,
@@ -161,6 +166,20 @@ class AnthropicGateway(LLMGateway):
     ) -> LLMResponse:
         # Anthropic has no reasoning_effort knob wired here; accepted only
         # for interface parity with OpenAIGateway.
+        """Complete the result.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 1024).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+            on_token (Callable[[str], Awaitable[None]] | None): The on token (optional, default None).
+
+        Returns:
+            LLMResponse: The result.
+        """
         _ = reasoning_effort
         kwargs = {
             "model": model,
@@ -195,6 +214,20 @@ class AnthropicGateway(LLMGateway):
     ) -> StructuredResult:
         # Anthropic has no reasoning_effort knob wired here; accepted only
         # for interface parity with OpenAIGateway.
+        """Complete the structured.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            response_model (Type[T]): The response model.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+
+        Returns:
+            StructuredResult: The structured.
+        """
         _ = reasoning_effort
         # Anthropic has no .parse() shortcut. Force structured output by
         # exposing a single tool whose input_schema is the Pydantic schema,
@@ -265,6 +298,19 @@ class AnthropicGateway(LLMGateway):
         # User content is always rendered as a block list (not a bare
         # string) so a cache_control breakpoint can attach to it below
         # regardless of which role ends the conversation.
+        """Compute the chat with tools.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            messages (list[dict]): The messages.
+            tools (list[dict]): The tools.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+
+        Returns:
+            LLMToolUseResponse: The with tools.
+        """
         anthropic_messages: list[dict] = []
         for m in messages:
             role = m["role"]

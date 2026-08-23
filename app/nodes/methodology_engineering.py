@@ -25,10 +25,20 @@ from app.research.deep_research import ResearchBrief
 
 
 class MethodologyEngineeringInput(BaseModel):
+    """Pydantic model defining the MethodologyEngineeringInput shape."""
     pass
 
 
 class MethodologyEngineeringConfig(BaseModel):
+    """Pydantic model defining the MethodologyEngineeringConfig shape.
+
+    Attributes:
+        model (str).
+        research_briefs (str | list[ResearchBrief]).
+        selected_concept (Any).
+        max_objectives (int).
+        max_skills_per_card (int).
+    """
     model: str = "claude-opus-5"
     research_briefs: str | list[ResearchBrief] = Field(default_factory=list)
     # Free-form: the frozen ConceptAlternative dict from ConceptFreezeAgent,
@@ -40,6 +50,18 @@ class MethodologyEngineeringConfig(BaseModel):
 
 
 class _MethodCardDraft(BaseModel):
+    """Pydantic model defining the MethodCardDraft shape.
+
+    Attributes:
+        research_question_id (str).
+        inputs (list[str]).
+        method (str).
+        baseline_or_comparator (str).
+        validation (str).
+        uncertainty_method (str).
+        failure_condition (str).
+        responsible_capability (str).
+    """
     research_question_id: str = ""
     inputs: list[str] = Field(default_factory=list)
     method: str
@@ -57,6 +79,18 @@ class _MethodCardDraft(BaseModel):
 
 
 class MethodCard(BaseModel):
+    """Pydantic model defining the MethodCard shape.
+
+    Attributes:
+        method_id (str).
+        supports_objective (str).
+        research_question_id (str).
+        inputs (list[str]).
+        method (str).
+        baseline_or_comparator (str).
+        validation (str).
+        uncertainty_method (str).
+    """
     method_id: str
     supports_objective: str
     research_question_id: str = ""
@@ -77,6 +111,14 @@ class MethodCard(BaseModel):
 
 
 class MethodologyEngineeringOutput(BaseModel):
+    """Pydantic model defining the MethodologyEngineeringOutput shape.
+
+    Attributes:
+        method_cards (list[MethodCard]).
+        objectives_processed (int).
+        skills_manifest (dict[str, list[str]]).
+        skill_versions (dict[str, str]).
+    """
     method_cards: list[MethodCard] = Field(default_factory=list)
     objectives_processed: int = 0
     skills_manifest: dict[str, list[str]] = Field(default_factory=dict)
@@ -85,6 +127,7 @@ class MethodologyEngineeringOutput(BaseModel):
 
 @NodeRegistry.register
 class MethodologyEngineeringAgent(NodeType):
+    """Workflow node type implementing the MethodologyEngineeringAgent capability."""
     type_name = "MethodologyEngineeringAgent"
     description = (
         "Produce one skill-guided Method Card per frozen-concept objective: "
@@ -98,6 +141,14 @@ class MethodologyEngineeringAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger"}
 
     async def run(
@@ -105,6 +156,15 @@ class MethodologyEngineeringAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = MethodologyEngineeringConfig(**resolved_config)
         if isinstance(cfg.research_briefs, str):
             raise ValueError(
@@ -165,6 +225,22 @@ class MethodologyEngineeringAgent(NodeType):
         known_claim_ids: set[str],
         selected_concept: Any = None,
     ) -> MethodCard:
+        """Draft the one card.
+
+        Args:
+            llm (Any): The llm.
+            catalog (Any): The catalog.
+            objective_id (str): The objective id.
+            objective_text (str): The objective text.
+            model (str): Model name.
+            max_skills (int): The max skills.
+            known_brief_ids (set[str]): The known brief ids.
+            known_claim_ids (set[str]): The known claim ids.
+            selected_concept (Any): The selected concept (optional, default None).
+
+        Returns:
+            MethodCard: The one card.
+        """
         selected_names: list[str] = []
         guidance = ""
         if catalog is not None and getattr(catalog, "enabled", False):

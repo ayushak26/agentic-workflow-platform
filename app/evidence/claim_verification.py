@@ -19,6 +19,17 @@ VERIFY_CLAIM_MODEL = "gpt-5.6-sol"
 
 
 class ClaimVerificationResult(BaseModel):
+    """Pydantic model defining the ClaimVerificationResult shape.
+
+    Attributes:
+        verified (bool).
+        confidence (Literal['low', 'medium', 'high']).
+        source_type (Literal['website', 'book', 'citation', 'unknown']).
+        source_name (str).
+        source_url (str | None).
+        citation (str).
+        notes (str).
+    """
     verified: bool
     confidence: Literal["low", "medium", "high"] = "low"
     source_type: Literal["website", "book", "citation", "unknown"] = "unknown"
@@ -29,6 +40,14 @@ class ClaimVerificationResult(BaseModel):
 
 
 def _format_results(results: list[dict[str, Any]]) -> str:
+    """Format the results.
+
+    Args:
+        results (list[dict[str, Any]]): The results.
+
+    Returns:
+        str: The results.
+    """
     if not results:
         return "(no search results returned)"
     return "\n".join(
@@ -44,6 +63,17 @@ async def verify_claim(
     llm: Any,
     web_search: Any,
 ) -> ClaimVerificationResult:
+    """Verify the claim.
+
+    Args:
+        content (str): Content value.
+        source_name (str): The source name.
+        llm (Any): The llm.
+        web_search (Any): The web search.
+
+    Returns:
+        ClaimVerificationResult: The claim.
+    """
     content = content.strip()
     if not content:
         raise ValueError("content is required")

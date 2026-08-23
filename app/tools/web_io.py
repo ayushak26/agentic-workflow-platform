@@ -20,6 +20,15 @@ _URL_RE = re.compile(r"https?://[^\s<>()\]\"']+")
 
 @dataclass(frozen=True)
 class WebResult:
+    """Provides the WebResult behaviour.
+
+    Attributes:
+        title (str).
+        url (str).
+        snippet (str).
+        score (float).
+        status (str).
+    """
     title: str
     url: str
     snippet: str
@@ -29,6 +38,17 @@ class WebResult:
 
 @dataclass(frozen=True)
 class WebSearchResponse:
+    """Provides the WebSearchResponse behaviour.
+
+    Attributes:
+        query (str).
+        requested_provider (str).
+        actual_provider (str).
+        results (list[WebResult]).
+        fallback_reason (str | None).
+        input_tokens (int).
+        output_tokens (int).
+    """
     query: str
     requested_provider: str
     actual_provider: str
@@ -43,6 +63,7 @@ class TavilyQuotaExhausted(RuntimeError):
 
 
 class WebSearchService:
+    """Provides the WebSearchService behaviour."""
     def __init__(
         self,
         app_settings: Settings = settings,
@@ -51,12 +72,25 @@ class WebSearchService:
         openai_client: Any | None = None,
         kimi_client: Any | None = None,
     ) -> None:
+        """Initialize the WebSearchService.
+
+        Args:
+            app_settings (Settings): The app settings (optional, default settings).
+            http_client (Any | None): The http client (optional, default None).
+            openai_client (Any | None): The openai client (optional, default None).
+            kimi_client (Any | None): The kimi client (optional, default None).
+        """
         self.settings = app_settings
         self._http_client = http_client
         self._openai_client = openai_client
         self._kimi_client = kimi_client
 
     def available_providers(self) -> set[str]:
+        """Compute the available providers.
+
+        Returns:
+            set[str]: The providers.
+        """
         providers: set[str] = set()
         if self.settings.tavily_api_key.strip():
             providers.add("tavily")
@@ -81,6 +115,17 @@ class WebSearchService:
         top_k: int = 8,
         fallback_to_openai: bool = True,
     ) -> WebSearchResponse:
+        """Search the result.
+
+        Args:
+            query (str): Query filter.
+            provider (SearchProvider): Provider name (optional, default 'auto').
+            top_k (int): The top k (optional, default 8).
+            fallback_to_openai (bool): The fallback to openai (optional, default True).
+
+        Returns:
+            WebSearchResponse: The result.
+        """
         query = query.strip()
         if not query:
             raise ValueError("web search query cannot be empty")
@@ -146,6 +191,14 @@ class WebSearchService:
         raise RuntimeError(f"unsupported web-search provider: {selected}")
 
     def _select_provider(self, requested: SearchProvider) -> str:
+        """Select the provider.
+
+        Args:
+            requested (SearchProvider): The requested.
+
+        Returns:
+            str: The provider.
+        """
         if requested != "auto":
             return requested
         configured = self.settings.web_search_backend
@@ -165,6 +218,15 @@ class WebSearchService:
         query: str,
         top_k: int,
     ) -> list[WebResult]:
+        """Search the tavily.
+
+        Args:
+            query (str): Query filter.
+            top_k (int): The top k.
+
+        Returns:
+            list[WebResult]: The tavily.
+        """
         api_key = self.settings.tavily_api_key.strip()
         if not api_key:
             raise RuntimeError("TAVILY_API_KEY is not configured")
@@ -223,6 +285,15 @@ class WebSearchService:
         query: str,
         top_k: int,
     ) -> WebSearchResponse:
+        """Search the openai.
+
+        Args:
+            query (str): Query filter.
+            top_k (int): The top k.
+
+        Returns:
+            WebSearchResponse: The openai.
+        """
         key = self.settings.openai_api_key.strip()
         if self._openai_client is None and not key:
             raise RuntimeError("OPENAI_API_KEY is not configured")
@@ -280,6 +351,15 @@ class WebSearchService:
         query: str,
         top_k: int,
     ) -> WebSearchResponse:
+        """Search the kimi.
+
+        Args:
+            query (str): Query filter.
+            top_k (int): The top k.
+
+        Returns:
+            WebSearchResponse: The kimi.
+        """
         key = self.settings.moonshot_api_key.strip()
         if self._kimi_client is None and not key:
             raise RuntimeError("LOCAL_KIMI_API_KEY is not configured")
@@ -378,6 +458,15 @@ class WebSearchService:
 
     @staticmethod
     def _stub_results(query: str, top_k: int) -> list[WebResult]:
+        """Internal helper for the stub results step.
+
+        Args:
+            query (str): Query filter.
+            top_k (int): The top k.
+
+        Returns:
+            list[WebResult]: The results.
+        """
         return [
             WebResult(
                 title=f"[STUB RESULT {index + 1}] {query[:60]}",
@@ -393,14 +482,36 @@ class WebSearchService:
 
 
 def _rank_score(index: int, count: int) -> float:
+    """Rank the score.
+
+    Args:
+        index (int): Index.
+        count (int): The count.
+
+    Returns:
+        float: The score.
+    """
     return round(max(0.0, 1.0 - index / max(count, 1)), 3)
 
 
 def _url_citations(value: Any) -> list[dict[str, str]]:
+    """Internal helper for the url citations step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        list[dict[str, str]]: The citations.
+    """
     found: list[dict[str, str]] = []
     seen: set[str] = set()
 
     def visit(item: Any) -> None:
+        """Compute the visit.
+
+        Args:
+            item (Any): The item.
+        """
         if isinstance(item, dict):
             if item.get("type") == "url_citation":
                 citation = item.get("url_citation") or item
@@ -424,6 +535,14 @@ def _url_citations(value: Any) -> list[dict[str, str]]:
 
 
 def _response_usage(response: Any) -> tuple[int, int]:
+    """Internal helper for the response usage step.
+
+    Args:
+        response (Any): Outgoing FastAPI response.
+
+    Returns:
+        tuple[int, int]: The usage.
+    """
     usage = getattr(response, "usage", None)
     return (
         int(
@@ -443,6 +562,11 @@ _default_service: WebSearchService | None = None
 
 
 def get_web_search_service() -> WebSearchService:
+    """Return the web search service.
+
+    Returns:
+        WebSearchService: The web search service.
+    """
     global _default_service
     if _default_service is None:
         _default_service = WebSearchService()

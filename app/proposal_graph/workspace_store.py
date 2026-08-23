@@ -19,10 +19,23 @@ from app.proposal_graph.graph import ProposalGraph
 
 
 def _now() -> datetime:
+    """Internal helper for the now step.
+
+    Returns:
+        datetime: The result.
+    """
     return datetime.now(timezone.utc)
 
 
 def _canonical_hash(payload: Any) -> str:
+    """Internal helper for the canonical hash step.
+
+    Args:
+        payload (Any): Event or audit payload.
+
+    Returns:
+        str: The hash.
+    """
     encoded = json.dumps(
         payload,
         sort_keys=True,
@@ -34,6 +47,18 @@ def _canonical_hash(payload: Any) -> str:
 
 
 class SourceVersionRecord(BaseModel):
+    """Pydantic model defining the SourceVersionRecord shape.
+
+    Attributes:
+        proposal_id (str).
+        source_id (str).
+        version (int).
+        version_id (str).
+        content_sha256 (str).
+        metadata_sha256 (str).
+        object_key (str).
+        title (str).
+    """
     proposal_id: str
     source_id: str
     version: int
@@ -50,6 +75,18 @@ class SourceVersionRecord(BaseModel):
 
 
 class ProposalSnapshot(BaseModel):
+    """Pydantic model defining the ProposalSnapshot shape.
+
+    Attributes:
+        proposal_id (str).
+        version (int).
+        snapshot_id (str).
+        content_sha256 (str).
+        graph (dict[str, Any]).
+        created_at (datetime).
+        created_by (str).
+        reason (str).
+    """
     proposal_id: str
     version: int
     snapshot_id: str
@@ -61,6 +98,18 @@ class ProposalSnapshot(BaseModel):
 
 
 class ApprovalRecord(BaseModel):
+    """Pydantic model defining the ApprovalRecord shape.
+
+    Attributes:
+        approval_id (str).
+        proposal_id (str).
+        stage (str).
+        snapshot_id (str).
+        snapshot_version (int).
+        snapshot_sha256 (str).
+        status (Literal['pending', 'approved', 'rejected', 'changes_requested']).
+        selected_concept_id (str | None).
+    """
     approval_id: str
     proposal_id: str
     stage: str
@@ -78,11 +127,19 @@ class ApprovalRecord(BaseModel):
 
 
 class ProposalWorkspaceStore:
+    """Provides the ProposalWorkspaceStore behaviour."""
     def __init__(self, db, object_store) -> None:
+        """Initialize the ProposalWorkspaceStore.
+
+        Args:
+            db: Mongo database handle.
+            object_store: The object store.
+        """
         self.db = db
         self.object_store = object_store
 
     async def ensure_indexes(self) -> None:
+        """Ensure the indexes."""
         await self.db["proposal_source_versions"].create_index(
             [
                 ("session_id", 1),
@@ -128,6 +185,22 @@ class ProposalWorkspaceStore:
         authority: str = "unverified",
         metadata: dict[str, Any] | None = None,
     ) -> SourceVersionRecord:
+        """Register the source version.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+            source_id (str): The source id.
+            content (str): Content value.
+            title (str): The title.
+            created_by (str): The created by.
+            identifier (str | None): The identifier (optional, default None).
+            authority (str): The authority (optional, default 'unverified').
+            metadata (dict[str, Any] | None): Metadata mapping (optional, default None).
+
+        Returns:
+            SourceVersionRecord: The source version.
+        """
         if not content.strip():
             raise ValueError("source content cannot be empty")
         metadata = metadata or {}
@@ -197,6 +270,16 @@ class ProposalWorkspaceStore:
         proposal_id: str,
         source_id: str | None = None,
     ) -> list[dict[str, Any]]:
+        """List the source versions.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+            source_id (str | None): The source id (optional, default None).
+
+        Returns:
+            list[dict[str, Any]]: The source versions.
+        """
         query: dict[str, Any] = {
             "session_id": session_id,
             "proposal_id": proposal_id,
@@ -217,6 +300,17 @@ class ProposalWorkspaceStore:
         source_id: str,
         version_id: str | None = None,
     ) -> tuple[SourceVersionRecord, str]:
+        """Compute the source text.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+            source_id (str): The source id.
+            version_id (str | None): Version identifier (optional, default None).
+
+        Returns:
+            tuple[SourceVersionRecord, str]: The text.
+        """
         query: dict[str, Any] = {
             "session_id": session_id,
             "proposal_id": proposal_id,
@@ -250,6 +344,18 @@ class ProposalWorkspaceStore:
         created_by: str,
         reason: str,
     ) -> ProposalSnapshot:
+        """Save the snapshot.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+            graph (ProposalGraph): Compiled LangGraph graph.
+            created_by (str): The created by.
+            reason (str): Reason text.
+
+        Returns:
+            ProposalSnapshot: The snapshot.
+        """
         graph_payload = graph.model_dump(mode="json")
         content_sha = _canonical_hash(graph_payload)
         collection = self.db["proposal_snapshots"]
@@ -288,6 +394,19 @@ class ProposalWorkspaceStore:
         requested_by: str,
         selected_concept_id: str | None = None,
     ) -> ApprovalRecord:
+        """Compute the request approval.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+            graph (ProposalGraph): Compiled LangGraph graph.
+            stage (str): Pipeline stage label.
+            requested_by (str): The requested by.
+            selected_concept_id (str | None): The selected concept id (optional, default None).
+
+        Returns:
+            ApprovalRecord: The approval.
+        """
         coverage = build_call_coverage_matrix(graph)
         if coverage.submission_blocked and stage in {
             "call_coverage",
@@ -342,6 +461,19 @@ class ProposalWorkspaceStore:
         decided_by: str,
         comment: str | None,
     ) -> ApprovalRecord:
+        """Compute the decide approval.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+            approval_id (str): The approval id.
+            decision (Literal['approved', 'rejected', 'changes_requested']): Human decision mapping.
+            decided_by (str): The decided by.
+            comment (str | None): The comment.
+
+        Returns:
+            ApprovalRecord: The approval.
+        """
         collection = self.db["proposal_approvals"]
         updated = await collection.find_one_and_update(
             {
@@ -374,6 +506,15 @@ class ProposalWorkspaceStore:
         session_id: str,
         proposal_id: str,
     ) -> list[dict[str, Any]]:
+        """List the approvals.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            proposal_id (str): The proposal id.
+
+        Returns:
+            list[dict[str, Any]]: The approvals.
+        """
         cursor = self.db["proposal_approvals"].find(
             {"session_id": session_id, "proposal_id": proposal_id},
             {"_id": 0, "session_id": 0},

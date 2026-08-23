@@ -1,4 +1,10 @@
 # scripts/seed_collections.py
+"""Seed collections module.
+
+Part of the operational and development scripts.
+
+Public symbols: main.
+"""
 import asyncio
 import yaml
 from pathlib import Path
@@ -9,6 +15,7 @@ from app.ingestion.collections import CollectionConfig, CollectionRegistry
 
 
 async def main():
+    """Compute the main."""
     mongo = MongoClient()
     registry = CollectionRegistry(mongo)
     base = Path(__file__).resolve().parent.parent / "workflows" / "collections"

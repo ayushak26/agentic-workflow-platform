@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 
 import { dumpYaml, parseYaml, reactFlowToYaml, yamlToReactFlow } from '../yaml-bridge';
 
+// Vitest provides the CJS __dirname shim even in its jsdom environment
+// (import.meta.url is an http:// URL there, so fileURLToPath cannot be
+// used). This file is excluded from the browser-scoped tsconfig.app.json,
+// so the shim does not leak into app type-checking.
 const WORKFLOWS_DIR = join(__dirname, '../../../../../workflows');
 
 /**
@@ -31,9 +35,11 @@ function roundTrip(yamlText: string) {
 describe('every shipped workflow round-trips through the Builder without drift', () => {
   const files = readdirSync(WORKFLOWS_DIR).filter(name => name.endsWith('.yaml'));
 
-  it.each(files)('%s', (filename) => {
-    const text = readFileSync(join(WORKFLOWS_DIR, filename), 'utf8');
-    const { original, rebuilt } = roundTrip(text);
-    expect(normalise(rebuilt)).toEqual(normalise(original));
-  });
+  for (const filename of files) {
+    it(filename, () => {
+      const text = readFileSync(join(WORKFLOWS_DIR, filename), 'utf8');
+      const { original, rebuilt } = roundTrip(text);
+      expect(normalise(rebuilt)).toEqual(normalise(original));
+    });
+  }
 });

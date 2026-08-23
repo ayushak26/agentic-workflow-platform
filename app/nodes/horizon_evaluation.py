@@ -15,10 +15,20 @@ from app.proposal_graph.state import proposal_graph_from_state
 
 
 class HorizonEvaluationInput(BaseModel):
+    """Pydantic model defining the HorizonEvaluationInput shape."""
     pass
 
 
 class HorizonEvaluationConfig(BaseModel):
+    """Pydantic model defining the HorizonEvaluationConfig shape.
+
+    Attributes:
+        proposal_text (str).
+        generator_model (str | None).
+        evaluator_models (list[str]).
+        criterion_threshold (float).
+        total_threshold (float).
+    """
     proposal_text: str
     generator_model: str | None = None
     evaluator_models: list[str] = Field(
@@ -30,6 +40,7 @@ class HorizonEvaluationConfig(BaseModel):
 
 @NodeRegistry.register
 class HorizonEvaluationAgent(NodeType):
+    """Workflow node type implementing the HorizonEvaluationAgent capability."""
     type_name = "HorizonEvaluationAgent"
     description = (
         "Score Excellence, Impact, and Implementation with independent "
@@ -41,9 +52,26 @@ class HorizonEvaluationAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger"}
 
     async def run(self, state: dict, resolved_config: dict) -> dict:
+        """Run the result.
+
+        Args:
+            state (dict): Current workflow state.
+            resolved_config (dict): Configuration after template resolution.
+
+        Returns:
+            dict: The result.
+        """
         cfg = HorizonEvaluationConfig(**resolved_config)
         llm = self.services.get("llm")
         if llm is None:

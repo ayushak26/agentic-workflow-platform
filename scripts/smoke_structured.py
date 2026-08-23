@@ -9,11 +9,18 @@ from app.llm import get_gateway
 
 
 class Answer(BaseModel):
+    """Pydantic model defining the Answer shape.
+
+    Attributes:
+        number (int).
+        reasoning (str).
+    """
     number: int
     reasoning: str
 
 
 async def main():
+    """Compute the main."""
     gw, model = get_gateway("claude-haiku-4-5")
     r = await gw.complete_structured(
         model=model,

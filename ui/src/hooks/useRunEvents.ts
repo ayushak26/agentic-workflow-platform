@@ -10,7 +10,7 @@ export function useRunEvents(runId: string | null) {
   useEffect(() => {
     if (!runId) return;
     // This effect owns one authenticated SSE fetch/reconnect lifecycle.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setEvents([]);
     setOpen(false);
     setError(null);

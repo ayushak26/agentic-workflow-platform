@@ -161,6 +161,15 @@ _DOMAIN_HINTS: dict[str, set[str]] = {
 
 @dataclass(frozen=True)
 class SkillDocument:
+    """Provides the SkillDocument behaviour.
+
+    Attributes:
+        name (str).
+        description (str).
+        version (str).
+        license (str).
+        instructions (str).
+    """
     name: str
     description: str
     version: str
@@ -168,6 +177,11 @@ class SkillDocument:
     instructions: str
 
     def metadata(self) -> dict[str, str]:
+        """Compute the metadata.
+
+        Returns:
+            dict[str, str]: The result.
+        """
         return {
             "name": self.name,
             "description": self.description,
@@ -178,15 +192,23 @@ class SkillDocument:
 
 @dataclass(frozen=True)
 class SkillSelection:
+    """Provides the SkillSelection behaviour.
+
+    Attributes:
+        skills (tuple[SkillDocument, ...]).
+        reason (str).
+    """
     skills: tuple[SkillDocument, ...]
     reason: str
 
     @property
     def names(self) -> list[str]:
+        """The names."""
         return [skill.name for skill in self.skills]
 
     @property
     def versions(self) -> dict[str, str]:
+        """The versions."""
         return {skill.name: skill.version for skill in self.skills}
 
 
@@ -201,6 +223,14 @@ class ScientificSkillCatalog:
         enabled: bool = True,
         max_prompt_chars: int = 30_000,
     ) -> None:
+        """Initialize the ScientificSkillCatalog.
+
+        Args:
+            root (Path): The root.
+            allowlist (Iterable[str]): The allowlist.
+            enabled (bool): The enabled (optional, default True).
+            max_prompt_chars (int): The max prompt chars (optional, default 30000).
+        """
         self.root = root.expanduser()
         self.enabled = enabled
         self.allowlist = tuple(dict.fromkeys(allowlist))
@@ -209,6 +239,7 @@ class ScientificSkillCatalog:
         self._load_errors: dict[str, str] = {}
 
     def refresh(self) -> None:
+        """Refresh the result."""
         self._skills.clear()
         self._load_errors.clear()
         if not self.enabled:
@@ -241,6 +272,11 @@ class ScientificSkillCatalog:
                 )
 
     async def probe(self) -> bool:
+        """Probe the result.
+
+        Returns:
+            bool: The result.
+        """
         return (
             self.enabled
             and bool(self._skills)
@@ -248,6 +284,11 @@ class ScientificSkillCatalog:
         )
 
     def metadata(self) -> list[dict[str, str]]:
+        """Compute the metadata.
+
+        Returns:
+            list[dict[str, str]]: The result.
+        """
         return [
             self._skills[name].metadata()
             for name in self.allowlist
@@ -256,6 +297,7 @@ class ScientificSkillCatalog:
 
     @property
     def load_errors(self) -> dict[str, str]:
+        """The load errors."""
         return dict(self._load_errors)
 
     @property
@@ -277,6 +319,17 @@ class ScientificSkillCatalog:
         auto_select: bool = True,
         max_skills: int = 3,
     ) -> SkillSelection:
+        """Select the result.
+
+        Args:
+            objective (str): The objective.
+            requested (Iterable[str]): The requested (optional, default ()).
+            auto_select (bool): The auto select (optional, default True).
+            max_skills (int): The max skills (optional, default 3).
+
+        Returns:
+            SkillSelection: The result.
+        """
         if not self.enabled:
             raise RuntimeError("Scientific Agent Skills are disabled")
         if not self._skills:
@@ -334,6 +387,14 @@ class ScientificSkillCatalog:
         )
 
     def prompt_bundle(self, selection: SkillSelection) -> str:
+        """Compute the prompt bundle.
+
+        Args:
+            selection (SkillSelection): The selection.
+
+        Returns:
+            str: The bundle.
+        """
         chunks: list[str] = []
         remaining = self.max_prompt_chars
         for skill in selection.skills:
@@ -352,6 +413,14 @@ class ScientificSkillCatalog:
 
 
 def _parse_skill(text: str) -> SkillDocument:
+    """Parse the skill.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        SkillDocument: The skill.
+    """
     if not text.startswith("---"):
         raise ValueError("missing YAML frontmatter")
     parts = text.split("---", 2)
@@ -415,6 +484,15 @@ def _sanitize_instructions(text: str) -> str:
 
 
 def _skill_score(objective: str, skill: SkillDocument) -> int:
+    """Internal helper for the skill score step.
+
+    Args:
+        objective (str): The objective.
+        skill (SkillDocument): The skill.
+
+    Returns:
+        int: The score.
+    """
     objective_tokens = (
         set(_TOKEN.findall(objective.lower())) - _STOPWORD_TOKENS
     )

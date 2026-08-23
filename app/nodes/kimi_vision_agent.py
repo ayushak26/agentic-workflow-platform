@@ -12,6 +12,7 @@ from app.runtime.schema import WorkflowFileRef
 
 
 class KimiVisionInput(BaseModel):
+    """Pydantic model defining the KimiVisionInput shape."""
     pass
 
 
@@ -20,6 +21,14 @@ class KimiVisionConfig(BaseModel):
     # runtime must resolve it to the complete scoped WorkflowFileRef. None
     # means an optional image input was declared but never supplied for this
     # run — a legitimate case (see run()), not a template-resolution bug.
+    """Pydantic model defining the KimiVisionConfig shape.
+
+    Attributes:
+        image (str | WorkflowFileRef | None).
+        prompt (str).
+        vision_model (Literal['kimi-k3']).
+        max_completion_tokens (int).
+    """
     image: str | WorkflowFileRef | None
     prompt: str = "Describe and analyse this image."
     vision_model: Literal["kimi-k3"] = Field(
@@ -33,6 +42,18 @@ class KimiVisionConfig(BaseModel):
 
 
 class KimiVisionOutput(BaseModel):
+    """Pydantic model defining the KimiVisionOutput shape.
+
+    Attributes:
+        analysis (str).
+        provider (Literal['kimi']).
+        model (str).
+        image_name (str).
+        minio_key (str).
+        content_type (str).
+        byte_size (int).
+        input_tokens (int).
+    """
     analysis: str
     provider: Literal["kimi"] = "kimi"
     model: str
@@ -47,6 +68,7 @@ class KimiVisionOutput(BaseModel):
 
 @NodeRegistry.register
 class KimiVisionAgent(NodeType):
+    """Workflow node type implementing the KimiVisionAgent capability."""
     type_name = "KimiVisionAgent"
     description = (
         "Analyse an uploaded image with Kimi K3. Image bytes are fetched from "
@@ -58,6 +80,14 @@ class KimiVisionAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store", "kimi_vision"}
 
     async def run(
@@ -65,6 +95,15 @@ class KimiVisionAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         _ = state
         cfg = KimiVisionConfig.model_validate(resolved_config)
         if cfg.image is None:

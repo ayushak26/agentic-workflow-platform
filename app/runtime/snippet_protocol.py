@@ -45,6 +45,15 @@ async def read_message(reader: asyncio.StreamReader, limit: int = MAX_MESSAGE_BY
 
 
 class SnippetRequest(TypedDict):
+    """Provides the SnippetRequest behaviour.
+
+    Attributes:
+        code (str).
+        inputs (dict[str, Any]).
+        timeout_seconds (float).
+        memory_mb (int).
+        max_output_bytes (int).
+    """
     code: str
     inputs: dict[str, Any]
     timeout_seconds: float
@@ -56,6 +65,16 @@ SnippetStatus = Literal["ok", "error", "timeout", "limit_exceeded", "output_too_
 
 
 class SnippetResponse(TypedDict, total=False):
+    """Provides the SnippetResponse behaviour.
+
+    Attributes:
+        status (SnippetStatus).
+        output (dict[str, Any]).
+        stdout (str).
+        stderr (str).
+        error (str | None).
+        duration_s (float).
+    """
     status: SnippetStatus
     output: dict[str, Any]
     stdout: str

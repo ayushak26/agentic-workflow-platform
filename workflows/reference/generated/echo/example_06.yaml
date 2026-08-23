@@ -1,0 +1,137 @@
+name: Reference Echo 06
+description: Reusable subprocess. Answers a question grounded in the workspace's indexed
+  knowledge collection — using KnowledgeRetrieval to check whether any internal evidence
+  exists at all, and RAGAgent to generate the actual cited answer. Distinguishes HAS_INTERNAL_EVIDENCE
+  from NO_INTERNAL_EVIDENCE so a caller can route to a human instead of presenting
+  an uncited guess. Called via SubprocessAgent from Workflow 02, Workflow 03, Workflow
+  06, and Workflow 09.
+version: '1.0'
+use_case: shared_subprocess
+library:
+  title: SP03 — Internal Knowledge Answer
+  summary: Answer a question from internal knowledge, with an explicit evidence status.
+  purpose:
+  - Keep retrieval-only (KnowledgeRetrieval) and retrieval-plus-generation (RAGAgent)
+    distinct, per the platform's own node design
+  - Make "we found nothing" a visible, routable outcome, not a confident-sounding
+    guess
+  suitable_for:
+  - Called as a SubprocessAgent step whenever a workflow needs a grounded answer from
+    the internal knowledge base
+  not_suitable_for:
+  - Direct end-user invocation — this has no Start node, it's a subprocess
+  - Questions needing current public information — that's WebSearchAgent, not this
+  outputs:
+  - A grounded answer, its citations, and an evidence status
+  input_types:
+  - A question
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+inputs:
+  question:
+    type: text
+    required: true
+    description: The question to answer from internal knowledge.
+entry: received_question
+exit:
+- end_answer
+nodes:
+- id: received_question
+  type: Echo
+  config:
+    template: '{{inputs.question}}'
+  experience:
+    display_name: Question Received
+    purpose: The single entry point that fans out to both knowledge checks below.
+    contribution: Guarantees both branches always run, which is what makes the join
+      after them safe.
+    expected_output: The question, unchanged.
+    failure_message: The question could not be read.
+- id: retrieve
+  type: KnowledgeRetrieval
+  config:
+    collection_id: internal-knowledge-base
+    retrieval_profile_id: default
+    query: '{{inputs.question}}'
+  experience:
+    display_name: Check Internal Knowledge
+    purpose: See whether any internal knowledge addresses this question at all.
+    contribution: A cheap signal of evidence depth, independent of the generated answer.
+    expected_output: Retrieved chunks and how many were found.
+    failure_message: The knowledge base could not be searched.
+- id: answer
+  type: RAGAgent
+  config:
+    query: '{{inputs.question}}'
+  experience:
+    display_name: Generate Grounded Answer
+    purpose: Answer the question, citing every internal source used.
+    contribution: Every factual claim carries a [N] citation back to a real retrieved
+      chunk.
+    expected_output: A cited answer, or an honest "the sources don't say" when nothing
+      supports it.
+    failure_message: The question could not be answered.
+- id: assess
+  type: DecisionAgent
+  config:
+    defaults:
+      evidence_status: NO_INTERNAL_EVIDENCE
+    rules:
+    - name: Internal evidence exists
+      when:
+        operator: and
+        conditions:
+        - field: retrieve.context_count
+          operator: greater_than
+          value: 0
+      then:
+      - field: evidence_status
+        value: HAS_INTERNAL_EVIDENCE
+    - name: Generated answer cites nothing
+      when:
+        operator: and
+        conditions:
+        - field: answer.citations
+          operator: is_empty
+      then:
+      - field: evidence_status
+        value: NO_INTERNAL_EVIDENCE
+  experience:
+    display_name: Assess Evidence Status
+    purpose: Say plainly whether this answer is actually grounded in internal knowledge.
+    contribution: A caller can route an uncited answer to a human instead of presenting
+      it as fact.
+    expected_output: HAS_INTERNAL_EVIDENCE or NO_INTERNAL_EVIDENCE.
+    failure_message: The evidence status could not be assessed.
+- id: end_answer
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: answer
+      value_from: '{{outputs.answer.answer}}'
+    - key: citations
+      value_from: '{{outputs.answer.citations}}'
+    - key: evidence_status
+      value_from: '{{outputs.assess.decisions.evidence_status}}'
+    - key: context_count
+      value_from: '{{outputs.retrieve.context_count}}'
+  experience:
+    display_name: Knowledge Answer Result
+    purpose: Return the answer and its evidence status to the calling workflow.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: An answer, its citations, and an evidence status.
+    failure_message: The result could not be produced.
+edges:
+- from: received_question
+  to:
+  - retrieve
+  - answer
+- from: retrieve
+  to: assess
+- from: answer
+  to: assess
+- from: assess
+  to: end_answer

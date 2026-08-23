@@ -45,6 +45,7 @@ _GRANT_AGREEMENT_PATTERN = re.compile(
 
 
 class ProcessingMode(str, Enum):
+    """Enumeration of ProcessingMode values."""
     PUBLIC = "public"
     PSEUDONYMISED = "pseudonymised"
     RESTRICTED_LOCAL = "restricted_local"
@@ -52,18 +53,39 @@ class ProcessingMode(str, Enum):
 
 @dataclass
 class TokenizeResult:
+    """Provides the TokenizeResult behaviour.
+
+    Attributes:
+        text (str).
+        placeholders_used (frozenset[str]).
+    """
     text: str
     placeholders_used: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass
 class DetokenizeResult:
+    """Provides the DetokenizeResult behaviour.
+
+    Attributes:
+        value (Any).
+        unresolved_placeholders (frozenset[str]).
+    """
     value: Any
     unresolved_placeholders: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
 class _Span:
+    """Provides the Span behaviour.
+
+    Attributes:
+        start (int).
+        end (int).
+        entity_type (str).
+        value (str).
+        source (str).
+    """
     start: int
     end: int
     entity_type: str
@@ -72,10 +94,28 @@ class _Span:
 
 
 def _overlaps(start: int, end: int, claimed: list[tuple[int, int]]) -> bool:
+    """Internal helper for the overlaps step.
+
+    Args:
+        start (int): Start value.
+        end (int): End value.
+        claimed (list[tuple[int, int]]): The claimed.
+
+    Returns:
+        bool: The result.
+    """
     return any(not (end <= c_start or start >= c_end) for c_start, c_end in claimed)
 
 
 def _boundary_pattern(value: str) -> re.Pattern[str]:
+    """Internal helper for the boundary pattern step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        re.Pattern[str]: The pattern.
+    """
     escaped = re.escape(value)
     prefix = r"\b" if value[:1].isalnum() else ""
     suffix = r"\b" if value[-1:].isalnum() else ""
@@ -83,7 +123,13 @@ def _boundary_pattern(value: str) -> re.Pattern[str]:
 
 
 class EntityTokenizerService:
+    """Provides the EntityTokenizerService behaviour."""
     def __init__(self, db: Any) -> None:
+        """Initialize the EntityTokenizerService.
+
+        Args:
+            db (Any): Mongo database handle.
+        """
         self._vault = EntityVault(db)
         self._registry = EntityRegistry(self._vault)
 
@@ -93,6 +139,7 @@ class EntityTokenizerService:
         return self._registry
 
     async def ensure_indexes(self) -> None:
+        """Ensure the indexes."""
         await self._vault.ensure_indexes()
 
     async def tokenize(
@@ -103,6 +150,17 @@ class EntityTokenizerService:
         collection_id: str = "default",
         mode: ProcessingMode = ProcessingMode.PSEUDONYMISED,
     ) -> TokenizeResult:
+        """Tokenize the result.
+
+        Args:
+            text (str): The text.
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier (optional, default 'default').
+            mode (ProcessingMode): The mode (optional, default ProcessingMode.PSEUDONYMISED).
+
+        Returns:
+            TokenizeResult: The result.
+        """
         if mode is ProcessingMode.PUBLIC or not text:
             return TokenizeResult(text=text)
         if mode is ProcessingMode.RESTRICTED_LOCAL:
@@ -141,6 +199,16 @@ class EntityTokenizerService:
     async def _detect_spans(
         self, text: str, *, session_id: str, collection_id: str
     ) -> list[_Span]:
+        """Detect the spans.
+
+        Args:
+            text (str): The text.
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier.
+
+        Returns:
+            list[_Span]: The spans.
+        """
         known = await self._vault.list_scope_entities(
             session_id=session_id, collection_id=collection_id
         )
@@ -263,6 +331,16 @@ class EntityTokenizerService:
     async def _detokenize_text(
         self, text: str, *, session_id: str, collection_id: str
     ) -> DetokenizeResult:
+        """Detokenize the text.
+
+        Args:
+            text (str): The text.
+            session_id (str): Session scope the record belongs to.
+            collection_id (str): Knowledge collection identifier.
+
+        Returns:
+            DetokenizeResult: The text.
+        """
         found = set(_PLACEHOLDER_PATTERN.findall(text))
         resolved: dict[str, str] = {}
         if found:

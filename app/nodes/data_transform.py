@@ -65,6 +65,11 @@ class TransformOperation(BaseModel):
 
     @model_validator(mode="after")
     def operation_has_its_inputs(self) -> "TransformOperation":
+        """Compute the operation has its inputs.
+
+        Returns:
+            'TransformOperation': The has its inputs.
+        """
         needs_source = {
             "copy",
             "select",
@@ -106,6 +111,12 @@ class TransformOperation(BaseModel):
 
 
 class DataTransformConfig(BaseModel):
+    """Pydantic model defining the DataTransformConfig shape.
+
+    Attributes:
+        operations (list[TransformOperation]).
+        omit_empty (bool).
+    """
     model_config = ConfigDict(extra="forbid")
 
     operations: list[TransformOperation] = Field(
@@ -121,6 +132,11 @@ class DataTransformConfig(BaseModel):
 
     @model_validator(mode="after")
     def targets_are_unique(self) -> "DataTransformConfig":
+        """Compute the targets are unique.
+
+        Returns:
+            'DataTransformConfig': The are unique.
+        """
         targets = [op.target for op in self.operations]
         duplicates = sorted({name for name in targets if targets.count(name) > 1})
         if duplicates:
@@ -132,10 +148,17 @@ class DataTransformConfig(BaseModel):
 
 
 class DataTransformInput(BaseModel):
+    """Pydantic model defining the DataTransformInput shape."""
     pass
 
 
 class DataTransformOutput(BaseModel):
+    """Pydantic model defining the DataTransformOutput shape.
+
+    Attributes:
+        data (dict[str, Any]).
+        defaulted (list[str]).
+    """
     data: dict[str, Any] = Field(default_factory=dict)
     #: Targets whose source was missing or empty and which fell back to their
     #: default. Surfaced rather than silent, because a mapping that quietly
@@ -148,6 +171,13 @@ _TEMPLATE = re.compile(r"\{\{\s*([\w\.]+)\s*\}\}")
 
 @NodeRegistry.register
 class DataTransformAgent(NodeType):
+    """Workflow node type implementing the DataTransformAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "DataTransformAgent"
     description = (
         "Deprecated — use TransformAgent's mode: deterministic instead. "
@@ -180,10 +210,26 @@ class DataTransformAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return set()
 
     @classmethod
     def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         targets = {
             op.get("target")
             for op in (config.get("operations") or [])
@@ -193,11 +239,28 @@ class DataTransformAgent(NodeType):
 
     @classmethod
     def preflight_static_output_values(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if not (config.get("operations") or []):
             return {"data": {}}
         return {}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = DataTransformConfig(**resolved_config)
         context = dict(state)
         data: dict[str, Any] = {}
@@ -216,6 +279,14 @@ class DataTransformAgent(NodeType):
 
 
 def _is_blank(value: Any) -> bool:
+    """Return whether blank.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        bool: True when blank.
+    """
     if value is None:
         return True
     if isinstance(value, str):
@@ -226,6 +297,15 @@ def _is_blank(value: Any) -> bool:
 
 
 def _apply(op: TransformOperation, context: dict[str, Any]) -> Any:
+    """Apply the result.
+
+    Args:
+        op (TransformOperation): The op.
+        context (dict[str, Any]): The context.
+
+    Returns:
+        Any: The result.
+    """
     kind = op.operation
     if kind == "constant":
         return op.value
@@ -297,6 +377,14 @@ def _apply(op: TransformOperation, context: dict[str, Any]) -> Any:
 
 
 def _as_text(value: Any) -> str:
+    """Internal helper for the as text step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        str: The text.
+    """
     if value is None:
         return ""
     if isinstance(value, str):
@@ -309,6 +397,14 @@ def _as_text(value: Any) -> str:
 
 
 def _as_number(value: Any) -> float | None:
+    """Internal helper for the as number step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        float | None: The number.
+    """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -326,6 +422,14 @@ def _as_number(value: Any) -> float | None:
 
 
 def _as_boolean(value: Any) -> bool:
+    """Internal helper for the as boolean step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        bool: The boolean.
+    """
     if isinstance(value, bool):
         return value
     if isinstance(value, str):

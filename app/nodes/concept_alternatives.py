@@ -19,10 +19,18 @@ from app.proposal_graph.state import (
 
 
 class ConceptAlternativesInput(BaseModel):
+    """Pydantic model defining the ConceptAlternativesInput shape."""
     pass
 
 
 class ConceptAlternativesConfig(BaseModel):
+    """Pydantic model defining the ConceptAlternativesConfig shape.
+
+    Attributes:
+        model (str).
+        judge_model (str | None).
+        concept_note (str).
+    """
     model: str = "claude-opus-5"
     judge_model: str | None = None
     concept_note: str = ""
@@ -33,11 +41,17 @@ class ConceptAlternativesOutput(ConceptAlternativeSet):
     # the "select and freeze the concept" human gate. The human can accept
     # it or overwrite it with another alternative's id before ConceptFreezeAgent
     # reads the gate's decision.
+    """Provides the ConceptAlternativesOutput behaviour.
+
+    Attributes:
+        recommended_concept_id (str).
+    """
     recommended_concept_id: str = ""
 
 
 @NodeRegistry.register
 class ConceptAlternativesAgent(NodeType):
+    """Workflow node type implementing the ConceptAlternativesAgent capability."""
     type_name = "ConceptAlternativesAgent"
     description = (
         "Generate conservative, balanced, and ambitious Horizon concepts "
@@ -49,9 +63,26 @@ class ConceptAlternativesAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger"}
 
     async def run(self, state: dict, resolved_config: dict) -> dict:
+        """Run the result.
+
+        Args:
+            state (dict): Current workflow state.
+            resolved_config (dict): Configuration after template resolution.
+
+        Returns:
+            dict: The result.
+        """
         cfg = ConceptAlternativesConfig(**resolved_config)
         llm = self.services.get("llm")
         if llm is None:

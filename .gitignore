@@ -33,6 +33,9 @@ service-account*.json
 
 # Editor
 .vscode/
+!.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 *.swp
 .DS_Store

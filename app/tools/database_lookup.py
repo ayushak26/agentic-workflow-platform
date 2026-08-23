@@ -23,6 +23,15 @@ EUROSTAT_JSONSTAT_BASE = (
 
 @dataclass(frozen=True)
 class DatabaseResponse:
+    """Provides the DatabaseResponse behaviour.
+
+    Attributes:
+        endpoint (str).
+        parameters (dict[str, Any]).
+        raw (bytes).
+        content_type (str).
+        headers (dict[str, str]).
+    """
     endpoint: str
     parameters: dict[str, Any]
     raw: bytes
@@ -39,6 +48,12 @@ class PublicDatabaseLookupService:
         http_client: httpx.AsyncClient | None = None,
         minimum_interval_seconds: float = 0.5,
     ) -> None:
+        """Initialize the PublicDatabaseLookupService.
+
+        Args:
+            http_client (httpx.AsyncClient | None): The http client (optional, default None).
+            minimum_interval_seconds (float): The minimum interval seconds (optional, default 0.5).
+        """
         self._http_client = http_client
         self._owns_client = http_client is None
         self._minimum_interval_seconds = max(
@@ -49,6 +64,7 @@ class PublicDatabaseLookupService:
         self._last_request_at = 0.0
 
     async def close(self) -> None:
+        """Close the result."""
         if self._owns_client and self._http_client is not None:
             await self._http_client.aclose()
             self._http_client = None
@@ -60,6 +76,16 @@ class PublicDatabaseLookupService:
         timeout_seconds: float = 45.0,
         max_response_bytes: int = 20 * 1024 * 1024,
     ) -> DatabaseResponse:
+        """Query the eurostat.
+
+        Args:
+            query (StructuredDatasetQuery): Query filter.
+            timeout_seconds (float): Timeout in seconds (optional, default 45.0).
+            max_response_bytes (int): The max response bytes (optional, default 20 * 1024 * 1024).
+
+        Returns:
+            DatabaseResponse: The eurostat.
+        """
         endpoint = f"{EUROSTAT_JSONSTAT_BASE}/{query.dataset_code}"
         parameter_pairs: list[tuple[str, str]] = [("lang", "en")]
         for field_name in sorted(query.filters):
@@ -135,6 +161,14 @@ class PublicDatabaseLookupService:
         )
 
     async def _client(self, timeout_seconds: float) -> httpx.AsyncClient:
+        """Internal helper for the client step.
+
+        Args:
+            timeout_seconds (float): Timeout in seconds.
+
+        Returns:
+            httpx.AsyncClient: The result.
+        """
         if self._http_client is None:
             self._http_client = httpx.AsyncClient(
                 timeout=timeout_seconds,
@@ -143,6 +177,7 @@ class PublicDatabaseLookupService:
         return self._http_client
 
     async def _rate_limit(self) -> None:
+        """Internal helper for the rate limit step."""
         if not self._minimum_interval_seconds:
             return
         loop = asyncio.get_running_loop()
@@ -154,6 +189,14 @@ class PublicDatabaseLookupService:
 
 
 def _pairs_for_audit(pairs: list[tuple[str, str]]) -> dict[str, Any]:
+    """Internal helper for the pairs for audit step.
+
+    Args:
+        pairs (list[tuple[str, str]]): The pairs.
+
+    Returns:
+        dict[str, Any]: The for audit.
+    """
     result: dict[str, Any] = {}
     for key, value in pairs:
         existing = result.get(key)
@@ -167,4 +210,9 @@ def _pairs_for_audit(pairs: list[tuple[str, str]]) -> dict[str, Any]:
 
 
 def get_database_lookup_service() -> PublicDatabaseLookupService:
+    """Return the database lookup service.
+
+    Returns:
+        PublicDatabaseLookupService: The database lookup service.
+    """
     return PublicDatabaseLookupService()

@@ -49,12 +49,23 @@ OPPORTUNITY_COLUMNS = [
 
 ORDER_COLUMNS = [
     "salesorderid",
-    "ordernumber",
+    "order_number",
     "name",
     "createdon",
+    "confirmed_date",
+    "status",
     "totalamount",
     "_customerid_value",
     "products",
+]
+
+QUOTE_COLUMNS = [
+    "quoteid",
+    "quotation_number",
+    "name",
+    "status",
+    "totalamount",
+    "_customerid_value",
 ]
 
 PRODUCT_COLUMNS = ["productid", "name", "productnumber", "description"]
@@ -93,6 +104,14 @@ _ACTIVE = 0
 
 
 def _account(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the account step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "account_id": row.get("accountid") or "",
         "account_name": row.get("name") or "",
@@ -107,6 +126,14 @@ def _account(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _contact(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the contact step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "contact_id": row.get("contactid") or "",
         "full_name": row.get("fullname") or "",
@@ -118,6 +145,14 @@ def _contact(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _opportunity(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the opportunity step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     state = row.get("statecode", _ACTIVE)
     return {
         "opportunity_id": row.get("opportunityid") or "",
@@ -130,11 +165,21 @@ def _opportunity(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _order(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the order step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "order_id": row.get("salesorderid") or "",
-        "order_number": row.get("ordernumber") or "",
+        "order_number": row.get("order_number") or "",
         "name": row.get("name"),
         "ordered_on": row.get("createdon"),
+        "status": row.get("status"),
+        "confirmed_date": row.get("confirmed_date"),
         "total_amount": row.get("totalamount"),
         "products": [
             {
@@ -148,7 +193,32 @@ def _order(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _quote(row: dict[str, Any]) -> dict[str, Any]:
+    """Map a Dataverse quotation row onto business field names.
+
+    The shape matches ``_quote_summary()`` in ``tools.py`` exactly, so both
+    the fixture and the live backend produce the one contract a workflow
+    maps against.
+    """
+    return {
+        "quote_id": row.get("quoteid") or "",
+        "quote_number": row.get("quotation_number") or "",
+        "name": row.get("name"),
+        "status": row.get("status"),
+        "total_amount": row.get("totalamount"),
+        "account_id": row.get("_customerid_value"),
+    }
+
+
 def _product(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the product step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "product_id": row.get("productid") or "",
         "name": row.get("name") or "",
@@ -158,6 +228,14 @@ def _product(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _activity(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the activity step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "activity_id": row.get("activityid") or "",
         "activity_type": row.get("activitytypecode") or "",
@@ -168,6 +246,14 @@ def _activity(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _shipment(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the shipment step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "shipment_id": row.get("shipmentid") or "",
         "shipment_number": row.get("shipment_number") or "",
@@ -180,6 +266,14 @@ def _shipment(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _service_case(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the service case step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The case.
+    """
     return {
         "case_id": row.get("caseid") or "",
         "case_number": row.get("service_case_number") or "",
@@ -210,6 +304,16 @@ def _collection(
 
 
 def _limit(arguments: dict[str, Any], default: int, maximum: int) -> int:
+    """Internal helper for the limit step.
+
+    Args:
+        arguments (dict[str, Any]): The arguments.
+        default (int): Default value.
+        maximum (int): The maximum.
+
+    Returns:
+        int: The result.
+    """
     value = arguments.get("limit", default)
     try:
         parsed = int(value)
@@ -225,6 +329,15 @@ def _limit(arguments: dict[str, Any], default: int, maximum: int) -> int:
 async def get_current_user(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Return the current user.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The current user.
+    """
     del arguments
     return await backend.whoami()
 
@@ -232,6 +345,15 @@ async def get_current_user(
 async def find_account(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Find the account.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The account.
+    """
     company = arguments.get("company_name")
     limit = _limit(arguments, 5, 25)
     # Prefix and contains, OR-ed: a customer writing "ABC Chemicals GmbH"
@@ -253,6 +375,15 @@ async def find_account(
 async def get_account(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Return the account.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The account.
+    """
     account_id = odata.guid(arguments.get("account_id"), field="account_id")
     row = await backend.get("accounts", account_id, select=ACCOUNT_COLUMNS)
     if row is None:
@@ -268,6 +399,15 @@ async def get_account(
 async def find_contact(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Find the contact.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The contact.
+    """
     email = (arguments.get("email") or "").strip()
     name = (arguments.get("name") or "").strip()
     if not email and not name:
@@ -296,6 +436,15 @@ async def find_contact(
 async def get_contacts_for_account(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Return the contacts for account.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The contacts for account.
+    """
     limit = _limit(arguments, 20, 50)
     rows = await backend.query(
         "contacts",
@@ -312,6 +461,15 @@ async def get_contacts_for_account(
 async def get_open_opportunities(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Return the open opportunities.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The open opportunities.
+    """
     limit = _limit(arguments, 20, 50)
     rows = await backend.query(
         "opportunities",
@@ -328,9 +486,71 @@ async def get_open_opportunities(
     )
 
 
+async def get_quotations_for_account(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """List the stored quotations belonging to one CRM account.
+
+    Read-only: returns quotation facts (number, status, amount) exactly as
+    recorded, so a workflow can decide whether a commercial offer already
+    exists without starting a duplicate one.
+    """
+    limit = _limit(arguments, 20, 50)
+    rows = await backend.query(
+        "quotations",
+        select=QUOTE_COLUMNS,
+        filter_expression=odata.lookup_filter(
+            "_customerid_value", arguments.get("account_id")
+        ),
+        order_by="quotation_number asc",
+        top=limit + 1,
+    )
+    return _collection([_quote(row) for row in rows], "quotations", limit)
+
+
+async def find_quotation(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Find one quotation by its customer-facing number.
+
+    The lookup may be scoped to a known account. A missing quotation is a
+    business outcome (``found: False``), not an error — the same contract
+    the other finders use.
+    """
+    quote_number = (arguments.get("quote_number") or "").strip()
+    account_id = arguments.get("account_id")
+    if not quote_number:
+        raise DynamicsError(
+            "find_quotation needs a quote_number.",
+            code="CRM_INVALID_ARGUMENTS",
+            retryable=False,
+        )
+    filters = [odata.string_filter("quotation_number", quote_number)]
+    if account_id:
+        filters.append(odata.lookup_filter("_customerid_value", account_id))
+    rows = await backend.query(
+        "quotations",
+        select=QUOTE_COLUMNS,
+        filter_expression=odata.all_of(*filters),
+        top=1,
+    )
+    if not rows:
+        return {"quotation": None, "found": False}
+    return {"quotation": _quote(rows[0]), "found": True}
+
+
 async def find_previous_orders(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Find the previous orders.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The previous orders.
+    """
     limit = _limit(arguments, 10, 25)
     rows = await backend.query(
         "salesorders",
@@ -344,9 +564,80 @@ async def find_previous_orders(
     return _collection([_order(row) for row in rows], "orders", limit)
 
 
+async def find_order(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Find one sales order by order number or equipment serial number.
+
+    Serial numbers live on order line items, so a serial lookup fetches the
+    candidate orders and filters on the nested products — the fixture and
+    live backends both return the same ``products`` shape, so the contract
+    holds either way. A missing order is a business outcome
+    (``found: False``), not an error.
+    """
+    order_number = (arguments.get("order_number") or "").strip()
+    serial_number = (arguments.get("serial_number") or "").strip()
+    account_id = arguments.get("account_id")
+    if not order_number and not serial_number:
+        raise DynamicsError(
+            "find_order needs an order_number or a serial_number.",
+            code="CRM_INVALID_ARGUMENTS",
+            retryable=False,
+        )
+    filters = []
+    if order_number:
+        filters.append(odata.string_filter("order_number", order_number))
+    if account_id:
+        filters.append(odata.lookup_filter("_customerid_value", account_id))
+    rows = await backend.query(
+        "salesorders",
+        select=ORDER_COLUMNS,
+        filter_expression=odata.all_of(*filters) if filters else None,
+        order_by="createdon desc",
+        top=100,
+    )
+    if serial_number:
+        rows = [
+            row for row in rows
+            if any(
+                (item.get("serial_number") or "") == serial_number
+                for item in (row.get("products") or [])
+            )
+        ]
+    if not rows:
+        return {"order": None, "found": False}
+    return {"order": _order(rows[0]), "found": True}
+
+
+async def get_shipments_for_account(
+    backend: DynamicsBackend, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """List the stored shipment records belonging to one CRM account."""
+    limit = _limit(arguments, 20, 50)
+    rows = await backend.query(
+        "shipments",
+        select=SHIPMENT_COLUMNS,
+        filter_expression=odata.lookup_filter(
+            "_customerid_value", arguments.get("account_id")
+        ),
+        order_by="shipped_date desc",
+        top=limit + 1,
+    )
+    return _collection([_shipment(row) for row in rows], "shipments", limit)
+
+
 async def find_product(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Find the product.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The product.
+    """
     search = arguments.get("search")
     limit = _limit(arguments, 10, 25)
     rows = await backend.query(
@@ -365,6 +656,15 @@ async def find_product(
 async def find_shipment(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Find the shipment.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The shipment.
+    """
     shipment_number = (arguments.get("shipment_number") or "").strip()
     order_id = arguments.get("order_id")
     account_id = arguments.get("account_id")
@@ -397,6 +697,15 @@ async def find_shipment(
 async def find_service_case(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Find the service case.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The service case.
+    """
     service_case_number = (arguments.get("service_case_number") or "").strip()
     serial_number = (arguments.get("serial_number") or "").strip()
     account_id = arguments.get("account_id")
@@ -431,6 +740,15 @@ async def find_service_case(
 async def get_service_cases_for_account(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Return the service cases for account.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The service cases for account.
+    """
     limit = _limit(arguments, 20, 50)
     rows = await backend.query(
         "service_cases",
@@ -447,6 +765,15 @@ async def get_service_cases_for_account(
 async def get_recent_activities(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Return the recent activities.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The recent activities.
+    """
     limit = _limit(arguments, 10, 50)
     rows = await backend.query(
         "activitypointers",
@@ -490,6 +817,15 @@ def _text(arguments: dict[str, Any], key: str, limit: int) -> str | None:
 async def create_lead(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Create the lead.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The lead.
+    """
     subject = _text(arguments, "subject", 300)
     if not subject:
         raise DynamicsError(
@@ -517,6 +853,15 @@ async def create_lead(
 async def create_followup_activity(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Create the followup activity.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The followup activity.
+    """
     account_id = odata.guid(arguments.get("account_id"), field="account_id")
     subject = _text(arguments, "subject", 300)
     if not subject:
@@ -556,6 +901,15 @@ _ACCOUNT_CONTACT_FIELDS: dict[str, tuple[str, int]] = {
 async def update_account_contact_details(
     backend: DynamicsBackend, arguments: dict[str, Any]
 ) -> dict[str, Any]:
+    """Update the account contact details.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The account contact details.
+    """
     account_id = odata.guid(arguments.get("account_id"), field="account_id")
 
     unknown = sorted(
@@ -598,7 +952,11 @@ HANDLERS = {
     "find_contact": find_contact,
     "get_contacts_for_account": get_contacts_for_account,
     "get_open_opportunities": get_open_opportunities,
+    "get_quotations_for_account": get_quotations_for_account,
+    "find_quotation": find_quotation,
     "find_previous_orders": find_previous_orders,
+    "find_order": find_order,
+    "get_shipments_for_account": get_shipments_for_account,
     "find_shipment": find_shipment,
     "find_service_case": find_service_case,
     "get_service_cases_for_account": get_service_cases_for_account,

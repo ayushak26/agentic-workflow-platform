@@ -16,6 +16,7 @@ from app.workflow.file_inputs import WorkflowFileInputError
 
 
 class WorkflowFileLoaderInput(BaseModel):
+    """Pydantic model defining the WorkflowFileLoaderInput shape."""
     pass
 
 
@@ -23,12 +24,31 @@ class WorkflowFileLoaderConfig(BaseModel):
     # ``str`` allows a Builder/YAML template such as
     # "{{inputs.source_files}}" to pass compile-time validation. Runtime
     # template resolution replaces it with the actual ref/list before run().
+    """Pydantic model defining the WorkflowFileLoaderConfig shape.
+
+    Attributes:
+        files (str | WorkflowFileRef | list[WorkflowFileRef]).
+        max_chars_per_file (int).
+        fail_on_unreadable (bool).
+    """
     files: str | WorkflowFileRef | list[WorkflowFileRef]
     max_chars_per_file: int = Field(default=200_000, ge=1_000, le=2_000_000)
     fail_on_unreadable: bool = False
 
 
 class LoadedWorkflowFile(BaseModel):
+    """Pydantic model defining the LoadedWorkflowFile shape.
+
+    Attributes:
+        file_id (str).
+        name (str).
+        category (str).
+        minio_key (str).
+        extracted_chars (int).
+        truncated (bool).
+        status (str).
+        error (str | None).
+    """
     file_id: str
     name: str
     category: str
@@ -40,6 +60,16 @@ class LoadedWorkflowFile(BaseModel):
 
 
 class WorkflowFileLoaderOutput(BaseModel):
+    """Pydantic model defining the WorkflowFileLoaderOutput shape.
+
+    Attributes:
+        text (str).
+        files (list[LoadedWorkflowFile]).
+        image_files (list[dict[str, Any]]).
+        total_files (int).
+        text_file_count (int).
+        image_count (int).
+    """
     text: str
     files: list[LoadedWorkflowFile]
     image_files: list[dict[str, Any]]
@@ -64,6 +94,14 @@ class WorkflowFileLoader(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(
@@ -71,6 +109,15 @@ class WorkflowFileLoader(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         config = WorkflowFileLoaderConfig.model_validate(resolved_config)
         if isinstance(config.files, str):
             raise WorkflowFileInputError(

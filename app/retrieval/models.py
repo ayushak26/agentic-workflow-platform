@@ -28,6 +28,13 @@ METADATA_FILTER_OPERATORS = (
 
 
 class MetadataFilterPredicate(BaseModel):
+    """Pydantic model defining the MetadataFilterPredicate shape.
+
+    Attributes:
+        field (str).
+        operator (Literal['equals', 'not_equals', 'in', 'not_in', 'contains_any', 'greater_than', 'less_than', 'between']).
+        value (Any).
+    """
     field: str = Field(min_length=1)
     operator: Literal[
         "equals", "not_equals", "in", "not_in",
@@ -37,6 +44,13 @@ class MetadataFilterPredicate(BaseModel):
 
 
 class MetadataFilterGroup(BaseModel):
+    """Pydantic model defining the MetadataFilterGroup shape.
+
+    Attributes:
+        logic (Literal['and', 'or']).
+        predicates (list[MetadataFilterPredicate]).
+        groups (list['MetadataFilterGroup']).
+    """
     logic: Literal["and", "or"] = "and"
     predicates: list[MetadataFilterPredicate] = Field(default_factory=list)
     groups: list["MetadataFilterGroup"] = Field(default_factory=list)

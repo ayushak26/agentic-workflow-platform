@@ -1,3 +1,9 @@
+"""Auth module.
+
+Part of the http api layer: fastapi routers for auth, workflows, runs, knowledge, and administration.
+
+Public symbols: Token, Identity, login, me, logout.
+"""
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -19,6 +25,14 @@ _DEV_USERS = {
 
 
 class Token(BaseModel):
+    """Pydantic model defining the Token shape.
+
+    Attributes:
+        access_token (str).
+        token_type (str).
+        username (str).
+        role (str).
+    """
     access_token: str
     token_type: str
     username: str
@@ -26,6 +40,13 @@ class Token(BaseModel):
 
 
 class Identity(BaseModel):
+    """Pydantic model defining the Identity shape.
+
+    Attributes:
+        username (str).
+        role (str).
+        session_id (str | None).
+    """
     username: str
     role: str
     session_id: str | None = None
@@ -57,6 +78,13 @@ async def login(
     response: Response,
     form: OAuth2PasswordRequestForm = Depends(),
 ):
+    """Compute the login.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        response (Response): Outgoing FastAPI response.
+        form (OAuth2PasswordRequestForm): The form (optional, default Depends()).
+    """
     user = None
     if (
         settings.environment.strip().lower() != "production"

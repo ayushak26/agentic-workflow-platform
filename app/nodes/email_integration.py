@@ -72,6 +72,12 @@ OPERATION_PRESETS: list[dict[str, Any]] = [
 
 
 class EmailRecipient(BaseModel):
+    """Pydantic model defining the EmailRecipient shape.
+
+    Attributes:
+        email (str).
+        name (str | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     email: str
@@ -79,6 +85,18 @@ class EmailRecipient(BaseModel):
 
 
 class EmailNodeConfig(BaseModel):
+    """Pydantic model defining the EmailNodeConfig shape.
+
+    Attributes:
+        connection (str).
+        operation (EmailOperationName).
+        query (str).
+        from_address (str | None).
+        subject_contains (str | None).
+        unread_only (bool).
+        has_attachments (bool).
+        folder (str).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: Named connection resolved by EmailService. Never a token.
@@ -131,6 +149,11 @@ class EmailNodeConfig(BaseModel):
         # validated on its real value at runtime. This checks the author
         # supplied *something*, which is the mistake worth catching in the
         # Builder.
+        """Compute the operation has what it needs.
+
+        Returns:
+            'EmailNodeConfig': The has what it needs.
+        """
         if self.operation == "read" and not self.message_id:
             raise ValueError(
                 "read needs a message_id — map it from a search step"
@@ -151,6 +174,7 @@ class EmailNodeConfig(BaseModel):
 
 
 class EmailNodeInput(BaseModel):
+    """Pydantic model defining the EmailNodeInput shape."""
     pass
 
 
@@ -176,6 +200,18 @@ class EmailMessageSummary(BaseModel):
 
 
 class EmailNodeOutput(BaseModel):
+    """Pydantic model defining the EmailNodeOutput shape.
+
+    Attributes:
+        operation (str).
+        provider (str).
+        connection (str).
+        messages (list[EmailMessageSummary]).
+        message (EmailMessageSummary | None).
+        message_count (int).
+        draft_id (str | None).
+        sent_message_id (str | None).
+    """
     operation: str
     provider: str = ""
     connection: str = ""
@@ -191,6 +227,13 @@ class EmailNodeOutput(BaseModel):
 
 @NodeRegistry.register
 class EmailAgent(NodeType):
+    """Workflow node type implementing the EmailAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "EmailAgent"
     description = (
         "Email in one capability: search, read, draft, reply or send, over "
@@ -227,6 +270,14 @@ class EmailAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"email"}
 
     @classmethod
@@ -246,6 +297,15 @@ class EmailAgent(NodeType):
         )
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = EmailNodeConfig(**resolved_config)
         service = self.services.get("email")
         if service is None:
@@ -296,6 +356,14 @@ class EmailAgent(NodeType):
 
 
 def _criteria(cfg: EmailNodeConfig) -> EmailSearchCriteria:
+    """Internal helper for the criteria step.
+
+    Args:
+        cfg (EmailNodeConfig): The cfg.
+
+    Returns:
+        EmailSearchCriteria: The result.
+    """
     return EmailSearchCriteria(
         query=cfg.query,
         from_address=cfg.from_address,
@@ -309,6 +377,14 @@ def _criteria(cfg: EmailNodeConfig) -> EmailSearchCriteria:
 
 
 def _draft(cfg: EmailNodeConfig) -> EmailDraft:
+    """Draft the result.
+
+    Args:
+        cfg (EmailNodeConfig): The cfg.
+
+    Returns:
+        EmailDraft: The result.
+    """
     return EmailDraft(
         to=[EmailAddress(email=item.email, name=item.name) for item in cfg.to],
         cc=[EmailAddress(email=item.email, name=item.name) for item in cfg.cc],
@@ -322,6 +398,14 @@ def _draft(cfg: EmailNodeConfig) -> EmailDraft:
 
 
 def _summarise(message: Any) -> EmailMessageSummary:
+    """Internal helper for the summarise step.
+
+    Args:
+        message (Any): Message text.
+
+    Returns:
+        EmailMessageSummary: The result.
+    """
     return EmailMessageSummary(
         id=message.id,
         thread_id=message.thread_id,

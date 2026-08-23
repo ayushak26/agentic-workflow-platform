@@ -82,10 +82,19 @@ _DEFAULT_TEMPLATE = "corporate"
 
 
 class DOCXRenderInput(BaseModel):
+    """Pydantic model defining the DOCXRenderInput shape."""
     pass
 
 
 class DOCXRenderConfig(BaseModel):
+    """Pydantic model defining the DOCXRenderConfig shape.
+
+    Attributes:
+        sections (dict[str, str]).
+        template (TemplateName).
+        proposal_title (str).
+        client_name (str).
+    """
     sections: dict[str, str] = Field(
         description="Map of section_name -> section_text (Markdown). Templated from upstream nodes."
     )
@@ -95,6 +104,13 @@ class DOCXRenderConfig(BaseModel):
 
 
 class DOCXRenderOutput(BaseModel):
+    """Pydantic model defining the DOCXRenderOutput shape.
+
+    Attributes:
+        minio_key (str).
+        byte_size (int).
+        template_used (str).
+    """
     minio_key: str
     byte_size: int
     template_used: str
@@ -102,6 +118,7 @@ class DOCXRenderOutput(BaseModel):
 
 @NodeRegistry.register
 class DOCXProposalRenderer(NodeType):
+    """Workflow node type implementing the DOCXProposalRenderer capability."""
     type_name = "DOCXProposalRenderer"
     description = "Render proposal sections to a styled .docx (corporate, professional, warm)."
     input_schema = DOCXRenderInput
@@ -110,9 +127,26 @@ class DOCXProposalRenderer(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         store = self.services["object_store"]
         cfg = DOCXRenderConfig(**resolved_config)
 
@@ -157,6 +191,17 @@ class DOCXProposalRenderer(NodeType):
         client: str,
         title: str,
     ) -> bytes:
+        """Render the docx bytes.
+
+        Args:
+            sections (dict[str, str]): The sections.
+            template_name (str): The template name.
+            client (str): Client instance.
+            title (str): The title.
+
+        Returns:
+            bytes: The docx bytes.
+        """
         tpl = _TEMPLATES.get(template_name, _TEMPLATES[_DEFAULT_TEMPLATE])
         doc = Document()
 
@@ -184,6 +229,14 @@ class DOCXProposalRenderer(NodeType):
         return buf.getvalue()
 
     def _add_title_block(self, doc, title, client, tpl) -> None:
+        """Add the title block.
+
+        Args:
+            doc: Document.
+            title: The title.
+            client: Client instance.
+            tpl: The tpl.
+        """
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(title)
@@ -202,6 +255,13 @@ class DOCXProposalRenderer(NodeType):
         doc.add_page_break()
 
     def _style_heading(self, paragraph, tpl, top_level: bool) -> None:
+        """Internal helper for the style heading step.
+
+        Args:
+            paragraph: The paragraph.
+            tpl: The tpl.
+            top_level (bool): The top level.
+        """
         for run in paragraph.runs:
             run.font.name = tpl["heading_font"]
             run.font.color.rgb = tpl["accent"] if top_level else tpl["accent_2"]
@@ -217,6 +277,13 @@ class DOCXProposalRenderer(NodeType):
     _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{2,}.*$")
 
     def _render_markdown(self, doc, md: str, tpl) -> None:
+        """Render the markdown.
+
+        Args:
+            doc: Document.
+            md (str): The md.
+            tpl: The tpl.
+        """
         lines = md.replace("\r\n", "\n").split("\n")
         i, n = 0, len(md.replace("\r\n", "\n").split("\n"))
         while i < n:
@@ -266,7 +333,26 @@ class DOCXProposalRenderer(NodeType):
             self._add_inline(p, " ".join(s.strip() for s in buf))
 
     def _render_table(self, doc, lines, start, tpl) -> int:
+        """Render the table.
+
+        Args:
+            doc: Document.
+            lines: The lines.
+            start: Start value.
+            tpl: The tpl.
+
+        Returns:
+            int: The table.
+        """
         def cells(row: str) -> list[str]:
+            """Compute the cells.
+
+            Args:
+                row (str): Table row.
+
+            Returns:
+                list[str]: The result.
+            """
             row = row.strip()
             if row.startswith("|"):
                 row = row[1:]
@@ -300,6 +386,13 @@ class DOCXProposalRenderer(NodeType):
     _INLINE_RE = re.compile(r"(\*\*.+?\*\*|\*.+?\*|`.+?`)")
 
     def _add_inline(self, paragraph, text: str, bold: bool = False) -> None:
+        """Add the inline.
+
+        Args:
+            paragraph: The paragraph.
+            text (str): The text.
+            bold (bool): The bold (optional, default False).
+        """
         for token in self._INLINE_RE.split(text):
             if not token:
                 continue

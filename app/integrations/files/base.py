@@ -129,6 +129,17 @@ class IntegrationProvider(ABC):
         page_size: int,
         page_token: str | None,
     ) -> Page:
+        """List the folder.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            folder_id (str | None): The folder id.
+            page_size (int): The page size.
+            page_token (str | None): The page token.
+
+        Returns:
+            Page: The folder.
+        """
         ...
 
     @abstractmethod
@@ -141,16 +152,46 @@ class IntegrationProvider(ABC):
         page_size: int,
         page_token: str | None,
     ) -> Page:
+        """Search the files.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            query (str): Query filter.
+            folder_id (str | None): The folder id.
+            page_size (int): The page size.
+            page_token (str | None): The page token.
+
+        Returns:
+            Page: The files.
+        """
         ...
 
     @abstractmethod
     async def get_file_meta(
         self, connection: IntegrationConnection, *, file_id: str
     ) -> CloudFileMeta:
+        """Return the file meta.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            file_id (str): The file id.
+
+        Returns:
+            CloudFileMeta: The file meta.
+        """
         ...
 
     @abstractmethod
     async def download_file(
         self, connection: IntegrationConnection, *, file_id: str
     ) -> DownloadedFile:
+        """Download the file.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            file_id (str): The file id.
+
+        Returns:
+            DownloadedFile: The file.
+        """
         ...

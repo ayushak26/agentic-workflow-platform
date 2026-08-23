@@ -38,10 +38,23 @@ router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return user.session_id or user.username
 
 
 def _service(request: Request):
+    """Internal helper for the service step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+    """
     service = request.app.state.services.get("knowledge_service")
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Knowledge service unavailable")
@@ -49,6 +62,11 @@ def _service(request: Request):
 
 
 def _repository(request: Request):
+    """Internal helper for the repository step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+    """
     repository = request.app.state.services.get("knowledge_repository")
     if repository is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Knowledge repository unavailable")
@@ -56,6 +74,14 @@ def _repository(request: Request):
 
 
 class CollectionCreate(BaseModel):
+    """Pydantic model defining the CollectionCreate shape.
+
+    Attributes:
+        name (str).
+        description (str).
+        metadata_schema (dict[str, Any]).
+        doc_types (list[str]).
+    """
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
     metadata_schema: dict[str, Any] = Field(default_factory=dict)
@@ -68,6 +94,13 @@ async def create_collection(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Create the collection.
+
+    Args:
+        payload (CollectionCreate): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await _service(request).create_collection(
         owner_scope_id=_scope(user), **payload.model_dump()
     )
@@ -78,6 +111,12 @@ async def list_collections(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the collections.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await _repository(request).list_collections(_scope(user))
 
 
@@ -87,6 +126,13 @@ async def get_collection(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Return the collection.
+
+    Args:
+        collection_id (str): Knowledge collection identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _repository(request).get_collection(_scope(user), collection_id)
     except ResourceNotFoundError as exc:
@@ -94,6 +140,17 @@ async def get_collection(
 
 
 class ProfileCreate(BaseModel):
+    """Pydantic model defining the ProfileCreate shape.
+
+    Attributes:
+        profile_type (ProfileType).
+        name (str).
+        strategy (str).
+        config (dict[str, Any]).
+        profile_id (str | None).
+        description (str).
+        based_on_preset (str | None).
+    """
     profile_type: ProfileType
     name: str
     strategy: str
@@ -109,6 +166,13 @@ async def create_profile(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Create the profile.
+
+    Args:
+        payload (ProfileCreate): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _service(request).create_profile_version(
             owner_scope_id=_scope(user), **payload.model_dump()
@@ -123,6 +187,13 @@ async def list_profiles(
     profile_type: ProfileType | None = Query(None),
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the profiles.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        profile_type (ProfileType | None): The profile type (optional, default Query(None)).
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await _repository(request).list_profiles(_scope(user), profile_type)
 
 
@@ -133,6 +204,14 @@ async def get_profile(
     version: int | None = Query(None, ge=1),
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Return the profile.
+
+    Args:
+        profile_id (str): The profile id.
+        request (Request): Incoming FastAPI request.
+        version (int | None): Version identifier (optional, default Query(None, ge=1)).
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _repository(request).get_profile(_scope(user), profile_id, version)
     except ResourceNotFoundError as exc:
@@ -144,6 +223,12 @@ async def create_default_profiles(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Create the default profiles.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await _service(request).ensure_default_profiles(_scope(user))
 
 
@@ -179,6 +264,11 @@ INGESTION_PRESETS: dict[str, dict[str, Any]] = {
 async def ingestion_presets(
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Compute the ingestion presets.
+
+    Args:
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return INGESTION_PRESETS
 
 
@@ -211,6 +301,16 @@ async def embedding_models(
 
 
 class IndexCreate(BaseModel):
+    """Pydantic model defining the IndexCreate shape.
+
+    Attributes:
+        parser_profile_id (str).
+        parser_profile_version (int).
+        chunking_profile_id (str).
+        chunking_profile_version (int).
+        embedding_profile_id (str).
+        embedding_profile_version (int).
+    """
     parser_profile_id: str
     parser_profile_version: int = Field(ge=1)
     chunking_profile_id: str
@@ -226,6 +326,14 @@ async def create_index(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Create the index.
+
+    Args:
+        collection_id (str): Knowledge collection identifier.
+        payload (IndexCreate): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _service(request).create_index(
             owner_scope_id=_scope(user), collection_id=collection_id, **payload.model_dump()
@@ -240,6 +348,13 @@ async def list_indexes(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the indexes.
+
+    Args:
+        collection_id (str): Knowledge collection identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     await _repository(request).get_collection(_scope(user), collection_id)
     return await _repository(request).list_indexes(_scope(user), collection_id)
 
@@ -251,6 +366,14 @@ async def activate_index(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Compute the activate index.
+
+    Args:
+        collection_id (str): Knowledge collection identifier.
+        index_id (str): The index id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _service(request).activate_index(
             owner_scope_id=_scope(user), collection_id=collection_id, index_id=index_id
@@ -274,6 +397,22 @@ async def start_ingestion(
     metadata_json: str = Form("{}"),
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Start the ingestion.
+
+    Args:
+        collection_id (str): Knowledge collection identifier.
+        request (Request): Incoming FastAPI request.
+        files (list[UploadFile]): The files (optional, default File(...)).
+        parser_profile_id (str | None): The parser profile id (optional, default Form(None)).
+        parser_profile_version (int | None): The parser profile version (optional, default Form(None)).
+        chunking_profile_id (str | None): The chunking profile id (optional, default Form(None)).
+        chunking_profile_version (int | None): The chunking profile version (optional, default Form(None)).
+        embedding_profile_id (str | None): The embedding profile id (optional, default Form(None)).
+        embedding_profile_version (int | None): The embedding profile version (optional, default Form(None)).
+        embedding_model (str | None): The embedding model (optional, default Form(None)).
+        metadata_json (str): The metadata json (optional, default Form('{}')).
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     scope = _scope(user)
     if not files:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "At least one file is required")
@@ -469,6 +608,13 @@ async def list_ingestions(
     collection_id: str | None = Query(None),
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the ingestions.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        collection_id (str | None): Knowledge collection identifier (optional, default Query(None)).
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await _repository(request).list_ingestion_jobs(_scope(user), collection_id)
 
 
@@ -478,6 +624,13 @@ async def get_ingestion(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Return the ingestion.
+
+    Args:
+        ingestion_job_id (str): The ingestion job id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _repository(request).get_ingestion_job(_scope(user), ingestion_job_id)
     except ResourceNotFoundError as exc:
@@ -490,6 +643,13 @@ async def cancel_ingestion(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:write")),
 ):
+    """Cancel the ingestion.
+
+    Args:
+        ingestion_job_id (str): The ingestion job id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     repository = _repository(request)
     job = await repository.get_ingestion_job(_scope(user), ingestion_job_id)
     if job.status in {
@@ -511,6 +671,13 @@ async def list_documents(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the documents.
+
+    Args:
+        collection_id (str): Knowledge collection identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     await _repository(request).get_collection(_scope(user), collection_id)
     return await _repository(request).list_documents(_scope(user), collection_id)
 
@@ -521,6 +688,13 @@ async def get_document(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Return the document.
+
+    Args:
+        document_id (str): The document id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await _repository(request).get_document(_scope(user), document_id)
     except ResourceNotFoundError as exc:
@@ -533,6 +707,13 @@ async def document_source_url(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Compute the document source url.
+
+    Args:
+        document_id (str): The document id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     repository = _repository(request)
     document = await repository.get_document(_scope(user), document_id)
     if not document.current_source_version_id:

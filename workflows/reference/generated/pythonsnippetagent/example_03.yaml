@@ -1,0 +1,177 @@
+name: Reference PythonSnippetAgent 03
+description: Reusable subprocess. Resolves a customer's stated company name and order
+  reference against Dynamics 365 Finance & SCM, and — critically — never overwrites
+  what the customer said with what the system found. Both are preserved, with an explicit
+  resolution_status (RESOLVED / AMBIGUOUS / MISSING / CONFLICTING) an upstream Decision
+  step can act on. Called via SubprocessAgent from Workflow 01, Workflow 03, and Workflow
+  04.
+version: '1.0'
+use_case: shared_subprocess
+library:
+  title: SP02 — Customer Identity Resolution
+  summary: Resolve a stated company name and order reference against real business
+    records.
+  purpose:
+  - Preserve both the customer's stated identity and the system's resolved identity
+  - Surface AMBIGUOUS (several matches) and CONFLICTING (resolved name disagrees with
+    what was stated) rather than silently picking one
+  suitable_for:
+  - Called as a SubprocessAgent step whenever a workflow has a stated company name
+    and/or order reference that needs verifying against Finance & SCM
+  not_suitable_for:
+  - Direct end-user invocation — this has no Start node, it's a subprocess
+  outputs:
+  - resolution_status, the stated and resolved company names, and the order lookup
+    result
+  input_types:
+  - A stated company name and an optional order reference
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+inputs:
+  stated_company_name:
+    type: text
+    required: true
+    description: The company name exactly as the customer wrote it.
+  order_reference:
+    type: text
+    required: false
+    description: The order number the customer quoted, if any.
+entry: find_customer_by_name
+exit:
+- end_resolution
+nodes:
+- id: find_customer_by_name
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_customer
+    fail_on_error: false
+    arguments:
+      customer_name: '{{inputs.stated_company_name}}'
+  experience:
+    display_name: Look Up Customer By Name
+    purpose: Check whether the stated company name matches a real customer.
+    contribution: Gives every later step a real fact instead of trusting the message
+      alone.
+    expected_output: Zero, one, or several matching customer records.
+    failure_message: The customer lookup could not be completed.
+- id: compare_names
+  type: PythonSnippetAgent
+  config:
+    code: "stated = (inputs.get(\"stated\") or \"\").strip().lower()\nresolved = (inputs.get(\"\
+      resolved\") or \"\").strip().lower()\noutput = {\n    \"names_match\": bool(stated\
+      \ and resolved and stated == resolved),\n}\n"
+    input_fields:
+      stated: '{{inputs.stated_company_name}}'
+      resolved: '{{outputs.find_customer_by_name.first.account_name?}}'
+    output_fields:
+    - name: names_match
+      type: boolean
+  experience:
+    display_name: Compare Stated vs Resolved Name
+    purpose: Decide, exactly and deterministically, whether the resolved name matches
+      what was stated.
+    contribution: An exact string comparison, not a model's judgment call.
+    expected_output: Whether the two names match.
+    failure_message: The names could not be compared.
+- id: find_order_by_reference
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_sales_order
+    fail_on_error: false
+    arguments:
+      order_number: '{{inputs.order_reference?}}'
+  experience:
+    display_name: Look Up Order Reference
+    purpose: Check whether the quoted order reference exists in Finance & SCM.
+    contribution: Confirms the order is real before anything is built around it.
+    expected_output: Whether the order was found, and its current status.
+    failure_message: The order lookup could not be completed.
+- id: resolve
+  type: DecisionAgent
+  config:
+    defaults:
+      resolution_status: MISSING
+      resolved_company_name: ''
+      resolved_customer_id: ''
+    rules:
+    - name: Customer resolved
+      when:
+        operator: and
+        conditions:
+        - field: find_customer_by_name.found
+          operator: is_true
+      then:
+      - field: resolution_status
+        value: RESOLVED
+      - field: resolved_company_name
+        value: '{{outputs.find_customer_by_name.first.account_name?}}'
+      - field: resolved_customer_id
+        value: '{{outputs.find_customer_by_name.first.account_id?}}'
+    - name: Multiple customers match
+      when:
+        operator: and
+        conditions:
+        - field: find_customer_by_name.count
+          operator: greater_than
+          value: 1
+      then:
+      - field: resolution_status
+        value: AMBIGUOUS
+    - name: Resolved name disagrees with what the customer stated
+      when:
+        operator: and
+        conditions:
+        - field: find_customer_by_name.found
+          operator: is_true
+        - field: compare_names.result.names_match
+          operator: is_false
+      then:
+      - field: resolution_status
+        value: CONFLICTING
+  experience:
+    display_name: Resolve Identity
+    purpose: Combine the lookup, the comparison, and the order check into one resolution
+      status.
+    contribution: Ambiguous and conflicting cases are named explicitly, never silently
+      merged.
+    expected_output: RESOLVED, AMBIGUOUS, MISSING, or CONFLICTING.
+    failure_message: The identity could not be resolved.
+- id: end_resolution
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: resolution_status
+      value_from: '{{outputs.resolve.decisions.resolution_status}}'
+    - key: stated_company_name
+      value_from: '{{inputs.stated_company_name}}'
+    - key: resolved_company_name
+      value_from: '{{outputs.resolve.decisions.resolved_company_name}}'
+    - key: resolved_customer_id
+      value_from: '{{outputs.resolve.decisions.resolved_customer_id}}'
+    - key: order_found
+      value_from: '{{outputs.find_order_by_reference.found}}'
+    - key: order_status
+      value_from: '{{outputs.find_order_by_reference.first.order_status?}}'
+  experience:
+    display_name: Identity Resolution Result
+    purpose: Return the resolution to the calling workflow.
+    contribution: Both the stated and resolved names travel together, never one overwriting
+      the other.
+    expected_output: A resolution status plus the stated and resolved identity.
+    failure_message: The result could not be produced.
+edges:
+- from: find_customer_by_name
+  to:
+  - compare_names
+  - find_order_by_reference
+- from: compare_names
+  to: resolve
+- from: find_order_by_reference
+  to: resolve
+- from: resolve
+  to: end_resolution

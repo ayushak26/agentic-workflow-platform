@@ -76,6 +76,18 @@ class EvidencePolicy(BaseModel):
 
 
 class SearchAuditRecord(BaseModel):
+    """Pydantic model defining the SearchAuditRecord shape.
+
+    Attributes:
+        claim_id (str).
+        query (str).
+        source_or_database (str).
+        filters (dict[str, Any]).
+        searched_at (str).
+        result_count (int).
+        purpose (EvidencePurpose).
+        error (str | None).
+    """
     claim_id: str
     query: str
     source_or_database: str
@@ -171,6 +183,18 @@ class FullTextDocument(BaseModel):
 
 
 class RetrievedPassage(BaseModel):
+    """Pydantic model defining the RetrievedPassage shape.
+
+    Attributes:
+        passage_id (str).
+        document_id (str).
+        page (int).
+        section (str | None).
+        text (str).
+        context (str).
+        retrieval_score (float).
+        passage_sha256 (str).
+    """
     passage_id: str
     document_id: str
     page: int = Field(ge=1)
@@ -182,6 +206,18 @@ class RetrievedPassage(BaseModel):
 
 
 class ClaimEvidenceLink(BaseModel):
+    """Pydantic model defining the ClaimEvidenceLink shape.
+
+    Attributes:
+        link_id (str).
+        claim_id (str).
+        document_id (str).
+        candidate_id (str).
+        source_id (str).
+        passage_id (str).
+        exact_passage (str).
+        locator (dict[str, Any]).
+    """
     link_id: str
     claim_id: str
     document_id: str
@@ -202,6 +238,18 @@ class ClaimEvidenceLink(BaseModel):
 
 
 class CitationRegistryEntry(BaseModel):
+    """Pydantic model defining the CitationRegistryEntry shape.
+
+    Attributes:
+        citation_id (str).
+        source_id (str).
+        document_id (str).
+        display_number (int).
+        title (str).
+        authors (list[str]).
+        organisation (str | None).
+        year (int | None).
+    """
     citation_id: str
     source_id: str
     document_id: str
@@ -223,6 +271,18 @@ class CitationRegistryEntry(BaseModel):
 
 
 class VerifiedClaim(BaseModel):
+    """Pydantic model defining the VerifiedClaim shape.
+
+    Attributes:
+        claim_id (str).
+        original_text (str).
+        atomic_claim (str).
+        claim_type (str).
+        section_id (str).
+        materiality (Literal['critical', 'important', 'contextual']).
+        evidence_requirement (str).
+        final_status (FinalClaimStatus).
+    """
     claim_id: str
     original_text: str
     atomic_claim: str
@@ -242,6 +302,15 @@ class VerifiedClaim(BaseModel):
 
 
 class RejectedCandidate(BaseModel):
+    """Pydantic model defining the RejectedCandidate shape.
+
+    Attributes:
+        claim_id (str).
+        candidate_title (str).
+        candidate_identifier (str | None).
+        reason (str).
+        notes (str).
+    """
     claim_id: str
     candidate_title: str
     candidate_identifier: str | None = None
@@ -250,6 +319,16 @@ class RejectedCandidate(BaseModel):
 
 
 class EvidenceGap(BaseModel):
+    """Pydantic model defining the EvidenceGap shape.
+
+    Attributes:
+        claim_id (str).
+        gap (str).
+        proposal_risk (str).
+        recommended_action (Literal['search_again', 'narrow_claim', 'replace_claim', 'obtain_internal_evidence', 'human_review', 'delete_claim']).
+        owner (str).
+        blocking (bool).
+    """
     claim_id: str
     gap: str
     proposal_risk: str
@@ -266,6 +345,18 @@ class EvidenceGap(BaseModel):
 
 
 class EvidenceQAReport(BaseModel):
+    """Pydantic model defining the EvidenceQAReport shape.
+
+    Attributes:
+        policy_version (str).
+        tool_versions (dict[str, str]).
+        claims_examined (int).
+        critical_claims (int).
+        verified_claims (int).
+        qualified_claims (int).
+        mixed_or_contradicted_claims (int).
+        unresolved_claims (int).
+    """
     policy_version: str
     tool_versions: dict[str, str] = Field(default_factory=dict)
     claims_examined: int = 0
@@ -290,6 +381,18 @@ class EvidenceQAReport(BaseModel):
 
 
 class ProposalEvidencePackage(BaseModel):
+    """Pydantic model defining the ProposalEvidencePackage shape.
+
+    Attributes:
+        verified_claims (list[VerifiedClaim]).
+        citation_registry (list[CitationRegistryEntry]).
+        claim_evidence_links (list[ClaimEvidenceLink]).
+        quantitative_evidence_registry (list[dict[str, Any]]).
+        proposal_ready_cited_markdown (str).
+        bibliography_markdown (str).
+        bibliography_bibtex (str).
+        search_audit (list[SearchAuditRecord]).
+    """
     verified_claims: list[VerifiedClaim] = Field(default_factory=list)
     citation_registry: list[CitationRegistryEntry] = Field(default_factory=list)
     claim_evidence_links: list[ClaimEvidenceLink] = Field(default_factory=list)

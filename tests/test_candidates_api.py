@@ -97,3 +97,49 @@ def test_discovered_candidates_from_run_dedupes_across_discovery_and_deep_resear
 def test_discovered_candidates_from_run_handles_missing_node_runs():
     assert _discovered_candidates_from_run({}) == []
     assert _discovered_candidates_from_run({"node_runs": {}}) == []
+
+
+def test_discovered_candidates_contract_returns_a_list_of_full_records():
+    """Contract lock: the helper returns a list (never a dict keyed by id),
+    and every record carries the complete documented key set. A shape change
+    here breaks both the /candidates endpoint merge and the UI table."""
+    run = {
+        "node_runs": {
+            "discover": {
+                "node_id": "discover",
+                "type_name": "ScholarlyCandidateDiscoveryAgent",
+                "output": {
+                    "candidates": [
+                        {
+                            "candidate_id": "CAND-1",
+                            "claim_id": "CL-1",
+                            "title": "A paper",
+                            "canonical_url": "https://x.example/p",
+                            "doi": "10.1/x",
+                            "source": "web",
+                            "purpose": "discovery",
+                            "authority": "unverified",
+                            "retraction_status": "unchecked",
+                        }
+                    ]
+                },
+            }
+        }
+    }
+    result = _discovered_candidates_from_run(run)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    assert set(result[0].keys()) == {
+        "candidate_id",
+        "claim_id",
+        "title",
+        "url",
+        "doi",
+        "source",
+        "purpose",
+        "authority",
+        "retraction_status",
+        "found_by_node_id",
+        "found_by_type",
+    }
+    assert result[0]["found_by_node_id"] == "discover"

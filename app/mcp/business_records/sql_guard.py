@@ -48,7 +48,14 @@ _SQL_ONLY_WRITE_VERBS = frozenset({"alter", "grant", "revoke", "replace", "call"
 
 
 class SQLGuardError(RuntimeError):
+    """Exception raised for the SQLGuardError case."""
     def __init__(self, message: str, *, code: str):
+        """Initialize the SQLGuardError.
+
+        Args:
+            message (str): Message text.
+            code (str): The code.
+        """
         self.code = code
         super().__init__(message)
 
@@ -102,6 +109,11 @@ async def run_readonly_query(
         cursor.execute("START TRANSACTION READ ONLY")
 
         def _run() -> list[dict[str, Any]]:
+            """Run the result.
+
+            Returns:
+                list[dict[str, Any]]: The result.
+            """
             cursor.execute(sql, params or None)
             return list(cursor.fetchmany(max_rows + 1))
 

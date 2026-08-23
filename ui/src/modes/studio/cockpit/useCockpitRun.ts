@@ -76,6 +76,9 @@ export type CockpitNavState = {
   // e.g. "Node test: reviewer" / "Branch test: approve" — shown instead of
   // the plain workflow name so a test run is never mistaken for a full run.
   testLabel?: string;
+  // A fresh full-workflow Cockpit can wait for an explicit Test or Run choice.
+  // Attach/retry/pipeline and synthetic node-test flows remain automatic.
+  awaitLaunch?: boolean;
 };
 
 // Fallback node coloring for attach mode, when SSE replay has nothing (the
@@ -103,6 +106,7 @@ export function useCockpitRun() {
     navState.workflowYaml ? parseYaml(navState.workflowYaml) : null
   ));
   const [runTriggered, setRunTriggered] = useState(false);
+  const [launchRequested, setLaunchRequested] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [liveRun, setLiveRun] = useState<RunDetail | null>(null);
 
@@ -120,7 +124,7 @@ export function useCockpitRun() {
   // fresh pause always deserves the human's attention by default.
   const [gateHidden, setGateHidden] = useState(false);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setGateHidden(false);
   }, [gate?.nodeId]);
 
@@ -182,9 +186,16 @@ export function useCockpitRun() {
 
   // Subscribe first, then trigger exactly once so no early SSE event is lost.
   useEffect(() => {
-    if (navState.attach || !streamOpen || runTriggered || !navState.workflowYaml || !runId) return;
+    if (
+      navState.attach
+      || !streamOpen
+      || runTriggered
+      || !navState.workflowYaml
+      || !runId
+      || (navState.awaitLaunch && !launchRequested)
+    ) return;
     // This state guards the one external run request owned by this effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setRunTriggered(true);
     const pipeline = navState.pipeline;
     const request = pipeline
@@ -206,6 +217,7 @@ export function useCockpitRun() {
           navState.inputs ?? {},
           undefined,
           runId,
+          navState.awaitLaunch === true,
         );
     request
       // A pipeline call's result is nested under stage_result — the same
@@ -224,6 +236,8 @@ export function useCockpitRun() {
     navState.inputs,
     navState.retrySourceRunId,
     navState.pipeline,
+    navState.awaitLaunch,
+    launchRequested,
     runId,
   ]);
 
@@ -284,7 +298,7 @@ export function useCockpitRun() {
     if (!result) return;
     // Synchronizing local state from a polled external record (runDetail),
     // not from a prop/state change this render already reflects.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+
     setFinished(result);
   }, [runTriggered, navState.attach, liveRun, finished]);
 
@@ -439,5 +453,7 @@ export function useCockpitRun() {
     continueError,
     liveRunNodeStatus: getLiveRunNodeStatus,
     costSummary,
+    runTriggered,
+    requestRun: () => setLaunchRequested(true),
   };
 }

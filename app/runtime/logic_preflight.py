@@ -63,12 +63,28 @@ def _register_builders() -> None:
     from app.nodes.workflow_input import WorkflowInputConfig
 
     def ai_task_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the ai task paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The task paths.
+        """
         return [
             path.model_copy(update={"path": f"result.{path.path}"})
             for path in field_paths(effective_fields(config))
         ]
 
     def input_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the input paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The paths.
+        """
         specs = WorkflowInputConfig(**config).as_field_specs()
         return [
             path.model_copy(update={"path": f"data.{path.path}"})
@@ -76,6 +92,14 @@ def _register_builders() -> None:
         ]
 
     def decision_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the decision paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The paths.
+        """
         parsed = DecisionConfig(**config)
         found: list[FieldPath] = []
         for name in sorted(parsed.output_field_names()):
@@ -93,6 +117,14 @@ def _register_builders() -> None:
         return found
 
     def transform_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the transform paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The paths.
+        """
         from app.nodes.data_transform import DataTransformConfig
 
         parsed = DataTransformConfig(**config)
@@ -108,6 +140,14 @@ def _register_builders() -> None:
         ]
 
     def transform_agent_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the transform agent paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The agent paths.
+        """
         from app.nodes.transform import TransformConfig, is_new_style
 
         parsed = TransformConfig(**config)
@@ -144,6 +184,14 @@ def _register_builders() -> None:
         return found
 
     def mcp_tool_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the mcp tool paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The tool paths.
+        """
         schema = _static_mcp_output_schema(config.get("server_id"), config.get("tool"))
         if not schema:
             # Unknown tool — a live/third-party server, a renamed/retired
@@ -183,6 +231,14 @@ def _register_builders() -> None:
         return found
 
     def subprocess_output_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the subprocess output paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The output paths.
+        """
         child_spec = _static_subprocess_child_spec(config)
         if child_spec is None or child_spec.output is None:
             # No declared output: contract on the child, or the child
@@ -205,6 +261,14 @@ def _register_builders() -> None:
         return found
 
     def python_snippet_paths(config: dict[str, Any]) -> list[FieldPath]:
+        """Compute the python snippet paths.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            list[FieldPath]: The snippet paths.
+        """
         from app.nodes.python_snippet import PythonSnippetConfig
 
         parsed = PythonSnippetConfig(**config)
@@ -233,6 +297,15 @@ def _register_builders() -> None:
 
 
 def _declared_value(parsed: Any, name: str) -> Any:
+    """Internal helper for the declared value step.
+
+    Args:
+        parsed (Any): The parsed.
+        name (str): Workflow or resource name.
+
+    Returns:
+        Any: The value.
+    """
     if name in parsed.defaults:
         return parsed.defaults[name]
     for rule in parsed.rules:
@@ -243,6 +316,14 @@ def _declared_value(parsed: Any, name: str) -> Any:
 
 
 def _infer_kind(value: Any) -> str:
+    """Internal helper for the infer kind step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        str: The kind.
+    """
     if isinstance(value, bool):
         return "boolean"
     if isinstance(value, int):
@@ -270,6 +351,14 @@ _JSON_SCHEMA_KINDS = {
 
 
 def _json_schema_kind(schema: dict[str, Any]) -> str:
+    """Internal helper for the json schema kind step.
+
+    Args:
+        schema (dict[str, Any]): Schema definition.
+
+    Returns:
+        str: The schema kind.
+    """
     type_ = schema.get("type")
     if isinstance(type_, list):
         # e.g. ["string", "null"] from an Optional field — the null arm carries
@@ -345,6 +434,15 @@ def _static_mcp_tool_registries() -> dict[str, dict[str, dict[str, Any]]]:
 
 
 def _static_mcp_tool_definition(server_id: Any, tool_name: Any) -> dict[str, Any] | None:
+    """Internal helper for the static mcp tool definition step.
+
+    Args:
+        server_id (Any): The server id.
+        tool_name (Any): The tool name.
+
+    Returns:
+        dict[str, Any] | None: The mcp tool definition.
+    """
     if not isinstance(server_id, str) or not isinstance(tool_name, str):
         return None
     return _static_mcp_tool_registries().get(server_id, {}).get(tool_name)
@@ -463,6 +561,14 @@ _TRANSFORM_KINDS = {
 
 
 def _transform_kind(operation: str) -> str:
+    """Internal helper for the transform kind step.
+
+    Args:
+        operation (str): The operation.
+
+    Returns:
+        str: The kind.
+    """
     return _TRANSFORM_KINDS.get(operation, "unknown")
 
 
@@ -571,6 +677,7 @@ class FieldIndex:
     """Every value the workflow can produce, keyed by its reference path."""
 
     def __init__(self) -> None:
+        """Initialize the FieldIndex."""
         self.by_path: dict[str, FieldPath] = {}
         #: node id → whether its output shape is fully typed. An untyped node
         #: (a free-form dict output) makes references *through* it unprovable,
@@ -578,13 +685,35 @@ class FieldIndex:
         self.typed_nodes: dict[str, bool] = {}
 
     def add(self, node_id: str, path: FieldPath) -> None:
+        """Add the result.
+
+        Args:
+            node_id (str): Workflow node identifier.
+            path (FieldPath): Filesystem path.
+        """
         for prefix in (f"outputs.{node_id}", node_id):
             self.by_path[f"{prefix}.{path.path}"] = path
 
     def get(self, reference: str) -> FieldPath | None:
+        """Return the result.
+
+        Args:
+            reference (str): The reference.
+
+        Returns:
+            FieldPath | None: The result.
+        """
         return self.by_path.get(reference)
 
     def node_of(self, reference: str) -> str | None:
+        """Compute the node of.
+
+        Args:
+            reference (str): The reference.
+
+        Returns:
+            str | None: The of.
+        """
         parts = reference.split(".")
         if not parts:
             return None
@@ -595,6 +724,14 @@ class FieldIndex:
         return None
 
     def paths_for(self, node_id: str) -> list[FieldPath]:
+        """Compute the paths for.
+
+        Args:
+            node_id (str): Workflow node identifier.
+
+        Returns:
+            list[FieldPath]: The for.
+        """
         prefix = f"outputs.{node_id}."
         return [
             value
@@ -841,6 +978,15 @@ def _reaching_branches(
 
 
 def _reachable_from(start: str, forward: dict[str, set[str]]) -> set[str]:
+    """Internal helper for the reachable from step.
+
+    Args:
+        start (str): Start value.
+        forward (dict[str, set[str]]): The forward.
+
+    Returns:
+        set[str]: The from.
+    """
     seen: set[str] = set()
     queue = [start]
     while queue:
@@ -853,6 +999,14 @@ def _reachable_from(start: str, forward: dict[str, set[str]]) -> set[str]:
 
 
 def _edge_targets(edge: Any) -> list[str]:
+    """Internal helper for the edge targets step.
+
+    Args:
+        edge (Any): The edge.
+
+    Returns:
+        list[str]: The targets.
+    """
     targets: list[str] = []
     if isinstance(edge.to, list):
         targets.extend(edge.to)
@@ -870,6 +1024,16 @@ def _check_decision(
     issue: Callable[..., None],
     guaranteed_before: Callable[[str, str], bool] | None,
 ) -> None:
+    """Check the decision.
+
+    Args:
+        node (NodeSpec): The node.
+        config (dict[str, Any]): Node configuration mapping.
+        index (FieldIndex): Index.
+        nodes (dict[str, NodeSpec]): The nodes.
+        issue (Callable[..., None]): Preflight issue.
+        guaranteed_before (Callable[[str, str], bool] | None): The guaranteed before.
+    """
     from app.nodes.decision import DecisionConfig
 
     try:
@@ -900,6 +1064,16 @@ def _check_router(
     issue: Callable[..., None],
     guaranteed_before: Callable[[str, str], bool] | None,
 ) -> None:
+    """Check the router.
+
+    Args:
+        node (NodeSpec): The node.
+        config (dict[str, Any]): Node configuration mapping.
+        index (FieldIndex): Index.
+        nodes (dict[str, NodeSpec]): The nodes.
+        issue (Callable[..., None]): Preflight issue.
+        guaranteed_before (Callable[[str, str], bool] | None): The guaranteed before.
+    """
     from app.nodes.router import RouterConfig
 
     try:
@@ -1010,6 +1184,18 @@ def _check_condition(
     guaranteed_before: Callable[[str, str], bool] | None,
     label: str,
 ) -> None:
+    """Check the condition.
+
+    Args:
+        condition (Condition): The condition.
+        node (NodeSpec): The node.
+        index (FieldIndex): Index.
+        nodes (dict[str, NodeSpec]): The nodes.
+        path (str): Filesystem path.
+        issue (Callable[..., None]): Preflight issue.
+        guaranteed_before (Callable[[str, str], bool] | None): The guaranteed before.
+        label (str): The label.
+    """
     described = _resolve_reference(
         condition.field,
         node=node,
@@ -1311,6 +1497,13 @@ def _check_output_field_enums(
     fields: list[FieldSpec],
     issue: Callable[..., None],
 ) -> None:
+    """Check the output field enums.
+
+    Args:
+        node (NodeSpec): The node.
+        fields (list[FieldSpec]): Field names.
+        issue (Callable[..., None]): Preflight issue.
+    """
     for path in field_paths(fields):
         if path.type == "enum" and not path.enum_values:
             issue(
@@ -1356,6 +1549,14 @@ def _check_external_actions(
     }
 
     def reviewed_before(node_id: str) -> bool:
+        """Compute the reviewed before.
+
+        Args:
+            node_id (str): Workflow node identifier.
+
+        Returns:
+            bool: The before.
+        """
         if not human_gates:
             return False
         if guaranteed_before is None:
@@ -1598,6 +1799,14 @@ def _find_subprocess_cycle(entry_refs: set[str]) -> list[str] | None:
     memo: dict[str, set[str]] = {}
 
     def refs_of(name: str) -> list[str]:
+        """Compute the refs of.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            list[str]: The of.
+        """
         cached = memo.get(name)
         if cached is None:
             cached = _load_subprocess_refs(name)

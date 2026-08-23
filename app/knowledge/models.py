@@ -11,10 +11,16 @@ from app.llm.model_catalog import AUTO_MODEL
 
 
 def utcnow() -> datetime:
+    """Compute the utcnow.
+
+    Returns:
+        datetime: The result.
+    """
     return datetime.now(timezone.utc)
 
 
 class ResourceStatus(str, Enum):
+    """Enumeration of ResourceStatus values."""
     DRAFT = "draft"
     BUILDING = "building"
     READY = "ready"
@@ -25,6 +31,7 @@ class ResourceStatus(str, Enum):
 
 
 class ProfileType(str, Enum):
+    """Enumeration of ProfileType values."""
     PARSER = "parser"
     CHUNKING = "chunking"
     EMBEDDING = "embedding"
@@ -37,6 +44,7 @@ class ProfileType(str, Enum):
 
 
 class IngestionJobStatus(str, Enum):
+    """Enumeration of IngestionJobStatus values."""
     QUEUED = "queued"
     UPLOADING = "uploading"
     PARSING = "parsing"
@@ -51,6 +59,14 @@ class IngestionJobStatus(str, Enum):
 
 
 class ScopedResource(BaseModel):
+    """Pydantic model defining the ScopedResource shape.
+
+    Attributes:
+        workspace_id (str).
+        owner_scope_id (str).
+        created_at (datetime).
+        updated_at (datetime).
+    """
     model_config = ConfigDict(extra="forbid")
 
     workspace_id: str
@@ -60,6 +76,18 @@ class ScopedResource(BaseModel):
 
 
 class CollectionResource(ScopedResource):
+    """Provides the CollectionResource behaviour.
+
+    Attributes:
+        collection_id (str).
+        name (str).
+        description (str).
+        status (ResourceStatus).
+        document_count (int).
+        chunk_count (int).
+        active_index_id (str | None).
+        metadata_schema (dict[str, Any]).
+    """
     collection_id: str
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
@@ -75,10 +103,23 @@ class CollectionResource(ScopedResource):
 
     @property
     def display_name(self) -> str:
+        """The display name."""
         return self.name
 
 
 class DocumentResource(ScopedResource):
+    """Provides the DocumentResource behaviour.
+
+    Attributes:
+        document_id (str).
+        collection_id (str).
+        source_id (str).
+        filename (str).
+        mime_type (str).
+        source_format (str).
+        status (ResourceStatus).
+        current_source_version_id (str | None).
+    """
     document_id: str
     collection_id: str
     source_id: str
@@ -93,6 +134,18 @@ class DocumentResource(ScopedResource):
 
 
 class SourceVersionResource(ScopedResource):
+    """Provides the SourceVersionResource behaviour.
+
+    Attributes:
+        source_version_id (str).
+        source_id (str).
+        document_id (str).
+        collection_id (str).
+        version (int).
+        filename (str).
+        mime_type (str).
+        source_format (str).
+    """
     source_version_id: str
     source_id: str
     document_id: str
@@ -109,6 +162,17 @@ class SourceVersionResource(ScopedResource):
 
 
 class ParserProfileConfig(BaseModel):
+    """Pydantic model defining the ParserProfileConfig shape.
+
+    Attributes:
+        strategy (Literal['standard', 'layout_aware', 'structure_aware', 'ocr_fallback', 'vision_augmented']).
+        ocr_min_text_characters (int).
+        preserve_tables (bool).
+        preserve_headings (bool).
+        vision_max_pages (int).
+        vision_all_pages (bool).
+        vision_prompt (str).
+    """
     strategy: Literal[
         "standard", "layout_aware", "structure_aware", "ocr_fallback", "vision_augmented"
     ] = "standard"
@@ -123,6 +187,17 @@ class ParserProfileConfig(BaseModel):
 
 
 class ChunkingProfileConfig(BaseModel):
+    """Pydantic model defining the ChunkingProfileConfig shape.
+
+    Attributes:
+        strategy (Literal['fixed_token', 'recursive', 'structure_aware', 'parent_child', 'contextual', 'semantic', 'sentence_window']).
+        target_tokens (int).
+        max_tokens (int).
+        overlap_tokens (int).
+        min_tokens (int).
+        parent_tokens (int).
+        sentence_window (int).
+    """
     strategy: Literal[
         "fixed_token",
         "recursive",
@@ -141,6 +216,11 @@ class ChunkingProfileConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_token_windows(self) -> "ChunkingProfileConfig":
+        """Validate the token windows.
+
+        Returns:
+            'ChunkingProfileConfig': The token windows.
+        """
         if self.target_tokens > self.max_tokens:
             raise ValueError("target_tokens cannot exceed max_tokens")
         if self.overlap_tokens >= self.target_tokens:
@@ -149,6 +229,15 @@ class ChunkingProfileConfig(BaseModel):
 
 
 class EmbeddingProfileConfig(BaseModel):
+    """Pydantic model defining the EmbeddingProfileConfig shape.
+
+    Attributes:
+        provider (str).
+        model (str).
+        dimensions (int).
+        batch_size (int).
+        data_processing (Literal['external', 'private', 'local']).
+    """
     provider: str = "openai"
     model: str = "text-embedding-3-small"
     dimensions: int = Field(default=1536, ge=64, le=65536)
@@ -157,6 +246,18 @@ class EmbeddingProfileConfig(BaseModel):
 
 
 class RetrievalProfileConfig(BaseModel):
+    """Pydantic model defining the RetrievalProfileConfig shape.
+
+    Attributes:
+        strategy (Literal['dense', 'sparse', 'hybrid', 'hybrid_rerank']).
+        candidate_count (int).
+        final_count (int).
+        alpha (float).
+        fusion_strategy (Literal['relative_score', 'rrf']).
+        reranking_enabled (bool).
+        compression_enabled (bool).
+        query_transform (Literal['none', 'rewrite', 'multi_query', 'decomposition', 'hyde', 'self_query']).
+    """
     strategy: Literal["dense", "sparse", "hybrid", "hybrid_rerank"] = "hybrid_rerank"
     candidate_count: int = Field(default=20, ge=1, le=200)
     final_count: int = Field(default=6, ge=1, le=50)
@@ -170,12 +271,28 @@ class RetrievalProfileConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_counts(self) -> "RetrievalProfileConfig":
+        """Validate the counts.
+
+        Returns:
+            'RetrievalProfileConfig': The counts.
+        """
         if self.final_count > self.candidate_count:
             raise ValueError("final_count cannot exceed candidate_count")
         return self
 
 
 class RetrievalRoute(BaseModel):
+    """Pydantic model defining the RetrievalRoute shape.
+
+    Attributes:
+        route_id (str).
+        name (str).
+        collection_id (str).
+        retrieval_profile_id (str).
+        retrieval_profile_version (int).
+        keywords (list[str]).
+        description (str).
+    """
     route_id: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     collection_id: str
@@ -186,12 +303,24 @@ class RetrievalRoute(BaseModel):
 
 
 class RetrievalRoutingProfileConfig(BaseModel):
+    """Pydantic model defining the RetrievalRoutingProfileConfig shape.
+
+    Attributes:
+        mode (Literal['deterministic', 'ai', 'hybrid']).
+        routes (list[RetrievalRoute]).
+        default_route_id (str | None).
+    """
     mode: Literal["deterministic", "ai", "hybrid"] = "deterministic"
     routes: list[RetrievalRoute] = Field(min_length=1, max_length=25)
     default_route_id: str | None = None
 
     @model_validator(mode="after")
     def validate_routes(self) -> "RetrievalRoutingProfileConfig":
+        """Validate the routes.
+
+        Returns:
+            'RetrievalRoutingProfileConfig': The routes.
+        """
         ids = [route.route_id for route in self.routes]
         if len(ids) != len(set(ids)):
             raise ValueError("routing route_id values must be unique")
@@ -201,6 +330,15 @@ class RetrievalRoutingProfileConfig(BaseModel):
 
 
 class GenerationProfileConfig(BaseModel):
+    """Pydantic model defining the GenerationProfileConfig shape.
+
+    Attributes:
+        model (str).
+        temperature (float).
+        instruction (str).
+        citation_policy (Literal['required', 'optional', 'none']).
+        no_answer_policy (Literal['say_not_found', 'return_empty', 'request_clarification']).
+    """
     model: str = AUTO_MODEL
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     instruction: str = (
@@ -212,6 +350,18 @@ class GenerationProfileConfig(BaseModel):
 
 
 class ProfileVersion(ScopedResource):
+    """Provides the ProfileVersion behaviour.
+
+    Attributes:
+        profile_id (str).
+        profile_type (ProfileType).
+        name (str).
+        version (int).
+        strategy (str).
+        config (dict[str, Any]).
+        description (str).
+        status (ResourceStatus).
+    """
     profile_id: str
     profile_type: ProfileType
     name: str = Field(min_length=1, max_length=200)
@@ -224,6 +374,18 @@ class ProfileVersion(ScopedResource):
 
 
 class IndexVersion(ScopedResource):
+    """Provides the IndexVersion behaviour.
+
+    Attributes:
+        index_id (str).
+        collection_id (str).
+        version (int).
+        parser_profile_id (str).
+        parser_profile_version (int).
+        chunking_profile_id (str).
+        chunking_profile_version (int).
+        embedding_profile_id (str).
+    """
     index_id: str
     collection_id: str
     version: int = Field(ge=1)
@@ -249,6 +411,15 @@ class IndexVersion(ScopedResource):
 
 
 class IngestionSourceInput(BaseModel):
+    """Pydantic model defining the IngestionSourceInput shape.
+
+    Attributes:
+        filename (str).
+        storage_key (str).
+        mime_type (str).
+        content_hash (str).
+        byte_size (int).
+    """
     filename: str
     storage_key: str
     mime_type: str
@@ -257,6 +428,18 @@ class IngestionSourceInput(BaseModel):
 
 
 class IngestionJob(ScopedResource):
+    """Provides the IngestionJob behaviour.
+
+    Attributes:
+        ingestion_job_id (str).
+        collection_id (str).
+        parser_profile_id (str).
+        parser_profile_version (int).
+        chunking_profile_id (str).
+        chunking_profile_version (int).
+        embedding_profile_id (str).
+        embedding_profile_version (int).
+    """
     ingestion_job_id: str
     collection_id: str
     parser_profile_id: str
@@ -281,6 +464,18 @@ class IngestionJob(ScopedResource):
 
 
 class RAGAgentDefinition(ScopedResource):
+    """Provides the RAGAgentDefinition behaviour.
+
+    Attributes:
+        rag_agent_id (str).
+        name (str).
+        description (str).
+        collection_id (str).
+        retrieval_profile_id (str).
+        retrieval_profile_version (int | None).
+        generation_profile_id (str).
+        generation_profile_version (int | None).
+    """
     rag_agent_id: str
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
@@ -295,6 +490,18 @@ class RAGAgentDefinition(ScopedResource):
 
 
 class RetrievalTrace(ScopedResource):
+    """Provides the RetrievalTrace behaviour.
+
+    Attributes:
+        retrieval_request_id (str).
+        rag_agent_id (str | None).
+        retrieval_profile_id (str).
+        retrieval_profile_version (int).
+        collection_id (str).
+        resolved_index_id (str).
+        parser_profile_id (str | None).
+        parser_profile_version (int | None).
+    """
     retrieval_request_id: str
     rag_agent_id: str | None = None
     retrieval_profile_id: str

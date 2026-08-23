@@ -27,6 +27,11 @@ def _parse_metadata(raw: list[str]) -> dict[str, str]:
 
 
 async def _amain(args: argparse.Namespace) -> None:
+    """Internal helper for the amain step.
+
+    Args:
+        args (argparse.Namespace): Positional arguments.
+    """
     path = Path(args.file)
     metadata = _parse_metadata(args.meta)
 
@@ -57,6 +62,7 @@ async def _amain(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Compute the main."""
     configure_logging()
 
     parser = argparse.ArgumentParser(

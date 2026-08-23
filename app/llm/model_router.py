@@ -112,6 +112,18 @@ class ModelRoutingError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelSelection:
+    """Provides the ModelSelection behaviour.
+
+    Attributes:
+        requested_model (str).
+        selected_model (str).
+        mode (Literal['auto', 'manual', 'cost_protection']).
+        task_kind (TaskKind).
+        complexity (Complexity).
+        reason (str).
+        estimated_cost_usd (float).
+        candidate_models (tuple[str, ...]).
+    """
     requested_model: str
     selected_model: str
     mode: Literal["auto", "manual", "cost_protection"]
@@ -131,6 +143,17 @@ class ModelSelection:
         fallback: bool = False,
         cache_hit: bool = False,
     ) -> dict[str, Any]:
+        """Compute the to event.
+
+        Args:
+            actual_model (str): The actual model.
+            call_id (int): The call id.
+            fallback (bool): The fallback (optional, default False).
+            cache_hit (bool): The cache hit (optional, default False).
+
+        Returns:
+            dict[str, Any]: The event.
+        """
         return {
             "call_id": call_id,
             "requested_model": self.requested_model,
@@ -163,6 +186,20 @@ class ModelRouter:
         node_type: str | None = None,
         policy: Mapping[str, Any] | None = None,
     ) -> ModelSelection:
+        """Select the result.
+
+        Args:
+            method_name (str): The method name.
+            kwargs (Mapping[str, Any]): Keyword arguments.
+            input_tokens (int): Input token count.
+            allowed_models (Sequence[str]): The allowed models.
+            is_available (Callable[[str], bool]): The is available.
+            node_type (str | None): The node type (optional, default None).
+            policy (Mapping[str, Any] | None): The policy (optional, default None).
+
+        Returns:
+            ModelSelection: The result.
+        """
         policy = dict(policy or {})
         priority = _accuracy_priority(policy.get("accuracy_priority"))
         task = infer_task_kind(
@@ -288,6 +325,20 @@ class ModelRouter:
         node_type: str | None = None,
         mode: Literal["manual", "cost_protection"] = "manual",
     ) -> ModelSelection:
+        """Compute the describe manual.
+
+        Args:
+            requested_model (str): The requested model.
+            selected_model (str): The selected model.
+            method_name (str): The method name.
+            kwargs (Mapping[str, Any]): Keyword arguments.
+            input_tokens (int): Input token count.
+            node_type (str | None): The node type (optional, default None).
+            mode (Literal['manual', 'cost_protection']): The mode (optional, default 'manual').
+
+        Returns:
+            ModelSelection: The manual.
+        """
         task = infer_task_kind(method_name, kwargs, node_type=node_type)
         complexity = infer_complexity(
             method_name,
@@ -325,6 +376,16 @@ def infer_task_kind(
     *,
     node_type: str | None = None,
 ) -> TaskKind:
+    """Compute the infer task kind.
+
+    Args:
+        method_name (str): The method name.
+        kwargs (Mapping[str, Any]): Keyword arguments.
+        node_type (str | None): The node type (optional, default None).
+
+    Returns:
+        TaskKind: The task kind.
+    """
     if method_name == "chat_with_tools" or kwargs.get("tools"):
         return "tool_use"
     if method_name == "complete_structured" or kwargs.get("response_model"):
@@ -353,6 +414,17 @@ def infer_complexity(
     input_tokens: int,
     node_type: str | None = None,
 ) -> Complexity:
+    """Compute the infer complexity.
+
+    Args:
+        method_name (str): The method name.
+        kwargs (Mapping[str, Any]): Keyword arguments.
+        input_tokens (int): Input token count.
+        node_type (str | None): The node type (optional, default None).
+
+    Returns:
+        Complexity: The complexity.
+    """
     points = 0
     if input_tokens >= 12_000:
         points += 2
@@ -392,6 +464,15 @@ def _request_text(
     *,
     node_type: str | None,
 ) -> str:
+    """Internal helper for the request text step.
+
+    Args:
+        kwargs (Mapping[str, Any]): Keyword arguments.
+        node_type (str | None): The node type.
+
+    Returns:
+        str: The text.
+    """
     try:
         serialized = json.dumps(
             {
@@ -415,6 +496,14 @@ def _request_text(
 
 
 def _accuracy_priority(value: Any) -> AccuracyPriority:
+    """Internal helper for the accuracy priority step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        AccuracyPriority: The priority.
+    """
     return (
         value
         if value in {"maximum", "balanced", "economy"}
@@ -440,6 +529,15 @@ def _target_tier(
     complexity: Complexity,
     priority: AccuracyPriority,
 ) -> int:
+    """Internal helper for the target tier step.
+
+    Args:
+        complexity (Complexity): The complexity.
+        priority (AccuracyPriority): The priority.
+
+    Returns:
+        int: The tier.
+    """
     base = {"simple": 1, "moderate": 2, "complex": 3}[complexity]
     if priority == "maximum":
         return min(3, base + 1)
@@ -459,6 +557,21 @@ def _score_profile(
     prefer_low_latency: bool,
     observed_quality: float | None,
 ) -> float:
+    """Score the profile.
+
+    Args:
+        profile (ModelProfile): The profile.
+        task (TaskKind): Asyncio task.
+        complexity (Complexity): The complexity.
+        priority (AccuracyPriority): The priority.
+        estimated_cost (float): The estimated cost.
+        max_cost (float): The max cost.
+        prefer_low_latency (bool): The prefer low latency.
+        observed_quality (float | None): The observed quality.
+
+    Returns:
+        float: The profile.
+    """
     tier = _TIER_VALUE[profile.tier]
     if observed_quality is not None:
         base = max(0.0, min(1.0, observed_quality)) * 100
@@ -504,6 +617,20 @@ def _selection_reason(
     estimated_cost: float,
     ceiling: float | None,
 ) -> str:
+    """Internal helper for the selection reason step.
+
+    Args:
+        profile (ModelProfile): The profile.
+        task (TaskKind): Asyncio task.
+        complexity (Complexity): The complexity.
+        priority (AccuracyPriority): The priority.
+        source (Literal['policy', 'evaluation']): Source value.
+        estimated_cost (float): The estimated cost.
+        ceiling (float | None): The ceiling.
+
+    Returns:
+        str: The reason.
+    """
     evidence = (
         "node-specific evaluation scores"
         if source == "evaluation"

@@ -14,7 +14,10 @@ dependencies = [
     "structlog>=24.2.0",
     "python-jose[cryptography]>=3.3.0",
     "cryptography>=42.0.0",
-    "passlib[bcrypt]>=1.7.4",
+    # app/security/passwords.py imports argon2 directly — declared here
+    # explicitly (it previously arrived only transitively via minio).
+    # passlib was removed after the migration to argon2-cffi left it unused.
+    "argon2-cffi>=23.1.0",
     "python-multipart>=0.0.9",
     "motor>=3.4.0",
     "pymongo>=4.7.0",

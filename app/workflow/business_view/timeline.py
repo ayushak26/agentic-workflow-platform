@@ -27,6 +27,14 @@ _MARK_ACTIVITIES = {"handling", "enrich", "ownership"}
 
 
 def _marks(activity: BusinessActivityView) -> list[str]:
+    """Internal helper for the marks step.
+
+    Args:
+        activity (BusinessActivityView): The activity.
+
+    Returns:
+        list[str]: The result.
+    """
     if activity.id not in _MARK_ACTIVITIES:
         return []
     return [f"{fact.label}: {fact.display}" for fact in activity.facts[:6] if not fact.missing]
@@ -39,6 +47,17 @@ def build_timeline(
     decision: BusinessDecisionView | None,
     status: BusinessStatusView,
 ) -> list[BusinessTimelineEntry]:
+    """Build the timeline.
+
+    Args:
+        run (RunView): The run.
+        activities (list[BusinessActivityView]): The activities.
+        decision (BusinessDecisionView | None): Human decision mapping.
+        status (BusinessStatusView): Status value.
+
+    Returns:
+        list[BusinessTimelineEntry]: The timeline.
+    """
     entries: list[BusinessTimelineEntry] = []
 
     if run.started_at:

@@ -101,6 +101,7 @@ explanation outside the RFP itself."""
 
 
 def main() -> None:
+    """Compute the main."""
     for spec in RFPS:
         prompt = PROMPT_TEMPLATE.format(
             client=spec["client"],

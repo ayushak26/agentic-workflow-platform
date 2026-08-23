@@ -73,7 +73,6 @@ export function CloudFileBrowser({
         setError(reason instanceof Error ? reason.message : String(reason));
         setState('error');
       });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionId, currentFolderId, query]);
 
   const loadMore = () => {

@@ -56,6 +56,14 @@ _CONDITION = re.compile(r"^\s*([A-Za-z_][\w.]*)\s*(?:==|!=|<=|>=|<|>)\s*")
 
 
 def stale_decisions_for(field: str) -> tuple[str, ...]:
+    """Compute the stale decisions for.
+
+    Args:
+        field (str): The field.
+
+    Returns:
+        tuple[str, ...]: The decisions for.
+    """
     return FACT_DEPENDENCIES.get(field, ())
 
 
@@ -78,6 +86,14 @@ def _condition_paths(config: dict[str, Any]) -> list[str]:
 
 
 def _group_paths(group: Any) -> list[str]:
+    """Group the paths.
+
+    Args:
+        group (Any): The group.
+
+    Returns:
+        list[str]: The paths.
+    """
     if not isinstance(group, dict):
         return []
     paths: list[str] = []

@@ -15,18 +15,41 @@ logger = get_logger(__name__)
 
 
 def _require_session(session_id: str) -> str:
+    """Internal helper for the require session step.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+
+    Returns:
+        str: The session.
+    """
     if not session_id or not session_id.strip():
         raise ValueError("session_id is mandatory for run chat access")
     return session_id
 
 
 async def ensure_run_chat_indexes(db) -> None:
+    """Ensure the run chat indexes.
+
+    Args:
+        db: Mongo database handle.
+    """
     await db["run_chats"].create_index(
         [("session_id", 1), ("run_id", 1)], unique=True
     )
 
 
 async def get_run_chat_turns(db, *, session_id: str, run_id: str) -> list[dict[str, Any]]:
+    """Return the run chat turns.
+
+    Args:
+        db: Mongo database handle.
+        session_id (str): Session scope the record belongs to.
+        run_id (str): Workflow run identifier.
+
+    Returns:
+        list[dict[str, Any]]: The run chat turns.
+    """
     _require_session(session_id)
     doc = await db["run_chats"].find_one(
         {"session_id": session_id, "run_id": run_id}, {"_id": 0},

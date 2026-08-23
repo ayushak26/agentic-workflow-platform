@@ -14,10 +14,28 @@ router = APIRouter(prefix="/api/rag-agents", tags=["rag-agents"])
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return user.session_id or user.username
 
 
 class RAGAgentCreate(BaseModel):
+    """Pydantic model defining the RAGAgentCreate shape.
+
+    Attributes:
+        name (str).
+        description (str).
+        collection_id (str).
+        retrieval_profile_id (str).
+        generation_profile_id (str).
+        routing_profile_id (str | None).
+    """
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
     collection_id: str
@@ -32,6 +50,13 @@ async def create_agent(
     request: Request,
     user: CurrentUser = Depends(require_permission("rag:write")),
 ):
+    """Create the agent.
+
+    Args:
+        payload (RAGAgentCreate): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_permission('rag:write'))).
+    """
     try:
         return await request.app.state.services["knowledge_service"].create_rag_agent(
             owner_scope_id=_scope(user), **payload.model_dump()
@@ -46,6 +71,13 @@ async def list_agents(
     search: str | None = Query(default=None),
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the agents.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        search (str | None): The search (optional, default Query(default=None)).
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await request.app.state.services["knowledge_repository"].list_rag_agents(
         _scope(user), search=search
     )
@@ -57,6 +89,13 @@ async def get_agent(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Return the agent.
+
+    Args:
+        rag_agent_id (str): The rag agent id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await request.app.state.services["knowledge_repository"].get_rag_agent(
             _scope(user), rag_agent_id
@@ -66,6 +105,13 @@ async def get_agent(
 
 
 class RAGQueryRequest(BaseModel):
+    """Pydantic model defining the RAGQueryRequest shape.
+
+    Attributes:
+        query (str).
+        runtime_filters (dict[str, Any]).
+        runtime_context (dict[str, Any]).
+    """
     query: str = Field(min_length=1)
     runtime_filters: dict[str, Any] = Field(default_factory=dict)
     runtime_context: dict[str, Any] = Field(default_factory=dict)
@@ -78,6 +124,14 @@ async def query_agent(
     request: Request,
     user: CurrentUser = Depends(require_permission("rag:query")),
 ):
+    """Query the agent.
+
+    Args:
+        rag_agent_id (str): The rag agent id.
+        payload (RAGQueryRequest): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_permission('rag:query'))).
+    """
     try:
         query = check_workflow_inputs({"query": payload.query}).value["query"]
     except GuardrailViolation as exc:

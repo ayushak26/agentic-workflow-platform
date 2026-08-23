@@ -55,10 +55,26 @@ async def ensure_indexes(db: Any) -> None:
 
 
 def _services(request: Request) -> dict[str, Any]:
+    """Internal helper for the services step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return getattr(request.app.state, "services", {}) or {}
 
 
 def _require_db(request: Request) -> Any:
+    """Internal helper for the require db step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        Any: The db.
+    """
     db = _services(request).get("audit_db")
     if db is None:
         raise HTTPException(
@@ -69,6 +85,14 @@ def _require_db(request: Request) -> Any:
 
 
 def _require_integration_service(request: Request) -> Any:
+    """Internal helper for the require integration service step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        Any: The integration service.
+    """
     service = _services(request).get("files_integration")
     if service is None:
         raise HTTPException(status_code=503, detail="File integration is not configured in this deployment.")
@@ -78,6 +102,15 @@ def _require_integration_service(request: Request) -> Any:
 def _connection_id(provider: Provider, address: str) -> str:
     # Stable per (provider, account) — reconnecting the same account updates
     # its existing connection rather than creating a duplicate.
+    """Internal helper for the connection id step.
+
+    Args:
+        provider (Provider): Provider name.
+        address (str): The address.
+
+    Returns:
+        str: The id.
+    """
     normalized = address.strip().lower().replace("@", "_at_").replace(".", "_")
     return f"{provider}_{normalized}" if normalized else f"{provider}_{secrets.token_hex(6)}"
 
@@ -217,6 +250,15 @@ async def list_connections(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ) -> dict[str, Any]:
+    """List the connections.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+
+    Returns:
+        dict[str, Any]: The connections.
+    """
     del user
     service = _services(request).get("files_integration")
     if service is None:
@@ -230,6 +272,16 @@ async def disconnect(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ) -> dict[str, Any]:
+    """Compute the disconnect.
+
+    Args:
+        connection_id (str): The connection id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     del user
     db = _require_db(request)
     await delete_connection_record(db, connection_id)

@@ -22,17 +22,25 @@ import { ExecutionKindBadge } from './ExecutionKindBadge';
 
 export function AboutPanel({
   businessLabel,
+  completedMessage,
   downstreamTypes = [],
   manifest,
   nodeId,
   onBusinessLabelChange,
+  onCompletedMessageChange,
+  onRunningMessageChange,
+  runningMessage,
   upstreamTypes = [],
 }: {
   businessLabel: string;
+  completedMessage: string;
   downstreamTypes?: string[];
   manifest: NodeTypeManifest | undefined;
   nodeId: string;
   onBusinessLabelChange: (label: string) => void;
+  onCompletedMessageChange: (message: string) => void;
+  onRunningMessageChange: (message: string) => void;
+  runningMessage: string;
   upstreamTypes?: string[];
 }) {
   const [askingAi, setAskingAi] = useState(false);
@@ -64,6 +72,32 @@ export function AboutPanel({
       <p className="mt-1 text-[10px] text-ink-500">
         What this step is called on the canvas and in run explanations. Name the
         business action, not the technology.
+      </p>
+
+      {/* Chat progress copy (§26): shown in Business Chat while this step
+          runs and once it finishes. Optional — the chat falls back to the
+          business name when left empty. */}
+      <label className="mt-4 block text-[11px] font-medium text-ink-700">
+        Progress message (chat, while running)
+        <input
+          className="builder-field mt-1"
+          onChange={event => onRunningMessageChange(event.target.value)}
+          placeholder={`Working on: ${businessLabel || nodeId}…`}
+          value={runningMessage}
+        />
+      </label>
+      <label className="mt-3 block text-[11px] font-medium text-ink-700">
+        Completed message (chat, when done)
+        <input
+          className="builder-field mt-1"
+          onChange={event => onCompletedMessageChange(event.target.value)}
+          placeholder={businessLabel || nodeId}
+          value={completedMessage}
+        />
+      </label>
+      <p className="mt-1 text-[10px] text-ink-500">
+        Written for the business user chatting with this workflow. Keep both
+        short; leave empty to use the business name.
       </p>
 
       <div className="mt-3 flex items-center justify-between gap-2">

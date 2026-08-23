@@ -40,6 +40,13 @@ _SYSTEM_PROMPT = (
 
 
 class DecisionExplanation(BaseModel):
+    """Pydantic model defining the DecisionExplanation shape.
+
+    Attributes:
+        summary (str).
+        fact_refs (list[str]).
+        rule_refs (list[str]).
+    """
     summary: str
     fact_refs: list[str] = Field(default_factory=list)
     rule_refs: list[str] = Field(default_factory=list)

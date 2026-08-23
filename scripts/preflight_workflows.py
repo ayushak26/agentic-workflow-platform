@@ -11,6 +11,14 @@ from app.runtime.preflight import preflight_workflow_yaml
 
 
 def _paths(values: list[str]) -> list[Path]:
+    """Internal helper for the paths step.
+
+    Args:
+        values (list[str]): The values.
+
+    Returns:
+        list[Path]: The result.
+    """
     if values:
         resolved: list[Path] = []
         for value in values:
@@ -21,10 +29,19 @@ def _paths(values: list[str]) -> list[Path]:
             else:
                 resolved.append(path)
         return list(dict.fromkeys(resolved))
-    return sorted(Path("workflows").glob("*.yaml"))
+    # Shipped library + the hidden reference corpus (generation exemplars):
+    # both must stay preflight-clean, so both are in the default gate.
+    return sorted(Path("workflows").glob("*.yaml")) + sorted(
+        Path("workflows/reference").rglob("*.yaml")
+    )
 
 
 def main() -> int:
+    """Compute the main.
+
+    Returns:
+        int: The result.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Dry-validate workflow YAML, node registration/config, models, "

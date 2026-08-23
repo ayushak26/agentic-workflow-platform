@@ -47,6 +47,14 @@ _SYSTEM_PROMPT = (
 
 
 def _schema_field_names(schema: dict[str, Any] | None) -> list[str]:
+    """Internal helper for the schema field names step.
+
+    Args:
+        schema (dict[str, Any] | None): Schema definition.
+
+    Returns:
+        list[str]: The field names.
+    """
     if not isinstance(schema, dict):
         return []
     return list((schema.get("properties") or {}).keys())
@@ -59,10 +67,13 @@ def _build_node_type_catalog() -> str:
     lines = []
     for entry in NodeRegistry.manifest():
         config_fields = _schema_field_names(entry.get("config_schema"))
+        contract = entry.get("contract") or {}
         lines.append(
             f"- {entry['type_name']} (category: {entry.get('category', 'Other')}): "
             f"{entry.get('description') or 'no description provided'}. "
-            f"Config fields: {', '.join(config_fields) or 'none'}."
+            f"Config fields: {', '.join(config_fields) or 'none'}. "
+            f"Accepts: {', '.join(contract.get('accepts') or ['state'])}. "
+            f"Produces: {', '.join(contract.get('produces') or ['state'])}."
         )
     return "\n".join(lines)
 
@@ -76,6 +87,12 @@ def _manifest_entry(type_name: str) -> dict[str, Any] | None:
 
 
 class ChatMessage(BaseModel):
+    """Pydantic model defining the ChatMessage shape.
+
+    Attributes:
+        role (str).
+        content (str).
+    """
     role: str
     content: str
 
@@ -100,6 +117,14 @@ class AskContext(BaseModel):
 
 
 class AskAboutNodeTypesRequest(BaseModel):
+    """Pydantic model defining the AskAboutNodeTypesRequest shape.
+
+    Attributes:
+        question (str).
+        focus_type_name (str | None).
+        history (list[ChatMessage]).
+        context (AskContext | None).
+    """
     question: str
     focus_type_name: str | None = None
     history: list[ChatMessage] = []
@@ -130,6 +155,13 @@ async def ask_about_node_types(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the ask about node types.
+
+    Args:
+        req (AskAboutNodeTypesRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = request.app.state.services
     llm = services.get("llm")
     if llm is None:
@@ -333,6 +365,14 @@ This response is inserted directly into a configuration field, not shown to the 
 
 
 class DraftPromptRequest(BaseModel):
+    """Pydantic model defining the DraftPromptRequest shape.
+
+    Attributes:
+        type_name (str).
+        field_name (str).
+        instruction (str).
+        history (list[ChatMessage]).
+    """
     type_name: str
     field_name: str
     instruction: str
@@ -345,6 +385,13 @@ async def draft_prompt(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Draft the prompt.
+
+    Args:
+        req (DraftPromptRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = request.app.state.services
     llm = services.get("llm")
     if llm is None:
@@ -407,6 +454,14 @@ Respond with ONLY the drafted instructions text: no heading, no preamble like "H
 
 
 class DraftInstructionsFieldSpec(BaseModel):
+    """Pydantic model defining the DraftInstructionsFieldSpec shape.
+
+    Attributes:
+        name (str).
+        description (str).
+        type (str | None).
+        enum_values (list[str]).
+    """
     name: str
     description: str = ""
     type: str | None = None
@@ -414,12 +469,27 @@ class DraftInstructionsFieldSpec(BaseModel):
 
 
 class DraftInstructionsRequest(BaseModel):
+    """Pydantic model defining the DraftInstructionsRequest shape.
+
+    Attributes:
+        existing_instructions (str).
+        input_fields (list[DraftInstructionsFieldSpec]).
+        output_fields (list[DraftInstructionsFieldSpec]).
+    """
     existing_instructions: str = ""
     input_fields: list[DraftInstructionsFieldSpec] = []
     output_fields: list[DraftInstructionsFieldSpec] = []
 
 
 def _describe_fields(fields: list[DraftInstructionsFieldSpec]) -> str:
+    """Internal helper for the describe fields step.
+
+    Args:
+        fields (list[DraftInstructionsFieldSpec]): Field names.
+
+    Returns:
+        str: The fields.
+    """
     if not fields:
         return "(none declared yet)"
     lines = []
@@ -439,6 +509,13 @@ async def draft_instructions(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Draft the instructions.
+
+    Args:
+        req (DraftInstructionsRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = request.app.state.services
     llm = services.get("llm")
     if llm is None:
@@ -488,6 +565,17 @@ Respond with ONLY the code: no heading, no preamble, no markdown fences (no ```)
 
 
 class DraftCodeRequest(BaseModel):
+    """Pydantic model defining the DraftCodeRequest shape.
+
+    Attributes:
+        language (Literal['python', 'sql']).
+        existing_code (str).
+        input_fields (list[DraftInstructionsFieldSpec]).
+        output_fields (list[DraftInstructionsFieldSpec]).
+        example_inputs (dict[str, Any]).
+        example_outputs (dict[str, Any]).
+        instructions (str).
+    """
     language: Literal["python", "sql"]
     existing_code: str = ""
     input_fields: list[DraftInstructionsFieldSpec] = []
@@ -506,6 +594,13 @@ async def draft_code(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Draft the code.
+
+    Args:
+        req (DraftCodeRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = request.app.state.services
     llm = services.get("llm")
     if llm is None:

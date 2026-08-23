@@ -60,6 +60,12 @@ class BusinessActionError(Exception):
     """A typed action that cannot be performed as asked."""
 
     def __init__(self, message: str, *, status_code: int = 400):
+        """Initialize the BusinessActionError.
+
+        Args:
+            message (str): Message text.
+            status_code (int): The status code (optional, default 400).
+        """
         super().__init__(message)
         self.status_code = status_code
 
@@ -85,6 +91,16 @@ _CLARIFICATION_SYSTEM = (
 async def _draft_clarification(
     *, llm: Any, topic: str, context: dict[str, Any],
 ) -> dict[str, Any]:
+    """Draft the clarification.
+
+    Args:
+        llm (Any): The llm.
+        topic (str): The topic.
+        context (dict[str, Any]): The context.
+
+    Returns:
+        dict[str, Any]: The clarification.
+    """
     if llm is None:
         raise BusinessActionError("Drafting is unavailable right now.", status_code=503)
     payload = {
@@ -121,6 +137,18 @@ async def _draft_clarification(
 async def _lookup_record(
     *, mcp: Any, params: dict[str, Any], run_id: str, session_id: str, role: str,
 ) -> dict[str, Any]:
+    """Internal helper for the lookup record step.
+
+    Args:
+        mcp (Any): The mcp.
+        params (dict[str, Any]): The params.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+        role (str): User role.
+
+    Returns:
+        dict[str, Any]: The record.
+    """
     tool = str(params.get("tool") or "")
     server_id = str(params.get("server_id") or "")
     argument = str(params.get("argument") or "")

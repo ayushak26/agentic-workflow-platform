@@ -94,6 +94,14 @@ _TOKENIZERS: dict[str, tiktoken.Encoding] = {}
 
 
 def _get_tokenizer(name: str) -> tiktoken.Encoding:
+    """Return the tokenizer.
+
+    Args:
+        name (str): Workflow or resource name.
+
+    Returns:
+        tiktoken.Encoding: The tokenizer.
+    """
     if name not in _TOKENIZERS:
         _TOKENIZERS[name] = tiktoken.get_encoding(name)
     return _TOKENIZERS[name]
@@ -287,6 +295,14 @@ def chunk_document(
     prefix = chunk_id_prefix or doc.source_path
 
     def _build(active: ChunkConfig) -> list[Chunk]:
+        """Build the result.
+
+        Args:
+            active (ChunkConfig): Active flag.
+
+        Returns:
+            list[Chunk]: The result.
+        """
         chunks: list[Chunk] = []
         chunk_index = 0
         for unit in doc.units:

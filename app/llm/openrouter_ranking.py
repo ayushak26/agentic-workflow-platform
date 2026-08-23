@@ -40,6 +40,14 @@ _OBSERVED_SCORE_THRESHOLD = 0.7  # only a genuinely good observed score narrows 
 
 
 def _cost_tier_for_priority(accuracy_priority: str) -> str:
+    """Internal helper for the cost tier for priority step.
+
+    Args:
+        accuracy_priority (str): The accuracy priority.
+
+    Returns:
+        str: The tier for priority.
+    """
     return {"economy": "low", "balanced": "medium", "maximum": "high"}.get(
         accuracy_priority, "medium"
     )

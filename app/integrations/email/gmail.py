@@ -35,16 +35,30 @@ _TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 
 class GmailAdapter(EmailAdapter):
+    """Provides the GmailAdapter behaviour."""
     provider = "gmail"
 
     def __init__(self, client: httpx.AsyncClient | None = None):
         # An injected client is how tests drive this adapter against a transport
         # mock, and how a deployment shares one connection pool.
+        """Initialize the GmailAdapter.
+
+        Args:
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+        """
         self._client = client
 
     # -- transport ------------------------------------------------------
 
     def _headers(self, connection: EmailConnection) -> dict[str, str]:
+        """Internal helper for the headers step.
+
+        Args:
+            connection (EmailConnection): The connection.
+
+        Returns:
+            dict[str, str]: The result.
+        """
         token = connection.credentials.get("access_token")
         if not token:
             raise EmailAdapterError(
@@ -63,6 +77,18 @@ class GmailAdapter(EmailAdapter):
         side_effect: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        """Internal helper for the request step.
+
+        Args:
+            connection (EmailConnection): The connection.
+            method (str): The method.
+            path (str): Filesystem path.
+            side_effect (bool): The side effect (optional, default False).
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         client = self._client or httpx.AsyncClient(timeout=_TIMEOUT)
         owns_client = self._client is None
         try:
@@ -104,6 +130,15 @@ class GmailAdapter(EmailAdapter):
     async def search(
         self, connection: EmailConnection, criteria: EmailSearchCriteria
     ) -> list[EmailMessage]:
+        """Search the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            criteria (EmailSearchCriteria): The criteria.
+
+        Returns:
+            list[EmailMessage]: The result.
+        """
         listing = await self._request(
             connection,
             "GET",
@@ -123,6 +158,15 @@ class GmailAdapter(EmailAdapter):
     async def read(
         self, connection: EmailConnection, message_id: str
     ) -> EmailMessage:
+        """Read the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            message_id (str): The message id.
+
+        Returns:
+            EmailMessage: The result.
+        """
         raw = await self._request(
             connection,
             "GET",
@@ -134,6 +178,15 @@ class GmailAdapter(EmailAdapter):
     async def create_draft(
         self, connection: EmailConnection, draft: EmailDraft
     ) -> str:
+        """Create the draft.
+
+        Args:
+            connection (EmailConnection): The connection.
+            draft (EmailDraft): The draft.
+
+        Returns:
+            str: The draft.
+        """
         payload: dict[str, Any] = {"message": {"raw": _encode(draft, connection)}}
         if draft.thread_id:
             payload["message"]["threadId"] = draft.thread_id
@@ -147,6 +200,15 @@ class GmailAdapter(EmailAdapter):
         return str(created.get("id") or "")
 
     async def send(self, connection: EmailConnection, draft: EmailDraft) -> str:
+        """Send the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            draft (EmailDraft): The draft.
+
+        Returns:
+            str: The result.
+        """
         payload: dict[str, Any] = {"raw": _encode(draft, connection)}
         if draft.thread_id:
             payload["threadId"] = draft.thread_id
@@ -206,6 +268,14 @@ def _encode(draft: EmailDraft, connection: EmailConnection) -> str:
 
 
 def _to_message(raw: dict[str, Any]) -> EmailMessage:
+    """Internal helper for the to message step.
+
+    Args:
+        raw (dict[str, Any]): Raw value.
+
+    Returns:
+        EmailMessage: The message.
+    """
     payload = raw.get("payload") or {}
     headers = {
         str(item.get("name", "")).lower(): str(item.get("value", ""))
@@ -243,6 +313,11 @@ def _extract_bodies(payload: dict[str, Any]) -> tuple[str, str | None]:
     html: str | None = None
 
     def walk(part: dict[str, Any]) -> None:
+        """Compute the walk.
+
+        Args:
+            part (dict[str, Any]): The part.
+        """
         nonlocal text, html
         mime = part.get("mimeType", "")
         data = (part.get("body") or {}).get("data")
@@ -260,9 +335,22 @@ def _extract_bodies(payload: dict[str, Any]) -> tuple[str, str | None]:
 
 
 def _extract_attachments(payload: dict[str, Any]) -> list[EmailAttachmentRef]:
+    """Extract the attachments.
+
+    Args:
+        payload (dict[str, Any]): Event or audit payload.
+
+    Returns:
+        list[EmailAttachmentRef]: The attachments.
+    """
     found: list[EmailAttachmentRef] = []
 
     def walk(part: dict[str, Any]) -> None:
+        """Compute the walk.
+
+        Args:
+            part (dict[str, Any]): The part.
+        """
         body = part.get("body") or {}
         attachment_id = body.get("attachmentId")
         if attachment_id:
@@ -282,6 +370,14 @@ def _extract_attachments(payload: dict[str, Any]) -> list[EmailAttachmentRef]:
 
 
 def _decode_b64(data: str) -> str:
+    """Decode the b64.
+
+    Args:
+        data (str): Data mapping.
+
+    Returns:
+        str: The b64.
+    """
     padding = "=" * (-len(data) % 4)
     try:
         return base64.urlsafe_b64decode(data + padding).decode(
@@ -292,6 +388,14 @@ def _decode_b64(data: str) -> str:
 
 
 def _parse_address(value: str | None) -> EmailAddress | None:
+    """Parse the address.
+
+    Args:
+        value (str | None): Value to process.
+
+    Returns:
+        EmailAddress | None: The address.
+    """
     if not value:
         return None
     name, email = parseaddr(value)
@@ -301,6 +405,14 @@ def _parse_address(value: str | None) -> EmailAddress | None:
 
 
 def _parse_addresses(value: str | None) -> list[EmailAddress]:
+    """Parse the addresses.
+
+    Args:
+        value (str | None): Value to process.
+
+    Returns:
+        list[EmailAddress]: The addresses.
+    """
     if not value:
         return []
     parsed = [_parse_address(part) for part in value.split(",")]
@@ -308,6 +420,14 @@ def _parse_addresses(value: str | None) -> list[EmailAddress]:
 
 
 def _parse_internal_date(value: Any) -> datetime | None:
+    """Parse the internal date.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        datetime | None: The internal date.
+    """
     if not value:
         return None
     try:

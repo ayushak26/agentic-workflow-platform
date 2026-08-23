@@ -14,6 +14,7 @@ OUTPUT_DIR = ROOT / "output" / "pdf"
 
 
 def main() -> None:
+    """Compute the main."""
     rendered = render_horizon_proposal(
         content=SOURCE.read_text(encoding="utf-8"),
         content_format="markdown",

@@ -1,0 +1,205 @@
+name: Multimodal Interview Prep Coach
+description: >-
+  Practice interview answers by typing or dictating. An OpenRouter model coaches the answer,
+  produces a stronger STAR response and follow-up questions, then ChatGPT Image and OpenRouter
+  Image each create a visual memory aid. Responses can be read aloud in Business Chat.
+version: '1.0'
+use_case: interview_preparation
+library:
+  title: Multimodal Interview Prep Coach
+  summary: Dictate an interview answer, receive OpenRouter coaching, hear it aloud, and generate two visual memory aids.
+  purpose:
+    - Practice behavioral and technical interview questions conversationally
+    - Turn a rough spoken answer into a concise STAR response
+    - Generate likely follow-up questions and focused improvement advice
+    - Reinforce the answer with visual aids from ChatGPT Image and OpenRouter Image
+  suitable_for:
+    - Behavioral interview preparation
+    - Technical interview explanation practice
+    - Leadership, product, engineering, sales, and consulting interviews
+  not_suitable_for:
+    - Impersonating a candidate during a live interview
+    - Making hiring decisions about another person
+  outputs:
+    - Interview feedback and improved answer
+    - Follow-up practice questions
+    - ChatGPT Image visual memory aid
+    - OpenRouter Image visual memory aid
+  input_types:
+    - Typed or dictated interview question and draft answer
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: approved
+  owner_team: Interview Coaching
+entry: start
+exit: reply
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+      chatbot_name: Interview Prep Coach
+      welcome_message: >-
+        Paste an interview question and your draft answer, or use Dictate to speak it. I’ll coach
+        the answer, rewrite it into a strong interview-ready response, suggest follow-ups, and make
+        two visual memory aids. You can use Read aloud to rehearse the result.
+      message_placeholder: Describe the role, question, and your draft answer…
+      allow_attachments: true
+      suggested_questions:
+        - Help me answer “Tell me about a difficult stakeholder” using STAR.
+        - Run a senior software engineer system-design interview practice round.
+        - Improve my answer to “Why do you want this product manager role?”
+    experience:
+      display_name: Interview Practice
+      agent_role: Candidate
+      purpose: Collect the role, interview question, and draft answer in the candidate's own words.
+      contribution: Supplies the only facts the coach may use, preventing invented experience.
+      expected_output: A role, interview question, and rough answer or practice request.
+      failure_message: The interview practice request could not be collected.
+      running_message: Listening to your interview practice…
+      completed_message: Practice response received
+
+  - id: coach
+    type: TransformAgent
+    selected_model: openrouter/anthropic/claude-sonnet-4.5
+    config:
+      mode: ai
+      model: openrouter/anthropic/claude-sonnet-4.5
+      input_fields:
+        - name: practice
+          type: string
+          value: '{{outputs.start.message}}'
+      instructions: >-
+        You are an exacting but supportive interview coach. Analyze the candidate's message, which
+        may contain a target role, an interview question, and a rough or dictated answer. Never
+        invent achievements, metrics, employers, technologies, or responsibilities. When a detail
+        is missing, mark it as a detail the candidate should supply.
+
+        Produce:
+        1. answer: a polished, natural interview response. For behavioral questions use STAR, but
+           do not announce the STAR labels in spoken prose. For technical questions structure the
+           explanation from assumptions through trade-offs and verification.
+        2. feedback: concise strengths, gaps, credibility risks, and delivery advice.
+        3. follow_up_questions: three realistic interviewer follow-ups, one per line.
+        4. openai_image_prompt: a professional mnemonic visual for this answer. Use a clean
+           interview-prep infographic or storyboard, minimal text, no logos, no real person's face.
+        5. openrouter_image_prompt: a different visual metaphor that helps the candidate remember
+           the answer's sequence and key evidence, minimal text, no logos, no real person's face.
+
+        Keep the answer speakable and specific to the supplied facts.
+      output_fields:
+        - name: answer
+          type: text
+          description: Polished interview-ready answer.
+          required: true
+        - name: feedback
+          type: text
+          description: Strengths, gaps, and delivery coaching.
+          required: true
+        - name: follow_up_questions
+          type: text
+          description: Three likely interviewer follow-up questions.
+          required: true
+        - name: openai_image_prompt
+          type: text
+          description: Prompt for the ChatGPT Image memory aid.
+          required: true
+        - name: openrouter_image_prompt
+          type: text
+          description: Prompt for the OpenRouter Image memory aid.
+          required: true
+      temperature: 0.3
+      max_tokens: 4096
+      max_retries: 1
+      fail_on_error: true
+    experience:
+      display_name: Interview Coach
+      agent_role: OpenRouter Coach
+      purpose: Improve the answer without inventing candidate experience.
+      contribution: Produces the rehearsal answer, feedback, follow-ups, and both visual prompts.
+      expected_output: A fact-grounded answer, actionable coaching, three follow-ups, and two image prompts.
+      failure_message: OpenRouter could not prepare the interview coaching response.
+      running_message: Reviewing your answer and preparing coaching…
+      completed_message: Coaching and rehearsal answer prepared
+
+  - id: chatgpt_visual
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: chatgpt-image-latest
+      prompt: '{{outputs.coach.parsed.openai_image_prompt}}'
+      size: auto
+      quality: medium
+      output_format: png
+    experience:
+      display_name: ChatGPT Image
+      agent_role: Visual Coach
+      purpose: Create a visual mnemonic for the interview response with ChatGPT Image.
+      contribution: Reinforces the answer's sequence with a memorable visual study aid.
+      expected_output: One stored PNG interview memory aid.
+      failure_message: ChatGPT Image could not create the memory aid.
+      running_message: Creating a ChatGPT Image memory aid…
+      completed_message: ChatGPT Image memory aid created
+      recovery_actions:
+        - Retry image generation
+        - Continue without this visual
+
+  - id: openrouter_visual
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openrouter
+      openrouter_image_model: google/gemini-3.1-flash-image
+      prompt: '{{outputs.coach.parsed.openrouter_image_prompt}}'
+      size: 1024x1024
+      quality: medium
+      output_format: png
+    experience:
+      display_name: OpenRouter Image
+      agent_role: Visual Coach
+      purpose: Create an alternative visual mnemonic through OpenRouter Image.
+      contribution: Provides a second visual metaphor for remembering the answer and evidence.
+      expected_output: One stored PNG interview memory aid from OpenRouter.
+      failure_message: OpenRouter Image could not create the memory aid.
+      running_message: Creating an OpenRouter Image memory aid…
+      completed_message: OpenRouter Image memory aid created
+      recovery_actions:
+        - Retry image generation
+        - Continue without this visual
+
+  - id: reply
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: |-
+        {{outputs.coach.parsed.answer}}
+
+        COACHING FEEDBACK
+        {{outputs.coach.parsed.feedback}}
+
+        PRACTICE THESE FOLLOW-UPS
+        {{outputs.coach.parsed.follow_up_questions}}
+      outcome: coached
+      handoff:
+        chatgpt_image: '{{outputs.chatgpt_visual.minio_key}}'
+        openrouter_image: '{{outputs.openrouter_visual.minio_key}}'
+    experience:
+      display_name: Rehearsal Response
+      agent_role: Interview Coach
+      purpose: Return the improved answer, feedback, and follow-up practice in chat.
+      contribution: Gives the candidate one response to rehearse by reading or listening aloud.
+      expected_output: A chat response containing the answer, coaching, and follow-up questions.
+      failure_message: The final interview rehearsal response could not be presented.
+      running_message: Preparing your rehearsal response…
+      completed_message: Your interview rehearsal is ready
+edges:
+  - from: start
+    to: coach
+  - from: coach
+    to:
+      - chatgpt_visual
+      - openrouter_visual
+  - from: chatgpt_visual
+    to: reply
+  - from: openrouter_visual
+    to: reply

@@ -1,3 +1,9 @@
+"""Cost module.
+
+Part of the http api layer: fastapi routers for auth, workflows, runs, knowledge, and administration.
+
+Public symbols: run_cost, session_cost.
+"""
 from fastapi import APIRouter, Request, Depends
 from app.security.dependencies import get_current_user, CurrentUser
 
@@ -10,6 +16,13 @@ async def run_cost(
     request: Request,
     user: CurrentUser = Depends(get_current_user),
 ):
+    """Run the cost.
+
+    Args:
+        run_id (str): Workflow run identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(get_current_user)).
+    """
     ledger = request.app.state.services.get("cost_ledger")
     if not ledger:
         return {"error": "cost ledger unavailable"}
@@ -23,6 +36,13 @@ async def session_cost(
     request: Request,
     user: CurrentUser = Depends(get_current_user),
 ):
+    """Compute the session cost.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(get_current_user)).
+    """
     ledger = request.app.state.services.get("cost_ledger")
     if not ledger:
         return {"error": "cost ledger unavailable"}

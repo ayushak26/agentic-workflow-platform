@@ -3,6 +3,11 @@
 Production can export to an OTLP/HTTP collector or managed observability
 backend. When disabled, this module has no effect and imports no exporter.
 """
+# pyright: reportMissingImports=false
+# OpenTelemetry is an intentionally optional deployment feature. Imports stay
+# inside configure_tracing so the default installation does not carry six
+# tracing packages; production still fails closed if OTEL_ENABLED=true and the
+# selected image has not installed the tracing extra.
 from __future__ import annotations
 
 from app.config import settings
@@ -12,6 +17,11 @@ log = get_logger(__name__)
 
 
 def configure_tracing(app) -> None:
+    """Configure the tracing.
+
+    Args:
+        app: The app.
+    """
     if not settings.otel_enabled:
         return
     try:

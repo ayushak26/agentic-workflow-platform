@@ -24,6 +24,18 @@ def merge_node_outputs(
 
 class WorkflowState(TypedDict, total=False):
     # Inputs supplied at invocation (the RFP PDF reference, client context, etc.)
+    """Provides the WorkflowState behaviour.
+
+    Attributes:
+        inputs (dict[str, Any]).
+        node_outputs (Annotated[dict[str, Any], merge_node_outputs]).
+        audit_log (Annotated[list[dict], add]).
+        model_selections (Annotated[list[dict], add]).
+        session_id (str).
+        collection_id (str).
+        variables (dict[str, Any]).
+        domain_state (Annotated[dict[str, Any], merge_domain_state]).
+    """
     inputs: dict[str, Any]
 
     # Per-node outputs. Reducer lets parallel branches all write here.

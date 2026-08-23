@@ -73,6 +73,14 @@ def _work_item_title(customer: str | None, work_type: str, process_name: str) ->
 
 
 def _request_type(payload: dict[str, Any]) -> str:
+    """Internal helper for the request type step.
+
+    Args:
+        payload (dict[str, Any]): Event or audit payload.
+
+    Returns:
+        str: The type.
+    """
     for key in ("intent", "primary_intent", "request_types"):
         value = payload.get(key)
         if isinstance(value, list):
@@ -83,6 +91,14 @@ def _request_type(payload: dict[str, Any]) -> str:
 
 
 def _required_user_actions(run) -> list[BusinessRequiredUserAction]:
+    """Internal helper for the required user actions step.
+
+    Args:
+        run: The run.
+
+    Returns:
+        list[BusinessRequiredUserAction]: The user actions.
+    """
     gate = run.gate or {}
     if not gate.get("paused"):
         return []

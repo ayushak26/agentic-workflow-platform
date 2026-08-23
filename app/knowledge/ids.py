@@ -47,6 +47,15 @@ _PREFIX_TO_KIND = {prefix: kind for kind, prefix in ID_PREFIXES.items()}
 
 
 def _encode(value: int, length: int) -> str:
+    """Encode the result.
+
+    Args:
+        value (int): Value to process.
+        length (int): The length.
+
+    Returns:
+        str: The result.
+    """
     out = ["0"] * length
     for position in range(length - 1, -1, -1):
         out[position] = _ALPHABET[value & 0x1F]
@@ -55,6 +64,14 @@ def _encode(value: int, length: int) -> str:
 
 
 def prefix_for(kind: str) -> str:
+    """Compute the prefix for.
+
+    Args:
+        kind (str): The kind.
+
+    Returns:
+        str: The for.
+    """
     try:
         return ID_PREFIXES[kind]
     except KeyError as exc:
@@ -102,4 +119,13 @@ def kind_of(resource_id: str) -> str | None:
 
 
 def is_kind(resource_id: str, kind: str) -> bool:
+    """Return whether kind.
+
+    Args:
+        resource_id (str): The resource id.
+        kind (str): The kind.
+
+    Returns:
+        bool: True when kind.
+    """
     return kind_of(resource_id) == kind

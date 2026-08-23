@@ -39,7 +39,7 @@ library:
     count: 1
     labels:
       - Identity Ambiguity Review
-  visibility_status: draft
+  visibility_status: approved
 entry: start
 exit:
   - end_stopped

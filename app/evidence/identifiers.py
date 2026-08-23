@@ -91,6 +91,7 @@ class ResolvedWork:
 
     @property
     def has_strong_identifier(self) -> bool:
+        """The has strong identifier."""
         return bool(
             self.doi
             or self.pmid
@@ -152,6 +153,14 @@ def normalise_doi_value(value: Any) -> str | None:
 
 
 def _arxiv_from(text: str) -> str | None:
+    """Internal helper for the arxiv from step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        str | None: The from.
+    """
     new = _ARXIV_NEW.search(text)
     if new:
         return new.group(1)
@@ -187,6 +196,14 @@ def extract_identifiers(
         }
 
     def meta(*keys: str) -> Any:
+        """Compute the meta.
+
+        Args:
+            *keys (str): The keys.
+
+        Returns:
+            Any: The result.
+        """
         for key in keys:
             value = lowered_meta.get(key)
             if value not in (None, "", [], {}):

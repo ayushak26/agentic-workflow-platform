@@ -1,3 +1,9 @@
+"""Cost ledger module.
+
+Part of the observability: structured logging, prometheus metrics, tracing, and the cost ledger.
+
+Public symbols: LedgerEntry, configure_pricing_db, CostLedger.
+"""
 from __future__ import annotations
 import time
 from dataclasses import dataclass, field
@@ -60,6 +66,18 @@ CostSource = Literal["estimated", "provider_reported"]
 
 @dataclass
 class LedgerEntry:
+    """Provides the LedgerEntry behaviour.
+
+    Attributes:
+        run_id (str).
+        session_id (str).
+        node_id (str).
+        model (str).
+        intended_model (str).
+        input_tokens (int).
+        output_tokens (int).
+        cost_usd (float).
+    """
     run_id:         str
     session_id:     str
     node_id:        str
@@ -122,6 +140,7 @@ def configure_pricing_db(db: Any) -> None:
 
 
 def _refresh_pricing_overrides_if_stale() -> None:
+    """Refresh the pricing overrides if stale."""
     global _pricing_override_cache, _pricing_override_fetched_at
     if _pricing_db is None:
         return
@@ -140,7 +159,13 @@ def _refresh_pricing_overrides_if_stale() -> None:
 
 
 class CostLedger:
+    """Provides the CostLedger behaviour."""
     def __init__(self, db: Any):
+        """Initialize the CostLedger.
+
+        Args:
+            db (Any): Mongo database handle.
+        """
         self._col = db["cost_ledger"] if db is not None else None
 
     @staticmethod
@@ -152,6 +177,18 @@ class CostLedger:
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int = 0,
     ) -> float:
+        """Compute the result.
+
+        Args:
+            model (str): Model name.
+            input_tokens (int): Input token count.
+            output_tokens (int): Output token count.
+            cache_creation_input_tokens (int): The cache creation input tokens (optional, default 0).
+            cache_read_input_tokens (int): The cache read input tokens (optional, default 0).
+
+        Returns:
+            float: The result.
+        """
         _refresh_pricing_overrides_if_stale()
         p_in, p_out = _pricing_override_cache.get(model) or MODEL_PRICING.get(
             model, (0.005, 0.015)
@@ -167,6 +204,11 @@ class CostLedger:
         return round(cost / 1000, 6)
 
     def record(self, entry: LedgerEntry) -> None:
+        """Record the result.
+
+        Args:
+            entry (LedgerEntry): Ledger entry.
+        """
         if self._col is not None:
             self._col.insert_one({
                 "run_id":         entry.run_id,
@@ -247,6 +289,15 @@ class CostLedger:
 
     @staticmethod
     def _group_by(entries: list[dict], key: str) -> list[dict]:
+        """Group the by.
+
+        Args:
+            entries (list[dict]): Entries to process.
+            key (str): Lookup key.
+
+        Returns:
+            list[dict]: The by.
+        """
         groups: dict[str, dict] = {}
         order: list[str] = []
         for entry in entries:
@@ -286,6 +337,15 @@ class CostLedger:
         return result
 
     def run_summary(self, run_id: str, session_id: str | None = None) -> dict:
+        """Run the summary.
+
+        Args:
+            run_id (str): Workflow run identifier.
+            session_id (str | None): Session scope the record belongs to (optional, default None).
+
+        Returns:
+            dict: The summary.
+        """
         if self._col is None:
             return {
                 "run_id": run_id,
@@ -311,6 +371,14 @@ class CostLedger:
         }
 
     def session_summary(self, session_id: str) -> dict:
+        """Compute the session summary.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+
+        Returns:
+            dict: The summary.
+        """
         if self._col is None:
             return {"session_id": session_id, "total_usd": 0.0}
         entries = list(self._col.find({"session_id": session_id}, {"_id": 0}))

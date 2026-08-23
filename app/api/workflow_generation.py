@@ -57,6 +57,37 @@ GENERATION_MODEL = GENERATION_MODEL_SIMPLE
 MAX_STATIC_ATTEMPTS = 4
 MAX_REAL_EXECUTION_ATTEMPTS = 1 + 2  # one real run, then up to 2 repair-and-retry rounds
 
+_CONTRACT_GUIDANCE = """WIRING & CAPABILITY CONTRACT (apply to every edge you draw):
+
+- Every node type is defined by what it ACCEPTS and what it PRODUCES. An \
+edge is valid only when the source's output is something the target can \
+consume: text flows to text consumers, files to nodes that accept files, \
+structured objects to nodes that bind their fields. When two nodes do not \
+line up, insert a TransformAgent to convert — never force a mismatch.
+
+- AITaskAgent and DataTransformAgent are DEPRECATED — always use \
+TransformAgent for AI steps (mode: ai with input_fields / instructions / \
+output_fields) and for deterministic reshaping (mode: deterministic with \
+operations). A TransformAgent's structured outputs live under \
+`parsed.<field>` (e.g. {{node_id.parsed.answer}}).
+
+- Chat-shaped workflows: StartAgent(mode: chatbot) collects the user's \
+message; downstream nodes read it via {{outputs.start.message}} (NEVER \
+{{inputs.message}} — chatbot Start does not declare a message input); \
+EndAgent(mode: chat_response, chat_message: ...) delivers the reply. \
+StartAgent(mode: input_form) declares typed fields instead, which DO \
+appear as workflow inputs ({{inputs.<field_name>}}).
+
+- Knowledge: KnowledgeRetrieval takes collection_id + retrieval_profile_id \
++ query and produces `context` (a string that feeds AI steps), `citations` \
+(a list that feeds EndAgent sources), and `context_count` (which a \
+DecisionAgent can use to branch on "nothing found").
+
+- Every workflow terminates in EndAgent node(s); router branches never \
+reconverge on a shared downstream node; every referenced field must \
+actually exist in the referenced node's declared outputs."""
+
+
 _EXAMPLE_WORKFLOW_YAML = """
 name: Hello Workflow
 description: >-
@@ -173,6 +204,11 @@ closely: which fields it actually sets, how it templates upstream values, \
 how any nested structure is filled in. Match that shape. Where a type has no \
 real example listed, its NODE TYPE CATALOG entry (field names and types) \
 plus the FIELDSPEC SHAPE / field-type rules below are what you have instead.
+
+The HIDDEN REFERENCE CORPUS section is a request-ranked sample from the \
+platform's 400 machine-validated reference workflows. Use it as context, not \
+as permission to copy irrelevant nodes. Live node contracts and preflight \
+rules are authoritative if an example and a contract appear to disagree.
 
 STEP 3 — ASSEMBLE THE WORKFLOW: once you know the types (step 1) and how \
 each is really configured (step 2), wire them into a complete workflow — \
@@ -291,11 +327,18 @@ is not itself a valid field path. Braces belong on ordinary `{{{{...}}}}` config
 fields (AITaskAgent's `input`, Echo's `template`, and similar) — never on a \
 `route_field` or a rule's `field`.
 
+WIRING & CAPABILITY CONTRACT AND NODE PATTERNS:
+
+{contract_guidance}
+
 NODE TYPE CATALOG (step 1's result):
 {catalog}
 
 REAL USAGE EXAMPLES (step 2 — study these before writing the equivalent node):
 {examples}
+
+HIDDEN REFERENCE CORPUS (ranked examples from 400 preflight-clean workflows):
+{reference_examples}
 
 WORKFLOW YAML SHAPE (required fields: name, nodes; nodes must be a non-empty \
 list with unique ids; edges/entry/exit/inputs are optional but should \
@@ -348,6 +391,13 @@ condition: route (always that literal string, never a template), and branches (a
 branches must never reconverge into one shared downstream node via separate plain edges.
 - route_field and any rule's field (DecisionAgent, RouterAgent cases[].when) are bare dotted \
 paths, never wrapped in {{{{...}}}}.
+
+WIRING & CAPABILITY CONTRACT:
+
+{contract_guidance}
+
+HIDDEN REFERENCE CORPUS (use only patterns relevant to the document being repaired):
+{reference_examples}
 
 NODE TYPE CATALOG (every node type already used in the document below is valid; consult this only \
 if you need to understand a field you're changing):
@@ -414,13 +464,19 @@ def _node_type_catalog(type_names: list[str] | None = None) -> str:
             f"{name} ({_field_type_label(schema)})" for name, schema in properties.items()
         ]
         output_fields = list((entry.get("output_schema") or {}).get("properties", {}).keys())
+        contract = entry.get("contract") or {}
+        accepts = ", ".join(contract.get("accepts") or []) or "state"
+        produces = ", ".join(contract.get("produces") or []) or "state"
+        capabilities = ", ".join(contract.get("requires_capabilities") or []) or "none"
         structured = "output_schema" in config_fields
         line = (
             f"- {entry['type_name']} (category: {entry.get('category', 'Other')}): "
             f"{entry.get('description') or 'no description'}. "
             f"Config fields: {', '.join(config_fields_typed) or 'none'}. "
             f"Output fields: {', '.join(output_fields) or 'none'}"
-            f"{' (declares structured output — see note above)' if structured else ''}."
+            f"{' (declares structured output — see note above)' if structured else ''}. "
+            f"Contract v{contract.get('version', '1')}: accepts [{accepts}], "
+            f"produces [{produces}], requires [{capabilities}]."
         )
         lines.append(line)
     return "\n".join(lines)
@@ -496,7 +552,36 @@ def _real_usage_examples(type_names: list[str], manifest: list[dict]) -> str:
     return "\n\n".join(blocks)
 
 
+def _reference_workflow_examples(type_names: list[str], *, limit: int = 3) -> str:
+    """Build a bounded, type-ranked context slice from the hidden corpus."""
+
+    import re
+
+    blocks: list[str] = []
+    root = _REPO_ROOT / "workflows" / "reference" / "generated"
+    for type_name in type_names:
+        slug = re.sub(r"[^a-z0-9]+", "_", type_name.lower()).strip("_")
+        candidates = sorted((root / slug).glob("*.yaml"))
+        if not candidates:
+            continue
+        text = candidates[0].read_text(encoding="utf-8")
+        if len(text) > 2_400:
+            text = text[:2_400].rsplit("\n", 1)[0] + "\n... (reference truncated)"
+        blocks.append(f"# Reference for {type_name}\n{text.strip()}")
+        if len(blocks) >= limit:
+            break
+    return "\n\n".join(blocks) if blocks else "(No matching hidden reference examples found.)"
+
+
 def _strip_code_fence(text: str) -> str:
+    """Internal helper for the strip code fence step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        str: The code fence.
+    """
     text = text.strip()
     if text.startswith("```"):
         lines = text.splitlines()
@@ -537,6 +622,14 @@ def _synthesize_sample_inputs(
 
 @dataclass
 class GenerationAttempt:
+    """Provides the GenerationAttempt behaviour.
+
+    Attributes:
+        stage (str).
+        yaml (str).
+        success (bool).
+        detail (str).
+    """
     stage: str  # "static" | "real_execution"
     yaml: str
     success: bool
@@ -545,6 +638,16 @@ class GenerationAttempt:
 
 @dataclass
 class GenerationResult:
+    """Provides the GenerationResult behaviour.
+
+    Attributes:
+        yaml (str).
+        success (bool).
+        preflight_report (WorkflowPreflightReport | None).
+        execution_result (dict[str, Any] | None).
+        execution_skipped_reason (str | None).
+        attempts (list[GenerationAttempt]).
+    """
     yaml: str
     success: bool
     preflight_report: WorkflowPreflightReport | None
@@ -666,6 +769,12 @@ async def run_generation_pipeline(
 
 
 class GenerateWorkflowRequest(BaseModel):
+    """Pydantic model defining the GenerateWorkflowRequest shape.
+
+    Attributes:
+        prompt (str).
+        sample_inputs (dict[str, Any] | None).
+    """
     prompt: str
     sample_inputs: dict[str, Any] | None = None
 
@@ -725,8 +834,21 @@ def build_llm_yaml_generator(
     }
 
     def _system_prompt(base_prompt: str) -> str:
+        """Internal helper for the system prompt step.
+
+        Args:
+            base_prompt (str): The base prompt.
+
+        Returns:
+            str: The prompt.
+        """
         if mode == "repair":
-            return _REPAIR_SYSTEM_PROMPT_TEMPLATE.format(catalog=full_catalog)
+            return _REPAIR_SYSTEM_PROMPT_TEMPLATE.format(
+                catalog=full_catalog, contract_guidance=_CONTRACT_GUIDANCE,
+                reference_examples=_reference_workflow_examples(
+                    sorted(NodeRegistry._registry), limit=3,
+                ),
+            )
         if system_prompt_state["escalated"]:
             # The full registry is the safety net for a retry — but step 2's
             # real-usage grounding stays scoped to the original shortlist
@@ -744,12 +866,29 @@ def build_llm_yaml_generator(
             catalog = _node_type_catalog(candidates)
             examples = _real_usage_examples(candidates, manifest)
             system_prompt_state["model"] = select_generation_model(base_prompt, manifest)
+        reference_types = (
+            sorted(NodeRegistry._registry)
+            if system_prompt_state["escalated"]
+            else candidates
+        )
         return _SYSTEM_PROMPT_TEMPLATE.format(
             catalog=catalog, examples=examples, example=_EXAMPLE_WORKFLOW_YAML,
             routing_example=_ROUTING_EXAMPLE_YAML,
+            contract_guidance=_CONTRACT_GUIDANCE,
+            reference_examples=_reference_workflow_examples(reference_types),
         )
 
     async def generate_yaml(base_prompt: str, prior_yaml: str | None, feedback: str | None) -> str:
+        """Generate the yaml.
+
+        Args:
+            base_prompt (str): The base prompt.
+            prior_yaml (str | None): The prior yaml.
+            feedback (str | None): The feedback.
+
+        Returns:
+            str: The yaml.
+        """
         if feedback and mode != "repair":
             # A retry means the shortlist may have been wrong (or simply
             # incomplete) — widen to the full registry starting with this
@@ -803,6 +942,13 @@ async def generate_workflow_endpoint(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Generate the workflow endpoint.
+
+    Args:
+        req (GenerateWorkflowRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     llm = services.get("llm")
     if llm is None:
@@ -823,6 +969,14 @@ async def generate_workflow_endpoint(
         # input on every generation call that didn't happen to also pass
         # sample_inputs, which is nearly all of them. `sample_inputs`, when a
         # caller does provide it, still gets checked for real below.
+        """Compute the static check.
+
+        Args:
+            yaml_text (str): Workflow YAML text.
+
+        Returns:
+            tuple[WorkflowPreflightReport, dict[str, WorkflowInputSpec]]: The check.
+        """
         report = await preflight_workflow_for_run(
             yaml_text, provided_inputs=req.sample_inputs, services=services,
             probe_services=True, require_run_history=False,
@@ -836,6 +990,15 @@ async def generate_workflow_endpoint(
         return report, declared_inputs
 
     async def execute(yaml_text: str, inputs: dict[str, Any]) -> dict[str, Any]:
+        """Execute the result.
+
+        Args:
+            yaml_text (str): Workflow YAML text.
+            inputs (dict[str, Any]): Workflow input mapping.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         spec = load_workflow_from_string(yaml_text)
         try:
             return await run_workflow(

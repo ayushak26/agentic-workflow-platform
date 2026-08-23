@@ -16,6 +16,15 @@ from typing import Any
 
 
 def _string(description: str, **extra: Any) -> dict[str, Any]:
+    """Internal helper for the string step.
+
+    Args:
+        description (str): The description.
+        **extra (Any): The extra.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {"type": "string", "description": description, **extra}
 
 
@@ -44,6 +53,11 @@ def _collection(key: str, item_schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def _customer_item() -> dict[str, Any]:
+    """Internal helper for the customer item step.
+
+    Returns:
+        dict[str, Any]: The item.
+    """
     return {
         "type": "object",
         "properties": {
@@ -69,6 +83,11 @@ def _customer_item() -> dict[str, Any]:
 
 
 def _order_item() -> dict[str, Any]:
+    """Internal helper for the order item step.
+
+    Returns:
+        dict[str, Any]: The item.
+    """
     return {
         "type": "object",
         "properties": {
@@ -83,6 +102,11 @@ def _order_item() -> dict[str, Any]:
 
 
 def _inventory_item() -> dict[str, Any]:
+    """Internal helper for the inventory item step.
+
+    Returns:
+        dict[str, Any]: The item.
+    """
     return {
         "type": "object",
         "properties": {
@@ -98,6 +122,11 @@ def _inventory_item() -> dict[str, Any]:
 
 
 def _product_item() -> dict[str, Any]:
+    """Internal helper for the product item step.
+
+    Returns:
+        dict[str, Any]: The item.
+    """
     return {
         "type": "object",
         "properties": {
@@ -116,6 +145,11 @@ def _product_item() -> dict[str, Any]:
 
 
 def _case_record() -> dict[str, Any]:
+    """Internal helper for the case record step.
+
+    Returns:
+        dict[str, Any]: The record.
+    """
     return {
         "type": "object",
         "properties": {
@@ -135,6 +169,11 @@ def _case_record() -> dict[str, Any]:
 
 
 def _opportunity_record() -> dict[str, Any]:
+    """Internal helper for the opportunity record step.
+
+    Returns:
+        dict[str, Any]: The record.
+    """
     return {
         "type": "object",
         "properties": {
@@ -151,6 +190,11 @@ def _opportunity_record() -> dict[str, Any]:
 
 
 def _order_record() -> dict[str, Any]:
+    """Internal helper for the order record step.
+
+    Returns:
+        dict[str, Any]: The record.
+    """
     return {
         "type": "object",
         "properties": {

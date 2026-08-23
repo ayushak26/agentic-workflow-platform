@@ -6,7 +6,7 @@
 // which is exactly what react-refresh/only-export-components warns about —
 // deliberately disabled here since this module is a shared utilities file,
 // not a component meant to hot-reload standalone.
-/* eslint-disable react-refresh/only-export-components */
+ 
 import type { NavigateFunction } from 'react-router-dom';
 import { api } from '../../../api/client';
 import { CopyButton } from '../../../components/CopyButton';

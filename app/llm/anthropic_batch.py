@@ -26,6 +26,14 @@ _ENDED_STATUS = "ended"
 
 
 def _tool_name_for(response_model: Type[BaseModel]) -> str:
+    """Internal helper for the tool name for step.
+
+    Args:
+        response_model (Type[BaseModel]): The response model.
+
+    Returns:
+        str: The name for.
+    """
     return "emit_" + response_model.__name__.lower()
 
 
@@ -54,6 +62,11 @@ class AnthropicBatchService:
     """Submit, poll, and read back an Anthropic Message Batch."""
 
     def __init__(self, api_key: str | None = None):
+        """Initialize the AnthropicBatchService.
+
+        Args:
+            api_key (str | None): API key (optional, default None).
+        """
         self._client = AsyncAnthropic(
             api_key=api_key or settings.anthropic_api_key,
             timeout=settings.llm_request_timeout_seconds,
@@ -70,6 +83,14 @@ class AnthropicBatchService:
         return batch.id
 
     async def status(self, batch_id: str) -> BatchStatus:
+        """Compute the status.
+
+        Args:
+            batch_id (str): The batch id.
+
+        Returns:
+            BatchStatus: The result.
+        """
         batch = await self._client.messages.batches.retrieve(batch_id)
         counts = batch.request_counts
         return BatchStatus(

@@ -21,12 +21,25 @@ TERMINAL_STAGE_STATUSES = {"completed", "failed", "rejected"}
 
 
 def _require_session(session_id: str) -> str:
+    """Internal helper for the require session step.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+
+    Returns:
+        str: The session.
+    """
     if not session_id or not session_id.strip():
         raise ValueError("session_id is mandatory for pipeline history access")
     return session_id
 
 
 async def ensure_pipeline_indexes(db) -> None:
+    """Ensure the pipeline indexes.
+
+    Args:
+        db: Mongo database handle.
+    """
     await db["pipeline_runs"].create_index("pipeline_run_id", unique=True)
     await db["pipeline_runs"].create_index(
         [("session_id", 1), ("created_at", -1)]
@@ -103,6 +116,16 @@ async def record_stage_launch(
 async def get_pipeline_run(
     db, session_id: str, pipeline_run_id: str,
 ) -> dict[str, Any] | None:
+    """Return the pipeline run.
+
+    Args:
+        db: Mongo database handle.
+        session_id (str): Session scope the record belongs to.
+        pipeline_run_id (str): The pipeline run id.
+
+    Returns:
+        dict[str, Any] | None: The pipeline run.
+    """
     _require_session(session_id)
     return await db["pipeline_runs"].find_one(
         {"session_id": session_id, "pipeline_run_id": pipeline_run_id},
@@ -113,6 +136,16 @@ async def get_pipeline_run(
 async def list_pipeline_runs(
     db, session_id: str, limit: int = 50,
 ) -> list[dict[str, Any]]:
+    """List the pipeline runs.
+
+    Args:
+        db: Mongo database handle.
+        session_id (str): Session scope the record belongs to.
+        limit (int): Maximum number of items to return (optional, default 50).
+
+    Returns:
+        list[dict[str, Any]]: The pipeline runs.
+    """
     _require_session(session_id)
     cursor = (
         db["pipeline_runs"]

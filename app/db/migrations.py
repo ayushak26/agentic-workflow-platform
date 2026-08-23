@@ -32,12 +32,26 @@ class MigrationError(RuntimeError):
 
 @dataclass(frozen=True)
 class Migration:
+    """Provides the Migration behaviour.
+
+    Attributes:
+        migration_id (str).
+        description (str).
+        apply (Callable[[Any], Awaitable[None]]).
+    """
     migration_id: str
     description: str
     apply: Callable[[Any], Awaitable[None]]
 
 
 async def _set_missing(collection: Any, field: str, value: Any) -> None:
+    """Set the missing.
+
+    Args:
+        collection (Any): Mongo collection.
+        field (str): The field.
+        value (Any): Value to process.
+    """
     await collection.update_many(
         {field: {"$exists": False}},
         {"$set": {field: value}},
@@ -116,6 +130,13 @@ async def _acquire_lock(
     owner: str,
     wait_timeout_seconds: float,
 ) -> None:
+    """Acquire the lock.
+
+    Args:
+        collection (Any): Mongo collection.
+        owner (str): Lease owner identifier.
+        wait_timeout_seconds (float): The wait timeout seconds.
+    """
     deadline = asyncio.get_running_loop().time() + wait_timeout_seconds
     while True:
         now = datetime.now(timezone.utc)
@@ -150,6 +171,12 @@ async def _acquire_lock(
 
 
 async def _renew_lock(collection: Any, *, owner: str) -> None:
+    """Renew the lock.
+
+    Args:
+        collection (Any): Mongo collection.
+        owner (str): Lease owner identifier.
+    """
     now = datetime.now(timezone.utc)
     result = await collection.update_one(
         {"_id": _LOCK_ID, "owner": owner},

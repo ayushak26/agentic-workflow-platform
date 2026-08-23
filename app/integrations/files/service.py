@@ -42,6 +42,11 @@ IntegrationOperation = Literal[
 
 
 def _now() -> datetime:
+    """Internal helper for the now step.
+
+    Returns:
+        datetime: The result.
+    """
     return datetime.now(UTC)
 
 
@@ -64,6 +69,18 @@ def _as_id_list(value: str | list[str] | None) -> list[str]:
 
 
 class IntegrationResult(BaseModel):
+    """Pydantic model defining the IntegrationResult shape.
+
+    Attributes:
+        operation (str).
+        provider (str).
+        connection_id (str).
+        files (list[CloudFileMeta]).
+        selected_files (list[CloudFileMeta]).
+        file (CloudFileMeta | None).
+        downloaded_list (list[DownloadedFile]).
+        downloaded (DownloadedFile | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     operation: str
@@ -94,6 +111,13 @@ class IntegrationService:
         connections: dict[str, IntegrationConnection],
         db: Any = None,
     ):
+        """Initialize the IntegrationService.
+
+        Args:
+            providers (dict[str, IntegrationProvider]): The providers.
+            connections (dict[str, IntegrationConnection]): The connections.
+            db (Any): Mongo database handle (optional, default None).
+        """
         self.providers = providers
         self.connections = connections
         # Only used for OAuth-issued connections' token refresh (see
@@ -104,6 +128,14 @@ class IntegrationService:
     # -- connection resolution -----------------------------------------
 
     def connection(self, connection_id: str) -> IntegrationConnection:
+        """Compute the connection.
+
+        Args:
+            connection_id (str): The connection id.
+
+        Returns:
+            IntegrationConnection: The result.
+        """
         found = self.connections.get(connection_id)
         if found is None:
             raise IntegrationConnectionError(
@@ -119,6 +151,11 @@ class IntegrationService:
         self.connections[connection.id] = connection
 
     def remove_connection(self, connection_id: str) -> None:
+        """Remove the connection.
+
+        Args:
+            connection_id (str): The connection id.
+        """
         self.connections.pop(connection_id, None)
 
     async def _refreshed(self, connection: IntegrationConnection) -> IntegrationConnection:
@@ -191,6 +228,14 @@ class IntegrationService:
         return refreshed
 
     def provider_for(self, connection: IntegrationConnection) -> IntegrationProvider:
+        """Compute the provider for.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+
+        Returns:
+            IntegrationProvider: The for.
+        """
         found = self.providers.get(connection.provider)
         if found is None:
             raise IntegrationConnectionError(
@@ -225,6 +270,20 @@ class IntegrationService:
         page_size: int = 25,
         page_token: str | None = None,
     ) -> IntegrationResult:
+        """Execute the result.
+
+        Args:
+            connection_id (str): The connection id.
+            operation (IntegrationOperation): The operation.
+            folder_id (str | list[str] | None): The folder id (optional, default None).
+            file_id (str | list[str] | None): The file id (optional, default None).
+            query (str): Query filter (optional, default '').
+            page_size (int): The page size (optional, default 25).
+            page_token (str | None): The page token (optional, default None).
+
+        Returns:
+            IntegrationResult: The result.
+        """
         connection = await self._refreshed(self.connection(connection_id))
         provider = self.provider_for(connection)
 

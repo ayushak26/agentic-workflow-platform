@@ -3,9 +3,11 @@ import { login } from "../../api/client";   // <-- add this import
 
 interface Props {
   onLogin: (username: string) => void;       // <-- token no longer needed here
+  /** Informational banner (e.g. "session expired") shown above the form. */
+  notice?: string;
 }
 
-export const LoginPage: FC<Props> = ({ onLogin }) => {
+export const LoginPage: FC<Props> = ({ onLogin, notice }) => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError]       = useState("");
@@ -61,6 +63,15 @@ export const LoginPage: FC<Props> = ({ onLogin }) => {
         </div>
 
         {/* Fields */}
+        {notice && (
+          <div role="status" style={{
+            fontSize: 12, color: "var(--eur-navy)", background: "#f2f5f8",
+            border: "1px solid var(--eur-border-mid)", borderRadius: 8,
+            padding: "8px 12px", marginBottom: 14, textAlign: "center",
+          }}>
+            {notice}
+          </div>
+        )}
         <div style={{ marginBottom: 12 }}>
           <label style={{ fontSize: 11, fontWeight: 500, color: "var(--eur-text-secondary)", display: "block", marginBottom: 5 }}>
             Username

@@ -86,6 +86,11 @@ export type NodeExperienceSpec = {
   expected_output?: string;
   success_condition?: string;
   quality_checks?: string[];
+  // In-progress vs done copy for the chat/business surfaces (mirrors the
+  // backend NodeExperienceSpec): the chat shows running_message while this
+  // step executes and completed_message once it finishes.
+  running_message?: string;
+  completed_message?: string;
   failure_message?: string;
   recovery_actions?: string[];
   visibility?: GuidedVisibility;
@@ -209,10 +214,11 @@ export function parseYaml(text: string): YamlWorkflow {
 
 /** Does this workflow's Start node collect a free-text chat message?
  *
- * `parseYaml` is a raw parse — it does NOT run `deriveInputsFromStartNode`
- * (that only happens inside `reactFlowToYaml`, the Builder-canvas save
- * path). So `parsed.inputs` for a chatbot-mode Start with no hand-written
- * top-level `inputs:` block (the normal case — see RunDialog's own
+ * `parseYaml` is a raw parse — it does not derive runnable inputs from the
+ * Start node (that is a read-time concern: the backend does it at load time
+ * in app/runtime/schema.py, and RunDialog does it from the YAML itself). So
+ * `parsed.inputs` for a chatbot-mode Start with no hand-written top-level
+ * `inputs:` block (the normal case — see RunDialog's own
  * `chatbotStartConfigFrom`) is simply absent, and any caller that infers
  * "this workflow needs no input step" from an empty `inputs:` map is wrong
  * for exactly this shape: it still needs a chat message, just not one
@@ -304,50 +310,14 @@ export function yamlToReactFlow(
 }
 
 /**
- * Mirrors app/runtime/schema.py's WorkflowSpec.derive_inputs_from_start_node —
- * a Start node is the single place a workflow author declares what this
- * workflow needs (see app/nodes/start.py), and this projects those
- * declarations into the same `inputs:` shape the Run dialog and
- * WorkflowInputsPanel already know how to render, so a Start-having
- * workflow's fields are runnable without either component needing its own
- * Start-awareness. Explicit `inputs:` entries always win — this only fills
- * in names not already declared by hand, matching the backend exactly so
- * the two stay in sync.
+ * Derivation of a workflow's runnable `inputs:` from its Start node is a
+ * read-time concern, deliberately NOT applied on this save path: the backend
+ * re-derives inputs at load time (app/runtime/schema.py →
+ * derive_inputs_from_start_node) and the Run dialog derives them from the
+ * YAML itself (RunDialog.tsx). Materializing them into saved YAML mutated
+ * shipped workflows on every open-and-save (caught by the round-trip test),
+ * so reactFlowToYaml now preserves the authored `inputs:` block exactly.
  */
-function deriveInputsFromStartNode(
-  nodes: YamlWorkflowNode[],
-): Record<string, WorkflowInputSpec> {
-  const derived: Record<string, WorkflowInputSpec> = {};
-  for (const node of nodes) {
-    if (node.type !== 'StartAgent') continue;
-    const config = node.config ?? {};
-    if (config.mode === 'chatbot') {
-      if (config.allow_attachments !== false) {
-        derived.attachments ??= { type: 'file', required: false, multiple: true };
-      }
-      continue;
-    }
-    for (const field of (config.file_fields as Array<Record<string, unknown>> | undefined) ?? []) {
-      const name = typeof field.name === 'string' ? field.name : '';
-      if (!name) continue;
-      const multiple = Boolean(field.multiple);
-      derived[name] = {
-        type: 'file',
-        required: Boolean(field.required),
-        multiple,
-        accept: Array.isArray(field.accept) ? field.accept as string[] : FILE_CATEGORIES.map(([value]) => value),
-        max_files: multiple && typeof field.max_files === 'number' ? field.max_files : undefined,
-      };
-    }
-    for (const field of (config.fields as Array<Record<string, unknown>> | undefined) ?? []) {
-      const name = typeof field.name === 'string' ? field.name : '';
-      if (name && field.required) {
-        derived[name] = { type: 'json', required: true };
-      }
-    }
-  }
-  return derived;
-}
 
 /** React Flow nodes + edges → YAML workflow (used in 9B.2b for save). */
 export function reactFlowToYaml(
@@ -413,7 +383,6 @@ export function reactFlowToYaml(
   return {
     ...meta,
     version: meta.version ?? '1.0',
-    inputs: { ...deriveInputsFromStartNode(nodes), ...(meta.inputs ?? {}) },
     nodes,
     edges,
   };

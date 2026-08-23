@@ -1,8 +1,19 @@
+"""Logging module.
+
+Part of the observability: structured logging, prometheus metrics, tracing, and the cost ledger.
+
+Public symbols: configure_logging, get_logger.
+"""
 import structlog
 import sys,logging
 
 
 def configure_logging(environment: str = "development") -> None:
+    """Configure the logging.
+
+    Args:
+        environment (str): Environment name (optional, default 'development').
+    """
     shared_processors = [
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,
@@ -38,4 +49,9 @@ def configure_logging(environment: str = "development") -> None:
     root.setLevel(logging.INFO)
 
 def get_logger(name: str = __name__):
+    """Return the logger.
+
+    Args:
+        name (str): Workflow or resource name (optional, default __name__).
+    """
     return structlog.get_logger(name)

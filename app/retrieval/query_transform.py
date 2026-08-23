@@ -19,6 +19,16 @@ _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*\d]+[.)]?)\s*", re.MULTILINE)
 
 
 async def _safe_complete(llm: Any, *, system: str, user: str) -> str | None:
+    """Internal helper for the safe complete step.
+
+    Args:
+        llm (Any): The llm.
+        system (str): The system.
+        user (str): Authenticated current user.
+
+    Returns:
+        str | None: The complete.
+    """
     if llm is None:
         return None
     try:
@@ -29,6 +39,15 @@ async def _safe_complete(llm: Any, *, system: str, user: str) -> str | None:
 
 
 def _split_lines(text: str, *, limit: int) -> list[str]:
+    """Split the lines.
+
+    Args:
+        text (str): The text.
+        limit (int): Maximum number of items to return.
+
+    Returns:
+        list[str]: The lines.
+    """
     lines = [_LIST_ITEM_RE.sub("", line).strip() for line in text.splitlines()]
     return [line for line in lines if line][:limit]
 

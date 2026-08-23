@@ -56,6 +56,7 @@ class _MinimalLLM:
 
 
 async def main() -> None:
+    """Compute the main."""
     bus = RunEventBus()
 
     # Trace every publish. This is a debugging seam, not production code —
@@ -63,6 +64,11 @@ async def main() -> None:
     real_publish = bus.publish
 
     async def trace(evt: RunEvent) -> None:
+        """Compute the trace.
+
+        Args:
+            evt (RunEvent): Run event.
+        """
         line = f"[{evt.type:18s}] node={evt.node_id or '-':<10s}"
         if evt.output_preview:
             line += f"  preview={evt.output_preview[:80]}"

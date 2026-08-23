@@ -159,6 +159,7 @@ class CatalogEntry:
 
     @property
     def emits_text(self) -> bool:
+        """The emits text."""
         return "text" in self.output_modalities
 
     @property
@@ -177,16 +178,19 @@ class CatalogEntry:
 
     @property
     def claims_structured(self) -> bool:
+        """The claims structured."""
         return bool(
             {"structured_outputs", "response_format"} & self.supported_parameters
         )
 
     @property
     def claims_tools(self) -> bool:
+        """The claims tools."""
         return "tools" in self.supported_parameters
 
     @property
     def claims_reasoning(self) -> bool:
+        """The claims reasoning."""
         return bool(
             {"reasoning", "include_reasoning", "reasoning_effort"}
             & self.supported_parameters
@@ -208,6 +212,14 @@ class CatalogEntry:
         }
 
     def worst_case_cost_usd(self, probes: Iterable[str]) -> float:
+        """Compute the worst case cost usd.
+
+        Args:
+            probes (Iterable[str]): The probes.
+
+        Returns:
+            float: The case cost usd.
+        """
         ceilings = self.ceilings
         total = 0.0
         for probe in probes:
@@ -233,6 +245,11 @@ def _price(raw: Any) -> float | None:
 
 
 async def fetch_catalog() -> list[CatalogEntry]:
+    """Fetch the catalog.
+
+    Returns:
+        list[CatalogEntry]: The catalog.
+    """
     async with httpx.AsyncClient(
         base_url=settings.openrouter_base_url,
         timeout=settings.openrouter_request_timeout_seconds,
@@ -335,6 +352,15 @@ class FatalProviderError(RuntimeError):
 
 @dataclass
 class ProbeResult:
+    """Provides the ProbeResult behaviour.
+
+    Attributes:
+        status (str).
+        detail (str).
+        seconds (float).
+        cost_usd (float | None).
+        output_tokens (int).
+    """
     status: str  # "ok" | "fail" | "skip"
     detail: str = ""
     seconds: float = 0.0
@@ -342,6 +368,11 @@ class ProbeResult:
     output_tokens: int = 0
 
     def as_dict(self) -> dict[str, Any]:
+        """Compute the as dict.
+
+        Returns:
+            dict[str, Any]: The dict.
+        """
         return {
             "status": self.status,
             "detail": self.detail,
@@ -353,6 +384,15 @@ class ProbeResult:
 
 @dataclass
 class ModelResult:
+    """Provides the ModelResult behaviour.
+
+    Attributes:
+        model (str).
+        display_name (str).
+        verdict (str).
+        probes (dict[str, ProbeResult]).
+        seconds (float).
+    """
     model: str
     display_name: str
     verdict: str = "down"
@@ -361,9 +401,15 @@ class ModelResult:
 
     @property
     def cost_usd(self) -> float:
+        """The cost usd."""
         return sum(p.cost_usd or 0.0 for p in self.probes.values())
 
     def as_dict(self) -> dict[str, Any]:
+        """Compute the as dict.
+
+        Returns:
+            dict[str, Any]: The dict.
+        """
         return {
             "model": self.model,
             "display_name": self.display_name,
@@ -393,6 +439,14 @@ def _http_detail(error: httpx.HTTPStatusError) -> str:
 
 
 def _classify(error: BaseException) -> str:
+    """Classify the result.
+
+    Args:
+        error (BaseException): Error value or message.
+
+    Returns:
+        str: The result.
+    """
     if isinstance(error, httpx.HTTPStatusError):
         return _http_detail(error)
     if isinstance(error, asyncio.TimeoutError):
@@ -405,6 +459,14 @@ def _classify(error: BaseException) -> str:
 
 
 def _is_fatal(error: BaseException) -> bool:
+    """Return whether fatal.
+
+    Args:
+        error (BaseException): Error value or message.
+
+    Returns:
+        bool: True when fatal.
+    """
     return (
         isinstance(error, httpx.HTTPStatusError)
         and error.response.status_code in (401, 402, 403)
@@ -412,6 +474,14 @@ def _is_fatal(error: BaseException) -> bool:
 
 
 def _is_retryable(error: BaseException) -> bool:
+    """Return whether retryable.
+
+    Args:
+        error (BaseException): Error value or message.
+
+    Returns:
+        bool: True when retryable.
+    """
     if isinstance(error, asyncio.TimeoutError):
         return False
     if isinstance(error, httpx.HTTPStatusError):
@@ -465,6 +535,18 @@ async def probe_model(
     timeout: float,
     retry_delay: float,
 ) -> ModelResult:
+    """Probe the model.
+
+    Args:
+        gateway (OpenRouterGateway): LLM gateway.
+        entry (CatalogEntry): Ledger entry.
+        probes (tuple[str, ...]): The probes.
+        timeout (float): Timeout in seconds.
+        retry_delay (float): The retry delay.
+
+    Returns:
+        ModelResult: The model.
+    """
     result = ModelResult(model=entry.platform_id, display_name=entry.name)
     started = time.monotonic()
     model = entry.platform_id
@@ -654,6 +736,16 @@ def _select(
 def _apply_limit(
     selected: list[CatalogEntry], excluded: list[tuple[str, str]], limit: int | None
 ) -> list[CatalogEntry]:
+    """Apply the limit.
+
+    Args:
+        selected (list[CatalogEntry]): The selected.
+        excluded (list[tuple[str, str]]): The excluded.
+        limit (int | None): Maximum number of items to return.
+
+    Returns:
+        list[CatalogEntry]: The limit.
+    """
     if not limit:
         return selected
     excluded.extend((entry.id, f"beyond --limit {limit}") for entry in selected[limit:])
@@ -698,10 +790,26 @@ async def filter_by_provider(
 
 
 def _verdict_mark(verdict: str) -> str:
+    """Internal helper for the verdict mark step.
+
+    Args:
+        verdict (str): The verdict.
+
+    Returns:
+        str: The mark.
+    """
     return {"healthy": "PASS", "degraded": "WARN", "down": "FAIL"}.get(verdict, "????")
 
 
 def _probe_summary(result: ModelResult) -> str:
+    """Probe the summary.
+
+    Args:
+        result (ModelResult): Result mapping.
+
+    Returns:
+        str: The summary.
+    """
     parts = []
     for name in PROBE_NAMES:
         probe = result.probes.get(name)
@@ -713,6 +821,15 @@ def _probe_summary(result: ModelResult) -> str:
 
 
 async def sweep(entries: list[CatalogEntry], args: argparse.Namespace) -> list[ModelResult]:
+    """Sweep the result.
+
+    Args:
+        entries (list[CatalogEntry]): Entries to process.
+        args (argparse.Namespace): Positional arguments.
+
+    Returns:
+        list[ModelResult]: The result.
+    """
     gateway = OpenRouterGateway(api_key=settings.openrouter_api_key)
     semaphore = asyncio.Semaphore(args.concurrency)
     results: list[ModelResult] = []
@@ -721,6 +838,11 @@ async def sweep(entries: list[CatalogEntry], args: argparse.Namespace) -> list[M
     total = len(entries)
 
     async def worker(entry: CatalogEntry) -> None:
+        """Compute the worker.
+
+        Args:
+            entry (CatalogEntry): Ledger entry.
+        """
         nonlocal done
         if aborted:
             return
@@ -763,6 +885,16 @@ def report(
     excluded: list[tuple[str, str]],
     args: argparse.Namespace,
 ) -> int:
+    """Report the result.
+
+    Args:
+        results (list[ModelResult]): The results.
+        excluded (list[tuple[str, str]]): The excluded.
+        args (argparse.Namespace): Positional arguments.
+
+    Returns:
+        int: The result.
+    """
     healthy = [r for r in results if r.verdict == "healthy"]
     degraded = [r for r in results if r.verdict == "degraded"]
     down = [r for r in results if r.verdict == "down"]
@@ -828,6 +960,14 @@ def report(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the args.
+
+    Args:
+        argv (list[str] | None): The argv (optional, default None).
+
+    Returns:
+        argparse.Namespace: The args.
+    """
     parser = argparse.ArgumentParser(
         description="Probe every OpenRouter LLM through Eurskem's production gateway.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -892,6 +1032,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def run(args: argparse.Namespace) -> int:
+    """Run the result.
+
+    Args:
+        args (argparse.Namespace): Positional arguments.
+
+    Returns:
+        int: The result.
+    """
     async with httpx.AsyncClient(
         base_url=settings.openrouter_base_url,
         timeout=settings.openrouter_request_timeout_seconds,
@@ -974,6 +1122,11 @@ async def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Compute the main.
+
+    Returns:
+        int: The result.
+    """
     return asyncio.run(run(parse_args()))
 
 

@@ -41,6 +41,7 @@ log = get_logger(__name__)
 
 
 class MinIOEvidenceIngestionInput(BaseModel):
+    """Pydantic model defining the MinIOEvidenceIngestionInput shape."""
     pass
 
 
@@ -49,6 +50,17 @@ class MinIOEvidenceIngestionConfig(BaseModel):
     # display_number + citation_id; we also need the MinIO pages key, which the
     # registry entry does not have - so we ALSO take the raw documents list to
     # resolve pages_object_key per source. Both are templated in.
+    """Pydantic model defining the MinIOEvidenceIngestionConfig shape.
+
+    Attributes:
+        citation_registry (str | list[dict[str, Any]]).
+        documents (str | list[dict[str, Any]]).
+        chunk_chars (int).
+        chunk_overlap_chars (int).
+        max_chunks_per_source (int).
+        max_total_chunks (int).
+        embed_batch_size (int).
+    """
     citation_registry: str | list[dict[str, Any]] = Field(default_factory=list)
     documents: str | list[dict[str, Any]] = Field(default_factory=list)
     chunk_chars: int = Field(default=1200, ge=200, le=4000)
@@ -60,12 +72,30 @@ class MinIOEvidenceIngestionConfig(BaseModel):
     @field_validator("citation_registry", "documents", mode="before")
     @classmethod
     def _reject_unresolved(cls, value: Any) -> Any:
+        """Internal helper for the reject unresolved step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The unresolved.
+        """
         if isinstance(value, dict) and "documents" in value:
             return value["documents"]
         return value
 
 
 class MinIOEvidenceIngestionOutput(BaseModel):
+    """Pydantic model defining the MinIOEvidenceIngestionOutput shape.
+
+    Attributes:
+        sources_indexed (int).
+        sources_skipped (int).
+        chunks_written (int).
+        collection_id (str).
+        session_id (str).
+        skipped_detail (list[dict[str, str]]).
+    """
     sources_indexed: int = 0
     sources_skipped: int = 0
     chunks_written: int = 0
@@ -76,6 +106,13 @@ class MinIOEvidenceIngestionOutput(BaseModel):
 
 @NodeRegistry.register
 class MinIOEvidenceIngestion(NodeType):
+    """Workflow node type implementing the MinIOEvidenceIngestion capability.
+
+    Attributes:
+        input_schema (ClassVar[type[BaseModel]]).
+        config_schema (ClassVar[type[BaseModel]]).
+        output_schema (ClassVar[type[BaseModel]]).
+    """
     type_name = "MinIOEvidenceIngestion"
     description = (
         "Index acquired full-text sources (from MinIO pages.json) into "
@@ -91,6 +128,15 @@ class MinIOEvidenceIngestion(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = MinIOEvidenceIngestionConfig(**resolved_config)
         if isinstance(cfg.citation_registry, str) or isinstance(
             cfg.documents, str
@@ -243,6 +289,14 @@ class MinIOEvidenceIngestion(NodeType):
 
 
 def _load_pages(raw: bytes) -> list[dict[str, Any]]:
+    """Load the pages.
+
+    Args:
+        raw (bytes): Raw value.
+
+    Returns:
+        list[dict[str, Any]]: The pages.
+    """
     payload = json.loads(raw.decode("utf-8"))
     pages = payload.get("pages") if isinstance(payload, dict) else payload
     return pages if isinstance(pages, list) else []
@@ -251,6 +305,15 @@ def _load_pages(raw: bytes) -> list[dict[str, Any]]:
 def _source_path(doc: dict[str, Any], number: int) -> str:
     # doc_title in retrieval is source_path.split("/")[-1], so end the path
     # with a human-meaningful, [N]-prefixed identity.
+    """Internal helper for the source path step.
+
+    Args:
+        doc (dict[str, Any]): Document.
+        number (int): The number.
+
+    Returns:
+        str: The path.
+    """
     title = str(doc.get("title") or "source").strip().replace("/", "-")[:80]
     return f"evidence/{number:04d}/{title}"
 
@@ -262,6 +325,17 @@ def _chunk_pages(
     overlap: int,
     max_chunks: int,
 ) -> list[tuple[int, str]]:
+    """Chunk the pages.
+
+    Args:
+        pages (list[dict[str, Any]]): The pages.
+        chunk_chars (int): The chunk chars.
+        overlap (int): The overlap.
+        max_chunks (int): The max chunks.
+
+    Returns:
+        list[tuple[int, str]]: The pages.
+    """
     chunks: list[tuple[int, str]] = []
     for page in pages:
         page_no = int(page.get("page") or 0)
@@ -283,6 +357,11 @@ def _chunk_pages(
 
 
 def _rfc3339_now() -> str:
+    """Internal helper for the rfc3339 now step.
+
+    Returns:
+        str: The now.
+    """
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()

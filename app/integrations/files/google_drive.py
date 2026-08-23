@@ -47,14 +47,28 @@ _EXPORT_MIME_MAP: dict[str, str] = {
 
 
 class GoogleDriveProvider(IntegrationProvider):
+    """Provides the GoogleDriveProvider behaviour."""
     provider = "google_drive"
 
     def __init__(self, client: httpx.AsyncClient | None = None):
         # An injected client is how tests drive this adapter against a
         # transport mock, and how a deployment shares one connection pool.
+        """Initialize the GoogleDriveProvider.
+
+        Args:
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+        """
         self._client = client
 
     def _headers(self, connection: IntegrationConnection) -> dict[str, str]:
+        """Internal helper for the headers step.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+
+        Returns:
+            dict[str, str]: The result.
+        """
         token = connection.credentials.get("access_token")
         if not token:
             raise IntegrationAdapterError(
@@ -71,6 +85,17 @@ class GoogleDriveProvider(IntegrationProvider):
         url: str,
         **kwargs: Any,
     ) -> httpx.Response:
+        """Internal helper for the request step.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            method (str): The method.
+            url (str): Target URL.
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            httpx.Response: The result.
+        """
         client = self._client or httpx.AsyncClient(timeout=_TIMEOUT)
         owns_client = self._client is None
         try:
@@ -110,6 +135,17 @@ class GoogleDriveProvider(IntegrationProvider):
         page_size: int,
         page_token: str | None,
     ) -> Page:
+        """List the folder.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            folder_id (str | None): The folder id.
+            page_size (int): The page size.
+            page_token (str | None): The page token.
+
+        Returns:
+            Page: The folder.
+        """
         parent = folder_id or "root"
         response = await self._request(
             connection,
@@ -134,6 +170,18 @@ class GoogleDriveProvider(IntegrationProvider):
         page_size: int,
         page_token: str | None,
     ) -> Page:
+        """Search the files.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            query (str): Query filter.
+            folder_id (str | None): The folder id.
+            page_size (int): The page size.
+            page_token (str | None): The page token.
+
+        Returns:
+            Page: The files.
+        """
         escaped = query.replace("'", "\\'")
         clauses = [f"name contains '{escaped}'", "trashed=false"]
         if folder_id:
@@ -155,6 +203,15 @@ class GoogleDriveProvider(IntegrationProvider):
     async def get_file_meta(
         self, connection: IntegrationConnection, *, file_id: str
     ) -> CloudFileMeta:
+        """Return the file meta.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            file_id (str): The file id.
+
+        Returns:
+            CloudFileMeta: The file meta.
+        """
         response = await self._request(
             connection,
             "GET",
@@ -168,6 +225,15 @@ class GoogleDriveProvider(IntegrationProvider):
     async def download_file(
         self, connection: IntegrationConnection, *, file_id: str
     ) -> DownloadedFile:
+        """Download the file.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            file_id (str): The file id.
+
+        Returns:
+            DownloadedFile: The file.
+        """
         meta = await self.get_file_meta(connection, file_id=file_id)
         export_mime = _EXPORT_MIME_MAP.get(meta.mime_type)
         if export_mime:
@@ -193,6 +259,15 @@ class GoogleDriveProvider(IntegrationProvider):
 
 
 def _to_meta(raw: dict[str, Any], *, parent_id: str | None = None) -> CloudFileMeta:
+    """Internal helper for the to meta step.
+
+    Args:
+        raw (dict[str, Any]): Raw value.
+        parent_id (str | None): The parent id (optional, default None).
+
+    Returns:
+        CloudFileMeta: The meta.
+    """
     mime = raw.get("mimeType", "")
     parents = raw.get("parents") or []
     return CloudFileMeta(
@@ -209,11 +284,28 @@ def _to_meta(raw: dict[str, Any], *, parent_id: str | None = None) -> CloudFileM
 
 
 def _to_page(raw: dict[str, Any], *, parent_id: str | None) -> Page:
+    """Internal helper for the to page step.
+
+    Args:
+        raw (dict[str, Any]): Raw value.
+        parent_id (str | None): The parent id.
+
+    Returns:
+        Page: The page.
+    """
     items = [_to_meta(item, parent_id=parent_id) for item in raw.get("files", [])]
     return Page(items=items, next_page_token=raw.get("nextPageToken"))
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
+    """Parse the timestamp.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        datetime | None: The timestamp.
+    """
     if not value:
         return None
     try:

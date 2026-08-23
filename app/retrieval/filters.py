@@ -56,10 +56,20 @@ def metadata_property_name(key: str) -> str:
 
 
 class MetadataFilterValidationError(ValueError):
+    """Exception raised for the MetadataFilterValidationError case."""
     pass
 
 
 def _field_type(field: str, schema: dict[str, Any]) -> str | None:
+    """Internal helper for the field type step.
+
+    Args:
+        field (str): The field.
+        schema (dict[str, Any]): Schema definition.
+
+    Returns:
+        str | None: The type.
+    """
     if field in STANDARD_METADATA_TYPES:
         return STANDARD_METADATA_TYPES[field]
     properties = schema.get("properties", schema) if isinstance(schema, dict) else {}
@@ -70,6 +80,12 @@ def _field_type(field: str, schema: dict[str, Any]) -> str | None:
 
 
 def _check_field(field: str, schema: dict[str, Any]) -> None:
+    """Check the field.
+
+    Args:
+        field (str): The field.
+        schema (dict[str, Any]): Schema definition.
+    """
     if field in RESERVED_METADATA_FIELDS:
         raise MetadataFilterValidationError(
             f"metadata field {field!r} is a reserved security/provenance field"
@@ -124,6 +140,12 @@ def validate_metadata_document(metadata: dict[str, Any], schema: dict[str, Any])
 
 
 def _validate_group(group: MetadataFilterGroup, schema: dict[str, Any]) -> None:
+    """Validate the group.
+
+    Args:
+        group (MetadataFilterGroup): The group.
+        schema (dict[str, Any]): Schema definition.
+    """
     for predicate in group.predicates:
         _check_field(predicate.field, schema)
         # Membership and range operators carry collections/pairs, so only
@@ -178,6 +200,14 @@ def coerce_metadata_filter_group(
 
 
 def _predicate_to_filter(predicate: MetadataFilterPredicate) -> Filter:
+    """Internal helper for the predicate to filter step.
+
+    Args:
+        predicate (MetadataFilterPredicate): The predicate.
+
+    Returns:
+        Filter: The to filter.
+    """
     property_name = metadata_property_name(predicate.field)
     prop = Filter.by_property(property_name)
     operator = predicate.operator
@@ -203,6 +233,14 @@ def _predicate_to_filter(predicate: MetadataFilterPredicate) -> Filter:
 
 
 def _group_to_filter(group: MetadataFilterGroup) -> Filter | None:
+    """Group the to filter.
+
+    Args:
+        group (MetadataFilterGroup): The group.
+
+    Returns:
+        Filter | None: The to filter.
+    """
     clauses: list[Filter] = [_predicate_to_filter(p) for p in group.predicates]
     for nested in group.groups:
         nested_filter = _group_to_filter(nested)

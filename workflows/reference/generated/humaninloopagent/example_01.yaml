@@ -1,0 +1,441 @@
+name: Reference HumanInLoopAgent 01
+description: A salesperson prepares a quotation that may need approval beyond their
+  own authority. A high discount and a large deal value are two separate approval
+  triggers, and both can apply to the same quote — when they do, the quote goes to
+  Sales Manager approval first and Finance approval second, one sign-off at a time,
+  rather than both at once. (The platform's durable human-review checkpoint currently
+  tracks one pending gate per run; sequencing the two reviews keeps each one independently
+  approvable/ rejectable without relying on concurrent-pause support the runtime doesn't
+  have yet.) Nothing waits on an approval track that was never triggered.
+version: '1.0'
+use_case: sales_operations
+library:
+  title: W05 — Quote and Discount Approval
+  summary: Route a quote to Sales Manager and/or Finance approval, in sequence, based
+    on discount, deal value, and account status.
+  purpose:
+  - Demonstrate a quote that needs more than one sign-off, resolved one review at
+    a time
+  - Keep the approval thresholds deterministic and auditable
+  suitable_for:
+  - Any quote where discount or deal size may exceed a salesperson's own authority
+  not_suitable_for:
+  - Routine quotes within standard authority — those auto-approve here, deliberately
+  outputs:
+  - An approved (or auto-approved) opportunity record for whichever approval track
+    applied
+  input_types:
+  - A quote's company, deal value, discount, and product summary
+  human_reviews:
+    count: 2
+    labels:
+    - Sales Manager Approval
+    - Finance Approval
+  visibility_status: draft
+entry: start
+exit:
+- end_auto
+- end_sales_mgr_approved
+- end_finance_approved
+- end_both_approved
+nodes:
+- id: start
+  type: StartAgent
+  config:
+    mode: input_form
+    title: Quote Approval Request
+    fields:
+    - name: company_name
+      label: Company Name
+      type: string
+      required: true
+    - name: product_summary
+      label: What's Being Quoted
+      type: text
+      required: true
+    - name: deal_value
+      label: Deal Value
+      type: number
+      required: true
+    - name: discount_percentage
+      label: Discount %
+      type: number
+      required: true
+      format: percentage
+  experience:
+    display_name: Quote Approval Request
+    purpose: Capture the quote's commercial terms for approval.
+    contribution: The one entry point for every quote, regardless of size.
+    expected_output: A company, a deal value, and a discount.
+    failure_message: The quote request could not be read.
+- id: find_customer
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_customer
+    fail_on_error: false
+    arguments:
+      customer_name: '{{outputs.start.data.company_name}}'
+  experience:
+    display_name: Check Account Status
+    purpose: See whether this is a designated key/strategic account.
+    contribution: A strategic account can trigger Finance approval regardless of discount
+      size.
+    expected_output: The customer record, including key_account status.
+    failure_message: The account status could not be checked.
+- id: find_crm_account
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365
+    tool: find_account
+    fail_on_error: false
+    arguments:
+      company_name: '{{outputs.start.data.company_name}}'
+  experience:
+    display_name: Look Up CRM Account
+    purpose: Resolve the CRM account id the resulting opportunity will be filed against.
+    contribution: The opportunity is filed against a real, confirmed account.
+    expected_output: The matching CRM account, if one exists.
+    failure_message: The CRM account could not be looked up.
+- id: decide_approval
+  type: DecisionAgent
+  config:
+    defaults:
+      needs_sales_manager_approval: false
+      needs_finance_approval: false
+    rules:
+    - name: A discount above 10% needs Sales Manager approval
+      when:
+        operator: and
+        conditions:
+        - field: start.data.discount_percentage
+          operator: greater_than
+          value: 10
+      then:
+      - field: needs_sales_manager_approval
+        value: true
+    - name: A deal above 100000 needs Finance approval
+      when:
+        operator: and
+        conditions:
+        - field: start.data.deal_value
+          operator: greater_than
+          value: 100000
+      then:
+      - field: needs_finance_approval
+        value: true
+    - name: A strategic account always needs Finance approval
+      when:
+        operator: and
+        conditions:
+        - field: find_customer.first.key_account
+          operator: is_true
+      then:
+      - field: needs_finance_approval
+        value: true
+  experience:
+    display_name: Business Rules
+    purpose: Decide which approvals this specific quote actually needs.
+    contribution: The same thresholds every time — never a judgment call on whether
+      to ask.
+    expected_output: Whether Sales Manager and/or Finance approval is required.
+    failure_message: The approval requirement could not be assessed.
+- id: approval_router
+  type: RouterAgent
+  config:
+    mode: conditions
+    selection: single
+    cases:
+    - route: BOTH
+      description: Both the discount and the deal size/account status need sign-off.
+      when:
+        operator: and
+        conditions:
+        - field: decide_approval.decisions.needs_sales_manager_approval
+          operator: is_true
+        - field: decide_approval.decisions.needs_finance_approval
+          operator: is_true
+    - route: SALES_MANAGER
+      description: The discount exceeds standard authority.
+      when:
+        operator: and
+        conditions:
+        - field: decide_approval.decisions.needs_sales_manager_approval
+          operator: is_true
+    - route: FINANCE
+      description: The deal size or account status needs Finance sign-off.
+      when:
+        operator: and
+        conditions:
+        - field: decide_approval.decisions.needs_finance_approval
+          operator: is_true
+    fallback: AUTO
+  experience:
+    display_name: Route For Approval
+    purpose: Send the quote to the first approver it actually needs to see.
+    contribution: A quote needing both approvals still gets both — Sales Manager first,
+      then Finance.
+    expected_output: BOTH, one of the single approval routes, or AUTO if neither applies.
+    failure_message: The quote could not be routed for approval.
+- id: create_opportunity_auto
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_opportunity
+    fail_on_error: false
+    allow_unattended_write: true
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      name: '{{outputs.start.data.product_summary}}'
+      estimated_value: '{{outputs.start.data.deal_value}}'
+  experience:
+    display_name: Create Opportunity (Auto-Approved)
+    purpose: File the opportunity — this quote needed no approval beyond standard
+      authority.
+    contribution: Nothing waits on an approval this quote never actually required.
+    expected_output: A created opportunity record.
+    failure_message: The opportunity could not be created.
+- id: end_auto
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: approval
+      value_from: auto_approved
+    - key: opportunity
+      value_from: '{{outputs.create_opportunity_auto.data.opportunity}}'
+  experience:
+    display_name: Auto-Approved Outcome
+    purpose: Return the auto-approved opportunity.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created opportunity record.
+    failure_message: The result could not be produced.
+- id: sales_manager_review
+  type: HumanInLoopAgent
+  config:
+    question: This quote's discount exceeds standard authority. Approve it?
+    review_purpose: A discount above standard authority is a Sales Manager decision,
+      not an automatic one.
+    review_panels:
+    - label: Company
+      field: start.data.company_name
+    - label: Deal Value
+      field: start.data.deal_value
+    - label: Discount %
+      field: start.data.discount_percentage
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Sales Manager Approval
+    purpose: Let a Sales Manager approve or reject the discount.
+    contribution: Nothing above standard authority goes out without this sign-off.
+    expected_output: Approve or reject.
+    failure_message: The approval could not be recorded.
+- id: post_sales_manager_router
+  type: RouterAgent
+  config:
+    mode: conditions
+    selection: single
+    cases:
+    - route: ALSO_NEEDS_FINANCE
+      description: This quote also needs Finance sign-off, now that Sales Manager
+        has approved it.
+      when:
+        operator: and
+        conditions:
+        - field: decide_approval.decisions.needs_finance_approval
+          operator: is_true
+    fallback: SALES_MANAGER_ONLY
+  experience:
+    display_name: Does This Also Need Finance?
+    purpose: After Sales Manager approval, decide whether Finance still needs to sign
+      off too.
+    contribution: A quote needing both approvals moves on to Finance instead of stopping
+      early.
+    expected_output: Whether Finance approval is still needed.
+    failure_message: Could not determine whether Finance approval is still needed.
+- id: create_opportunity_sales_mgr
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_opportunity
+    fail_on_error: false
+    approved_by: sales_manager_review
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      name: '{{outputs.start.data.product_summary}}'
+      estimated_value: '{{outputs.start.data.deal_value}}'
+  experience:
+    display_name: Create Opportunity (Sales Manager Approved)
+    purpose: File the opportunity now that the Sales Manager has approved it.
+    contribution: Only reached after approval — never on rejection.
+    expected_output: A created opportunity record.
+    failure_message: The opportunity could not be created.
+- id: end_sales_mgr_approved
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: approval
+      value_from: sales_manager_approved
+    - key: opportunity
+      value_from: '{{outputs.create_opportunity_sales_mgr.data.opportunity}}'
+  experience:
+    display_name: Sales-Manager-Approved Outcome
+    purpose: Return the Sales-Manager-approved opportunity.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created opportunity record.
+    failure_message: The result could not be produced.
+- id: finance_review
+  type: HumanInLoopAgent
+  config:
+    question: This quote needs Finance sign-off (deal size or strategic account).
+      Approve it?
+    review_purpose: Deal size or account strategy is a Finance decision, not an automatic
+      one.
+    review_panels:
+    - label: Company
+      field: start.data.company_name
+    - label: Deal Value
+      field: start.data.deal_value
+    - label: Strategic Account?
+      field: find_customer.first.key_account
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Finance Approval
+    purpose: Let Finance approve or reject the quote.
+    contribution: Nothing at this deal size or account status goes out without this
+      sign-off.
+    expected_output: Approve or reject.
+    failure_message: The approval could not be recorded.
+- id: finance_review_both
+  type: HumanInLoopAgent
+  config:
+    question: Sales Manager has approved this quote's discount. It also needs Finance
+      sign-off (deal size or strategic account). Approve it?
+    review_purpose: Deal size or account strategy is a Finance decision, not an automatic
+      one — asked after Sales Manager's, since this quote needs both.
+    review_panels:
+    - label: Company
+      field: start.data.company_name
+    - label: Deal Value
+      field: start.data.deal_value
+    - label: Strategic Account?
+      field: find_customer.first.key_account
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Finance Approval (After Sales Manager)
+    purpose: Let Finance approve or reject a quote that already has Sales Manager
+      sign-off.
+    contribution: This quote's own dedicated Finance step — never shared with the
+      Finance-only track, so each path is independently safe to route and to reject.
+    expected_output: Approve or reject.
+    failure_message: The approval could not be recorded.
+- id: create_opportunity_finance
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_opportunity
+    fail_on_error: false
+    approved_by: finance_review
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      name: '{{outputs.start.data.product_summary}}'
+      estimated_value: '{{outputs.start.data.deal_value}}'
+  experience:
+    display_name: Create Opportunity (Finance Approved)
+    purpose: File the opportunity now that Finance has approved it.
+    contribution: Only reached after approval — never on rejection.
+    expected_output: A created opportunity record.
+    failure_message: The opportunity could not be created.
+- id: end_finance_approved
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: approval
+      value_from: finance_approved
+    - key: opportunity
+      value_from: '{{outputs.create_opportunity_finance.data.opportunity}}'
+  experience:
+    display_name: Finance-Approved Outcome
+    purpose: Return the Finance-approved opportunity.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created opportunity record.
+    failure_message: The result could not be produced.
+- id: create_opportunity_both
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_opportunity
+    fail_on_error: false
+    approved_by: finance_review_both
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      name: '{{outputs.start.data.product_summary}}'
+      estimated_value: '{{outputs.start.data.deal_value}}'
+  experience:
+    display_name: Create Opportunity (Sales Manager + Finance Approved)
+    purpose: File the opportunity now that both Sales Manager and Finance have approved
+      it, in sequence.
+    contribution: Only reached after both sign-offs — either one rejecting stops the
+      run before this node.
+    expected_output: A created opportunity record.
+    failure_message: The opportunity could not be created.
+- id: end_both_approved
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: approval
+      value_from: sales_manager_and_finance_approved
+    - key: opportunity
+      value_from: '{{outputs.create_opportunity_both.data.opportunity}}'
+  experience:
+    display_name: Both-Approved Outcome
+    purpose: Return the opportunity approved by both Sales Manager and Finance.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created opportunity record.
+    failure_message: The result could not be produced.
+edges:
+- from: start
+  to:
+  - find_customer
+  - find_crm_account
+- from: find_customer
+  to: decide_approval
+- from: find_crm_account
+  to: decide_approval
+- from: decide_approval
+  to: approval_router
+- from: approval_router
+  condition: route
+  branches:
+    AUTO: create_opportunity_auto
+    BOTH: sales_manager_review
+    SALES_MANAGER: sales_manager_review
+    FINANCE: finance_review
+- from: create_opportunity_auto
+  to: end_auto
+- from: sales_manager_review
+  to: post_sales_manager_router
+- from: post_sales_manager_router
+  condition: route
+  branches:
+    ALSO_NEEDS_FINANCE: finance_review_both
+    SALES_MANAGER_ONLY: create_opportunity_sales_mgr
+- from: create_opportunity_sales_mgr
+  to: end_sales_mgr_approved
+- from: finance_review
+  to: create_opportunity_finance
+- from: create_opportunity_finance
+  to: end_finance_approved
+- from: finance_review_both
+  to: create_opportunity_both
+- from: create_opportunity_both
+  to: end_both_approved

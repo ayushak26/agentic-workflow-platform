@@ -232,6 +232,13 @@ class MCPClient:
         startup_timeout_seconds: float | None = None,
         tool_timeout_seconds: float | None = None,
     ):
+        """Initialize the MCPClient.
+
+        Args:
+            servers (Mapping[str, StdioServerParameters] | None): The servers (optional, default None).
+            startup_timeout_seconds (float | None): The startup timeout seconds (optional, default None).
+            tool_timeout_seconds (float | None): The tool timeout seconds (optional, default None).
+        """
         self._specs = dict(servers) if servers is not None else build_server_specs()
         self._stacks: dict[str, AsyncExitStack] = {}
         self._sessions: dict[str, ClientSession] = {}
@@ -250,10 +257,12 @@ class MCPClient:
 
     @property
     def configured_servers(self) -> tuple[str, ...]:
+        """The configured servers."""
         return tuple(self._specs)
 
     @property
     def running_servers(self) -> tuple[str, ...]:
+        """The running servers."""
         return tuple(self._sessions)
 
     async def start(self, servers: list[str] | None = None) -> None:
@@ -298,6 +307,7 @@ class MCPClient:
                 )
 
     async def stop(self) -> None:
+        """Stop the result."""
         if self._stopped:
             return
         self._stopped = True
@@ -316,6 +326,14 @@ class MCPClient:
         log.info("mcp.client.stopped")
 
     def _require(self, server: str) -> ClientSession:
+        """Internal helper for the require step.
+
+        Args:
+            server (str): The server.
+
+        Returns:
+            ClientSession: The result.
+        """
         session = self._sessions.get(server)
         if session is None:
             raise RuntimeError(
@@ -325,9 +343,25 @@ class MCPClient:
         return session
 
     def has_server(self, server: str) -> bool:
+        """Return whether server.
+
+        Args:
+            server (str): The server.
+
+        Returns:
+            bool: True when server.
+        """
         return server in self._sessions
 
     async def list_tools(self, server: str = DEFAULT_SERVER) -> list:
+        """List the tools.
+
+        Args:
+            server (str): The server (optional, default DEFAULT_SERVER).
+
+        Returns:
+            list: The tools.
+        """
         if server not in self._tools_cache:
             async with asyncio.timeout(self._tool_timeout_seconds):
                 resp = await self._require(server).list_tools()

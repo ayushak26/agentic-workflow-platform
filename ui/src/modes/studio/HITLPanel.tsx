@@ -10,6 +10,7 @@ import {
   RichTextEditor,
   type RichEditorValue,
 } from './RichTextEditor';
+import { plainTextJsonAdapter } from './hitl-plain-text';
 
 const DEFAULT_CAPABILITIES: WorkflowFileCapabilities = {
   categories: {},
@@ -85,6 +86,7 @@ export function HITLPanel({
   onSubmitting,
   onSubmitError,
   onClose,
+  plainTextJsonEditing = false,
 }: {
   runId: string;
   pausedNodeId: string;
@@ -111,6 +113,9 @@ export function HITLPanel({
   // surface — the Cockpit needs to show it instead.
   onSubmitError?: (message: string) => void;
   onClose: () => void;
+  /** Business Chat presents structured review content as ordinary prose while
+   * serializing it back to valid JSON for the runtime behind the UI. */
+  plainTextJsonEditing?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -121,8 +126,17 @@ export function HITLPanel({
     () => initialReviewContent(content, context),
     [content, context],
   );
+  const jsonAdapter = useMemo(
+    () => (
+      plainTextJsonEditing && initialContent.format === 'json'
+        ? plainTextJsonAdapter(initialContent.text)
+        : null
+    ),
+    [initialContent, plainTextJsonEditing],
+  );
+  const initialEditorText = jsonAdapter?.displayText ?? initialContent.text;
   const [editorValue, setEditorValue] = useState<RichEditorValue>(
-    () => emptyEditorValue(initialContent.text),
+    () => emptyEditorValue(initialEditorText),
   );
   const [editorFormat, setEditorFormat] = useState<'text' | 'json'>(
     initialContent.format ?? 'text',
@@ -140,7 +154,7 @@ export function HITLPanel({
 
   const canEdit = allowedActions.includes('edit');
   const canReject = allowedActions.includes('reject');
-  const originalText = initialContent.text;
+  const originalText = initialEditorText;
   const dirty = (
     editorValue.text !== originalText
     || sourceDocument !== null
@@ -158,7 +172,12 @@ export function HITLPanel({
       setError(`The edited content exceeds ${maxEditChars.toLocaleString()} characters.`);
       return;
     }
-    if (action === 'edit' && editorFormat === 'json') {
+    const submittedText = jsonAdapter?.serialize(editorValue.text) ?? editorValue.text;
+    if (action === 'edit' && submittedText.length > maxEditChars) {
+      setError(`The encoded edited content exceeds ${maxEditChars.toLocaleString()} characters.`);
+      return;
+    }
+    if (action === 'edit' && editorFormat === 'json' && !jsonAdapter) {
       try {
         JSON.parse(editorValue.text);
       } catch {
@@ -175,8 +194,8 @@ export function HITLPanel({
       if (action === 'reject' && reason) payload.reason = reason;
       if (action === 'edit') {
         payload.edited_content = {
-          text: editorValue.text,
-          html: editorValue.html,
+          text: submittedText,
+          html: jsonAdapter ? null : editorValue.html,
           format: editorFormat,
           source: sourceDocument ? 'upload' : 'editor',
           source_document: sourceDocument,

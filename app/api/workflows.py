@@ -1,3 +1,9 @@
+"""Workflows module.
+
+Part of the http api layer: fastapi routers for auth, workflows, runs, knowledge, and administration.
+
+Public symbols: list_workflows, list_node_types, allowed_models, RunRequest, ValidateWorkflowRequest, validate_workflow, ... (31 symbols total).
+"""
 import asyncio
 import json
 import uuid
@@ -11,6 +17,7 @@ from pathlib import Path
 from fastapi.responses import Response, StreamingResponse
 
 from app.nodes.registry import NodeRegistry
+from app.observability.logging import get_logger
 from app.runtime.autofix import (
     NOT_AUTOFIXABLE_CODES,
     apply_deterministic_fixes,
@@ -54,6 +61,7 @@ from app.workflow.file_inputs import (
 )
 
 router = APIRouter(prefix="/api", tags=["workflows"])
+log = get_logger(__name__)
 
 
 async def _reserve_run_id(
@@ -133,6 +141,7 @@ def _scope(user: CurrentUser, body_session: str | None) -> str:
 
 @router.get("/")
 async def list_workflows():
+    """List the workflows."""
     return {"workflows": []}
 
 
@@ -154,20 +163,46 @@ async def allowed_models(node_type: str):
 
 
 class RunRequest(BaseModel):
+    """Pydantic model defining the RunRequest shape.
+
+    Attributes:
+        workflow_yaml (str).
+        inputs (dict).
+        session_id (str | None).
+        collection_id (str).
+        run_id (str | None).
+        skip_preflight (bool): Explicit technical-Cockpit direct-run choice.
+    """
     workflow_yaml: str
     inputs: dict = Field(default_factory=dict)
     session_id: str | None = None
     collection_id: str = "default"
     run_id: str | None = None
+    skip_preflight: bool = False
 
 
 class ValidateWorkflowRequest(BaseModel):
+    """Pydantic model defining the ValidateWorkflowRequest shape.
+
+    Attributes:
+        workflow_yaml (str).
+        inputs (dict[str, Any] | None).
+        check_services (bool).
+    """
     workflow_yaml: str
     inputs: dict[str, Any] | None = None
     check_services: bool = False
 
 
 def _preflight_http_detail(report: WorkflowPreflightReport) -> dict[str, Any]:
+    """Internal helper for the preflight http detail step.
+
+    Args:
+        report (WorkflowPreflightReport): Preflight report.
+
+    Returns:
+        dict[str, Any]: The http detail.
+    """
     return {
         "message": (
             f"Workflow preflight found {len(report.errors)} blocking "
@@ -257,12 +292,28 @@ async def validate_workflow(
 
 
 class AutofixWorkflowRequest(BaseModel):
+    """Pydantic model defining the AutofixWorkflowRequest shape.
+
+    Attributes:
+        workflow_yaml (str).
+        inputs (dict[str, Any] | None).
+        check_services (bool).
+    """
     workflow_yaml: str
     inputs: dict[str, Any] | None = None
     check_services: bool = False
 
 
 class AutofixWorkflowResponse(BaseModel):
+    """Pydantic model defining the AutofixWorkflowResponse shape.
+
+    Attributes:
+        yaml (str).
+        fixed (bool).
+        deterministic_fixes_applied (list[str]).
+        llm_attempts (list[dict[str, Any]]).
+        preflight_report (dict[str, Any]).
+    """
     yaml: str
     fixed: bool
     deterministic_fixes_applied: list[str]
@@ -333,6 +384,14 @@ async def autofix_workflow(
                     generate_yaml = build_llm_yaml_generator(llm, services, scope, mode="repair")
 
                     async def static_check(yaml_text: str) -> WorkflowPreflightReport:
+                        """Compute the static check.
+
+                        Args:
+                            yaml_text (str): Workflow YAML text.
+
+                        Returns:
+                            WorkflowPreflightReport: The check.
+                        """
                         return await _run_preflight(yaml_text, req, services)
 
                     current_yaml, report, attempts = await repair_with_llm(
@@ -386,23 +445,38 @@ async def get_preflight_stats(
 
 @router.post("/workflows/run")
 async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(require_consultant)):
+    """Run the result.
+
+    Args:
+        req (RunRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     try:
         guarded_inputs = check_workflow_inputs(req.inputs).value
     except GuardrailViolation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    preflight = await preflight_workflow_for_run(
-        req.workflow_yaml,
-        provided_inputs=guarded_inputs,
-        services=services,
-        probe_services=True,
-        require_run_history=True,
-        owner_scope_id=_scope(user, None),
-    )
-    if not preflight.valid:
-        raise HTTPException(
-            status_code=422,
-            detail=_preflight_http_detail(preflight),
+    if not req.skip_preflight:
+        preflight = await preflight_workflow_for_run(
+            req.workflow_yaml,
+            provided_inputs=guarded_inputs,
+            services=services,
+            probe_services=True,
+            require_run_history=True,
+            owner_scope_id=_scope(user, None),
+        )
+        if not preflight.valid:
+            raise HTTPException(
+                status_code=422,
+                detail=_preflight_http_detail(preflight),
+            )
+    else:
+        log.warning(
+            "workflow.direct_run_without_preflight",
+            requested_run_id=req.run_id,
+            owner_scope_id=_scope(user, None),
+            input_count=len(guarded_inputs),
         )
 
     try:
@@ -477,6 +551,12 @@ async def run(req: RunRequest, request: Request, user: CurrentUser = Depends(req
 
 
 class ResumeRequest(BaseModel):
+    """Pydantic model defining the ResumeRequest shape.
+
+    Attributes:
+        decision (dict[str, Any]).
+        session_id (str | None).
+    """
     decision: dict[str, Any]
     session_id: str | None = None   # Phase 11A — Cockpit may send it; else derived from token
 
@@ -561,6 +641,14 @@ async def resume(
 
 
 class SubprocessCallbackRequest(BaseModel):
+    """Pydantic model defining the SubprocessCallbackRequest shape.
+
+    Attributes:
+        status (str).
+        output (Any).
+        node_outputs (dict[str, Any]).
+        error (str | None).
+    """
     status: str = Field(description="'completed', 'rejected', or 'failed'.")
     output: Any = None
     node_outputs: dict[str, Any] = Field(default_factory=dict)
@@ -660,6 +748,39 @@ def list_workflows():
     return out
 
 
+@router.get("/workflows/chat-catalog")
+def list_chat_workflows():
+    """Return the small published-workflow catalog used by Business Chat.
+
+    The full Library listing preflights every workflow so it can report
+    readiness. Business Chat only needs approved card metadata; making it pay
+    that cost added several seconds to every visit. Check the explicit status
+    in the source first, then parse only the usually tiny approved subset.
+    """
+    out = []
+    for path in sorted(WORKFLOWS_DIR.glob("*.yaml")):
+        text = path.read_text(encoding="utf-8")
+        if not any(
+            line.strip() == "visibility_status: approved"
+            for line in text.splitlines()
+        ):
+            continue
+        try:
+            data = yaml.safe_load(text) or {}
+            library = data.get("library")
+        except yaml.YAMLError:
+            continue
+        if not isinstance(library, dict) or library.get("visibility_status") != "approved":
+            continue
+        out.append({
+            "name": path.stem,
+            "description": data.get("description", ""),
+            "use_case": data.get("use_case", "generic"),
+            "library": library,
+        })
+    return out
+
+
 @router.get("/workflows/by-name/{name}")
 def get_workflow(name: str):
     """Builder calls this to load an existing workflow for editing.
@@ -727,6 +848,12 @@ async def get_workflow_stats(
 
 
 class SaveWorkflowRequest(BaseModel):
+    """Pydantic model defining the SaveWorkflowRequest shape.
+
+    Attributes:
+        name (str).
+        yaml (str).
+    """
     name: str
     yaml: str
 
@@ -802,11 +929,25 @@ def delete_workflow(
 
 
 class SaveDraftRequest(BaseModel):
+    """Pydantic model defining the SaveDraftRequest shape.
+
+    Attributes:
+        yaml (str).
+        canvas (dict[str, Any] | None).
+    """
     yaml: str
     canvas: dict[str, Any] | None = None
 
 
 def _builder_name(name: str) -> str:
+    """Internal helper for the builder name step.
+
+    Args:
+        name (str): Workflow or resource name.
+
+    Returns:
+        str: The name.
+    """
     try:
         return WorkflowBuilderStore.validate_name(name)
     except ValueError as exc:
@@ -814,6 +955,14 @@ def _builder_name(name: str) -> str:
 
 
 def _builder_version_id(version_id: str) -> str:
+    """Internal helper for the builder version id step.
+
+    Args:
+        version_id (str): Version identifier.
+
+    Returns:
+        str: The version id.
+    """
     try:
         return WorkflowBuilderStore.validate_version_id(version_id)
     except ValueError as exc:
@@ -843,6 +992,11 @@ def get_workflow_draft(name: str):
 
 @router.delete("/workflows/{name}/draft")
 def delete_workflow_draft(name: str):
+    """Delete the workflow draft.
+
+    Args:
+        name (str): Workflow or resource name.
+    """
     safe_name = _builder_name(name)
     deleted = BUILDER_STORE.delete_draft(safe_name)
     return {"ok": deleted}
@@ -850,12 +1004,23 @@ def delete_workflow_draft(name: str):
 
 @router.get("/workflows/{name}/versions")
 def list_workflow_versions(name: str):
+    """List the workflow versions.
+
+    Args:
+        name (str): Workflow or resource name.
+    """
     safe_name = _builder_name(name)
     return BUILDER_STORE.list_versions(safe_name)
 
 
 @router.get("/workflows/{name}/versions/{version_id}")
 def get_workflow_version(name: str, version_id: str):
+    """Return the workflow version.
+
+    Args:
+        name (str): Workflow or resource name.
+        version_id (str): Version identifier.
+    """
     safe_name = _builder_name(name)
     safe_version = _builder_version_id(version_id)
     try:
@@ -895,6 +1060,16 @@ def _sse_message(
     data: dict[str, Any],
     event_id: int | None = None,
 ) -> str:
+    """Internal helper for the sse message step.
+
+    Args:
+        event (str): Run event.
+        data (dict[str, Any]): Data mapping.
+        event_id (int | None): The event id (optional, default None).
+
+    Returns:
+        str: The message.
+    """
     lines = []
     if event_id is not None:
         lines.append(f"id: {event_id}")
@@ -928,6 +1103,7 @@ async def stream_run_events(
     )
 
     async def generate():
+        """Generate the result."""
         try:
             yield _sse_message(
                 event="ready",

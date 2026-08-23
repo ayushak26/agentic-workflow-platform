@@ -68,6 +68,36 @@ def test_draft_lifecycle(client):
     assert res.status_code == 404
 
 
+def test_chat_catalog_returns_only_explicitly_approved_workflows(tmp_path, monkeypatch):
+    approved = VALID_YAML.replace(
+        "version: '1.0'",
+        "version: '1.0'\nlibrary:\n  title: Approved chat\n  visibility_status: approved",
+    )
+    draft = VALID_YAML.replace(
+        "version: '1.0'",
+        "version: '1.0'\nlibrary:\n  title: Draft chat\n  visibility_status: draft",
+    )
+    (tmp_path / "approved_chat.yaml").write_text(approved)
+    (tmp_path / "draft_chat.yaml").write_text(draft)
+    # The lightweight endpoint must not call full Library preflight.
+    monkeypatch.setattr(workflows_module, "WORKFLOWS_DIR", tmp_path)
+    monkeypatch.setattr(
+        workflows_module,
+        "preflight_workflow_yaml",
+        lambda *args, **kwargs: pytest.fail("chat catalog ran full preflight"),
+    )
+
+    assert workflows_module.list_chat_workflows() == [{
+        "name": "approved_chat",
+        "description": "",
+        "use_case": "generic",
+        "library": {
+            "title": "Approved chat",
+            "visibility_status": "approved",
+        },
+    }]
+
+
 def test_draft_rejects_unsafe_name(client):
     res = client.put(
         "/api/workflows/../escape/draft",

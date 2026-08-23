@@ -41,16 +41,39 @@ _STOP_WORDS = {
 
 
 def utc_now() -> str:
+    """Compute the utc now.
+
+    Returns:
+        str: The now.
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def stable_id(prefix: str, *parts: Any, length: int = 16) -> str:
+    """Compute the stable id.
+
+    Args:
+        prefix (str): Prefix string.
+        *parts (Any): Path segments.
+        length (int): The length (optional, default 16).
+
+    Returns:
+        str: The id.
+    """
     basis = "|".join(str(part or "") for part in parts)
     digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()[:length]
     return f"{prefix}-{digest}"
 
 
 def normalise_doi(value: Any) -> str | None:
+    """Compute the normalise doi.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        str | None: The doi.
+    """
     if not value:
         return None
     doi = str(value).strip()
@@ -59,6 +82,14 @@ def normalise_doi(value: Any) -> str | None:
 
 
 def parse_authors(value: Any) -> list[str]:
+    """Parse the authors.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        list[str]: The authors.
+    """
     if isinstance(value, str):
         splitter = ";" if ";" in value else ","
         return [item.strip() for item in value.split(splitter) if item.strip()]
@@ -78,11 +109,28 @@ def parse_authors(value: Any) -> list[str]:
 
 
 def parse_year(value: Any) -> int | None:
+    """Parse the year.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        int | None: The year.
+    """
     match = re.search(r"\b(19|20)\d{2}\b", str(value or ""))
     return int(match.group(0)) if match else None
 
 
 def first_value(data: dict[str, Any], *keys: str) -> Any:
+    """Compute the first value.
+
+    Args:
+        data (dict[str, Any]): Data mapping.
+        *keys (str): The keys.
+
+    Returns:
+        Any: The value.
+    """
     for key in keys:
         value = data.get(key)
         if value not in (None, "", [], {}):
@@ -91,6 +139,14 @@ def first_value(data: dict[str, Any], *keys: str) -> Any:
 
 
 def parse_mcp_payload(raw: Any) -> Any:
+    """Parse the mcp payload.
+
+    Args:
+        raw (Any): Raw value.
+
+    Returns:
+        Any: The mcp payload.
+    """
     if not isinstance(raw, str):
         return raw
     value: Any = raw.strip()
@@ -105,6 +161,14 @@ def parse_mcp_payload(raw: Any) -> Any:
 
 
 def papers_from_payload(raw: Any) -> list[dict[str, Any]]:
+    """Compute the papers from payload.
+
+    Args:
+        raw (Any): Raw value.
+
+    Returns:
+        list[dict[str, Any]]: The from payload.
+    """
     payload = parse_mcp_payload(raw)
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
@@ -144,6 +208,19 @@ def candidate_from_paper(
     source_hint: str | None = None,
     discovery_lane: str | None = None,
 ) -> CandidateSource:
+    """Compute the candidate from paper.
+
+    Args:
+        paper (dict[str, Any]): The paper.
+        claim_id (str): The claim id.
+        query (str): Query filter.
+        purpose (str): The purpose.
+        source_hint (str | None): The source hint (optional, default None).
+        discovery_lane (str | None): The discovery lane (optional, default None).
+
+    Returns:
+        CandidateSource: The from paper.
+    """
     source = str(
         first_value(paper, "source", "platform") or source_hint or "unknown"
     ).strip().lower()
@@ -334,6 +411,14 @@ def deduplicate_candidates(
     title_alias: dict[tuple[str, str], tuple[str, str]] = {}
 
     def _lane_list(key: tuple[str, str]) -> list[str]:
+        """Internal helper for the lane list step.
+
+        Args:
+            key (tuple[str, str]): Lookup key.
+
+        Returns:
+            list[str]: The list.
+        """
         return lanes.setdefault(key, [])
 
     for candidate in candidates:
@@ -389,6 +474,14 @@ def deduplicate_candidates(
 
 
 def formatted_citation(candidate: CandidateSource) -> str:
+    """Compute the formatted citation.
+
+    Args:
+        candidate (CandidateSource): The candidate.
+
+    Returns:
+        str: The citation.
+    """
     author = ""
     if candidate.authors:
         author = candidate.authors[0]
@@ -404,6 +497,14 @@ def formatted_citation(candidate: CandidateSource) -> str:
 
 
 def download_path_from_payload(raw: Any) -> str | None:
+    """Download the path from payload.
+
+    Args:
+        raw (Any): Raw value.
+
+    Returns:
+        str | None: The path from payload.
+    """
     payload = parse_mcp_payload(raw)
     if isinstance(payload, str):
         return payload.strip()
@@ -421,6 +522,16 @@ def validate_downloaded_pdf(
     allowed_root: Path,
     max_bytes: int,
 ) -> Path:
+    """Validate the downloaded pdf.
+
+    Args:
+        raw_path (str | None): The raw path.
+        allowed_root (Path): The allowed root.
+        max_bytes (int): The max bytes.
+
+    Returns:
+        Path: The downloaded pdf.
+    """
     if not raw_path:
         raise ValueError("download tool did not return a file path")
     candidate = Path(raw_path).expanduser().resolve()
@@ -439,6 +550,14 @@ def validate_downloaded_pdf(
 
 
 def _tokens(text: str) -> list[str]:
+    """Internal helper for the tokens step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        list[str]: The result.
+    """
     return [
         token.lower()
         for token in _TOKEN_RE.findall(text)
@@ -447,6 +566,16 @@ def _tokens(text: str) -> list[str]:
 
 
 def _page_windows(text: str, size: int = 1800, overlap: int = 250) -> list[str]:
+    """Internal helper for the page windows step.
+
+    Args:
+        text (str): The text.
+        size (int): The size (optional, default 1800).
+        overlap (int): The overlap (optional, default 250).
+
+    Returns:
+        list[str]: The windows.
+    """
     clean = re.sub(r"[ \t]+", " ", text or "").strip()
     if not clean:
         return []

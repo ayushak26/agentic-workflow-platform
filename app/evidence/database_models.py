@@ -38,6 +38,14 @@ class StructuredDatasetQuery(BaseModel):
     @field_validator("query_id", "claim_id", "dataset_code")
     @classmethod
     def _safe_identifier(cls, value: str) -> str:
+        """Internal helper for the safe identifier step.
+
+        Args:
+            value (str): Value to process.
+
+        Returns:
+            str: The identifier.
+        """
         value = value.strip()
         if not _SAFE_IDENTIFIER.fullmatch(value):
             raise ValueError(
@@ -49,6 +57,14 @@ class StructuredDatasetQuery(BaseModel):
     @field_validator("start_period", "end_period")
     @classmethod
     def _safe_period(cls, value: str | None) -> str | None:
+        """Internal helper for the safe period step.
+
+        Args:
+            value (str | None): Value to process.
+
+        Returns:
+            str | None: The period.
+        """
         if value is None:
             return None
         value = value.strip()
@@ -64,6 +80,14 @@ class StructuredDatasetQuery(BaseModel):
         cls,
         value: dict[str, list[str]],
     ) -> dict[str, list[str]]:
+        """Internal helper for the safe filters step.
+
+        Args:
+            value (dict[str, list[str]]): Value to process.
+
+        Returns:
+            dict[str, list[str]]: The filters.
+        """
         cleaned: dict[str, list[str]] = {}
         for field_name, raw_values in value.items():
             if not _SAFE_IDENTIFIER.fullmatch(field_name):
@@ -85,6 +109,16 @@ class StructuredDatasetQuery(BaseModel):
 
 
 class CountReconciliation(BaseModel):
+    """Pydantic model defining the CountReconciliation shape.
+
+    Attributes:
+        expected_cells (int).
+        response_cells (int).
+        non_null_records (int).
+        returned_records (int).
+        truncated (bool).
+        complete (bool).
+    """
     expected_cells: int = 0
     response_cells: int = 0
     non_null_records: int = 0
@@ -123,6 +157,18 @@ class StructuredDataEvidenceRecord(BaseModel):
 
 
 class DatasetRetrievalAudit(BaseModel):
+    """Pydantic model defining the DatasetRetrievalAudit shape.
+
+    Attributes:
+        query_id (str).
+        claim_id (str).
+        database (str).
+        endpoint (str).
+        parameters (dict[str, Any]).
+        accessed_at (str).
+        response_sha256 (str).
+        snapshot_object_key (str).
+    """
     query_id: str
     claim_id: str
     database: str
@@ -162,6 +208,15 @@ class InternalEvidenceRecord(BaseModel):
 
 
 class InternalEvidenceReviewItem(BaseModel):
+    """Pydantic model defining the InternalEvidenceReviewItem shape.
+
+    Attributes:
+        internal_evidence_id (str).
+        source_name (str).
+        fact_key (str).
+        fact_value (Any).
+        decision (Literal['approve', 'correct', 'reject']).
+    """
     internal_evidence_id: str
     source_name: str
     fact_key: str

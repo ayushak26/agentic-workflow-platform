@@ -14,10 +14,20 @@ _DOMAIN = re.compile(
 
 
 def secret() -> str:
+    """Compute the secret.
+
+    Returns:
+        str: The result.
+    """
     return secrets.token_hex(32)
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the args.
+
+    Returns:
+        argparse.Namespace: The args.
+    """
     parser = argparse.ArgumentParser(
         description="Create a secure .env.production for IONOS"
     )
@@ -33,6 +43,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Compute the main."""
     args = parse_args()
     domain = args.domain.strip().lower()
     if not _DOMAIN.fullmatch(domain):

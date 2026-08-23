@@ -57,6 +57,18 @@ ResearchModel = Literal["gpt-5.6-sol", "claude-fable-5"]
 
 
 class ResearchBrief(BaseModel):
+    """Pydantic model defining the ResearchBrief shape.
+
+    Attributes:
+        brief_id (str).
+        track (ResearchTrack).
+        question (str).
+        purpose (str).
+        linked_claim_ids (list[str]).
+        linked_call_requirement_ids (list[str]).
+        required_source_types (list[str]).
+        geographic_scope (list[str]).
+    """
     brief_id: str
     track: ResearchTrack
     question: str
@@ -74,6 +86,18 @@ class ResearchBrief(BaseModel):
 
 
 class ResearchCitation(BaseModel):
+    """Pydantic model defining the ResearchCitation shape.
+
+    Attributes:
+        citation_id (str).
+        title (str).
+        url (str).
+        start_index (int | None).
+        end_index (int | None).
+        cited_text (str).
+        claim_id (str | None).
+        stance (Literal['supports', 'contradicts', 'qualifies', 'context_only', 'unclear'] | None).
+    """
     citation_id: str
     title: str
     url: str
@@ -99,11 +123,25 @@ class ResearchCitation(BaseModel):
 
 
 class ResearchToolTrace(BaseModel):
+    """Pydantic model defining the ResearchToolTrace shape.
+
+    Attributes:
+        type (str).
+        action (str).
+    """
     type: str
     action: str = ""
 
 
 class ResearchUsage(BaseModel):
+    """Pydantic model defining the ResearchUsage shape.
+
+    Attributes:
+        input_tokens (int).
+        output_tokens (int).
+        total_tokens (int).
+        tool_calls (int).
+    """
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -111,6 +149,18 @@ class ResearchUsage(BaseModel):
 
 
 class ResearchDossier(BaseModel):
+    """Pydantic model defining the ResearchDossier shape.
+
+    Attributes:
+        brief_id (str).
+        track (ResearchTrack).
+        question (str).
+        linked_claim_ids (list[str]).
+        linked_call_requirement_ids (list[str]).
+        model (str).
+        response_id (str).
+        status (str).
+    """
     brief_id: str
     track: ResearchTrack
     question: str
@@ -171,10 +221,21 @@ class BoundedToolResearchService:
     """
 
     def __init__(self, *, llm: Any, web_search: Any) -> None:
+        """Initialize the BoundedToolResearchService.
+
+        Args:
+            llm (Any): The llm.
+            web_search (Any): The web search.
+        """
         self._llm = llm
         self._web_search = web_search
 
     def available(self) -> bool:
+        """Compute the available.
+
+        Returns:
+            bool: The result.
+        """
         return self._llm is not None and self._web_search is not None
 
     async def research(
@@ -186,6 +247,18 @@ class BoundedToolResearchService:
         max_iterations: int = 15,
         max_cost_per_call_usd: float = 15.0,
     ) -> ResearchDossier:
+        """Compute the research.
+
+        Args:
+            brief (ResearchBrief): The brief.
+            instructions (str): The instructions.
+            max_duration_seconds (float): The max duration seconds (optional, default 1800.0).
+            max_iterations (int): The max iterations (optional, default 15).
+            max_cost_per_call_usd (float): The max cost per call usd (optional, default 15.0).
+
+        Returns:
+            ResearchDossier: The result.
+        """
         if not self.available():
             raise RuntimeError("Bounded research service is not configured")
 
@@ -513,6 +586,13 @@ class BoundedToolResearchService:
 
 
 class _CitationAttribution(BaseModel):
+    """Pydantic model defining the CitationAttribution shape.
+
+    Attributes:
+        citation_id (str).
+        claim_id (str).
+        stance (Literal['supports', 'contradicts', 'qualifies', 'context_only', 'unclear']).
+    """
     citation_id: str
     claim_id: str
     stance: Literal[
@@ -525,10 +605,23 @@ class _CitationAttribution(BaseModel):
 
 
 class _CitationAttributionSet(BaseModel):
+    """Pydantic model defining the CitationAttributionSet shape.
+
+    Attributes:
+        attributions (list[_CitationAttribution]).
+    """
     attributions: list[_CitationAttribution] = Field(default_factory=list)
 
 
 def _brief_prompt(brief: ResearchBrief) -> str:
+    """Internal helper for the brief prompt step.
+
+    Args:
+        brief (ResearchBrief): The brief.
+
+    Returns:
+        str: The prompt.
+    """
     return (
         f"RESEARCH QUESTION ID: {brief.brief_id}\n"
         f"TRACK: {brief.track}\n"
@@ -556,4 +649,13 @@ def _brief_prompt(brief: ResearchBrief) -> str:
 def get_deep_research_service(
     *, llm: Any, web_search: Any
 ) -> BoundedToolResearchService:
+    """Return the deep research service.
+
+    Args:
+        llm (Any): The llm.
+        web_search (Any): The web search.
+
+    Returns:
+        BoundedToolResearchService: The deep research service.
+    """
     return BoundedToolResearchService(llm=llm, web_search=web_search)

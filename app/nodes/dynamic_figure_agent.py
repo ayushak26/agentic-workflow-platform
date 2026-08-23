@@ -60,10 +60,22 @@ _DIAGRAM_PREAMBLE = (
 
 
 class DynamicFigureAgentInput(BaseModel):
+    """Pydantic model defining the DynamicFigureAgentInput shape."""
     pass
 
 
 class DynamicFigureAgentConfig(BaseModel):
+    """Pydantic model defining the DynamicFigureAgentConfig shape.
+
+    Attributes:
+        content (str).
+        image_model (str).
+        size (str).
+        quality (str).
+        output_format (str).
+        max_images (int).
+        fail_open (bool).
+    """
     content: str
     image_model: str = "gpt-image-2-2026-04-21"
     size: str = "auto"
@@ -76,6 +88,16 @@ class DynamicFigureAgentConfig(BaseModel):
 
 
 class GeneratedFigure(BaseModel):
+    """Pydantic model defining the GeneratedFigure shape.
+
+    Attributes:
+        index (int).
+        prompt (str).
+        generated (bool).
+        minio_key (str | None).
+        byte_size (int | None).
+        error (str | None).
+    """
     index: int
     prompt: str
     generated: bool
@@ -85,6 +107,15 @@ class GeneratedFigure(BaseModel):
 
 
 class DynamicFigureAgentOutput(BaseModel):
+    """Pydantic model defining the DynamicFigureAgentOutput shape.
+
+    Attributes:
+        illustrated_content (str).
+        captioned_content (str).
+        figures (list[GeneratedFigure]).
+        markers_found (int).
+        images_generated (int).
+    """
     illustrated_content: str = ""
     captioned_content: str = ""
     figures: list[GeneratedFigure] = Field(default_factory=list)
@@ -94,6 +125,13 @@ class DynamicFigureAgentOutput(BaseModel):
 
 @NodeRegistry.register
 class DynamicFigureAgent(NodeType):
+    """Workflow node type implementing the DynamicFigureAgent capability.
+
+    Attributes:
+        input_schema (ClassVar[type[BaseModel]]).
+        config_schema (ClassVar[type[BaseModel]]).
+        output_schema (ClassVar[type[BaseModel]]).
+    """
     type_name = "DynamicFigureAgent"
     description = (
         "Generate a diagram image for every [[IMAGE PROMPT: ...]] marker and "
@@ -109,6 +147,15 @@ class DynamicFigureAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = DynamicFigureAgentConfig(**resolved_config)
         content = cfg.content or ""
 
@@ -152,6 +199,15 @@ class DynamicFigureAgent(NodeType):
             )
         else:
             async def _one(idx: int, prompt: str) -> GeneratedFigure:
+                """Internal helper for the one step.
+
+                Args:
+                    idx (int): The idx.
+                    prompt (str): Prompt text.
+
+                Returns:
+                    GeneratedFigure: The result.
+                """
                 full_prompt = _DIAGRAM_PREAMBLE + prompt
                 try:
                     result = await image_service.generate(
@@ -196,6 +252,14 @@ class DynamicFigureAgent(NodeType):
         counter = {"n": 0}
 
         def _repl_illustrated(mobj: re.Match) -> str:
+            """Internal helper for the repl illustrated step.
+
+            Args:
+                mobj (re.Match): The mobj.
+
+            Returns:
+                str: The illustrated.
+            """
             i = counter["n"]
             counter["n"] += 1
             desc = mobj.group(1).strip()
@@ -231,9 +295,25 @@ class DynamicFigureAgent(NodeType):
 
 
 def _sub_captioned(content: str) -> str:
+    """Internal helper for the sub captioned step.
+
+    Args:
+        content (str): Content value.
+
+    Returns:
+        str: The captioned.
+    """
     counter = {"n": 0}
 
     def repl(mobj: re.Match) -> str:
+        """Compute the repl.
+
+        Args:
+            mobj (re.Match): The mobj.
+
+        Returns:
+            str: The result.
+        """
         counter["n"] += 1
         return f"*Figure {counter['n']}: {mobj.group(1).strip()}*"
 
@@ -241,6 +321,14 @@ def _sub_captioned(content: str) -> str:
 
 
 def _escape(text: str) -> str:
+    """Internal helper for the escape step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        str: The result.
+    """
     return (
         text.replace("&", "&amp;")
         .replace('"', "&quot;")

@@ -97,6 +97,11 @@ warnings.filterwarnings(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Compute the lifespan.
+
+    Args:
+        app (FastAPI): The app.
+    """
     logger.info("eurskem_ai.startup", environment=settings.environment)
 
     services: dict = {}
@@ -555,6 +560,7 @@ async def lifespan(app: FastAPI):
     cleanup_task: asyncio.Task | None = None
     if services.get("audit_db") is not None:
         async def _run_cleanup_loop() -> None:
+            """Run the cleanup loop."""
             from app.workflow.run_history import cleanup_stale_runs
             while True:
                 await asyncio.sleep(settings.run_auto_cleanup_interval_seconds)

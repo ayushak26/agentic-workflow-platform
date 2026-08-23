@@ -63,7 +63,12 @@ function toIdList(value: unknown): string[] {
  *  once the callback page (app/api/integration_oauth.py) posts back. */
 function useIntegrationOAuthPopup(onComplete: () => void) {
   const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
+  // Latest-ref capture happens in an effect (not during render) so the ref
+  // write stays out of the render phase; the message handler below reads it
+  // asynchronously, so the observable timing is unchanged.
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {

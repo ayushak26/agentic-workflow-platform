@@ -31,10 +31,24 @@ router = APIRouter(prefix="/api/cost-admin", tags=["cost-admin"])
 
 
 def _db(request: Request):
+    """Internal helper for the db step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+    """
     return getattr(request.app.state, "services", {}).get("db")
 
 
 def _cost_ledger_entries(db, *, since: datetime | None = None) -> list[dict]:
+    """Internal helper for the cost ledger entries step.
+
+    Args:
+        db: Mongo database handle.
+        since (datetime | None): The since (optional, default None).
+
+    Returns:
+        list[dict]: The ledger entries.
+    """
     if db is None:
         return []
     query: dict[str, Any] = {}
@@ -49,6 +63,12 @@ def _cost_ledger_entries(db, *, since: datetime | None = None) -> list[dict]:
 
 
 class PricingOverrideRequest(BaseModel):
+    """Pydantic model defining the PricingOverrideRequest shape.
+
+    Attributes:
+        input_usd_per_1k (float).
+        output_usd_per_1k (float).
+    """
     input_usd_per_1k: float = Field(ge=0)
     output_usd_per_1k: float = Field(ge=0)
 
@@ -108,6 +128,14 @@ async def set_pricing_override(
     request: Request,
     user: CurrentUser = Depends(require_admin),
 ):
+    """Set the pricing override.
+
+    Args:
+        model (str): Model name.
+        body (PricingOverrideRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     db = _db(request)
     if db is None:
         raise HTTPException(status_code=503, detail="database unavailable")
@@ -139,6 +167,13 @@ async def clear_pricing_override(
     request: Request,
     user: CurrentUser = Depends(require_admin),
 ):
+    """Clear the pricing override.
+
+    Args:
+        model (str): Model name.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     del user
     db = _db(request)
     if db is None:
@@ -157,12 +192,27 @@ _LOCAL_MODELS = tuple(model for model in MODEL_PRICING if model.startswith("loca
 
 
 class InfraAllocationRequest(BaseModel):
+    """Pydantic model defining the InfraAllocationRequest shape.
+
+    Attributes:
+        allocation_type (str).
+        value_usd (float).
+        expected_monthly_calls (int | None).
+    """
     allocation_type: str = Field(pattern="^(per_call|monthly_amortized)$")
     value_usd: float = Field(ge=0)
     expected_monthly_calls: int | None = Field(default=None, gt=0)
 
 
 def _effective_per_call_cost(allocation: dict[str, Any]) -> float | None:
+    """Internal helper for the effective per call cost step.
+
+    Args:
+        allocation (dict[str, Any]): The allocation.
+
+    Returns:
+        float | None: The per call cost.
+    """
     if allocation["allocation_type"] == "per_call":
         return allocation["value_usd"]
     calls = allocation.get("expected_monthly_calls")
@@ -173,6 +223,12 @@ def _effective_per_call_cost(allocation: dict[str, Any]) -> float | None:
 
 @router.get("/infra-allocations")
 async def list_infra_allocations(request: Request, user: CurrentUser = Depends(require_admin)):
+    """List the infra allocations.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     del user
     db = _db(request)
     allocations = {}
@@ -203,6 +259,14 @@ async def set_infra_allocation(
     request: Request,
     user: CurrentUser = Depends(require_admin),
 ):
+    """Set the infra allocation.
+
+    Args:
+        model (str): Model name.
+        body (InfraAllocationRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     if model not in _LOCAL_MODELS:
         raise HTTPException(
             status_code=404,
@@ -234,6 +298,15 @@ async def set_infra_allocation(
 
 
 def _allocated_infra_cost(entries: list[dict], allocations: dict[str, dict]) -> float:
+    """Internal helper for the allocated infra cost step.
+
+    Args:
+        entries (list[dict]): Entries to process.
+        allocations (dict[str, dict]): The allocations.
+
+    Returns:
+        float: The infra cost.
+    """
     calls_by_model: dict[str, int] = defaultdict(int)
     for entry in entries:
         if entry.get("model") in allocations:
@@ -271,6 +344,13 @@ async def cache_summary(
     since_days: int = Query(default=30, ge=1, le=365),
     user: CurrentUser = Depends(require_admin),
 ):
+    """Compute the cache summary.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        since_days (int): The since days (optional, default Query(default=30, ge=1, le=365)).
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     del user
     db = _db(request)
     since = datetime.now(timezone.utc) - timedelta(days=since_days)
@@ -315,16 +395,32 @@ async def cache_summary(
 
 
 class BudgetRequest(BaseModel):
+    """Pydantic model defining the BudgetRequest shape.
+
+    Attributes:
+        daily_limit_usd (float).
+    """
     daily_limit_usd: float = Field(ge=0)
 
 
 def _today_start() -> datetime:
+    """Internal helper for the today start step.
+
+    Returns:
+        datetime: The start.
+    """
     now = datetime.now(timezone.utc)
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 @router.get("/budgets")
 async def get_budgets(request: Request, user: CurrentUser = Depends(require_admin)):
+    """Return the budgets.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     del user
     db = _db(request)
     today_entries = _cost_ledger_entries(db, since=_today_start())
@@ -371,6 +467,13 @@ async def get_budgets(request: Request, user: CurrentUser = Depends(require_admi
 async def set_global_budget(
     body: BudgetRequest, request: Request, user: CurrentUser = Depends(require_admin)
 ):
+    """Set the global budget.
+
+    Args:
+        body (BudgetRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     db = _db(request)
     if db is None:
         raise HTTPException(status_code=503, detail="database unavailable")
@@ -394,6 +497,14 @@ async def set_session_budget(
     request: Request,
     user: CurrentUser = Depends(require_admin),
 ):
+    """Set the session budget.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+        body (BudgetRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     db = _db(request)
     if db is None:
         raise HTTPException(status_code=503, detail="database unavailable")
@@ -422,6 +533,13 @@ async def cost_overview(
     days: int = Query(default=30, ge=1, le=365),
     user: CurrentUser = Depends(require_admin),
 ):
+    """Compute the cost overview.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        days (int): The days (optional, default Query(default=30, ge=1, le=365)).
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_admin)).
+    """
     del user
     db = _db(request)
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -486,6 +604,14 @@ async def cost_overview(
     allocated_infra_usd = _allocated_infra_cost(entries, allocations)
 
     def _sorted_breakdown(d: dict[str, float]) -> list[dict[str, Any]]:
+        """Internal helper for the sorted breakdown step.
+
+        Args:
+            d (dict[str, float]): The d.
+
+        Returns:
+            list[dict[str, Any]]: The breakdown.
+        """
         return [
             {"label": label, "cost_usd": round(cost, 6)}
             for label, cost in sorted(d.items(), key=lambda item: item[1], reverse=True)

@@ -10,6 +10,18 @@ from app.nodes.registry import NodeRegistry
 
 
 class ScientificSkillConfig(BaseModel):
+    """Pydantic model defining the ScientificSkillConfig shape.
+
+    Attributes:
+        model (str).
+        objective (str).
+        skills (list[str]).
+        auto_select (bool).
+        max_skills (int).
+        system_prompt (str).
+        temperature (float).
+        max_tokens (int).
+    """
     model: str = "claude-sonnet-4-5"
     objective: str
     skills: list[str] = Field(
@@ -32,10 +44,19 @@ class ScientificSkillConfig(BaseModel):
 
 
 class ScientificSkillInput(BaseModel):
+    """Pydantic model defining the ScientificSkillInput shape."""
     pass
 
 
 class ScientificSkillOutput(BaseModel):
+    """Pydantic model defining the ScientificSkillOutput shape.
+
+    Attributes:
+        answer (str).
+        skills_used (list[str]).
+        skill_versions (dict[str, str]).
+        selection_reason (str).
+    """
     answer: str
     skills_used: list[str]
     skill_versions: dict[str, str]
@@ -44,6 +65,7 @@ class ScientificSkillOutput(BaseModel):
 
 @NodeRegistry.register
 class ScientificSkillAgent(NodeType):
+    """Workflow node type implementing the ScientificSkillAgent capability."""
     type_name = "ScientificSkillAgent"
     description = (
         "Scientific synthesis or proposal work guided by approved "
@@ -55,6 +77,14 @@ class ScientificSkillAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger", "scientific_skill_catalog"}
 
     async def run(
@@ -62,6 +92,15 @@ class ScientificSkillAgent(NodeType):
         state,
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ScientificSkillConfig(**resolved_config)
         catalog = self.services.get("scientific_skill_catalog")
         if catalog is None:

@@ -12,11 +12,24 @@ _USERNAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 
 
 async def ensure_user_indexes(db: Any) -> None:
+    """Ensure the user indexes.
+
+    Args:
+        db (Any): Mongo database handle.
+    """
     await db["users"].create_index("username", unique=True)
     await db["users"].create_index([("active", 1), ("role", 1)])
 
 
 def validate_username(username: str) -> str:
+    """Validate the username.
+
+    Args:
+        username (str): Username value.
+
+    Returns:
+        str: The username.
+    """
     normalized = username.strip().lower()
     if not _USERNAME.fullmatch(normalized):
         raise ValueError(
@@ -33,6 +46,15 @@ async def upsert_local_user(
     role: Role,
     active: bool = True,
 ) -> None:
+    """Upsert the local user.
+
+    Args:
+        db (Any): Mongo database handle.
+        username (str): Username value.
+        password (str): Password value.
+        role (Role): User role.
+        active (bool): Active flag (optional, default True).
+    """
     normalized = validate_username(username)
     now = datetime.now(timezone.utc)
     await db["users"].update_one(
@@ -56,6 +78,16 @@ async def authenticate_local_user(
     username: str,
     password: str,
 ) -> dict[str, Any] | None:
+    """Authenticate the local user.
+
+    Args:
+        db (Any): Mongo database handle.
+        username (str): Username value.
+        password (str): Password value.
+
+    Returns:
+        dict[str, Any] | None: The local user.
+    """
     try:
         normalized = validate_username(username)
     except ValueError:

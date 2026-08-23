@@ -53,12 +53,25 @@ class DynamicsError(RuntimeError):
         retryable: bool = False,
         suggested_action: str = "",
     ):
+        """Initialize the DynamicsError.
+
+        Args:
+            message (str): Message text.
+            code (str): The code (optional, default 'DYNAMICS_ERROR').
+            retryable (bool): The retryable (optional, default False).
+            suggested_action (str): The suggested action (optional, default '').
+        """
         self.code = code
         self.retryable = retryable
         self.suggested_action = suggested_action
         super().__init__(message)
 
     def as_payload(self) -> dict[str, Any]:
+        """Compute the as payload.
+
+        Returns:
+            dict[str, Any]: The payload.
+        """
         return {
             "code": self.code,
             "message": str(self),
@@ -68,7 +81,13 @@ class DynamicsError(RuntimeError):
 
 
 class DynamicsAuthError(DynamicsError):
+    """Exception raised for the DynamicsAuthError case."""
     def __init__(self, message: str):
+        """Initialize the DynamicsAuthError.
+
+        Args:
+            message (str): Message text.
+        """
         super().__init__(
             message,
             code="DYNAMICS_AUTH_FAILED",
@@ -87,6 +106,11 @@ class DynamicsBackend(ABC):
 
     @abstractmethod
     async def whoami(self) -> dict[str, Any]:
+        """Compute the whoami.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         ...
 
     @abstractmethod
@@ -100,25 +124,65 @@ class DynamicsBackend(ABC):
         top: int | None = None,
         expand: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Query the result.
+
+        Args:
+            entity_set (str): The entity set.
+            select (list[str]): The select.
+            filter_expression (str | None): The filter expression (optional, default None).
+            order_by (str | None): The order by (optional, default None).
+            top (int | None): The top (optional, default None).
+            expand (str | None): The expand (optional, default None).
+
+        Returns:
+            list[dict[str, Any]]: The result.
+        """
         ...
 
     @abstractmethod
     async def get(
         self, entity_set: str, record_id: str, *, select: list[str]
     ) -> dict[str, Any] | None:
+        """Return the result.
+
+        Args:
+            entity_set (str): The entity set.
+            record_id (str): The record id.
+            select (list[str]): The select.
+
+        Returns:
+            dict[str, Any] | None: The result.
+        """
         ...
 
     @abstractmethod
     async def create(self, entity_set: str, payload: dict[str, Any]) -> str:
+        """Create the result.
+
+        Args:
+            entity_set (str): The entity set.
+            payload (dict[str, Any]): Event or audit payload.
+
+        Returns:
+            str: The result.
+        """
         ...
 
     @abstractmethod
     async def update(
         self, entity_set: str, record_id: str, payload: dict[str, Any]
     ) -> None:
+        """Update the result.
+
+        Args:
+            entity_set (str): The entity set.
+            record_id (str): The record id.
+            payload (dict[str, Any]): Event or audit payload.
+        """
         ...
 
     async def close(self) -> None:
+        """Close the result."""
         return None
 
 
@@ -134,6 +198,15 @@ class DataverseClient(DynamicsBackend):
         client_secret: str,
         http_client: httpx.AsyncClient | None = None,
     ):
+        """Initialize the DataverseClient.
+
+        Args:
+            base_url (str): Base URL.
+            tenant_id (str): The tenant id.
+            client_id (str): The client id.
+            client_secret (str): The client secret.
+            http_client (httpx.AsyncClient | None): The http client (optional, default None).
+        """
         self.base_url = base_url.rstrip("/")
         self.tenant_id = tenant_id
         self.client_id = client_id
@@ -144,11 +217,17 @@ class DataverseClient(DynamicsBackend):
         self._token_expires_at: float = 0.0
 
     def _http(self) -> httpx.AsyncClient:
+        """Internal helper for the http step.
+
+        Returns:
+            httpx.AsyncClient: The result.
+        """
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
         return self._client
 
     async def close(self) -> None:
+        """Close the result."""
         if self._client is not None and self._owns_client:
             await self._client.aclose()
             self._client = None
@@ -211,6 +290,14 @@ class DataverseClient(DynamicsBackend):
         return token
 
     async def _headers(self, *, write: bool = False) -> dict[str, str]:
+        """Internal helper for the headers step.
+
+        Args:
+            write (bool): The write (optional, default False).
+
+        Returns:
+            dict[str, str]: The result.
+        """
         headers = {
             "Authorization": f"Bearer {await self._access_token()}",
             "Accept": "application/json",
@@ -227,6 +314,15 @@ class DataverseClient(DynamicsBackend):
     # -- requests --------------------------------------------------------
 
     def _url(self, path: str, params: dict[str, str] | None = None) -> str:
+        """Internal helper for the url step.
+
+        Args:
+            path (str): Filesystem path.
+            params (dict[str, str] | None): The params (optional, default None).
+
+        Returns:
+            str: The result.
+        """
         url = f"{self.base_url}/api/data/{API_VERSION}/{path}"
         if params:
             url = f"{url}?{odata.encode_params(params)}"
@@ -241,6 +337,18 @@ class DataverseClient(DynamicsBackend):
         json_body: dict[str, Any] | None = None,
         write: bool = False,
     ) -> httpx.Response:
+        """Internal helper for the request step.
+
+        Args:
+            method (str): The method.
+            path (str): Filesystem path.
+            params (dict[str, str] | None): The params (optional, default None).
+            json_body (dict[str, Any] | None): The json body (optional, default None).
+            write (bool): The write (optional, default False).
+
+        Returns:
+            httpx.Response: The result.
+        """
         url = self._url(path, params)
         try:
             response = await self._http().request(
@@ -288,6 +396,11 @@ class DataverseClient(DynamicsBackend):
         return response
 
     async def whoami(self) -> dict[str, Any]:
+        """Compute the whoami.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         response = await self._request("GET", "WhoAmI")
         identity = response.json()
         user_id = identity.get("UserId")
@@ -314,6 +427,19 @@ class DataverseClient(DynamicsBackend):
         top: int | None = None,
         expand: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Query the result.
+
+        Args:
+            entity_set (str): The entity set.
+            select (list[str]): The select.
+            filter_expression (str | None): The filter expression (optional, default None).
+            order_by (str | None): The order by (optional, default None).
+            top (int | None): The top (optional, default None).
+            expand (str | None): The expand (optional, default None).
+
+        Returns:
+            list[dict[str, Any]]: The result.
+        """
         params = odata.build_query(
             select=select,
             filter_expression=filter_expression,
@@ -329,6 +455,16 @@ class DataverseClient(DynamicsBackend):
     async def get(
         self, entity_set: str, record_id: str, *, select: list[str]
     ) -> dict[str, Any] | None:
+        """Return the result.
+
+        Args:
+            entity_set (str): The entity set.
+            record_id (str): The record id.
+            select (list[str]): The select.
+
+        Returns:
+            dict[str, Any] | None: The result.
+        """
         params = odata.build_query(select=select)
         try:
             response = await self._request(
@@ -341,6 +477,15 @@ class DataverseClient(DynamicsBackend):
         return response.json()
 
     async def create(self, entity_set: str, payload: dict[str, Any]) -> str:
+        """Create the result.
+
+        Args:
+            entity_set (str): The entity set.
+            payload (dict[str, Any]): Event or audit payload.
+
+        Returns:
+            str: The result.
+        """
         response = await self._request(
             "POST", odata.entity_path(entity_set), json_body=payload, write=True
         )
@@ -363,6 +508,13 @@ class DataverseClient(DynamicsBackend):
     async def update(
         self, entity_set: str, record_id: str, payload: dict[str, Any]
     ) -> None:
+        """Update the result.
+
+        Args:
+            entity_set (str): The entity set.
+            record_id (str): The record id.
+            payload (dict[str, Any]): Event or audit payload.
+        """
         await self._request(
             "PATCH",
             odata.entity_path(entity_set, record_id),
@@ -396,6 +548,11 @@ class FixtureBackend(DynamicsBackend):
     is_mock = True
 
     def __init__(self, fixtures: dict[str, list[dict[str, Any]]] | None = None):
+        """Initialize the FixtureBackend.
+
+        Args:
+            fixtures (dict[str, list[dict[str, Any]]] | None): The fixtures (optional, default None).
+        """
         self.store: dict[str, list[dict[str, Any]]] = {
             key: [dict(item) for item in value]
             for key, value in (fixtures or {}).items()
@@ -405,16 +562,37 @@ class FixtureBackend(DynamicsBackend):
 
     @classmethod
     def from_file(cls, path: str | Path) -> "FixtureBackend":
+        """Compute the from file.
+
+        Args:
+            path (str | Path): Filesystem path.
+
+        Returns:
+            'FixtureBackend': The file.
+        """
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(data)
 
     def _next_id(self, prefix: str) -> str:
+        """Internal helper for the next id step.
+
+        Args:
+            prefix (str): Prefix string.
+
+        Returns:
+            str: The id.
+        """
         self._counter += 1
         # A GUID-shaped id, so downstream GUID validation behaves exactly as it
         # would against a real tenant.
         return f"{prefix:0>8}-0000-4000-8000-{self._counter:012d}"
 
     async def whoami(self) -> dict[str, Any]:
+        """Compute the whoami.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         return {
             "user_id": "00000000-0000-4000-8000-000000000001",
             "full_name": "Demo Integration User",
@@ -432,6 +610,19 @@ class FixtureBackend(DynamicsBackend):
         top: int | None = None,
         expand: str | None = None,
     ) -> list[dict[str, Any]]:
+        """Query the result.
+
+        Args:
+            entity_set (str): The entity set.
+            select (list[str]): The select.
+            filter_expression (str | None): The filter expression (optional, default None).
+            order_by (str | None): The order by (optional, default None).
+            top (int | None): The top (optional, default None).
+            expand (str | None): The expand (optional, default None).
+
+        Returns:
+            list[dict[str, Any]]: The result.
+        """
         del expand
         rows = list(self.store.get(entity_set, []))
         if filter_expression:
@@ -449,6 +640,16 @@ class FixtureBackend(DynamicsBackend):
     async def get(
         self, entity_set: str, record_id: str, *, select: list[str]
     ) -> dict[str, Any] | None:
+        """Return the result.
+
+        Args:
+            entity_set (str): The entity set.
+            record_id (str): The record id.
+            select (list[str]): The select.
+
+        Returns:
+            dict[str, Any] | None: The result.
+        """
         key = f"{entity_set.rstrip('s')}id"
         for row in self.store.get(entity_set, []):
             if str(row.get(key, "")).lower() == record_id.lower():
@@ -456,6 +657,15 @@ class FixtureBackend(DynamicsBackend):
         return None
 
     async def create(self, entity_set: str, payload: dict[str, Any]) -> str:
+        """Create the result.
+
+        Args:
+            entity_set (str): The entity set.
+            payload (dict[str, Any]): Event or audit payload.
+
+        Returns:
+            str: The result.
+        """
         key = f"{entity_set.rstrip('s')}id"
         record_id = self._next_id("f1")
         record = {**payload, key: record_id}
@@ -468,6 +678,13 @@ class FixtureBackend(DynamicsBackend):
     async def update(
         self, entity_set: str, record_id: str, payload: dict[str, Any]
     ) -> None:
+        """Update the result.
+
+        Args:
+            entity_set (str): The entity set.
+            record_id (str): The record id.
+            payload (dict[str, Any]): Event or audit payload.
+        """
         key = f"{entity_set.rstrip('s')}id"
         for row in self.store.get(entity_set, []):
             if str(row.get(key, "")).lower() == record_id.lower():

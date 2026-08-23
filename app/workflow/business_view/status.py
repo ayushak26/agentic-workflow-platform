@@ -40,6 +40,14 @@ IN_PROGRESS = "in_progress"
 
 
 def _attention_count(items: list[BusinessAttentionItem]) -> int:
+    """Internal helper for the attention count step.
+
+    Args:
+        items (list[BusinessAttentionItem]): Items to process.
+
+    Returns:
+        int: The count.
+    """
     return len(items)
 
 
@@ -112,6 +120,19 @@ def build_status(
 
 
 def _status(code, headline, summary, tone, count, run) -> BusinessStatusView:
+    """Internal helper for the status step.
+
+    Args:
+        code: The code.
+        headline: The headline.
+        summary: The summary.
+        tone: The tone.
+        count: The count.
+        run: The run.
+
+    Returns:
+        BusinessStatusView: The result.
+    """
     return BusinessStatusView(
         code=code,
         headline=headline,

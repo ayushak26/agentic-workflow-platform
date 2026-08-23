@@ -1,0 +1,419 @@
+name: Reference WebSearchAgent 04
+description: A new customer requests a quotation. The form collects technical requirements
+  with rich Start input types (dropdown, multi-select, number+unit, date, a repeating
+  line-items table, multiple files, and a conditional field). The workflow checks
+  product knowledge, optionally enriches the company from the public web, and decides
+  — deterministically — whether this is a standard RFQ, a technical RFQ needing an
+  engineer, or missing information that needs the customer back before Sales can act.
+version: '1.0'
+use_case: sales_operations
+library:
+  title: W02 — New Customer RFQ Intake and Qualification
+  summary: Collect a technical RFQ, ground it in product knowledge, and qualify it
+    deterministically.
+  purpose:
+  - Demonstrate the Start node's richer input types on a realistic technical form
+  - Keep AI understanding (extracting unstated requirements) separate from the deterministic
+    qualification decision
+  suitable_for:
+  - A new-customer sales intake process for technical/industrial products
+  not_suitable_for:
+  - Existing-customer requests — see Workflow 01 or Workflow 03
+  outputs:
+  - A qualified RFQ packet, routed to Sales or Sales Engineering, or a request for
+    missing information
+  input_types:
+  - A technical RFQ form with line items and drawings
+  human_reviews:
+    count: 1
+    labels:
+    - Technical RFQ Engineering Review
+  visibility_status: draft
+entry: start
+exit:
+- end_standard
+- end_technical
+- end_needs_info
+nodes:
+- id: start
+  type: StartAgent
+  config:
+    mode: input_form
+    title: Request A Quotation
+    fields:
+    - name: company_name
+      label: Company Name
+      type: string
+      required: true
+    - name: contact_name
+      label: Contact Name
+      type: string
+      required: true
+    - name: contact_email
+      label: Contact Email
+      type: string
+      required: true
+      format: email
+    - name: contact_phone
+      label: Contact Phone
+      type: string
+      required: false
+      format: phone
+    - name: country
+      label: Country
+      type: string
+      required: false
+      preset: country
+    - name: product_category
+      label: Product Category
+      type: enum
+      required: true
+      widget: dropdown
+      enum_values:
+      - PUMPS
+      - VALVES
+      - SYSTEMS
+      - SPARE_PARTS
+    - name: required_certifications
+      label: Required Certifications
+      type: list
+      item_type: enum
+      item_enum_values:
+      - ATEX
+      - CE
+      - ISO9001
+      - API610
+      required: false
+      widget: multi_select
+    - name: required_delivery_date
+      label: Required Delivery Date
+      type: date
+      required: false
+    - name: line_items
+      label: Requested Products
+      type: list
+      item_type: object
+      required: true
+      display: table
+      fields:
+      - name: product_description
+        type: string
+      - name: quantity
+        type: integer
+      - name: flow_rate_value
+        type: number
+        required: false
+      - name: flow_rate_unit
+        type: enum
+        required: false
+        enum_values:
+        - m3/h
+        - l/min
+    - name: needs_custom_engineering
+      label: Does this need custom engineering?
+      type: boolean
+      required: false
+      widget: toggle
+    - name: engineering_requirements
+      label: Describe The Custom Engineering Need
+      type: text
+      required: false
+      visible_when:
+        operator: and
+        conditions:
+        - field: needs_custom_engineering
+          operator: equals
+          value: true
+    - name: technical_notes
+      label: Additional Technical Notes
+      type: text
+      required: false
+    - name: drawings
+      label: Drawings / Specifications
+      type: object
+      required: false
+  experience:
+    display_name: Request A Quotation
+    purpose: Collect everything Sales and Sales Engineering need to qualify this RFQ.
+    contribution: Structured line items and a conditional engineering field, not a
+      free-text email.
+    expected_output: Company, contact, product requirements, and line items.
+    failure_message: The RFQ could not be read.
+- id: extract_unstated_requirements
+  type: TransformAgent
+  config:
+    mode: ai
+    model: claude-sonnet-4-5
+    temperature: 0
+    input_fields:
+    - name: technical_notes
+      type: string
+      value: '{{outputs.start.data.technical_notes}}'
+    instructions: 'Read the customer''s additional technical notes, if any. Identify
+      any
+
+      requirement it implies that a plain reading of the form fields would
+
+      miss (e.g. a hazardous-area mention implying ATEX, a food-contact
+
+      mention implying hygienic design). Never invent a requirement the
+
+      notes don''t support.'
+    output_fields:
+    - name: implied_requirements
+      type: list
+      item_type: string
+      description: Additional requirements implied by the notes, or an empty list.
+  experience:
+    display_name: Check For Unstated Requirements
+    purpose: Catch a requirement the structured form fields wouldn't capture.
+    contribution: The model only reads for what's implied — it never decides RFQ routing.
+    expected_output: A list of implied requirements, possibly empty.
+    failure_message: The technical notes could not be read.
+- id: product_knowledge
+  type: KnowledgeRetrieval
+  config:
+    collection_id: product-documentation
+    retrieval_profile_id: default
+    query: '{{outputs.start.data.product_category}}'
+  experience:
+    display_name: Check Product Knowledge
+    purpose: See whether internal product documentation covers this category at all.
+    contribution: A cheap signal of how well-documented this product line is.
+    expected_output: Retrieved chunks and how many were found.
+    failure_message: The product knowledge base could not be searched.
+- id: product_answer
+  type: RAGAgent
+  config:
+    query: What are the standard specifications and lead times for {{outputs.start.data.product_category}}?
+  experience:
+    display_name: Answer From Product Knowledge
+    purpose: Give Sales a cited summary of what's already known about this product
+      line.
+    contribution: Every claim is cited back to a real internal document.
+    expected_output: A cited answer, or an honest "the sources don't say."
+    failure_message: The product question could not be answered.
+- id: company_enrichment
+  type: WebSearchAgent
+  config:
+    query: '{{outputs.start.data.company_name}} company overview industry'
+    top_k: 5
+  experience:
+    display_name: Enrich Company (Public Web)
+    purpose: Give Sales public context on a brand-new company, optionally.
+    contribution: Explicitly candidate-only — never treated as a verified business
+      fact.
+    expected_output: A handful of public search results, or none.
+    failure_message: The company could not be searched for.
+- id: decide_qualification
+  type: DecisionAgent
+  config:
+    defaults:
+      rfq_type: STANDARD
+    rules:
+    - name: Custom engineering needs a Technical RFQ
+      when:
+        operator: and
+        conditions:
+        - field: start.data.needs_custom_engineering
+          operator: is_true
+      then:
+      - field: rfq_type
+        value: TECHNICAL
+    - name: A required delivery date is mandatory before Sales can quote
+      when:
+        operator: and
+        conditions:
+        - field: start.data.required_delivery_date
+          operator: does_not_exist
+      then:
+      - field: rfq_type
+        value: NEEDS_INFO
+  experience:
+    display_name: Qualify The RFQ
+    purpose: Decide, deterministically, whether this is standard, technical, or missing
+      information.
+    contribution: The same three outcomes every time, on the same facts — not a model's
+      judgment call.
+    expected_output: STANDARD, TECHNICAL, or NEEDS_INFO.
+    failure_message: The RFQ could not be qualified.
+- id: qualification_router
+  type: RouterAgent
+  config:
+    mode: field
+    route_field: decide_qualification.decisions.rfq_type
+    branches:
+      STANDARD: STANDARD
+      TECHNICAL: TECHNICAL
+      NEEDS_INFO: NEEDS_INFO
+    fallback: STANDARD
+  experience:
+    display_name: Route The RFQ
+    purpose: Send the RFQ to the path that actually matches its qualification.
+    contribution: Three real, separate destinations — none of them share a downstream
+      step.
+    expected_output: One of the three routes.
+    failure_message: The RFQ could not be routed.
+- id: build_standard_rfq
+  type: TransformAgent
+  config:
+    mode: deterministic
+    operations:
+    - target: rfq_type
+      operation: constant
+      value: STANDARD
+    - target: company_name
+      operation: copy
+      source: start.data.company_name
+    - target: product_category
+      operation: copy
+      source: start.data.product_category
+    - target: line_items
+      operation: copy
+      source: start.data.line_items
+  experience:
+    display_name: Build Standard RFQ Packet
+    purpose: Package the RFQ for Sales.
+    contribution: A clean packet, not the raw form plus every intermediate step's
+      output.
+    expected_output: A standard RFQ packet.
+    failure_message: The RFQ packet could not be built.
+- id: end_standard
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: rfq_type
+      value_from: '{{outputs.build_standard_rfq.data.rfq_type}}'
+    - key: company_name
+      value_from: '{{outputs.build_standard_rfq.data.company_name}}'
+  experience:
+    display_name: Standard RFQ Result
+    purpose: Return the standard RFQ packet.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The standard RFQ packet.
+    failure_message: The result could not be produced.
+- id: engineering_review
+  type: HumanInLoopAgent
+  config:
+    question: This RFQ needs custom engineering. Confirm it's feasible before it's
+      quoted?
+    review_purpose: A commitment to custom engineering work should be a person's call,
+      not automatic.
+    review_panels:
+    - label: Engineering Requirement
+      field: start.data.engineering_requirements
+    - label: Implied Requirements (from notes)
+      field: extract_unstated_requirements.parsed.implied_requirements
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Engineering Feasibility Review
+    purpose: Let an engineer confirm the custom requirement before it's quoted.
+    contribution: Nothing technically infeasible reaches a customer as a quote.
+    expected_output: Approve or reject.
+    failure_message: The review could not be recorded.
+- id: build_technical_rfq
+  type: TransformAgent
+  config:
+    mode: deterministic
+    operations:
+    - target: rfq_type
+      operation: constant
+      value: TECHNICAL
+    - target: company_name
+      operation: copy
+      source: start.data.company_name
+    - target: engineering_requirements
+      operation: copy
+      source: start.data.engineering_requirements
+  experience:
+    display_name: Build Technical RFQ Packet
+    purpose: Package the reviewed RFQ for Sales Engineering.
+    contribution: Only reached after an engineer has approved feasibility.
+    expected_output: A technical RFQ packet.
+    failure_message: The RFQ packet could not be built.
+- id: end_technical
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: rfq_type
+      value_from: '{{outputs.build_technical_rfq.data.rfq_type}}'
+    - key: engineering_review_decision
+      value_from: '{{outputs.engineering_review.decision}}'
+  experience:
+    display_name: Technical RFQ Result
+    purpose: Return the reviewed technical RFQ packet.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The technical RFQ packet and its review decision.
+    failure_message: The result could not be produced.
+- id: request_missing_info
+  type: HumanInLoopAgent
+  config:
+    question: This RFQ has no required delivery date. Confirm before Sales follows
+      up with the customer.
+    review_purpose: Sales cannot commit to a lead time with no date to plan against.
+    review_panels:
+    - label: Company
+      field: start.data.company_name
+    - label: Product Category
+      field: start.data.product_category
+    allowed_actions:
+    - approve
+    - reject
+  experience:
+    display_name: Confirm Follow-Up Needed
+    purpose: Let a person confirm the RFQ should go back to the customer for the missing
+      date.
+    contribution: A visible, deliberate step — not a silently dropped RFQ.
+    expected_output: Approve or reject.
+    failure_message: The review could not be recorded.
+- id: end_needs_info
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: rfq_type
+      value_from: NEEDS_INFO
+    - key: missing_field
+      value_from: required_delivery_date
+    - key: follow_up_confirmed
+      value_from: '{{outputs.request_missing_info.decision}}'
+  experience:
+    display_name: Needs-Info Result
+    purpose: Return the missing-information outcome.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The missing field and whether follow-up was confirmed.
+    failure_message: The result could not be produced.
+edges:
+- from: start
+  to: extract_unstated_requirements
+- from: extract_unstated_requirements
+  to:
+  - product_knowledge
+  - product_answer
+  - company_enrichment
+- from: product_knowledge
+  to: decide_qualification
+- from: product_answer
+  to: decide_qualification
+- from: company_enrichment
+  to: decide_qualification
+- from: decide_qualification
+  to: qualification_router
+- from: qualification_router
+  condition: route
+  branches:
+    STANDARD: build_standard_rfq
+    TECHNICAL: engineering_review
+    NEEDS_INFO: request_missing_info
+- from: build_standard_rfq
+  to: end_standard
+- from: engineering_review
+  to: build_technical_rfq
+- from: build_technical_rfq
+  to: end_technical
+- from: request_missing_info
+  to: end_needs_info

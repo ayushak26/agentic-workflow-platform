@@ -25,6 +25,14 @@ _pipeline_lock = threading.Lock()
 
 @dataclass(frozen=True)
 class EntityMatch:
+    """Provides the EntityMatch behaviour.
+
+    Attributes:
+        start (int).
+        end (int).
+        text (str).
+        entity_type (str).
+    """
     start: int
     end: int
     text: str
@@ -32,6 +40,7 @@ class EntityMatch:
 
 
 def _load_pipeline():
+    """Load the pipeline."""
     global _pipeline
     if _pipeline is not None:
         return _pipeline

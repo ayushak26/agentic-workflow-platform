@@ -1,0 +1,21 @@
+name: Reference ExternalActionAgent 04
+description: Smallest valid workflow exercising ExternalActionAgent — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production.
+version: '1.0'
+nodes:
+- id: lookup_shipment
+  type: ExternalActionAgent
+  config:
+    action_type: rest_api
+    safety_class: read
+    method: GET
+    url: https://logistics.example.com/api/shipments/status
+- id: summarize
+  type: Echo
+  config:
+    template: Shipment lookup returned status {{lookup_shipment.response_status}}.
+edges:
+- from: lookup_shipment
+  to: summarize
+entry: lookup_shipment
+exit: summarize

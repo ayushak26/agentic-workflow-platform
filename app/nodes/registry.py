@@ -27,10 +27,16 @@ class _EmptySchema(BaseModel):
 
 
 class NodeRegistryError(KeyError):
+    """Exception raised for the NodeRegistryError case."""
     pass
 
 
 class NodeRegistry:
+    """Provides the NodeRegistry behaviour.
+
+    Attributes:
+        _registry (dict[str, Type[NodeType]]).
+    """
     _registry: dict[str, Type[NodeType]] = {}
 
     @classmethod
@@ -50,11 +56,22 @@ class NodeRegistry:
                 f"Duplicate node type: {node_class.type_name}"
             )
 
+        # Registration is the single enforcement point: malformed contracts
+        # never reach preflight, generation, the Builder, or execution.
+        node_class.definition({})
         cls._registry[node_class.type_name] = node_class
         return node_class
 
     @classmethod
     def get(cls, type_name: str) -> Type[NodeType]:
+        """Return the result.
+
+        Args:
+            type_name (str): Node type name.
+
+        Returns:
+            Type[NodeType]: The result.
+        """
         if type_name not in cls._registry:
             raise NodeRegistryError(
                 f"Unknown node type: {type_name}"
@@ -78,6 +95,14 @@ class NodeRegistry:
 
 
 def _manifest_entry(klass: Type[NodeType]) -> dict:
+    """Internal helper for the manifest entry step.
+
+    Args:
+        klass (Type[NodeType]): Node type class.
+
+    Returns:
+        dict: The entry.
+    """
     uses_llm = _uses_llm(klass)
     # A class's own `about` always wins; auto-synthesized fields (derived from
     # its schemas and from real workflow adjacency — see about_synthesis.py)
@@ -93,6 +118,7 @@ def _manifest_entry(klass: Type[NodeType]) -> dict:
         klass.__dict__.get("execution_kind")
         or execution_kind_for(klass.type_name, uses_llm=uses_llm)
     )
+    definition = klass.definition({})
     return {
         "type_name": klass.type_name,
         "description": klass.description,
@@ -112,6 +138,7 @@ def _manifest_entry(klass: Type[NodeType]) -> dict:
         "external_action": bool(about.get("external_action", execution_kind == "external")),
         "about": about,
         "presets": about.get("presets") or [],
+        "contract": definition.model_dump(mode="json"),
         "input_schema": getattr(
             klass,
             "input_schema",

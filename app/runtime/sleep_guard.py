@@ -35,6 +35,11 @@ _active_runs = 0
 def _enabled() -> bool:
     # Skip under pytest regardless of platform so the suite never spawns real
     # subprocesses just because it happens to run on a Mac.
+    """Internal helper for the enabled step.
+
+    Returns:
+        bool: The result.
+    """
     return platform.system() == "Darwin" and "PYTEST_CURRENT_TEST" not in os.environ
 
 

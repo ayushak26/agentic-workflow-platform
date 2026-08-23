@@ -55,6 +55,16 @@ class MCPToolError(RuntimeError):
         server_id: str = "",
         tool_name: str = "",
     ):
+        """Initialize the MCPToolError.
+
+        Args:
+            message (str): Message text.
+            code (str): The code (optional, default 'MCP_TOOL_ERROR').
+            retryable (bool): The retryable (optional, default False).
+            suggested_action (str): The suggested action (optional, default '').
+            server_id (str): The server id (optional, default '').
+            tool_name (str): The tool name (optional, default '').
+        """
         self.code = code
         self.retryable = retryable
         self.suggested_action = suggested_action
@@ -63,6 +73,11 @@ class MCPToolError(RuntimeError):
         super().__init__(message)
 
     def as_payload(self) -> dict[str, Any]:
+        """Compute the as payload.
+
+        Returns:
+            dict[str, Any]: The payload.
+        """
         return {
             "code": self.code,
             "message": str(self),
@@ -82,6 +97,7 @@ class ToolDescriptor(dict):
 
 
 class MCPIntegrationService:
+    """Provides the MCPIntegrationService behaviour."""
     def __init__(
         self,
         *,
@@ -89,6 +105,13 @@ class MCPIntegrationService:
         client: Any,
         ledger: ExternalOperationLedger | None = None,
     ):
+        """Initialize the MCPIntegrationService.
+
+        Args:
+            registry (MCPServerRegistry): The registry.
+            client (Any): Client instance.
+            ledger (ExternalOperationLedger | None): Operation ledger (optional, default None).
+        """
         self.registry = registry
         self.client = client
         self.ledger = ledger or ExternalOperationLedger(collection="mcp_operations")
@@ -149,6 +172,15 @@ class MCPIntegrationService:
     def _describe_tool(
         self, connection: MCPServerConnection, tool: Any
     ) -> ToolDescriptor:
+        """Internal helper for the describe tool step.
+
+        Args:
+            connection (MCPServerConnection): The connection.
+            tool (Any): The tool.
+
+        Returns:
+            ToolDescriptor: The tool.
+        """
         from app.mcp.policy import classify_tool
 
         name = getattr(tool, "name", "")
@@ -195,12 +227,29 @@ class MCPIntegrationService:
     async def find_tool(
         self, server_id: str, tool_name: str
     ) -> ToolDescriptor | None:
+        """Find the tool.
+
+        Args:
+            server_id (str): The server id.
+            tool_name (str): The tool name.
+
+        Returns:
+            ToolDescriptor | None: The tool.
+        """
         for tool in await self.discover_tools(server_id):
             if tool["name"] == tool_name:
                 return tool
         return None
 
     async def health_check(self, server_id: str) -> dict[str, Any]:
+        """Compute the health check.
+
+        Args:
+            server_id (str): The server id.
+
+        Returns:
+            dict[str, Any]: The check.
+        """
         try:
             tools = await self.discover_tools(server_id, refresh=True)
         except MCPToolError as error:
@@ -431,6 +480,15 @@ class MCPIntegrationService:
     def _require_connection(
         self, server_id: str, tool_name: str
     ) -> MCPServerConnection:
+        """Internal helper for the require connection step.
+
+        Args:
+            server_id (str): The server id.
+            tool_name (str): The tool name.
+
+        Returns:
+            MCPServerConnection: The connection.
+        """
         connection = self.registry.get(server_id)
         if connection is None:
             raise MCPToolError(
@@ -455,6 +513,18 @@ class MCPIntegrationService:
         tool_name: str,
         decision: PolicyDecision,
     ) -> dict[str, Any]:
+        """Internal helper for the replay or refuse step.
+
+        Args:
+            existing (dict[str, Any]): The existing.
+            key (str): Lookup key.
+            connection (MCPServerConnection): The connection.
+            tool_name (str): The tool name.
+            decision (PolicyDecision): Human decision mapping.
+
+        Returns:
+            dict[str, Any]: The or refuse.
+        """
         status = existing.get("status")
         if status == "completed":
             log.info("mcp.write_deduplicated", tool=tool_name, key=key)
@@ -538,4 +608,12 @@ def _tool_error_payload(result: MCPToolResult) -> dict[str, Any] | None:
 
 
 def _humanise(name: str) -> str:
+    """Internal helper for the humanise step.
+
+    Args:
+        name (str): Workflow or resource name.
+
+    Returns:
+        str: The result.
+    """
     return name.replace("-", " ").replace("_", " ").strip().title()

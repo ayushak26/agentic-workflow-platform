@@ -28,7 +28,13 @@ class SnippetRunnerUnavailable(RuntimeError):
 
 
 class SnippetRunnerClient:
+    """Provides the SnippetRunnerClient behaviour."""
     def __init__(self, socket_path: str) -> None:
+        """Initialize the SnippetRunnerClient.
+
+        Args:
+            socket_path (str): The socket path.
+        """
         self._socket_path = socket_path
 
     async def run(
@@ -39,6 +45,17 @@ class SnippetRunnerClient:
         timeout_seconds: float,
         memory_mb: int,
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            code (str): The code.
+            inputs (dict[str, Any]): Workflow input mapping.
+            timeout_seconds (float): Timeout in seconds.
+            memory_mb (int): The memory mb.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         request = {
             "code": code,
             "inputs": inputs,
@@ -61,6 +78,15 @@ class SnippetRunnerClient:
             )
 
     async def _call(self, request: dict[str, Any], timeout_seconds: float) -> dict[str, Any]:
+        """Internal helper for the call step.
+
+        Args:
+            request (dict[str, Any]): Incoming FastAPI request.
+            timeout_seconds (float): Timeout in seconds.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_unix_connection(self._socket_path), timeout=5.0,

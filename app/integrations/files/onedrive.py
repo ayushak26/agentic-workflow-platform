@@ -34,12 +34,26 @@ _ITEM_FIELDS = "id,name,file,folder,size,lastModifiedDateTime,webUrl,parentRefer
 
 
 class OneDriveProvider(IntegrationProvider):
+    """Provides the OneDriveProvider behaviour."""
     provider = "onedrive"
 
     def __init__(self, client: httpx.AsyncClient | None = None):
+        """Initialize the OneDriveProvider.
+
+        Args:
+            client (httpx.AsyncClient | None): Client instance (optional, default None).
+        """
         self._client = client
 
     def _headers(self, connection: IntegrationConnection) -> dict[str, str]:
+        """Internal helper for the headers step.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+
+        Returns:
+            dict[str, str]: The result.
+        """
         token = connection.credentials.get("access_token")
         if not token:
             raise IntegrationAdapterError(
@@ -58,6 +72,18 @@ class OneDriveProvider(IntegrationProvider):
         follow_redirects: bool = False,
         **kwargs: Any,
     ) -> httpx.Response:
+        """Internal helper for the request step.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            method (str): The method.
+            url (str): Target URL.
+            follow_redirects (bool): The follow redirects (optional, default False).
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            httpx.Response: The result.
+        """
         client = self._client or httpx.AsyncClient(
             timeout=_TIMEOUT, follow_redirects=follow_redirects
         )
@@ -99,6 +125,17 @@ class OneDriveProvider(IntegrationProvider):
         page_size: int,
         page_token: str | None,
     ) -> Page:
+        """List the folder.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            folder_id (str | None): The folder id.
+            page_size (int): The page size.
+            page_token (str | None): The page token.
+
+        Returns:
+            Page: The folder.
+        """
         if page_token and page_token.startswith("http"):
             response = await self._request(connection, "GET", page_token)
             return _to_page(response.json())
@@ -121,6 +158,18 @@ class OneDriveProvider(IntegrationProvider):
         page_size: int,
         page_token: str | None,
     ) -> Page:
+        """Search the files.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            query (str): Query filter.
+            folder_id (str | None): The folder id.
+            page_size (int): The page size.
+            page_token (str | None): The page token.
+
+        Returns:
+            Page: The files.
+        """
         if page_token and page_token.startswith("http"):
             response = await self._request(connection, "GET", page_token)
             return _to_page(response.json())
@@ -138,6 +187,15 @@ class OneDriveProvider(IntegrationProvider):
     async def get_file_meta(
         self, connection: IntegrationConnection, *, file_id: str
     ) -> CloudFileMeta:
+        """Return the file meta.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            file_id (str): The file id.
+
+        Returns:
+            CloudFileMeta: The file meta.
+        """
         response = await self._request(
             connection,
             "GET",
@@ -149,6 +207,15 @@ class OneDriveProvider(IntegrationProvider):
     async def download_file(
         self, connection: IntegrationConnection, *, file_id: str
     ) -> DownloadedFile:
+        """Download the file.
+
+        Args:
+            connection (IntegrationConnection): The connection.
+            file_id (str): The file id.
+
+        Returns:
+            DownloadedFile: The file.
+        """
         meta = await self.get_file_meta(connection, file_id=file_id)
         # Graph's /content redirects to a pre-authenticated blob URL — the
         # generic _request must follow it here (unlike every other call,
@@ -164,6 +231,14 @@ class OneDriveProvider(IntegrationProvider):
 
 
 def _to_meta(raw: dict[str, Any]) -> CloudFileMeta:
+    """Internal helper for the to meta step.
+
+    Args:
+        raw (dict[str, Any]): Raw value.
+
+    Returns:
+        CloudFileMeta: The meta.
+    """
     is_folder = "folder" in raw
     parent = raw.get("parentReference") or {}
     file_facet = raw.get("file") or {}
@@ -181,11 +256,27 @@ def _to_meta(raw: dict[str, Any]) -> CloudFileMeta:
 
 
 def _to_page(raw: dict[str, Any]) -> Page:
+    """Internal helper for the to page step.
+
+    Args:
+        raw (dict[str, Any]): Raw value.
+
+    Returns:
+        Page: The page.
+    """
     items = [_to_meta(item) for item in raw.get("value", [])]
     return Page(items=items, next_page_token=raw.get("@odata.nextLink"))
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
+    """Parse the timestamp.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        datetime | None: The timestamp.
+    """
     if not value:
         return None
     try:

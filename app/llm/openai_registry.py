@@ -22,6 +22,18 @@ OpenAIModelTier = Literal["economy", "standard", "premium", "specialized"]
 
 @dataclass(frozen=True)
 class OpenAIModelDefinition:
+    """Provides the OpenAIModelDefinition behaviour.
+
+    Attributes:
+        name (str).
+        display_name (str).
+        kind (OpenAIModelKind).
+        tier (OpenAIModelTier).
+        strengths (frozenset[str]).
+        speed_rank (int).
+        input_usd_per_1k (float).
+        output_usd_per_1k (float).
+    """
     name: str
     display_name: str
     kind: OpenAIModelKind
@@ -38,6 +50,11 @@ class OpenAIModelDefinition:
     snapshot_of: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
+        """Compute the as dict.
+
+        Returns:
+            dict[str, Any]: The dict.
+        """
         value = asdict(self)
         value["strengths"] = sorted(self.strengths)
         value["reasoning_efforts"] = list(self.reasoning_efforts)
@@ -237,6 +254,14 @@ OPENAI_MODEL_NAMES = tuple(OPENAI_MODEL_BY_NAME)
 
 
 def models_for_kind(kind: OpenAIModelKind) -> tuple[str, ...]:
+    """Compute the models for kind.
+
+    Args:
+        kind (OpenAIModelKind): The kind.
+
+    Returns:
+        tuple[str, ...]: The for kind.
+    """
     return tuple(
         definition.name
         for definition in OPENAI_MODEL_REGISTRY
@@ -309,6 +334,14 @@ OPENAI_EMBEDDING_FALLBACK_CHAINS: dict[str, tuple[str, ...]] = {
 }
 
 def openai_model(model: str) -> OpenAIModelDefinition:
+    """Compute the openai model.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        OpenAIModelDefinition: The model.
+    """
     try:
         return OPENAI_MODEL_BY_NAME[model]
     except KeyError as exc:
@@ -318,6 +351,15 @@ def openai_model(model: str) -> OpenAIModelDefinition:
 
 
 def require_openai_model_kind(model: str, kind: OpenAIModelKind) -> str:
+    """Compute the require openai model kind.
+
+    Args:
+        model (str): Model name.
+        kind (OpenAIModelKind): The kind.
+
+    Returns:
+        str: The openai model kind.
+    """
     definition = openai_model(model)
     if definition.kind != kind:
         raise ValueError(

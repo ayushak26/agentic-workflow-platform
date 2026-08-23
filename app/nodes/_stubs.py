@@ -7,14 +7,25 @@ from .registry import NodeRegistry
 
 
 class _Empty(BaseModel):
+    """Pydantic model defining the Empty shape."""
     pass
 
 
 class _LiteralConfig(BaseModel):
+    """Pydantic model defining the LiteralConfig shape.
+
+    Attributes:
+        value (Any).
+    """
     value: Any
 
 
 class _LiteralOutput(BaseModel):
+    """Pydantic model defining the LiteralOutput shape.
+
+    Attributes:
+        value (Any).
+    """
     value: Any
 
 
@@ -28,14 +39,30 @@ class LiteralNode(NodeType):
     config_schema = _LiteralConfig
 
     async def run(self, state, resolved_config):
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config: Configuration after template resolution.
+        """
         return {"value": resolved_config["value"]}
 
 
 class _EchoConfig(BaseModel):
+    """Pydantic model defining the EchoConfig shape.
+
+    Attributes:
+        template (str).
+    """
     template: str
 
 
 class _EchoOutput(BaseModel):
+    """Pydantic model defining the EchoOutput shape.
+
+    Attributes:
+        text (str).
+    """
     text: str
 
 
@@ -49,4 +76,10 @@ class EchoNode(NodeType):
     config_schema = _EchoConfig
 
     async def run(self, state, resolved_config):
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config: Configuration after template resolution.
+        """
         return {"text": resolved_config["template"]}

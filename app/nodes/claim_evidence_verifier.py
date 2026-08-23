@@ -22,16 +22,34 @@ from app.proposal_graph.state import (
 
 
 class ClaimEvidenceVerifierInput(BaseModel):
+    """Pydantic model defining the ClaimEvidenceVerifierInput shape."""
     pass
 
 
 class ClaimEvidenceVerifierConfig(BaseModel):
+    """Pydantic model defining the ClaimEvidenceVerifierConfig shape.
+
+    Attributes:
+        model (str).
+        minimum_support_confidence (float).
+        max_source_characters (int).
+    """
     model: str = "claude-sonnet-4-5"
     minimum_support_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
     max_source_characters: int = Field(default=24000, ge=1000, le=100000)
 
 
 class ClaimEvidenceVerifierOutput(BaseModel):
+    """Pydantic model defining the ClaimEvidenceVerifierOutput shape.
+
+    Attributes:
+        claims_checked (int).
+        relations_created (int).
+        supported_claims (int).
+        contradicted_claims (int).
+        unverified_claims (int).
+        findings (list[dict[str, Any]]).
+    """
     claims_checked: int = 0
     relations_created: int = 0
     supported_claims: int = 0
@@ -42,6 +60,7 @@ class ClaimEvidenceVerifierOutput(BaseModel):
 
 @NodeRegistry.register
 class ClaimEvidenceVerifier(NodeType):
+    """Workflow node type implementing the ClaimEvidenceVerifier capability."""
     type_name = "ClaimEvidenceVerifier"
     description = (
         "Verify each linked claim against an exact passage in an immutable "
@@ -53,9 +72,26 @@ class ClaimEvidenceVerifier(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger"}
 
     async def _source_text(self, source, cap: int) -> tuple[str, str]:
+        """Internal helper for the source text step.
+
+        Args:
+            source: Source value.
+            cap (int): The cap.
+
+        Returns:
+            tuple[str, str]: The text.
+        """
         if source.object_key and self.services.get("object_store") is not None:
             raw = await asyncio.to_thread(
                 self.services["object_store"].get_bytes,
@@ -72,6 +108,15 @@ class ClaimEvidenceVerifier(NodeType):
         return "", source.identifier or "source text unavailable"
 
     async def run(self, state: dict, resolved_config: dict[str, Any]) -> dict:
+        """Run the result.
+
+        Args:
+            state (dict): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict: The result.
+        """
         cfg = ClaimEvidenceVerifierConfig(**resolved_config)
         graph = proposal_graph_from_state(state)
         llm = self.services.get("llm")

@@ -27,6 +27,14 @@ log = get_logger(__name__)
 
 @dataclass
 class CacheLookup:
+    """Provides the CacheLookup behaviour.
+
+    Attributes:
+        hit (bool).
+        response (dict[str, Any] | None).
+        similarity (float | None).
+        query_embedding (list[float] | None).
+    """
     hit: bool
     response: dict[str, Any] | None = None
     similarity: float | None = None
@@ -43,10 +51,21 @@ class SemanticLLMCache:
     """
 
     def __init__(self, redis, embedder) -> None:
+        """Initialize the SemanticLLMCache.
+
+        Args:
+            redis: Redis client.
+            embedder: The embedder.
+        """
         self._redis = redis
         self._embedder = embedder
 
     async def probe(self) -> bool:
+        """Probe the result.
+
+        Returns:
+            bool: The result.
+        """
         return bool(await self._redis.ping())
 
     async def get(
@@ -59,6 +78,19 @@ class SemanticLLMCache:
         temperature: float,
         max_tokens: int,
     ) -> CacheLookup:
+        """Return the result.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            temperature (float): The temperature.
+            max_tokens (int): The max tokens.
+
+        Returns:
+            CacheLookup: The result.
+        """
         scope = self._scope(
             session_id=session_id,
             model=model,
@@ -135,6 +167,18 @@ class SemanticLLMCache:
         response: dict[str, Any],
         query_embedding: list[float] | None,
     ) -> None:
+        """Store the result.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            temperature (float): The temperature.
+            max_tokens (int): The max tokens.
+            response (dict[str, Any]): Outgoing FastAPI response.
+            query_embedding (list[float] | None): The query embedding.
+        """
         scope = self._scope(
             session_id=session_id,
             model=model,
@@ -170,6 +214,11 @@ class SemanticLLMCache:
             )
 
     async def _prune(self, scope: str) -> None:
+        """Prune the result.
+
+        Args:
+            scope (str): Session scope the record belongs to.
+        """
         index = self._index_key(scope)
         count = await self._redis.zcard(index)
         extra = int(count) - settings.semantic_cache_max_entries_per_scope
@@ -191,6 +240,18 @@ class SemanticLLMCache:
         temperature: float,
         max_tokens: int,
     ) -> str:
+        """Internal helper for the scope step.
+
+        Args:
+            session_id (str): Session scope the record belongs to.
+            model (str): Model name.
+            system (str): The system.
+            temperature (float): The temperature.
+            max_tokens (int): The max tokens.
+
+        Returns:
+            str: The result.
+        """
         raw = "\0".join(
             (
                 session_id,
@@ -204,15 +265,41 @@ class SemanticLLMCache:
 
     @staticmethod
     def _entry_key(scope: str, user: str) -> str:
+        """Internal helper for the entry key step.
+
+        Args:
+            scope (str): Session scope the record belongs to.
+            user (str): Authenticated current user.
+
+        Returns:
+            str: The key.
+        """
         prompt_hash = hashlib.sha256(user.encode("utf-8")).hexdigest()
         return f"awp:semcache:entry:{scope}:{prompt_hash}"
 
     @staticmethod
     def _index_key(scope: str) -> str:
+        """Internal helper for the index key step.
+
+        Args:
+            scope (str): Session scope the record belongs to.
+
+        Returns:
+            str: The key.
+        """
         return f"awp:semcache:index:{scope}"
 
 
 def _cosine(left: list[float], right: list[float]) -> float:
+    """Internal helper for the cosine step.
+
+    Args:
+        left (list[float]): The left.
+        right (list[float]): The right.
+
+    Returns:
+        float: The result.
+    """
     if len(left) != len(right) or not left:
         return 0.0
     dot = sum(a * b for a, b in zip(left, right))

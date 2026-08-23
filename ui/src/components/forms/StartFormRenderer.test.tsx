@@ -94,10 +94,11 @@ describe('StartFormRenderer — repeating group', () => {
 
   it('fills a row and removes it, producing the right output shape', async () => {
     const user = userEvent.setup();
-    let latestValues: Record<string, unknown> = {};
+    // Mutable holder, written only from onChange (never during render), so
+    // the tracking component stays render-pure.
+    const captured: { values: Record<string, unknown> } = { values: {} };
     function Tracking() {
       const [values, setValues] = useState<Record<string, unknown>>({});
-      latestValues = values;
       return (
         <StartFormRenderer
           fields={[lineItems]}
@@ -105,7 +106,7 @@ describe('StartFormRenderer — repeating group', () => {
           interactive
           onChange={(name, value) => setValues(current => {
             const next = { ...current, [name]: value };
-            latestValues = next;
+            captured.values = next;
             return next;
           })}
           values={values}
@@ -118,10 +119,10 @@ describe('StartFormRenderer — repeating group', () => {
     const productInput = screen.getAllByRole('textbox')[0];
     await user.type(productInput, 'Widget');
 
-    expect(latestValues.line_items).toEqual([{ product: 'Widget' }]);
+    expect(captured.values.line_items).toEqual([{ product: 'Widget' }]);
 
     await user.click(screen.getByRole('button', { name: /remove row 1/i }));
-    expect(latestValues.line_items).toEqual([]);
+    expect(captured.values.line_items).toEqual([]);
   });
 });
 

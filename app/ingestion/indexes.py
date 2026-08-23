@@ -23,17 +23,33 @@ class WeaviateSearchIndex:
     """
 
     def __init__(self, *, client: Any, collection_name: str):
+        """Initialize the WeaviateSearchIndex.
+
+        Args:
+            client (Any): Client instance.
+            collection_name (str): The collection name.
+        """
         self._client = client
         self._collection_name = collection_name
         self._schema_ready = False
 
     async def _ensure_schema(self) -> None:
+        """Ensure the schema."""
         if self._schema_ready:
             return
         await asyncio.to_thread(ensure_collection_schema_on, self._client, self._collection_name)
         self._schema_ready = True
 
     async def index(self, objects: list[dict[str, Any]], vectors: list[list[float]]) -> int:
+        """Compute the index.
+
+        Args:
+            objects (list[dict[str, Any]]): The objects.
+            vectors (list[list[float]]): The vectors.
+
+        Returns:
+            int: The result.
+        """
         await self._ensure_schema()
         return await asyncio.to_thread(
             upsert_objects_on, self._client, self._collection_name, objects, vectors

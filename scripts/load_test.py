@@ -18,6 +18,11 @@ from app.security.rbac import Role
 
 
 async def main_async(args: argparse.Namespace) -> None:
+    """Compute the main async.
+
+    Args:
+        args (argparse.Namespace): Positional arguments.
+    """
     host = settings.allowed_hosts[0] if settings.allowed_hosts else "localhost"
     semaphore = asyncio.Semaphore(args.concurrency)
 
@@ -27,6 +32,14 @@ async def main_async(args: argparse.Namespace) -> None:
         headers={"Host": host},
     ) as client:
         async def one(index: int) -> tuple[int, float]:
+            """Compute the one.
+
+            Args:
+                index (int): Index.
+
+            Returns:
+                tuple[int, float]: The result.
+            """
             token = create_access_token(
                 {
                     "sub": f"load-user-{index}",
@@ -63,6 +76,7 @@ async def main_async(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Compute the main."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--concurrency", type=int, default=100)

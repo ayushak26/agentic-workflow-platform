@@ -126,7 +126,7 @@ services:
     # vectorset, not search — FT._LIST returns "unknown command". Do NOT
     # override the entrypoint with a bare redis-server command; that bypasses
     # the managed startup that loads the modules. Pass args via REDIS_ARGS.
-    image: redis/redis-stack-server:latest
+    image: redis/redis-stack-server:7.4.0-v3  # pinned; was :latest — bump deliberately
     ports:
       - "127.0.0.1:6379:6379"
     environment:
@@ -282,6 +282,7 @@ services:
       - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./observability/prometheus/alerts.yml:/etc/prometheus/alerts/alerts.yml:ro
     networks:
       - eurskem-net
 

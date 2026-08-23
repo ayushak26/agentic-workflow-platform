@@ -81,6 +81,18 @@ PROVIDER_PRESETS: list[dict[str, Any]] = [
 
 
 class IntegrationNodeConfig(BaseModel):
+    """Pydantic model defining the IntegrationNodeConfig shape.
+
+    Attributes:
+        provider (IntegrationProviderName).
+        connection (str).
+        operation (IntegrationOperationName).
+        folder_id (str | list[str] | None).
+        file_id (str | list[str] | None).
+        query (str).
+        page_size (int).
+        page_token (str | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: Which cloud-storage provider this step reads from.
@@ -115,6 +127,11 @@ class IntegrationNodeConfig(BaseModel):
         # is validated on its real value at runtime. This checks the author
         # supplied *something*, which is the mistake worth catching in the
         # Builder. `not value` is correctly falsy for None, "", and [].
+        """Compute the operation has what it needs.
+
+        Returns:
+            'IntegrationNodeConfig': The has what it needs.
+        """
         if self.operation in ("select_file", "get_file") and not self.file_id:
             raise ValueError(
                 f"{self.operation} needs a file_id — map it from a "
@@ -128,6 +145,7 @@ class IntegrationNodeConfig(BaseModel):
 
 
 class IntegrationNodeInput(BaseModel):
+    """Pydantic model defining the IntegrationNodeInput shape."""
     pass
 
 
@@ -146,6 +164,18 @@ class CloudFileMetaOut(BaseModel):
 
 
 class IntegrationNodeOutput(BaseModel):
+    """Pydantic model defining the IntegrationNodeOutput shape.
+
+    Attributes:
+        operation (str).
+        provider (str).
+        connection (str).
+        status (str).
+        files (list[CloudFileMetaOut]).
+        file (CloudFileMetaOut | None).
+        first (CloudFileMetaOut | None).
+        count (int).
+    """
     operation: str = ""
     provider: str = ""
     connection: str = ""
@@ -174,6 +204,13 @@ class IntegrationNodeOutput(BaseModel):
 
 @NodeRegistry.register
 class IntegrationAgent(NodeType):
+    """Workflow node type implementing the IntegrationAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "IntegrationAgent"
     description = (
         "Browse and pull files from a connected Google Drive or OneDrive "
@@ -204,10 +241,26 @@ class IntegrationAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"files_integration", "object_store"}
 
     @classmethod
     def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         declared = set(IntegrationNodeOutput.model_fields)
         meta_fields = set(CloudFileMetaOut.model_fields)
         ref_fields = set(WorkflowFileRef.model_fields)
@@ -221,6 +274,15 @@ class IntegrationAgent(NodeType):
         )
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = IntegrationNodeConfig(**resolved_config)
         service = self.services.get("files_integration")
         store = self.services.get("object_store")
@@ -311,6 +373,14 @@ class IntegrationAgent(NodeType):
 
 
 def _meta_out(meta: CloudFileMeta) -> CloudFileMetaOut:
+    """Internal helper for the meta out step.
+
+    Args:
+        meta (CloudFileMeta): The meta.
+
+    Returns:
+        CloudFileMetaOut: The out.
+    """
     return CloudFileMetaOut(
         id=meta.id,
         name=meta.name,
@@ -358,6 +428,18 @@ def _error_output(
     error: str,
     retryable: bool = False,
 ) -> dict[str, Any]:
+    """Internal helper for the error output step.
+
+    Args:
+        cfg (IntegrationNodeConfig): The cfg.
+        status (str): Status value.
+        error_code (str): The error code.
+        error (str): Error value or message.
+        retryable (bool): The retryable (optional, default False).
+
+    Returns:
+        dict[str, Any]: The output.
+    """
     return {
         "operation": cfg.operation,
         "provider": cfg.provider,

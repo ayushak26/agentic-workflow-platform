@@ -25,10 +25,23 @@ from app.research.deep_research import ResearchBrief, ResearchDossier
 
 
 class BoundedDeepResearchInput(BaseModel):
+    """Pydantic model defining the BoundedDeepResearchInput shape."""
     pass
 
 
 class BoundedDeepResearchConfig(BaseModel):
+    """Pydantic model defining the BoundedDeepResearchConfig shape.
+
+    Attributes:
+        research_briefs (str | list[ResearchBrief]).
+        max_jobs (int).
+        max_parallel_jobs (int).
+        max_total_tool_calls (int).
+        max_tool_calls_per_job (int).
+        max_citations_per_brief (int).
+        max_candidates_per_claim (int).
+        max_duration_seconds (float).
+    """
     research_briefs: str | list[ResearchBrief]
     max_jobs: int = Field(default=8, ge=1, le=12)
     max_parallel_jobs: int = Field(default=2, ge=1, le=4)
@@ -57,6 +70,14 @@ class BoundedDeepResearchConfig(BaseModel):
     @field_validator("research_briefs", mode="before")
     @classmethod
     def _coerce_briefs(cls, value: Any) -> Any:
+        """Internal helper for the coerce briefs step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The briefs.
+        """
         if isinstance(value, list):
             return value
         if isinstance(value, str) and "{{" in value and "}}" in value:
@@ -67,6 +88,18 @@ class BoundedDeepResearchConfig(BaseModel):
 
 
 class BoundedDeepResearchOutput(BaseModel):
+    """Pydantic model defining the BoundedDeepResearchOutput shape.
+
+    Attributes:
+        dossiers (list[ResearchDossier]).
+        candidates (list[CandidateSource]).
+        search_audit (list[SearchAuditRecord]).
+        jobs_completed (int).
+        jobs_failed (int).
+        failures (list[dict[str, str]]).
+        total_tool_call_budget (int).
+        actual_tool_calls (int).
+    """
     dossiers: list[ResearchDossier] = Field(default_factory=list)
     candidates: list[CandidateSource] = Field(default_factory=list)
     search_audit: list[SearchAuditRecord] = Field(default_factory=list)
@@ -82,6 +115,7 @@ class BoundedDeepResearchOutput(BaseModel):
 
 @NodeRegistry.register
 class BoundedDeepResearchAgent(NodeType):
+    """Workflow node type implementing the BoundedDeepResearchAgent capability."""
     type_name = "BoundedDeepResearchAgent"
     description = (
         "Run multiple K-Dense-guided bounded research dossiers using a "
@@ -94,6 +128,14 @@ class BoundedDeepResearchAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"deep_research", "scientific_skill_catalog", "cost_ledger"}
 
     async def run(
@@ -101,6 +143,15 @@ class BoundedDeepResearchAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = BoundedDeepResearchConfig(**resolved_config)
         if isinstance(cfg.research_briefs, str):
             raise ValueError(
@@ -150,6 +201,11 @@ class BoundedDeepResearchAgent(NodeType):
         failures: list[dict[str, str]] = []
 
         async def _run_one(brief: ResearchBrief) -> None:
+            """Run the one.
+
+            Args:
+                brief (ResearchBrief): The brief.
+            """
             async with semaphore:
                 try:
                     selection = catalog.select(
@@ -247,6 +303,12 @@ class BoundedDeepResearchAgent(NodeType):
         state: dict[str, Any],
         dossiers: list[ResearchDossier],
     ) -> None:
+        """Record the costs.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            dossiers (list[ResearchDossier]): The dossiers.
+        """
         ledger = self.services.get("cost_ledger")
         if ledger is None:
             return
@@ -280,6 +342,16 @@ def _candidate_records(
     max_citations_per_brief: int,
     max_candidates_per_claim: int,
 ) -> list[CandidateSource]:
+    """Internal helper for the candidate records step.
+
+    Args:
+        dossiers (list[ResearchDossier]): The dossiers.
+        max_citations_per_brief (int): The max citations per brief.
+        max_candidates_per_claim (int): The max candidates per claim.
+
+    Returns:
+        list[CandidateSource]: The records.
+    """
     retained: list[CandidateSource] = []
     counts: dict[str, int] = defaultdict(int)
     seen: set[tuple[str, str]] = set()
@@ -382,6 +454,16 @@ def _search_audit(
     dossiers: list[ResearchDossier],
     failures: list[dict[str, str]],
 ) -> list[SearchAuditRecord]:
+    """Search the audit.
+
+    Args:
+        briefs (list[ResearchBrief]): The briefs.
+        dossiers (list[ResearchDossier]): The dossiers.
+        failures (list[dict[str, str]]): The failures.
+
+    Returns:
+        list[SearchAuditRecord]: The audit.
+    """
     error_by_brief = {
         item["brief_id"]: item["error"] for item in failures
     }

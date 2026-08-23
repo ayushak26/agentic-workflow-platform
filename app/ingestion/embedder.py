@@ -54,6 +54,12 @@ class Embedder:
         config: EmbedderConfig | None = None,
         client: AsyncOpenAI | None = None,
     ):
+        """Initialize the Embedder.
+
+        Args:
+            config (EmbedderConfig | None): Node configuration mapping (optional, default None).
+            client (AsyncOpenAI | None): Client instance (optional, default None).
+        """
         self.config = config or EmbedderConfig(
             model=settings.embedding_model,
             dimensions=settings.embedding_dimensions,

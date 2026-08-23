@@ -1,3 +1,9 @@
+"""Config module.
+
+Part of the eurskem ai application package.
+
+Public symbols: Settings.
+"""
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -7,6 +13,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Provides the Settings behaviour.
+
+    Attributes:
+        secret_key (str).
+        algorithm (str).
+        access_token_expire_minutes (int).
+        jwt_issuer (str).
+        jwt_audience (str).
+        environment (str).
+        api_docs_enabled (bool).
+        metrics_enabled (bool).
+    """
     model_config = SettingsConfigDict(
         env_file=(".env", ".env.local"),
         extra="ignore",
@@ -48,14 +66,17 @@ class Settings(BaseSettings):
 
     @property
     def workflow_file_max_bytes(self) -> int:
+        """The workflow file max bytes."""
         return self.workflow_file_max_mb * 1024 * 1024
 
     @property
     def workflow_file_max_total_bytes(self) -> int:
+        """The workflow file max total bytes."""
         return self.workflow_file_max_total_mb * 1024 * 1024
 
     @property
     def max_request_body_bytes(self) -> int:
+        """The max request body bytes."""
         return self.max_request_body_mb * 1024 * 1024
 
     redis_url: str = "redis://localhost:6379/0"
@@ -265,6 +286,12 @@ class Settings(BaseSettings):
 
     # Every outbound call has a finite deadline.
     external_request_timeout_seconds: float = Field(default=30.0, gt=0, le=600)
+
+    # ExternalActionAgent SSRF guard (app/integrations/url_guard.py):
+    # https targets are always allowed, private/loopback/link-local targets
+    # never are. Plain-http targets are refused unless this escape hatch is
+    # set (a deployment whose legitimate webhook endpoints have no TLS).
+    external_action_allow_http: bool = False
 
     # SubprocessAgent: how many levels a subprocess chain may nest at
     # runtime before it is refused — a real static cycle is already caught
@@ -534,10 +561,12 @@ class Settings(BaseSettings):
 
     @property
     def kimi_api_base_url(self) -> str:
+        """The kimi api base url."""
         return self.local_kimi_base_url
 
     @property
     def required_readiness_services(self) -> tuple[str, ...]:
+        """The required readiness services."""
         return tuple(
             name.strip()
             for name in self.readiness_required_services.split(",")
@@ -546,27 +575,40 @@ class Settings(BaseSettings):
 
     @property
     def resolved_paper_search_mcp_path(self) -> Path | None:
+        """The resolved paper search mcp path."""
         value = self.paper_search_mcp_path.strip()
         return Path(value).expanduser() if value else None
 
     @property
     def resolved_scientific_skills_path(self) -> Path:
+        """The resolved scientific skills path."""
         return Path(self.scientific_skills_path).expanduser()
 
     @property
     def allowed_scientific_skills(self) -> tuple[str, ...]:
+        """The allowed scientific skills."""
         return _csv_values(self.scientific_skills_allowlist)
 
     @property
     def allowed_cors_origins(self) -> tuple[str, ...]:
+        """The allowed cors origins."""
         return _csv_values(self.cors_allowed_origins)
 
     @property
     def allowed_hosts(self) -> tuple[str, ...]:
+        """The allowed hosts."""
         return _csv_values(self.trusted_hosts)
 
 
 def _csv_values(value: str) -> tuple[str, ...]:
+    """Internal helper for the csv values step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        tuple[str, ...]: The values.
+    """
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
@@ -582,6 +624,14 @@ def _redis_url_has_password(url: str) -> bool:
 
 
 def _valid_http_url(value: str) -> bool:
+    """Internal helper for the valid http url step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        bool: The http url.
+    """
     try:
         parsed = urlsplit(value.strip())
     except ValueError:
@@ -597,6 +647,14 @@ def _valid_http_url(value: str) -> bool:
 
 
 def _is_placeholder(value: str) -> bool:
+    """Return whether placeholder.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        bool: True when placeholder.
+    """
     normalized = value.strip().lower()
     return "replace-with" in normalized or "change-me" in normalized
 

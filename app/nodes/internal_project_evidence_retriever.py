@@ -32,6 +32,18 @@ _APPROVED_SOURCE_CLASSES = {
 
 
 class _InternalFactDraft(BaseModel):
+    """Pydantic model defining the InternalFactDraft shape.
+
+    Attributes:
+        question (str).
+        fact_key (str).
+        fact_value (Any).
+        linked_claim_ids (list[str]).
+        linked_graph_object_ids (list[str]).
+        source_name (str).
+        exact_passage (str).
+        locator (str).
+    """
     question: str
     fact_key: str
     fact_value: Any
@@ -43,15 +55,34 @@ class _InternalFactDraft(BaseModel):
 
 
 class _InternalExtraction(BaseModel):
+    """Pydantic model defining the InternalExtraction shape.
+
+    Attributes:
+        facts (list[_InternalFactDraft]).
+        unresolved_questions (list[str]).
+    """
     facts: list[_InternalFactDraft] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
 
 
 class InternalProjectEvidenceRetrieverInput(BaseModel):
+    """Pydantic model defining the InternalProjectEvidenceRetrieverInput shape."""
     pass
 
 
 class InternalProjectEvidenceRetrieverConfig(BaseModel):
+    """Pydantic model defining the InternalProjectEvidenceRetrieverConfig shape.
+
+    Attributes:
+        source_registry (Any).
+        source_text (str).
+        research_briefs (Any).
+        model (str).
+        max_queries (int).
+        max_records (int).
+        max_source_chars (int).
+        query_internal_index (bool).
+    """
     source_registry: Any
     source_text: str
     research_briefs: Any = Field(default_factory=list)
@@ -67,6 +98,18 @@ class InternalProjectEvidenceRetrieverConfig(BaseModel):
 
 
 class InternalProjectEvidenceRetrieverOutput(BaseModel):
+    """Pydantic model defining the InternalProjectEvidenceRetrieverOutput shape.
+
+    Attributes:
+        records (list[InternalEvidenceRecord]).
+        approved_records (list[InternalEvidenceRecord]).
+        pending_human_approval (list[InternalEvidenceRecord]).
+        rejected_facts (list[dict[str, Any]]).
+        unresolved_questions (list[str]).
+        internal_index_used (bool).
+        verification_status (str).
+        report (str).
+    """
     records: list[InternalEvidenceRecord] = Field(default_factory=list)
     approved_records: list[InternalEvidenceRecord] = Field(default_factory=list)
     pending_human_approval: list[InternalEvidenceRecord] = Field(
@@ -81,6 +124,7 @@ class InternalProjectEvidenceRetrieverOutput(BaseModel):
 
 @NodeRegistry.register
 class InternalProjectEvidenceRetrieverAgent(NodeType):
+    """Workflow node type implementing the InternalProjectEvidenceRetrieverAgent capability."""
     type_name = "InternalProjectEvidenceRetrieverAgent"
     description = (
         "Retrieve partner, pilot, work-plan, budget and approved internal "
@@ -93,6 +137,14 @@ class InternalProjectEvidenceRetrieverAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         required = {"llm", "cost_ledger"}
         if config.get("require_internal_index", False):
             required.add("retriever")
@@ -103,6 +155,15 @@ class InternalProjectEvidenceRetrieverAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = InternalProjectEvidenceRetrieverConfig(**resolved_config)
         llm = self.services.get("llm")
         if llm is None:
@@ -359,6 +420,16 @@ def _research_questions(
     research_briefs: Any,
     limit: int,
 ) -> list[str]:
+    """Internal helper for the research questions step.
+
+    Args:
+        graph (Any): Compiled LangGraph graph.
+        research_briefs (Any): The research briefs.
+        limit (int): Maximum number of items to return.
+
+    Returns:
+        list[str]: The questions.
+    """
     questions = [
         item.text
         for item in graph.open_questions.values()
@@ -393,6 +464,14 @@ def _research_questions(
 
 
 def _normalise_registry(value: Any) -> dict[str, dict[str, Any]]:
+    """Internal helper for the normalise registry step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        dict[str, dict[str, Any]]: The registry.
+    """
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -424,6 +503,14 @@ def _normalise_registry(value: Any) -> dict[str, dict[str, Any]]:
 
 
 def _source_blocks(text: str) -> dict[str, str]:
+    """Internal helper for the source blocks step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        dict[str, str]: The blocks.
+    """
     pattern = re.compile(r"(?m)^---\s+(.+?)\s+---\s*$")
     matches = list(pattern.finditer(text))
     if not matches:
@@ -436,6 +523,14 @@ def _source_blocks(text: str) -> dict[str, str]:
 
 
 def _source_class(metadata: dict[str, Any]) -> str:
+    """Internal helper for the source class step.
+
+    Args:
+        metadata (dict[str, Any]): Metadata mapping.
+
+    Returns:
+        str: The class.
+    """
     return str(
         metadata.get("source_class")
         or metadata.get("class")
@@ -446,6 +541,14 @@ def _source_class(metadata: dict[str, Any]) -> str:
 
 
 def _explicitly_approved(metadata: dict[str, Any]) -> bool:
+    """Internal helper for the explicitly approved step.
+
+    Args:
+        metadata (dict[str, Any]): Metadata mapping.
+
+    Returns:
+        bool: The approved.
+    """
     if metadata.get("human_approved") is True:
         return True
     return str(metadata.get("approval_status") or "").lower() in {
@@ -459,6 +562,15 @@ def _resolve_source_name(
     requested: str,
     blocks: dict[str, str],
 ) -> str | None:
+    """Resolve the source name.
+
+    Args:
+        requested (str): The requested.
+        blocks (dict[str, str]): The blocks.
+
+    Returns:
+        str | None: The source name.
+    """
     if requested in blocks:
         return requested
     wanted = re.sub(r"\W+", "", requested).lower()

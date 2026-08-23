@@ -18,6 +18,14 @@ Probe = Callable[[], Any | Awaitable[Any]]
 
 
 async def _call_probe(probe: Probe) -> Any:
+    """Internal helper for the call probe step.
+
+    Args:
+        probe (Probe): The probe.
+
+    Returns:
+        Any: The probe.
+    """
     result = probe()
     if inspect.isawaitable(result):
         return await result
@@ -25,6 +33,15 @@ async def _call_probe(probe: Probe) -> Any:
 
 
 async def _probe(name: str, probe: Probe | None) -> tuple[str, dict[str, Any]]:
+    """Probe the result.
+
+    Args:
+        name (str): Workflow or resource name.
+        probe (Probe | None): The probe.
+
+    Returns:
+        tuple[str, dict[str, Any]]: The result.
+    """
     started = time.perf_counter()
     if probe is None:
         return name, {
@@ -59,6 +76,14 @@ async def _probe(name: str, probe: Probe | None) -> tuple[str, dict[str, Any]]:
 
 
 def _mongo_probe(services: dict[str, Any]) -> Probe | None:
+    """Internal helper for the mongo probe step.
+
+    Args:
+        services (dict[str, Any]): Shared application services dict.
+
+    Returns:
+        Probe | None: The probe.
+    """
     database = services.get("audit_db")
     if database is None:
         return None
@@ -66,6 +91,14 @@ def _mongo_probe(services: dict[str, Any]) -> Probe | None:
 
 
 def _weaviate_probe(services: dict[str, Any]) -> Probe | None:
+    """Internal helper for the weaviate probe step.
+
+    Args:
+        services (dict[str, Any]): Shared application services dict.
+
+    Returns:
+        Probe | None: The probe.
+    """
     client = services.get("weaviate_client")
     if client is None:
         return None
@@ -73,6 +106,14 @@ def _weaviate_probe(services: dict[str, Any]) -> Probe | None:
 
 
 def _minio_probe(services: dict[str, Any]) -> Probe | None:
+    """Internal helper for the minio probe step.
+
+    Args:
+        services (dict[str, Any]): Shared application services dict.
+
+    Returns:
+        Probe | None: The probe.
+    """
     store = services.get("object_store")
     if store is None:
         return None
@@ -83,6 +124,14 @@ def _minio_probe(services: dict[str, Any]) -> Probe | None:
 
 
 def _redis_probe(services: dict[str, Any]) -> Probe | None:
+    """Internal helper for the redis probe step.
+
+    Args:
+        services (dict[str, Any]): Shared application services dict.
+
+    Returns:
+        Probe | None: The probe.
+    """
     client = services.get("redis")
     if client is None:
         return None
@@ -90,6 +139,14 @@ def _redis_probe(services: dict[str, Any]) -> Probe | None:
 
 
 def _checkpointer_probe(services: dict[str, Any]) -> Probe | None:
+    """Internal helper for the checkpointer probe step.
+
+    Args:
+        services (dict[str, Any]): Shared application services dict.
+
+    Returns:
+        Probe | None: The probe.
+    """
     checkpointer = services.get("langgraph_checkpointer")
     if checkpointer is None:
         return None
@@ -148,6 +205,14 @@ async def probe_services(services: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 async def _health_payload(request: Request) -> tuple[dict[str, Any], bool]:
+    """Internal helper for the health payload step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        tuple[dict[str, Any], bool]: The payload.
+    """
     services = getattr(request.app.state, "services", {})
     service_results = await probe_services(services)
     mcp = services.get("mcp_client")

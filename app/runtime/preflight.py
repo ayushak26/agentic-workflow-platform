@@ -42,6 +42,7 @@ class DuplicateYamlKeyError(ValueError):
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
+    """Provides the UniqueKeyLoader behaviour."""
     pass
 
 
@@ -50,6 +51,16 @@ def _construct_unique_mapping(
     node: yaml.MappingNode,
     deep: bool = False,
 ) -> dict[Any, Any]:
+    """Internal helper for the construct unique mapping step.
+
+    Args:
+        loader (_UniqueKeyLoader): The loader.
+        node (yaml.MappingNode): The node.
+        deep (bool): The deep (optional, default False).
+
+    Returns:
+        dict[Any, Any]: The unique mapping.
+    """
     mapping: dict[Any, Any] = {}
     for key_node, value_node in node.value:
         key = loader.construct_object(key_node, deep=deep)
@@ -70,11 +81,22 @@ _UniqueKeyLoader.add_constructor(
 
 
 class PreflightSeverity(str, Enum):
+    """Enumeration of PreflightSeverity values."""
     ERROR = "error"
     WARNING = "warning"
 
 
 class PreflightIssue(BaseModel):
+    """Pydantic model defining the PreflightIssue shape.
+
+    Attributes:
+        code (str).
+        severity (PreflightSeverity).
+        message (str).
+        path (str | None).
+        node_id (str | None).
+        suggestion (str | None).
+    """
     code: str
     severity: PreflightSeverity
     message: str
@@ -84,12 +106,31 @@ class PreflightIssue(BaseModel):
 
 
 class PreflightCheck(BaseModel):
+    """Pydantic model defining the PreflightCheck shape.
+
+    Attributes:
+        name (str).
+        status (Literal['passed', 'failed', 'warning', 'skipped']).
+        detail (str).
+    """
     name: str
     status: Literal["passed", "failed", "warning", "skipped"]
     detail: str = ""
 
 
 class WorkflowPreflightReport(BaseModel):
+    """Pydantic model defining the WorkflowPreflightReport shape.
+
+    Attributes:
+        valid (bool).
+        workflow_name (str | None).
+        node_count (int).
+        edge_count (int).
+        required_services (list[str]).
+        checks (list[PreflightCheck]).
+        issues (list[PreflightIssue]).
+        tokens_spent (int).
+    """
     valid: bool
     workflow_name: str | None = None
     node_count: int = 0
@@ -101,6 +142,7 @@ class WorkflowPreflightReport(BaseModel):
 
     @property
     def errors(self) -> list[PreflightIssue]:
+        """The errors."""
         return [
             issue
             for issue in self.issues
@@ -109,6 +151,7 @@ class WorkflowPreflightReport(BaseModel):
 
     @property
     def warnings(self) -> list[PreflightIssue]:
+        """The warnings."""
         return [
             issue
             for issue in self.issues
@@ -116,6 +159,11 @@ class WorkflowPreflightReport(BaseModel):
         ]
 
     def refresh(self) -> "WorkflowPreflightReport":
+        """Refresh the result.
+
+        Returns:
+            'WorkflowPreflightReport': The result.
+        """
         self.valid = not self.errors
         return self
 
@@ -124,6 +172,11 @@ class WorkflowPreflightError(ValueError):
     """Carries the complete report when execution is blocked."""
 
     def __init__(self, report: WorkflowPreflightReport):
+        """Initialize the WorkflowPreflightError.
+
+        Args:
+            report (WorkflowPreflightReport): Preflight report.
+        """
         self.report = report
         summary = "; ".join(issue.message for issue in report.errors[:5])
         super().__init__(
@@ -142,6 +195,17 @@ def _issue(
     node_id: str | None = None,
     suggestion: str | None = None,
 ) -> None:
+    """Internal helper for the issue step.
+
+    Args:
+        report (WorkflowPreflightReport): Preflight report.
+        code (str): The code.
+        message (str): Message text.
+        severity (PreflightSeverity): The severity (optional, default PreflightSeverity.ERROR).
+        path (str | None): Filesystem path (optional, default None).
+        node_id (str | None): Workflow node identifier (optional, default None).
+        suggestion (str | None): The suggestion (optional, default None).
+    """
     report.issues.append(
         PreflightIssue(
             code=code,
@@ -160,6 +224,14 @@ def _add_check(
     before: int,
     detail: str,
 ) -> None:
+    """Add the check.
+
+    Args:
+        report (WorkflowPreflightReport): Preflight report.
+        name (str): Workflow or resource name.
+        before (int): The before.
+        detail (str): The detail.
+    """
     new_issues = report.issues[before:]
     if any(
         item.severity == PreflightSeverity.ERROR for item in new_issues
@@ -175,6 +247,14 @@ def _add_check(
 
 
 def _load_unique_yaml(yaml_text: str) -> Any:
+    """Load the unique yaml.
+
+    Args:
+        yaml_text (str): Workflow YAML text.
+
+    Returns:
+        Any: The unique yaml.
+    """
     return yaml.load(yaml_text, Loader=_UniqueKeyLoader)
 
 
@@ -182,6 +262,15 @@ def _parse_spec(
     yaml_text: str,
     report: WorkflowPreflightReport,
 ) -> WorkflowSpec | None:
+    """Parse the spec.
+
+    Args:
+        yaml_text (str): Workflow YAML text.
+        report (WorkflowPreflightReport): Preflight report.
+
+    Returns:
+        WorkflowSpec | None: The spec.
+    """
     before = len(report.issues)
     try:
         raw = _load_unique_yaml(yaml_text)
@@ -248,6 +337,11 @@ def _parse_spec(
 
 
 def _validate_registry(report: WorkflowPreflightReport) -> None:
+    """Validate the registry.
+
+    Args:
+        report (WorkflowPreflightReport): Preflight report.
+    """
     before = len(report.issues)
     discovery_errors = nodes_package.discover_nodes()
     for module, error in sorted(discovery_errors.items()):
@@ -311,6 +405,15 @@ def _unknown_config_fields(
     node_spec: NodeSpec,
     node_class: type[NodeType],
 ) -> list[str]:
+    """Internal helper for the unknown config fields step.
+
+    Args:
+        node_spec (NodeSpec): The node spec.
+        node_class (type[NodeType]): Node type class.
+
+    Returns:
+        list[str]: The config fields.
+    """
     model_config = getattr(node_class.config_schema, "model_config", {})
     if model_config.get("extra") == "allow":
         return []
@@ -319,6 +422,14 @@ def _unknown_config_fields(
 
 
 def _validated_node_config(node_spec: NodeSpec) -> dict[str, Any]:
+    """Internal helper for the validated node config step.
+
+    Args:
+        node_spec (NodeSpec): The node spec.
+
+    Returns:
+        dict[str, Any]: The node config.
+    """
     try:
         node_class = NodeRegistry.get(node_spec.type)
         instance = node_class(
@@ -332,6 +443,15 @@ def _validated_node_config(node_spec: NodeSpec) -> dict[str, Any]:
 
 
 def _iter_model_values(config: Any, path: str = "config") -> Iterable[tuple[str, str]]:
+    """Internal helper for the iter model values step.
+
+    Args:
+        config (Any): Node configuration mapping.
+        path (str): Filesystem path (optional, default 'config').
+
+    Returns:
+        Iterable[tuple[str, str]]: The model values.
+    """
     if isinstance(config, dict):
         for key, value in config.items():
             child_path = f"{path}.{key}"
@@ -369,6 +489,12 @@ def _validate_nodes(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
 ) -> None:
+    """Validate the nodes.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        report (WorkflowPreflightReport): Preflight report.
+    """
     before = len(report.issues)
     known_types = sorted(NodeRegistry._registry)
     required_services: set[str] = set()
@@ -539,6 +665,14 @@ def _validate_nodes(
 
 
 def _edge_targets(edge: EdgeSpec) -> list[str]:
+    """Internal helper for the edge targets step.
+
+    Args:
+        edge (EdgeSpec): The edge.
+
+    Returns:
+        list[str]: The targets.
+    """
     targets: list[str] = []
     if isinstance(edge.to, list):
         targets.extend(edge.to)
@@ -551,6 +685,14 @@ def _edge_targets(edge: EdgeSpec) -> list[str]:
 def _adjacency(
     spec: WorkflowSpec,
 ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Internal helper for the adjacency step.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+
+    Returns:
+        tuple[dict[str, set[str]], dict[str, set[str]]]: The result.
+    """
     forward = {node.id: set() for node in spec.nodes}
     reverse = {node.id: set() for node in spec.nodes}
     for edge in spec.edges:
@@ -561,6 +703,15 @@ def _adjacency(
 
 
 def _reachable(start: str, graph: dict[str, set[str]]) -> set[str]:
+    """Internal helper for the reachable step.
+
+    Args:
+        start (str): Start value.
+        graph (dict[str, set[str]]): Compiled LangGraph graph.
+
+    Returns:
+        set[str]: The result.
+    """
     seen: set[str] = set()
     queue: deque[str] = deque([start])
     while queue:
@@ -640,9 +791,25 @@ def _guaranteed_before(
 
 
 def _has_cycle(graph: dict[str, set[str]]) -> bool:
+    """Return whether cycle.
+
+    Args:
+        graph (dict[str, set[str]]): Compiled LangGraph graph.
+
+    Returns:
+        bool: True when cycle.
+    """
     colors = {node_id: 0 for node_id in graph}
 
     def visit(node_id: str) -> bool:
+        """Compute the visit.
+
+        Args:
+            node_id (str): Workflow node identifier.
+
+        Returns:
+            bool: The result.
+        """
         colors[node_id] = 1
         for target in graph[node_id]:
             if colors[target] == 1:
@@ -662,6 +829,12 @@ def _validate_router_edges(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
 ) -> None:
+    """Validate the router edges.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        report (WorkflowPreflightReport): Preflight report.
+    """
     nodes = {node.id: node for node in spec.nodes}
     conditional_sources: set[str] = set()
 
@@ -1288,6 +1461,15 @@ def _validate_graph(
     spec: WorkflowSpec,
     report: WorkflowPreflightReport,
 ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Validate the graph.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        report (WorkflowPreflightReport): Preflight report.
+
+    Returns:
+        tuple[dict[str, set[str]], dict[str, set[str]]]: The graph.
+    """
     before = len(report.issues)
     _validate_router_edges(spec, report)
     _validate_start_end_edges(spec, report)
@@ -1340,6 +1522,7 @@ def _validate_graph(
             )
 
     seen_edges: set[tuple[str, str, str]] = set()
+    nodes_by_id = {node.id: node for node in spec.nodes}
     for index, edge in enumerate(spec.edges):
         label = "conditional" if edge.branches else "plain"
         for target in _edge_targets(edge):
@@ -1352,6 +1535,40 @@ def _validate_graph(
                     path=f"edges.{index}",
                 )
             seen_edges.add(key)
+            source_spec = nodes_by_id.get(edge.from_)
+            target_spec = nodes_by_id.get(target)
+            if source_spec is None or target_spec is None:
+                continue
+            try:
+                source_type = NodeRegistry.get(source_spec.type)
+                target_type = NodeRegistry.get(target_spec.type)
+                from app.nodes.contracts import check_compatibility
+
+                compatibility = check_compatibility(
+                    source_type.definition(source_spec.effective_config()),
+                    target_type.definition(target_spec.effective_config()),
+                )
+            except Exception:
+                # Registry/config validation emits the actionable issue; edge
+                # compatibility must not duplicate or obscure it.
+                continue
+            for compatibility_issue in compatibility.issues:
+                _issue(
+                    report,
+                    compatibility_issue.code,
+                    compatibility_issue.message,
+                    severity=(
+                        PreflightSeverity.WARNING
+                        if compatibility_issue.severity == "warning"
+                        else PreflightSeverity.ERROR
+                    ),
+                    path=f"edges.{index}",
+                    node_id=target,
+                    suggestion=(
+                        "Insert a transform/adapter node or change one node's "
+                        "declared accepts/produces contract."
+                    ),
+                )
 
     if _has_cycle(forward):
         _issue(
@@ -1368,6 +1585,14 @@ def _validate_graph(
         before,
         f"Entry {entry!r}; {len(terminal_nodes)} terminal/exit node(s).",
     )
+    compatibility_issues = [issue for issue in report.issues[before:] if issue.code.startswith("EDGE_")]
+    report.checks.append(PreflightCheck(
+        name="edge_compatibility",
+        status="failed" if any(
+            issue.severity == PreflightSeverity.ERROR for issue in compatibility_issues
+        ) else ("warning" if compatibility_issues else "passed"),
+        detail=f"{len(seen_edges)} directed edge contract(s) checked generically.",
+    ))
     return forward, reverse
 
 
@@ -1375,6 +1600,15 @@ def _iter_strings(
     value: Any,
     path: str,
 ) -> Iterable[tuple[str, str]]:
+    """Internal helper for the iter strings step.
+
+    Args:
+        value (Any): Value to process.
+        path (str): Filesystem path.
+
+    Returns:
+        Iterable[tuple[str, str]]: The strings.
+    """
     if isinstance(value, str):
         yield path, value
     elif isinstance(value, dict):
@@ -1406,7 +1640,21 @@ def _validate_template_output_path(
     path: str,
     forward: dict[str, set[str]],
     guaranteed: dict[str, set[str]],
+    optional: bool = False,
 ) -> None:
+    """Validate the template output path.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        current_node (NodeSpec): The current node.
+        reference (str): The reference.
+        report (WorkflowPreflightReport): Preflight report.
+        path (str): Filesystem path.
+        forward (dict[str, set[str]]): The forward.
+        guaranteed (dict[str, set[str]]): The guaranteed.
+        optional (bool): Reference carries the trailing `?` marker, so a
+            None resolution is defined behaviour, not a failure.
+    """
     parts = reference.split(".")
     first = parts[0]
     node_map = {node.id: node for node in spec.nodes}
@@ -1611,7 +1859,12 @@ def _validate_template_output_path(
     # (shipped workflows rely on them). Blocking them would reject valid
     # workflows; staying silent hides a real, hard-to-diagnose mid-run
     # failure. So it is surfaced without failing preflight.
-    if len(parts) >= 3:
+    #
+    # Optional references (`...?`) are exempt: the runtime resolver wraps
+    # them in a try/except and substitutes None (app/runtime/templating.py),
+    # so the author has explicitly accepted a None outcome — warning anyway
+    # would punish the exact syntax that makes the reference safe.
+    if len(parts) >= 3 and not optional:
         output_schema = getattr(source_class, "output_schema", None)
         field_info = (
             output_schema.model_fields.get(parts[1])
@@ -1715,6 +1968,14 @@ def _validate_templates(
     forward: dict[str, set[str]],
     reverse: dict[str, set[str]],
 ) -> None:
+    """Validate the templates.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        report (WorkflowPreflightReport): Preflight report.
+        forward (dict[str, set[str]]): The forward.
+        reverse (dict[str, set[str]]): The reverse.
+    """
     before = len(report.issues)
     entry = spec.entry or spec.nodes[0].id
     guaranteed = _guaranteed_before(entry, forward, reverse)
@@ -1739,6 +2000,7 @@ def _validate_templates(
                     path,
                     forward,
                     guaranteed,
+                    optional=bool(match.group(2)),
                 )
 
     _add_check(
@@ -1754,6 +2016,13 @@ def _validate_inputs(
     provided_inputs: dict[str, Any] | None,
     report: WorkflowPreflightReport,
 ) -> None:
+    """Validate the inputs.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        provided_inputs (dict[str, Any] | None): The provided inputs.
+        report (WorkflowPreflightReport): Preflight report.
+    """
     before = len(report.issues)
     if provided_inputs is None:
         report.checks.append(
@@ -1828,6 +2097,13 @@ def _compile_dry_run(
     services: dict[str, Any] | None,
     report: WorkflowPreflightReport,
 ) -> None:
+    """Internal helper for the compile dry run step.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        services (dict[str, Any] | None): Shared application services dict.
+        report (WorkflowPreflightReport): Preflight report.
+    """
     before = len(report.issues)
     if report.errors:
         report.checks.append(
@@ -1981,6 +2257,16 @@ def _validate_business_logic(
         node_id: str | None = None,
         suggestion: str | None = None,
     ) -> None:
+        """Record the result.
+
+        Args:
+            code (str): The code.
+            message (str): Message text.
+            severity (str): The severity (optional, default 'error').
+            path (str | None): Filesystem path (optional, default None).
+            node_id (str | None): Workflow node identifier (optional, default None).
+            suggestion (str | None): The suggestion (optional, default None).
+        """
         _issue(
             report,
             code,
@@ -2007,6 +2293,15 @@ def _validate_business_logic(
     def always_before(source: str, target: str) -> bool:
         # An unknown target means the graph checks already reported a problem
         # with it; don't pile a second, less useful message on top.
+        """Compute the always before.
+
+        Args:
+            source (str): Source value.
+            target (str): Target value.
+
+        Returns:
+            bool: The before.
+        """
         if target not in guaranteed:
             return True
         return source in guaranteed[target]
@@ -2066,6 +2361,15 @@ async def _probe_services(
     require_run_history: bool,
     owner_scope_id: str | None = None,
 ) -> None:
+    """Probe the services.
+
+    Args:
+        spec (WorkflowSpec): Parsed workflow specification.
+        services (dict[str, Any]): Shared application services dict.
+        report (WorkflowPreflightReport): Preflight report.
+        require_run_history (bool): The require run history.
+        owner_scope_id (str | None): The owner scope id (optional, default None).
+    """
     before = len(report.issues)
     required = set(report.required_services)
     if require_run_history:
@@ -2352,16 +2656,18 @@ def _probe_image_generation_nodes(
             continue
         if node.effective_config().get("backend", "openai") == "disabled":
             continue
-        if not service.available():
+        backend = node.effective_config().get("backend", "openai")
+        if not service.available(backend):
             _issue(
                 report,
                 "IMAGE_GENERATION_UNAVAILABLE",
-                f"OpenAIImageGenerationAgent {node.id!r} has no configured "
+                f"OpenAIImageGenerationAgent {node.id!r} has no configured {backend} "
                 "image-generation backend.",
                 node_id=node.id,
                 path=f"nodes.{node.id}.config.backend",
                 suggestion=(
-                    "Set OPENAI_API_KEY and IMAGE_GENERATION_BACKEND=openai, "
+                    "Set OPENAI_API_KEY for backend=openai or OPENROUTER_API_KEY "
+                    "for backend=openrouter, "
                     "or set this node's backend to 'disabled'."
                 ),
             )
@@ -2423,6 +2729,13 @@ async def _probe_rag_resource_nodes(
     probed = 0
 
     async def _collection_ok(collection_id: str, node_id: str, path: str) -> None:
+        """Internal helper for the collection ok step.
+
+        Args:
+            collection_id (str): Knowledge collection identifier.
+            node_id (str): Workflow node identifier.
+            path (str): Filesystem path.
+        """
         try:
             collection = await repository.get_collection(owner_scope_id, collection_id)
         except ResourceNotFoundError:
@@ -2435,7 +2748,17 @@ async def _probe_rag_resource_nodes(
                 suggestion="Pick a Collection from Knowledge Studio.",
             )
             return
-        if not collection.active_index_id:
+        if collection.status not in {ResourceStatus.READY, ResourceStatus.ACTIVE}:
+            _issue(
+                report,
+                "COLLECTION_NOT_READY",
+                f"collection {collection.name!r} is {collection.status.value}, "
+                "so it cannot be searched.",
+                path=path,
+                node_id=node_id,
+                suggestion="Finish ingestion and activate a ready index in Knowledge Studio.",
+            )
+        elif not collection.active_index_id:
             _issue(
                 report,
                 "COLLECTION_NOT_READY",
@@ -2499,7 +2822,7 @@ async def _probe_rag_resource_nodes(
         if profile_id:
             probed += 1
             try:
-                await repository.get_profile(
+                profile = await repository.get_profile(
                     owner_scope_id,
                     str(profile_id),
                     config.get("retrieval_profile_version"),
@@ -2514,6 +2837,16 @@ async def _probe_rag_resource_nodes(
                     node_id=node.id,
                     suggestion="Save one from the Retrieval Playground first.",
                 )
+            else:
+                if profile.status not in {ResourceStatus.READY, ResourceStatus.ACTIVE}:
+                    _issue(
+                        report,
+                        "RETRIEVAL_PROFILE_NOT_READY",
+                        f"retrieval profile {profile_id!r} is {profile.status.value}.",
+                        path=f"{path}.retrieval_profile_id",
+                        node_id=node.id,
+                        suggestion="Activate a ready retrieval profile in Knowledge Studio.",
+                    )
 
     if probed:
         _add_check(
@@ -2713,5 +3046,10 @@ async def preflight_workflow_for_run(
 
 
 def require_preflight(report: WorkflowPreflightReport) -> None:
+    """Compute the require preflight.
+
+    Args:
+        report (WorkflowPreflightReport): Preflight report.
+    """
     if not report.valid:
         raise WorkflowPreflightError(report)

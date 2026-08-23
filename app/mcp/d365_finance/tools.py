@@ -10,10 +10,27 @@ from typing import Any
 
 
 def _string(description: str, **extra: Any) -> dict[str, Any]:
+    """Internal helper for the string step.
+
+    Args:
+        description (str): The description.
+        **extra (Any): The extra.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {"type": "string", "description": description, **extra}
 
 
 def _collection(key: str) -> dict[str, Any]:
+    """Internal helper for the collection step.
+
+    Args:
+        key (str): Lookup key.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "type": "object",
         "properties": {

@@ -1,0 +1,3040 @@
+name: Reference WorkflowFileLoader 07
+description: Understands one multilingual pump-manufacturer customer inquiry, preserves
+  optional attachment text, identifies one or more business-object/requested-action
+  pairs, exposes a typed top-level routing_keys list for deterministic policy, and
+  produces a CRM case-routing plan to CRM / Customer Support, Sales, Supply Chain
+  / Operations, Product Service & Spare Parts, or Finance. AI understands the inquiry;
+  deterministic policy assigns responsibility.
+version: '1.1'
+use_case: industrial_customer_operations
+inputs:
+  message:
+    type: text
+    required: true
+    description: Full customer inquiry in its original language. May come from email,
+      contact form, phone transcription, or messaging.
+  subject:
+    type: text
+    required: false
+    description: Subject/title when the source channel provides one.
+  sender_name:
+    type: text
+    required: false
+    description: Sender/contact name supplied by the channel.
+  sender_email:
+    type: text
+    required: false
+    description: Sender email address when available.
+  sender_phone:
+    type: text
+    required: false
+    description: Sender phone number when available.
+  source_channel:
+    type: text
+    required: false
+    description: Origin channel, for example EMAIL, WEB_FORM, PHONE_TRANSCRIPT, or
+      MESSAGING.
+  received_at:
+    type: text
+    required: false
+    description: Original receive timestamp when the channel provides one.
+  attachments:
+    type: file
+    required: false
+    multiple: true
+    max_files: 5
+    accept:
+    - pdf
+    - document
+    - markdown
+    - presentation
+    - spreadsheet
+    - code
+    description: Optional text-extractable attachments supplied with the inquiry.
+      Raw extracted text is preserved in understand_customer_inquiry.data.attachment.extracted_text.
+entry: customer_inquiry
+exit:
+- manual_understanding_review
+- customer_ambiguity_review
+- build_crm_case_payload
+output:
+  include_input: false
+  nodes:
+  - node_id: understand_customer_inquiry
+    flatten: false
+  - node_id: customer_context
+    flatten: false
+  - node_id: responsibility_decision
+    flatten: false
+  - node_id: coordination_decision
+    flatten: false
+  - node_id: build_crm_case_payload
+    flatten: false
+nodes:
+- id: customer_inquiry
+  type: WorkflowInputAgent
+  config:
+    source: api
+    fields:
+    - name: message
+      source: inputs.message
+      type: text
+      required: true
+      description: Original customer message/transcript.
+    - name: subject
+      source: inputs.subject
+      type: text
+      required: false
+      description: Source subject/title.
+    - name: sender_name
+      source: inputs.sender_name
+      type: string
+      required: false
+      description: Sender/contact name from channel metadata.
+    - name: sender_email
+      source: inputs.sender_email
+      type: string
+      required: false
+      description: Sender email from channel metadata.
+    - name: sender_phone
+      source: inputs.sender_phone
+      type: string
+      required: false
+      description: Sender phone from channel metadata.
+    - name: source_channel
+      source: inputs.source_channel
+      type: string
+      required: false
+      description: EMAIL / WEB_FORM / PHONE_TRANSCRIPT / MESSAGING / other.
+    - name: received_at
+      source: inputs.received_at
+      type: string
+      required: false
+      description: Receive timestamp.
+- id: load_attachments
+  type: WorkflowFileLoader
+  config:
+    files: '{{inputs.attachments}}'
+    max_chars_per_file: 100000
+    fail_on_unreadable: false
+- id: interpret_customer_inquiry
+  type: TransformAgent
+  config:
+    model: auto
+    temperature: 0
+    max_tokens: 12000
+    max_retries: 1
+    fail_on_error: false
+    input_fields:
+    - name: message
+      description: Full body of the incoming customer inquiry, in its original language.
+      type: string
+      value: '{{outputs.customer_inquiry.data.message}}'
+    - name: SUBJECT
+      description: Subject line of the incoming communication.
+      type: string
+      value: '{{outputs.customer_inquiry.data.subject}}'
+    - name: SENDER_NAME
+      description: Sender name from channel metadata.
+      type: string
+      value: '{{outputs.customer_inquiry.data.sender_name}}'
+    - name: SENDER_EMAIL
+      description: Sender email from channel metadata.
+      type: string
+      value: '{{outputs.customer_inquiry.data.sender_email}}'
+    - name: SENDER_PHONE
+      description: Sender phone from channel metadata.
+      type: string
+      value: '{{outputs.customer_inquiry.data.sender_phone}}'
+    - name: SOURCE_CHANNEL
+      description: EMAIL / WEB_FORM / PHONE_TRANSCRIPT / MESSAGING / other.
+      type: string
+      value: '{{outputs.customer_inquiry.data.source_channel}}'
+    - name: ATTACHMENT_EXTRACTED_TEXT
+      description: Extracted text of any attachments, evidence only, not authoritative.
+      type: string
+      value: '{{outputs.load_attachments.text}}'
+    instructions: 'Extract structured information from the customer''s message. Return
+      only the fields defined by the output schema below, and never invent a value.
+
+
+      The customer may write in any language. Detect it, understand the request in
+      its original language, and write every text output field in English, except
+      where a field is explicitly meant to preserve the original wording (e.g. an
+      exact quote or model designation).
+
+
+      Act as the intake-understanding capability for a pump-manufacturer CRM team.
+
+
+      Your job is to understand what the customer said. Do NOT decide a department,
+      employee,
+
+      owner, queue, warranty result, credit result, order result, stock result, or
+      delivery commitment.
+
+
+      Read the original message and the extracted attachment text together. Attachment
+      content is
+
+      evidence from the customer, not authoritative CRM/ERP truth. If the email and
+      attachment conflict,
+
+      record the conflict in ambiguous_information instead of choosing whichever looks
+      more plausible.
+
+
+      A single inquiry may contain several distinct requests. Create one item in `requests`
+      for each
+
+      genuinely distinct action the customer expects from the company. Do not split
+      one coherent request
+
+      merely because it contains several technical facts.
+
+
+      For each request:
+
+      1. business_object = what business object the request concerns.
+
+      2. requested_action = what the customer wants the company to do.
+
+      3. description = a concise description of that specific customer request.
+
+      4. Extract only the references and facts that belong to that request.
+
+
+      After creating `requests`, create the top-level `routing_keys` list:
+
+      - For EVERY request item, add exactly `BUSINESS_OBJECT::REQUESTED_ACTION`.
+
+      - Deduplicate identical keys if the customer repeats the same request.
+
+      - Every routing key must correspond to a request item and every request item
+      must be represented by a routing key.
+
+      - Use only values permitted by the `routing_keys` schema.
+
+      - If no governed pair fits, use business_object=OTHER, requested_action=OTHER_REQUEST,
+      and add OTHER::OTHER_REQUEST to routing_keys.
+
+
+      Preserve identifiers (quote, PO, sales order, invoice, case, pump model, serial,
+      part number),
+
+      quantities and units exactly as written. Customer claims about price, discount,
+      key-account status,
+
+      warranty, stock, delivery or internal ownership are customer-provided claims
+      only. Do not promote
+
+      them to company facts.
+
+
+      The following are interpretations, not routing decisions:
+
+      - NEW_EQUIPMENT means the customer is discussing equipment they may buy.
+
+      - PRODUCT_APPLICATION means product selection/sizing/suitability/configuration.
+
+      - SALES_ORDER means an accepted/existing order in execution.
+
+      - INSTALLED_PRODUCT means a pump/unit already installed or in use.
+
+      - SPARE_PART means replacement components/consumables.
+
+      - SERVICE means field service, commissioning, maintenance or service activity.
+
+      - PAYMENT_CREDIT means payment, credit-limit, credit-hold or payment-terms questions.
+
+
+      Confidence is only how confident you are that the inquiry was represented correctly.
+
+      Lower it for vague, contradictory, truncated or genuinely unclear content. It
+      is not a probability
+
+      that a later routing decision is correct.
+
+
+      The raw attachment text does NOT belong in your model-generated fields. It will
+      be attached
+
+      deterministically after this AI step so it cannot be paraphrased or lost.
+
+      '
+    output_fields:
+    - name: language
+      type: string
+      description: Language of the original customer communication.
+      required: true
+    - name: customer
+      type: object
+      description: Customer/contact information stated in the inquiry or channel metadata.
+      required: true
+      fields:
+      - name: company_name
+        type: string
+        description: Company/organisation the sender represents.
+        required: false
+        nullable: true
+      - name: contact_name
+        type: string
+        description: Name of the person contacting the company.
+        required: false
+        nullable: true
+      - name: email
+        type: string
+        description: Customer email address from channel metadata or message.
+        required: false
+        nullable: true
+      - name: phone
+        type: string
+        description: Customer phone number if available.
+        required: false
+        nullable: true
+      - name: country
+        type: string
+        description: Country stated explicitly; do not infer solely from language.
+        required: false
+        nullable: true
+    - name: inquiry
+      type: object
+      description: Human-readable understanding of the complete inquiry.
+      required: true
+      fields:
+      - name: summary
+        type: text
+        description: Concise English summary covering the full customer inquiry.
+        required: true
+      - name: subject_of_request
+        type: text
+        description: Short business-readable description of what the customer contacted
+          the company about.
+        required: true
+    - name: requests
+      type: list
+      description: Every distinct customer request, expressed as business_object +
+        requested_action plus extracted facts. One inquiry may contain several requests
+        for different teams. Deterministic routing uses the separate top-level routing_keys
+        list.
+      required: true
+      fields:
+      - name: business_object
+        type: enum
+        description: What business object this request is about. This describes the
+          object, not the owning department.
+        required: true
+        enum_values:
+        - GENERAL
+        - CUSTOMER_ACCOUNT
+        - NEW_EQUIPMENT
+        - PRODUCT_APPLICATION
+        - QUOTATION
+        - CUSTOMER_PO
+        - SALES_ORDER
+        - DELIVERY_SHIPMENT
+        - INSTALLED_PRODUCT
+        - SPARE_PART
+        - SERVICE
+        - WARRANTY
+        - INVOICE
+        - PAYMENT_CREDIT
+        - DOCUMENT
+        - COMPLAINT
+        - OTHER
+      - name: requested_action
+        type: enum
+        description: What the customer wants the company to do. This is the customer-facing
+          action, not an internal route.
+        required: true
+        enum_values:
+        - REQUEST_GENERAL_INFORMATION
+        - REQUEST_PRODUCT_INFORMATION
+        - REQUEST_DOCUMENT
+        - REQUEST_CLARIFICATION
+        - REQUEST_CASE_STATUS
+        - PROVIDE_ADDITIONAL_INFORMATION
+        - UPDATE_REQUEST
+        - REQUEST_PRODUCT_RECOMMENDATION
+        - REQUEST_PUMP_SELECTION
+        - REQUEST_PUMP_SIZING
+        - REQUEST_TECHNICAL_CONFIGURATION
+        - REQUEST_APPLICATION_REVIEW
+        - REQUEST_TECHNICAL_PROPOSAL
+        - REQUEST_ALTERNATIVE_PRODUCT
+        - REQUEST_QUOTATION
+        - REQUEST_QUOTE_REVISION
+        - CHECK_QUOTE_STATUS
+        - REQUEST_PRICE
+        - REQUEST_DISCOUNT
+        - NEGOTIATE_PRICE
+        - REQUEST_COMMERCIAL_TERMS
+        - NEGOTIATE_COMMERCIAL_TERMS
+        - ACCEPT_QUOTATION
+        - REJECT_QUOTATION
+        - SUBMIT_PURCHASE_ORDER
+        - CHECK_PO_PROCESSING
+        - CHANGE_PURCHASE_ORDER
+        - CANCEL_PURCHASE_ORDER
+        - CHECK_ORDER_STATUS
+        - CHECK_DELIVERY_DATE
+        - REQUEST_ORDER_CHANGE
+        - REQUEST_ORDER_CANCELLATION
+        - EXPEDITE_ORDER
+        - POSTPONE_ORDER
+        - CHANGE_DELIVERY_ADDRESS
+        - ADD_ITEMS_TO_ORDER
+        - REMOVE_ITEMS_FROM_ORDER
+        - REQUEST_ORDER_CONFIRMATION
+        - REPORT_ORDER_ERROR
+        - CHECK_PRODUCT_AVAILABILITY
+        - CHECK_LEAD_TIME
+        - REQUEST_DELIVERY_COMMITMENT
+        - REQUEST_EXPEDITE
+        - REPORT_DELIVERY_DELAY
+        - CHECK_SHIPMENT_STATUS
+        - TRACK_SHIPMENT
+        - REQUEST_SHIPPING_DOCUMENTS
+        - CHANGE_SHIPPING_INSTRUCTION
+        - REPORT_MISSING_DELIVERY
+        - REPORT_DAMAGED_DELIVERY
+        - REPORT_INCOMPLETE_DELIVERY
+        - REPORT_TECHNICAL_PROBLEM
+        - REQUEST_TECHNICAL_DIAGNOSIS
+        - REQUEST_TROUBLESHOOTING
+        - REQUEST_REPAIR
+        - REQUEST_MAINTENANCE
+        - REQUEST_INSPECTION
+        - REQUEST_COMMISSIONING
+        - REQUEST_SERVICE_VISIT
+        - REQUEST_UPGRADE
+        - REQUEST_REPLACEMENT_PRODUCT
+        - IDENTIFY_SPARE_PART
+        - REQUEST_SPARE_PART
+        - REQUEST_SPARE_PART_QUOTATION
+        - CHECK_SPARE_PART_AVAILABILITY
+        - CHECK_SPARE_PART_LEAD_TIME
+        - REQUEST_SPARE_PART_ALTERNATIVE
+        - REPORT_POTENTIAL_WARRANTY_FAILURE
+        - SUBMIT_WARRANTY_CLAIM
+        - CHECK_WARRANTY_STATUS
+        - REQUEST_WARRANTY_ASSESSMENT
+        - REQUEST_INVOICE_COPY
+        - QUESTION_INVOICE
+        - DISPUTE_INVOICE
+        - REQUEST_INVOICE_CORRECTION
+        - REPORT_INVOICE_NOT_RECEIVED
+        - REQUEST_CREDIT_NOTE
+        - REPORT_PAYMENT
+        - CHECK_PAYMENT_STATUS
+        - QUESTION_PAYMENT_TERMS
+        - REQUEST_PAYMENT_TERMS_CHANGE
+        - REQUEST_CREDIT_LIMIT_CHANGE
+        - RESOLVE_CREDIT_HOLD
+        - REQUEST_DATASHEET
+        - REQUEST_MANUAL
+        - REQUEST_TECHNICAL_DRAWING
+        - REQUEST_CERTIFICATE
+        - REQUEST_MATERIAL_CERTIFICATE
+        - REQUEST_COMPLIANCE_DOCUMENT
+        - REQUEST_ORDER_DOCUMENT
+        - REQUEST_DELIVERY_DOCUMENT
+        - REPORT_PRODUCT_COMPLAINT
+        - REPORT_SERVICE_COMPLAINT
+        - REPORT_DELIVERY_COMPLAINT
+        - REPORT_COMMERCIAL_COMPLAINT
+        - REPORT_BILLING_COMPLAINT
+        - REQUEST_ESCALATION
+        - OTHER_REQUEST
+      - name: description
+        type: text
+        description: One factual sentence explaining this distinct request.
+        required: true
+      - name: customer_expected_outcome
+        type: text
+        description: What result the customer expects from this request.
+        required: false
+        nullable: true
+      - name: customer_stated_urgency
+        type: text
+        description: Urgency stated by the customer. This is evidence only and does
+          not set internal priority.
+        required: false
+        nullable: true
+      - name: quotation_reference
+        type: string
+        description: Quotation/offer number explicitly mentioned for this request.
+        required: false
+        nullable: true
+      - name: customer_po_reference
+        type: string
+        description: Customer purchase-order number explicitly mentioned.
+        required: false
+        nullable: true
+      - name: sales_order_reference
+        type: string
+        description: Company sales-order number explicitly mentioned.
+        required: false
+        nullable: true
+      - name: invoice_reference
+        type: string
+        description: Invoice number explicitly mentioned.
+        required: false
+        nullable: true
+      - name: case_reference
+        type: string
+        description: Existing CRM/service case number explicitly mentioned.
+        required: false
+        nullable: true
+      - name: pump_model
+        type: string
+        description: Pump model explicitly stated by the customer or attachment.
+        required: false
+        nullable: true
+      - name: serial_number
+        type: string
+        description: Installed-unit serial number exactly as written.
+        required: false
+        nullable: true
+      - name: part_number
+        type: string
+        description: Spare-part/product part number exactly as written.
+        required: false
+        nullable: true
+      - name: quantity
+        type: string
+        description: Requested quantity, preserving the customer's wording/units.
+        required: false
+        nullable: true
+      - name: requested_delivery_date
+        type: string
+        description: Requested date or timeframe. This is not a company commitment.
+        required: false
+        nullable: true
+      - name: delivery_location
+        type: string
+        description: Requested delivery/site location if explicitly stated.
+        required: false
+        nullable: true
+      - name: requested_price
+        type: string
+        description: Price/discount/target stated by the customer. Not authoritative
+          company pricing.
+        required: false
+        nullable: true
+      - name: requested_document_type
+        type: string
+        description: Requested document type if relevant.
+        required: false
+        nullable: true
+      - name: application
+        type: text
+        description: How/where the pump or product will be used.
+        required: false
+        nullable: true
+      - name: medium
+        type: string
+        description: Fluid/material being pumped or handled.
+        required: false
+        nullable: true
+      - name: flow
+        type: string
+        description: Flow requirement, preserving the value and unit.
+        required: false
+        nullable: true
+      - name: pressure
+        type: string
+        description: Pressure/head requirement, preserving the value and unit.
+        required: false
+        nullable: true
+      - name: temperature
+        type: string
+        description: Operating/fluid temperature, preserving the value and unit.
+        required: false
+        nullable: true
+      - name: problem_description
+        type: text
+        description: Customer's description of a problem with installed equipment.
+        required: false
+        nullable: true
+      - name: symptoms
+        type: list
+        description: Observable symptoms stated by the customer; do not diagnose.
+        required: false
+        item_type: string
+      - name: missing_information
+        type: list
+        description: Important information missing specifically for this request.
+        required: false
+        item_type: string
+      - name: ambiguous_information
+        type: list
+        description: Information in this request that is contradictory or unclear.
+        required: false
+        item_type: string
+      item_type: object
+    - name: routing_keys
+      type: list
+      description: Deduplicated deterministic interface for routing. Include exactly
+        one BUSINESS_OBJECT::REQUESTED_ACTION value for every request item, using
+        only the governed enum values. This field is consumed by DecisionAgent rules.
+      required: true
+      item_type: enum
+      item_enum_values:
+      - GENERAL::REQUEST_GENERAL_INFORMATION
+      - GENERAL::REQUEST_CLARIFICATION
+      - GENERAL::REQUEST_CASE_STATUS
+      - GENERAL::PROVIDE_ADDITIONAL_INFORMATION
+      - GENERAL::UPDATE_REQUEST
+      - CUSTOMER_ACCOUNT::REQUEST_GENERAL_INFORMATION
+      - CUSTOMER_ACCOUNT::REQUEST_CLARIFICATION
+      - CUSTOMER_ACCOUNT::UPDATE_REQUEST
+      - NEW_EQUIPMENT::REQUEST_PRODUCT_INFORMATION
+      - NEW_EQUIPMENT::REQUEST_PRODUCT_RECOMMENDATION
+      - NEW_EQUIPMENT::REQUEST_QUOTATION
+      - NEW_EQUIPMENT::REQUEST_PRICE
+      - NEW_EQUIPMENT::CHECK_PRODUCT_AVAILABILITY
+      - NEW_EQUIPMENT::CHECK_LEAD_TIME
+      - PRODUCT_APPLICATION::REQUEST_PUMP_SELECTION
+      - PRODUCT_APPLICATION::REQUEST_PUMP_SIZING
+      - PRODUCT_APPLICATION::REQUEST_TECHNICAL_CONFIGURATION
+      - PRODUCT_APPLICATION::REQUEST_APPLICATION_REVIEW
+      - PRODUCT_APPLICATION::REQUEST_TECHNICAL_PROPOSAL
+      - PRODUCT_APPLICATION::REQUEST_ALTERNATIVE_PRODUCT
+      - QUOTATION::REQUEST_QUOTATION
+      - QUOTATION::REQUEST_QUOTE_REVISION
+      - QUOTATION::CHECK_QUOTE_STATUS
+      - QUOTATION::REQUEST_PRICE
+      - QUOTATION::REQUEST_DISCOUNT
+      - QUOTATION::NEGOTIATE_PRICE
+      - QUOTATION::REQUEST_COMMERCIAL_TERMS
+      - QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
+      - QUOTATION::ACCEPT_QUOTATION
+      - QUOTATION::REJECT_QUOTATION
+      - CUSTOMER_PO::SUBMIT_PURCHASE_ORDER
+      - CUSTOMER_PO::CHECK_PO_PROCESSING
+      - CUSTOMER_PO::CHANGE_PURCHASE_ORDER
+      - CUSTOMER_PO::CANCEL_PURCHASE_ORDER
+      - SALES_ORDER::CHECK_ORDER_STATUS
+      - SALES_ORDER::CHECK_DELIVERY_DATE
+      - SALES_ORDER::REQUEST_ORDER_CHANGE
+      - SALES_ORDER::REQUEST_ORDER_CANCELLATION
+      - SALES_ORDER::EXPEDITE_ORDER
+      - SALES_ORDER::POSTPONE_ORDER
+      - SALES_ORDER::CHANGE_DELIVERY_ADDRESS
+      - SALES_ORDER::ADD_ITEMS_TO_ORDER
+      - SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
+      - SALES_ORDER::REQUEST_ORDER_CONFIRMATION
+      - SALES_ORDER::REPORT_ORDER_ERROR
+      - SALES_ORDER::REQUEST_DELIVERY_COMMITMENT
+      - SALES_ORDER::REQUEST_EXPEDITE
+      - SALES_ORDER::REPORT_DELIVERY_DELAY
+      - DELIVERY_SHIPMENT::CHECK_SHIPMENT_STATUS
+      - DELIVERY_SHIPMENT::TRACK_SHIPMENT
+      - DELIVERY_SHIPMENT::REQUEST_SHIPPING_DOCUMENTS
+      - DELIVERY_SHIPMENT::CHANGE_SHIPPING_INSTRUCTION
+      - DELIVERY_SHIPMENT::REPORT_MISSING_DELIVERY
+      - DELIVERY_SHIPMENT::REPORT_DAMAGED_DELIVERY
+      - DELIVERY_SHIPMENT::REPORT_INCOMPLETE_DELIVERY
+      - INSTALLED_PRODUCT::REPORT_TECHNICAL_PROBLEM
+      - INSTALLED_PRODUCT::REQUEST_TECHNICAL_DIAGNOSIS
+      - INSTALLED_PRODUCT::REQUEST_TROUBLESHOOTING
+      - INSTALLED_PRODUCT::REQUEST_REPAIR
+      - INSTALLED_PRODUCT::REQUEST_MAINTENANCE
+      - INSTALLED_PRODUCT::REQUEST_INSPECTION
+      - INSTALLED_PRODUCT::REQUEST_SERVICE_VISIT
+      - INSTALLED_PRODUCT::REQUEST_UPGRADE
+      - INSTALLED_PRODUCT::REQUEST_REPLACEMENT_PRODUCT
+      - SPARE_PART::IDENTIFY_SPARE_PART
+      - SPARE_PART::REQUEST_SPARE_PART
+      - SPARE_PART::REQUEST_SPARE_PART_QUOTATION
+      - SPARE_PART::CHECK_SPARE_PART_AVAILABILITY
+      - SPARE_PART::CHECK_SPARE_PART_LEAD_TIME
+      - SPARE_PART::REQUEST_SPARE_PART_ALTERNATIVE
+      - SERVICE::REQUEST_COMMISSIONING
+      - SERVICE::REQUEST_SERVICE_VISIT
+      - SERVICE::REQUEST_MAINTENANCE
+      - SERVICE::REQUEST_INSPECTION
+      - SERVICE::REQUEST_CASE_STATUS
+      - WARRANTY::REPORT_POTENTIAL_WARRANTY_FAILURE
+      - WARRANTY::SUBMIT_WARRANTY_CLAIM
+      - WARRANTY::CHECK_WARRANTY_STATUS
+      - WARRANTY::REQUEST_WARRANTY_ASSESSMENT
+      - INVOICE::REQUEST_INVOICE_COPY
+      - INVOICE::QUESTION_INVOICE
+      - INVOICE::DISPUTE_INVOICE
+      - INVOICE::REQUEST_INVOICE_CORRECTION
+      - INVOICE::REPORT_INVOICE_NOT_RECEIVED
+      - INVOICE::REQUEST_CREDIT_NOTE
+      - PAYMENT_CREDIT::REPORT_PAYMENT
+      - PAYMENT_CREDIT::CHECK_PAYMENT_STATUS
+      - PAYMENT_CREDIT::QUESTION_PAYMENT_TERMS
+      - PAYMENT_CREDIT::REQUEST_PAYMENT_TERMS_CHANGE
+      - PAYMENT_CREDIT::REQUEST_CREDIT_LIMIT_CHANGE
+      - PAYMENT_CREDIT::RESOLVE_CREDIT_HOLD
+      - DOCUMENT::REQUEST_DOCUMENT
+      - DOCUMENT::REQUEST_DATASHEET
+      - DOCUMENT::REQUEST_MANUAL
+      - DOCUMENT::REQUEST_TECHNICAL_DRAWING
+      - DOCUMENT::REQUEST_CERTIFICATE
+      - DOCUMENT::REQUEST_MATERIAL_CERTIFICATE
+      - DOCUMENT::REQUEST_COMPLIANCE_DOCUMENT
+      - DOCUMENT::REQUEST_ORDER_DOCUMENT
+      - DOCUMENT::REQUEST_DELIVERY_DOCUMENT
+      - COMPLAINT::REPORT_PRODUCT_COMPLAINT
+      - COMPLAINT::REPORT_SERVICE_COMPLAINT
+      - COMPLAINT::REPORT_DELIVERY_COMPLAINT
+      - COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
+      - COMPLAINT::REPORT_BILLING_COMPLAINT
+      - COMPLAINT::REQUEST_ESCALATION
+      - OTHER::OTHER_REQUEST
+    - name: completeness
+      type: object
+      description: Quality of the extracted case understanding, separate from routing.
+      required: true
+      fields:
+      - name: missing_information
+        type: list
+        description: Important information missing across the inquiry before all requests
+          can be completed.
+        required: true
+        item_type: string
+      - name: ambiguous_information
+        type: list
+        description: Contradictory/unclear information across the inquiry.
+        required: true
+        item_type: string
+    - name: confidence
+      type: number
+      required: true
+      minimum: 0.0
+      maximum: 1.0
+      description: How certain you are about this result, 0.0 to 1.0. Lower it when
+        the content is ambiguous, incomplete, or outside your competence.
+    - name: reasoning
+      type: text
+      required: false
+      description: One or two sentences on how you reached this result, and what made
+        you uncertain.
+  selected_model: auto
+- id: understand_customer_inquiry
+  type: DataTransformAgent
+  config:
+    operations:
+    - target: language
+      operation: copy
+      source: interpret_customer_inquiry.parsed.language
+      default: UNKNOWN
+      description: Language detected by the AI understanding step.
+    - target: customer
+      operation: copy
+      source: interpret_customer_inquiry.parsed.customer
+      default: {}
+      description: Customer/contact information stated in the inquiry.
+    - target: inquiry
+      operation: copy
+      source: interpret_customer_inquiry.parsed.inquiry
+      default: {}
+      description: Human-readable summary of the whole inquiry.
+    - target: requests
+      operation: copy
+      source: interpret_customer_inquiry.parsed.requests
+      default: []
+      description: One or more distinct business-object/requested-action pairs.
+    - target: routing_keys
+      operation: copy
+      source: interpret_customer_inquiry.parsed.routing_keys
+      default: []
+      description: Typed governed routing keys consumed by deterministic responsibility
+        rules.
+    - target: completeness
+      operation: copy
+      source: interpret_customer_inquiry.parsed.completeness
+      default:
+        missing_information: []
+        ambiguous_information: []
+      description: Missing or ambiguous information in the customer's content.
+    - target: confidence
+      operation: copy
+      source: interpret_customer_inquiry.parsed.confidence
+      default: 0
+      description: AI self-reported understanding confidence; advisory, not a calibrated
+        probability.
+    - target: reasoning
+      operation: copy
+      source: interpret_customer_inquiry.parsed.reasoning
+      default: ''
+      description: Short AI explanation of uncertainty, when available.
+    - target: source_message
+      operation: object
+      value:
+        subject: $customer_inquiry.data.subject
+        message: $customer_inquiry.data.message
+        sender_name: $customer_inquiry.data.sender_name
+        sender_email: $customer_inquiry.data.sender_email
+        sender_phone: $customer_inquiry.data.sender_phone
+        source_channel: $customer_inquiry.data.source_channel
+        received_at: $customer_inquiry.data.received_at
+      description: Original channel payload preserved alongside the structured interpretation.
+    - target: attachment
+      operation: object
+      value:
+        text_file_count: $load_attachments.text_file_count
+        files: $load_attachments.files
+        extracted_text: $load_attachments.text
+      description: Attachment metadata plus raw extracted text. This is injected deterministically,
+        not rewritten by the LLM.
+- id: understanding_metrics
+  type: DataTransformAgent
+  config:
+    operations:
+    - target: request_count
+      operation: count
+      source: interpret_customer_inquiry.parsed.requests
+      default: 0
+    - target: missing_count
+      operation: count
+      source: interpret_customer_inquiry.parsed.completeness.missing_information
+      default: 0
+    - target: ambiguity_count
+      operation: count
+      source: interpret_customer_inquiry.parsed.completeness.ambiguous_information
+      default: 0
+- id: understanding_quality
+  type: DecisionAgent
+  config:
+    defaults:
+      route: CONTINUE
+      needs_human_review: false
+      clarification_required: false
+      reason: The inquiry has a schema-valid understanding with at least one governed
+        request.
+    rules:
+    - name: AI task failed
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.status
+          operator: not_equals
+          value: ok
+      then:
+      - field: route
+        value: HUMAN_REVIEW
+      - field: needs_human_review
+        value: true
+      - field: reason
+        value: The AI understanding step did not return a usable structured result.
+    - name: No request was extracted
+      when:
+        operator: and
+        conditions:
+        - field: outputs.understanding_metrics.data.request_count
+          operator: equals
+          value: 0
+      then:
+      - field: route
+        value: HUMAN_REVIEW
+      - field: needs_human_review
+        value: true
+      - field: reason
+        value: No actionable customer request was extracted from the inquiry.
+    - name: No governed routing key was extracted
+      description: A request without a governed routing key cannot be deterministically
+        mapped to a responsibility.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: is_empty
+      then:
+      - field: route
+        value: HUMAN_REVIEW
+      - field: needs_human_review
+        value: true
+      - field: reason
+        value: The inquiry was understood, but no governed business-object/requested-action
+          routing key was produced.
+    - name: Very low understanding confidence
+      when:
+        operator: and
+        conditions:
+        - field: outputs.understand_customer_inquiry.data.confidence
+          operator: less_than
+          value: 0.6
+      then:
+      - field: route
+        value: HUMAN_REVIEW
+      - field: needs_human_review
+        value: true
+      - field: reason
+        value: The inquiry is too uncertain to use automatic responsibility mapping
+          safely.
+    - name: Missing information can be clarified by CRM
+      when:
+        operator: and
+        conditions:
+        - field: outputs.understanding_metrics.data.missing_count
+          operator: greater_than
+          value: 0
+      then:
+      - field: clarification_required
+        value: true
+    - name: Ambiguity can be coordinated by CRM unless confidence fails
+      when:
+        operator: and
+        conditions:
+        - field: outputs.understanding_metrics.data.ambiguity_count
+          operator: greater_than
+          value: 0
+      then:
+      - field: clarification_required
+        value: true
+- id: understanding_router
+  type: RouterAgent
+  config:
+    mode: field
+    route_field: outputs.understanding_quality.decisions.route
+    branches:
+      CONTINUE: CONTINUE
+      HUMAN_REVIEW: HUMAN_REVIEW
+    fallback: HUMAN_REVIEW
+- id: manual_understanding_review
+  type: HumanInLoopAgent
+  config:
+    question: The inquiry could not be understood reliably enough for automatic responsibility
+      routing. Review the original message, attachment extraction, AI understanding
+      and quality decision. Approve after manual assignment, or reject/correct and
+      rerun.
+    context_fields:
+    - customer_inquiry.data
+    - load_attachments.files
+    - load_attachments.text
+    - interpret_customer_inquiry.status
+    - interpret_customer_inquiry.error
+    - understand_customer_inquiry.data
+    - understanding_quality.decisions
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+- id: find_customer
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_customer
+    fail_on_error: false
+    arguments:
+      customer_name: '{{outputs.interpret_customer_inquiry.parsed.customer.company_name?}}'
+      limit: 5
+- id: customer_match_router
+  type: RouterAgent
+  config:
+    mode: conditions
+    cases:
+    - route: AMBIGUOUS
+      description: More than one CRM account matches the customer name; choosing one
+        automatically could expose or use the wrong account's ownership.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.find_customer.count
+          operator: greater_than
+          value: 1
+    fallback: CONTINUE
+- id: customer_ambiguity_review
+  type: HumanInLoopAgent
+  config:
+    question: Several CRM accounts match this inquiry. Confirm the correct account
+      before assigning named owners. Approve after manual account selection/assignment,
+      or reject to correct the customer identity and rerun.
+    context_fields:
+    - interpret_customer_inquiry.parsed.customer
+    - interpret_customer_inquiry.parsed.inquiry
+    - find_customer.count
+    - find_customer.data
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+- id: get_account_ownership
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365_finance_scm
+    tool: find_account_ownership
+    fail_on_error: false
+    arguments:
+      account_id: '{{outputs.find_customer.first.account_id?}}'
+- id: customer_context
+  type: DecisionAgent
+  config:
+    defaults:
+      customer_state: UNKNOWN
+      ownership_state: UNAVAILABLE
+      sales_role: ACCOUNT_MANAGER
+      customer_verified: false
+    rules:
+    - name: Existing customer found
+      when:
+        operator: and
+        conditions:
+        - field: outputs.find_customer.status
+          operator: equals
+          value: ok
+        - field: outputs.find_customer.found
+          operator: is_true
+      then:
+      - field: customer_state
+        value: EXISTING_CUSTOMER
+      - field: customer_verified
+        value: true
+      - field: sales_role
+        value: ACCOUNT_MANAGER
+    - name: Existing key account found
+      when:
+        operator: and
+        conditions:
+        - field: outputs.find_customer.status
+          operator: equals
+          value: ok
+        - field: outputs.find_customer.found
+          operator: is_true
+        - field: outputs.find_customer.first.key_account
+          operator: is_true
+      then:
+      - field: customer_state
+        value: EXISTING_KEY_ACCOUNT
+      - field: customer_verified
+        value: true
+      - field: sales_role
+        value: KEY_ACCOUNT_MANAGER
+    - name: New or not-yet-known customer
+      when:
+        operator: and
+        conditions:
+        - field: outputs.find_customer.status
+          operator: equals
+          value: ok
+        - field: outputs.find_customer.found
+          operator: is_false
+      then:
+      - field: customer_state
+        value: NEW_CUSTOMER
+      - field: customer_verified
+        value: false
+      - field: sales_role
+        value: TERRITORY_OUTSIDE_SALES
+    - name: Customer lookup unavailable
+      when:
+        operator: and
+        conditions:
+        - field: outputs.find_customer.status
+          operator: in
+          value:
+          - error
+          - denied
+          - needs_approval
+      then:
+      - field: customer_state
+        value: SYSTEM_ERROR
+      - field: customer_verified
+        value: false
+    - name: Ownership directory available
+      when:
+        operator: and
+        conditions:
+        - field: outputs.get_account_ownership.status
+          operator: equals
+          value: ok
+      then:
+      - field: ownership_state
+        value: AVAILABLE
+    - name: Ownership lookup unavailable
+      when:
+        operator: and
+        conditions:
+        - field: outputs.get_account_ownership.status
+          operator: in
+          value:
+          - error
+          - denied
+          - needs_approval
+      then:
+      - field: ownership_state
+        value: SYSTEM_ERROR
+- id: owner_directory
+  type: DataTransformAgent
+  config:
+    operations:
+    - target: account_owner
+      operation: object
+      value:
+        name: $get_account_ownership.first.account_owner_name
+        recorded_name: $get_account_ownership.first.account_owner_recorded_name
+        status: $get_account_ownership.first.account_owner_status
+        team: $get_account_ownership.first.account_owner_team
+    - target: territory_sales_owner
+      operation: object
+      value:
+        name: $get_account_ownership.first.territory_sales_owner_name
+        recorded_name: $get_account_ownership.first.territory_sales_owner_recorded_name
+        status: $get_account_ownership.first.territory_sales_owner_status
+        team: $get_account_ownership.first.territory_sales_owner_team
+    - target: sales_engineer
+      operation: object
+      value:
+        name: $get_account_ownership.first.sales_engineer_name
+        recorded_name: $get_account_ownership.first.sales_engineer_recorded_name
+        status: $get_account_ownership.first.sales_engineer_status
+        team: $get_account_ownership.first.sales_engineer_team
+    - target: application_specialist
+      operation: object
+      value:
+        name: $get_account_ownership.first.application_specialist_name
+        recorded_name: $get_account_ownership.first.application_specialist_recorded_name
+        status: $get_account_ownership.first.application_specialist_status
+        team: $get_account_ownership.first.application_specialist_team
+    - target: service_owner
+      operation: object
+      value:
+        name: $get_account_ownership.first.service_owner_name
+        recorded_name: $get_account_ownership.first.service_owner_recorded_name
+        status: $get_account_ownership.first.service_owner_status
+        team: $get_account_ownership.first.service_owner_team
+- id: responsibility_decision
+  type: DecisionAgent
+  config:
+    defaults:
+      required_work: []
+      specialist_required: false
+      crm_can_fully_resolve: true
+    rules:
+    - name: GENERAL_CUSTOMER_SUPPORT -> INSIDE_SALES
+      description: General information can be handled directly by CRM / Customer Support.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: GENERAL::REQUEST_GENERAL_INFORMATION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_ACCOUNT::REQUEST_GENERAL_INFORMATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: GENERAL_CUSTOMER_SUPPORT
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: General information can be handled directly by CRM / Customer Support.
+    - name: CUSTOMER_CLARIFICATION -> INSIDE_SALES
+      description: The customer is asking for clarification rather than specialist
+        authority.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: GENERAL::REQUEST_CLARIFICATION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_ACCOUNT::REQUEST_CLARIFICATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CUSTOMER_CLARIFICATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: The customer is asking for clarification rather than specialist
+            authority.
+    - name: CASE_STATUS_COMMUNICATION -> INSIDE_SALES
+      description: A straightforward case/status update can be communicated by CRM
+        / Customer Support.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: GENERAL::REQUEST_CASE_STATUS
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SERVICE::REQUEST_CASE_STATUS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CASE_STATUS_COMMUNICATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: A straightforward case/status update can be communicated by CRM
+            / Customer Support.
+    - name: CASE_UPDATE_PROCESSING -> TECHNICAL_CASE_COORDINATOR
+      description: The customer is adding or correcting information on an existing
+        enquiry.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: GENERAL::PROVIDE_ADDITIONAL_INFORMATION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: GENERAL::UPDATE_REQUEST
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_ACCOUNT::UPDATE_REQUEST
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CASE_UPDATE_PROCESSING
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: The customer is adding or correcting information on an existing
+            enquiry.
+    - name: STANDARD_PRODUCT_INFORMATION -> INSIDE_SALES
+      description: Standard product information can be handled by Inside Sales.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: NEW_EQUIPMENT::REQUEST_PRODUCT_INFORMATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STANDARD_PRODUCT_INFORMATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: Standard product information can be handled by Inside Sales.
+    - name: STANDARD_QUOTE_PREPARATION -> INSIDE_SALES
+      description: Inside Sales can prepare a standard quotation package; negotiation
+        and exceptions are separate responsibilities.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: NEW_EQUIPMENT::REQUEST_QUOTATION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: QUOTATION::REQUEST_QUOTATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STANDARD_QUOTE_PREPARATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: Inside Sales can prepare a standard quotation package; negotiation
+            and exceptions are separate responsibilities.
+    - name: STANDARD_PRICE_INFORMATION -> INSIDE_SALES
+      description: A request for standard price information can be prepared by Inside
+        Sales when the customer is not negotiating an exception.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: NEW_EQUIPMENT::REQUEST_PRICE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: QUOTATION::REQUEST_PRICE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STANDARD_PRICE_INFORMATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: A request for standard price information can be prepared by Inside
+            Sales when the customer is not negotiating an exception.
+    - name: QUOTE_STATUS_COMMUNICATION -> INSIDE_SALES
+      description: Quotation progress/status is a CRM / Inside Sales information request.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: QUOTATION::CHECK_QUOTE_STATUS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: QUOTE_STATUS_COMMUNICATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: Quotation progress/status is a CRM / Inside Sales information request.
+    - name: PURCHASE_ORDER_INTAKE -> INSIDE_SALES
+      description: Inside Sales receives and validates the customer PO before downstream
+        order execution.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_PO::SUBMIT_PURCHASE_ORDER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PURCHASE_ORDER_INTAKE
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: Inside Sales receives and validates the customer PO before downstream
+            order execution.
+    - name: PURCHASE_ORDER_STATUS_SUPPORT -> INSIDE_SALES
+      description: Inside Sales can tell the customer whether the PO has entered the
+        order process.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_PO::CHECK_PO_PROCESSING
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PURCHASE_ORDER_STATUS_SUPPORT
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: Inside Sales can tell the customer whether the PO has entered the
+            order process.
+    - name: PURCHASE_ORDER_CHANGE_REVIEW -> INSIDE_SALES
+      description: CRM / Inside Sales first validates a requested PO change against
+        the received PO and existing commercial basis.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PURCHASE_ORDER_CHANGE_REVIEW
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: CRM / Inside Sales first validates a requested PO change against
+            the received PO and existing commercial basis.
+    - name: STANDARD_ORDER_INFORMATION -> INSIDE_SALES
+      description: A straightforward read-only order/status question can be answered
+        by CRM when ERP status is clear.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::CHECK_ORDER_STATUS
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::CHECK_DELIVERY_DATE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REQUEST_ORDER_CONFIRMATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STANDARD_ORDER_INFORMATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: A straightforward read-only order/status question can be answered
+            by CRM when ERP status is clear.
+    - name: STANDARD_SHIPMENT_INFORMATION -> INSIDE_SALES
+      description: A basic shipment-status question can be answered by CRM when the
+        shipment record is clear.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::CHECK_SHIPMENT_STATUS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STANDARD_SHIPMENT_INFORMATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: A basic shipment-status question can be answered by CRM when the
+            shipment record is clear.
+    - name: PREORDER_AVAILABILITY_SUPPORT -> INSIDE_SALES
+      description: Before an order exists, availability and lead-time information
+        supports quotation work rather than order execution.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: NEW_EQUIPMENT::CHECK_PRODUCT_AVAILABILITY
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: NEW_EQUIPMENT::CHECK_LEAD_TIME
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PREORDER_AVAILABILITY_SUPPORT
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: Before an order exists, availability and lead-time information supports
+            quotation work rather than order execution.
+    - name: PUMP_SELECTION -> APPLICATION_ENGINEER
+      description: Technical product selection belongs to the Application Engineer.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: NEW_EQUIPMENT::REQUEST_PRODUCT_RECOMMENDATION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PRODUCT_APPLICATION::REQUEST_PUMP_SELECTION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PUMP_SELECTION
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: Technical product selection belongs to the Application Engineer.
+    - name: PUMP_SIZING -> APPLICATION_ENGINEER
+      description: Pump sizing from process conditions belongs to the Application
+        Engineer.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PRODUCT_APPLICATION::REQUEST_PUMP_SIZING
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PUMP_SIZING
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: Pump sizing from process conditions belongs to the Application Engineer.
+    - name: TECHNICAL_CONFIGURATION -> APPLICATION_ENGINEER
+      description: Materials, options and configuration require application-engineering
+        judgement.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PRODUCT_APPLICATION::REQUEST_TECHNICAL_CONFIGURATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: TECHNICAL_CONFIGURATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: Materials, options and configuration require application-engineering
+            judgement.
+    - name: APPLICATION_SUITABILITY_REVIEW -> APPLICATION_ENGINEER
+      description: Suitability for the stated application is an Application Engineer
+        responsibility.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PRODUCT_APPLICATION::REQUEST_APPLICATION_REVIEW
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: APPLICATION_SUITABILITY_REVIEW
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: Suitability for the stated application is an Application Engineer
+            responsibility.
+    - name: TECHNICAL_PROPOSAL_PREPARATION -> APPLICATION_ENGINEER
+      description: A technical proposal requires application-engineering input.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PRODUCT_APPLICATION::REQUEST_TECHNICAL_PROPOSAL
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: TECHNICAL_PROPOSAL_PREPARATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: A technical proposal requires application-engineering input.
+    - name: ALTERNATIVE_PRODUCT_SELECTION -> APPLICATION_ENGINEER
+      description: Selecting a technical alternative requires application/product
+        expertise.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PRODUCT_APPLICATION::REQUEST_ALTERNATIVE_PRODUCT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: ALTERNATIVE_PRODUCT_SELECTION
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: Selecting a technical alternative requires application/product expertise.
+    - name: TECHNICAL_DOCUMENT_COORDINATION -> APPLICATION_ENGINEER
+      description: A technical drawing request needs product/application context.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_TECHNICAL_DRAWING
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: TECHNICAL_DOCUMENT_COORDINATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: APPLICATION_ENGINEER
+          owner_track: APPLICATION_SPECIALIST
+          crm_can_resolve: true
+          reason: A technical drawing request needs product/application context.
+    - name: STANDARD_DOCUMENT_FULFILMENT -> INSIDE_SALES
+      description: A standard existing customer/product document can be supplied by
+        CRM / Inside Sales.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_DOCUMENT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_DATASHEET
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_MANUAL
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_ORDER_DOCUMENT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STANDARD_DOCUMENT_FULFILMENT
+          department: CRM_CUSTOMER_SUPPORT
+          role: INSIDE_SALES
+          owner_track: INSIDE_SALES_QUEUE
+          crm_can_resolve: true
+          reason: A standard existing customer/product document can be supplied by
+            CRM / Inside Sales.
+    - name: SPECIALIST_DOCUMENT_COORDINATION -> TECHNICAL_CASE_COORDINATOR
+      description: Certificates/compliance documents may require specialist validation,
+        so CRM coordinates the request.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_CERTIFICATE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_MATERIAL_CERTIFICATE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_COMPLIANCE_DOCUMENT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SPECIALIST_DOCUMENT_COORDINATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: Certificates/compliance documents may require specialist validation,
+            so CRM coordinates the request.
+    - name: ORDER_STATUS_INVESTIGATION -> ORDER_FULFILMENT_COORDINATOR
+      description: A reported delay on an existing order requires Supply Chain to
+        investigate execution.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REPORT_DELIVERY_DELAY
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: ORDER_STATUS_INVESTIGATION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: ORDER_FULFILMENT_COORDINATOR
+          owner_track: ORDER_FULFILMENT_QUEUE
+          crm_can_resolve: false
+          reason: A reported delay on an existing order requires Supply Chain to investigate
+            execution.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: DELIVERY_DATE_CONFIRMATION -> ORDER_FULFILMENT_COORDINATOR
+      description: A committed delivery date for an existing order requires operational
+        confirmation.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REQUEST_DELIVERY_COMMITMENT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: DELIVERY_DATE_CONFIRMATION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: ORDER_FULFILMENT_COORDINATOR
+          owner_track: ORDER_FULFILMENT_QUEUE
+          crm_can_resolve: false
+          reason: A committed delivery date for an existing order requires operational
+            confirmation.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: ORDER_EXPEDITE_OR_RESCHEDULE_ASSESSMENT -> PRODUCTION_SCHEDULER
+      description: Changing production/delivery timing requires Production Scheduling
+        authority.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::EXPEDITE_ORDER
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REQUEST_EXPEDITE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::POSTPONE_ORDER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: ORDER_EXPEDITE_OR_RESCHEDULE_ASSESSMENT
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: PRODUCTION_SCHEDULER
+          owner_track: PRODUCTION_SCHEDULING_QUEUE
+          crm_can_resolve: false
+          reason: Changing production/delivery timing requires Production Scheduling
+            authority.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: ORDER_CHANGE_EXECUTION -> ORDER_FULFILMENT_COORDINATOR
+      description: Changing delivery instructions on an accepted order is an order-execution
+        responsibility.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::CHANGE_DELIVERY_ADDRESS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: ORDER_CHANGE_EXECUTION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: ORDER_FULFILMENT_COORDINATOR
+          owner_track: ORDER_FULFILMENT_QUEUE
+          crm_can_resolve: false
+          reason: Changing delivery instructions on an accepted order is an order-execution
+            responsibility.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: ORDER_CHANGE_EXECUTION -> ORDER_FULFILMENT_COORDINATOR
+      description: An accepted-order change requires Order Fulfilment to assess and
+        execute the operational change.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REQUEST_ORDER_CHANGE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::ADD_ITEMS_TO_ORDER
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SALES_ORDER::REPORT_ORDER_ERROR
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: ORDER_CHANGE_EXECUTION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: ORDER_FULFILMENT_COORDINATOR
+          owner_track: ORDER_FULFILMENT_QUEUE
+          crm_can_resolve: false
+          reason: An accepted-order change requires Order Fulfilment to assess and
+            execute the operational change.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SHIPMENT_TRACKING -> LOGISTICS_SHIPPING_COORDINATOR
+      description: Tracking a dispatched shipment belongs to Logistics / Shipping.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::TRACK_SHIPMENT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SHIPMENT_TRACKING
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: LOGISTICS_SHIPPING_COORDINATOR
+          owner_track: LOGISTICS_QUEUE
+          crm_can_resolve: false
+          reason: Tracking a dispatched shipment belongs to Logistics / Shipping.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SHIPPING_DOCUMENTATION -> LOGISTICS_SHIPPING_COORDINATOR
+      description: Shipping/delivery documents are controlled by Logistics / Shipping.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::REQUEST_SHIPPING_DOCUMENTS
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DOCUMENT::REQUEST_DELIVERY_DOCUMENT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SHIPPING_DOCUMENTATION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: LOGISTICS_SHIPPING_COORDINATOR
+          owner_track: LOGISTICS_QUEUE
+          crm_can_resolve: false
+          reason: Shipping/delivery documents are controlled by Logistics / Shipping.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SHIPPING_INSTRUCTION_CHANGE -> LOGISTICS_SHIPPING_COORDINATOR
+      description: A change to shipping instructions requires Logistics execution.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::CHANGE_SHIPPING_INSTRUCTION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SHIPPING_INSTRUCTION_CHANGE
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: LOGISTICS_SHIPPING_COORDINATOR
+          owner_track: LOGISTICS_QUEUE
+          crm_can_resolve: false
+          reason: A change to shipping instructions requires Logistics execution.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: DELIVERY_EXCEPTION_RESOLUTION -> LOGISTICS_SHIPPING_COORDINATOR
+      description: A missing, damaged or incomplete delivery requires Logistics exception
+        handling.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::REPORT_MISSING_DELIVERY
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::REPORT_DAMAGED_DELIVERY
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: DELIVERY_SHIPMENT::REPORT_INCOMPLETE_DELIVERY
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: DELIVERY_EXCEPTION_RESOLUTION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: LOGISTICS_SHIPPING_COORDINATOR
+          owner_track: LOGISTICS_QUEUE
+          crm_can_resolve: false
+          reason: A missing, damaged or incomplete delivery requires Logistics exception
+            handling.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: INSTALLED_PRODUCT_DIAGNOSIS -> AFTERMARKET_SERVICE_ENGINEER
+      description: A technical problem on installed equipment needs after-sales diagnosis.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REPORT_TECHNICAL_PROBLEM
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_TECHNICAL_DIAGNOSIS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: INSTALLED_PRODUCT_DIAGNOSIS
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: A technical problem on installed equipment needs after-sales diagnosis.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: TECHNICAL_TROUBLESHOOTING -> AFTERMARKET_SERVICE_ENGINEER
+      description: Troubleshooting an installed pump requires after-sales technical
+        expertise.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_TROUBLESHOOTING
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: TECHNICAL_TROUBLESHOOTING
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Troubleshooting an installed pump requires after-sales technical
+            expertise.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: REPAIR_ASSESSMENT -> AFTERMARKET_SERVICE_ENGINEER
+      description: A repair request requires Service to assess the equipment and repair
+        path.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_REPAIR
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: REPAIR_ASSESSMENT
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: A repair request requires Service to assess the equipment and repair
+            path.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: MAINTENANCE_SUPPORT -> AFTERMARKET_SERVICE_ENGINEER
+      description: Maintenance support belongs to Product Service.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_MAINTENANCE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SERVICE::REQUEST_MAINTENANCE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: MAINTENANCE_SUPPORT
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Maintenance support belongs to Product Service.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: PRODUCT_UPGRADE_ASSESSMENT -> AFTERMARKET_SERVICE_ENGINEER
+      description: An installed-product upgrade needs after-sales technical assessment.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_UPGRADE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PRODUCT_UPGRADE_ASSESSMENT
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: An installed-product upgrade needs after-sales technical assessment.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: FIELD_SERVICE_PLANNING -> FIELD_SERVICE_COORDINATOR
+      description: An onsite inspection/service visit must be coordinated by Field
+        Service.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_INSPECTION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SERVICE::REQUEST_INSPECTION
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_SERVICE_VISIT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SERVICE::REQUEST_SERVICE_VISIT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: FIELD_SERVICE_PLANNING
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: FIELD_SERVICE_COORDINATOR
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: An onsite inspection/service visit must be coordinated by Field
+            Service.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: COMMISSIONING_COORDINATION -> FIELD_SERVICE_COORDINATOR
+      description: Commissioning is a field-service activity after equipment delivery/installation.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SERVICE::REQUEST_COMMISSIONING
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMMISSIONING_COORDINATION
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: FIELD_SERVICE_COORDINATOR
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Commissioning is a field-service activity after equipment delivery/installation.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: REPLACEMENT_PRODUCT_ASSESSMENT -> AFTERMARKET_SERVICE_ENGINEER
+      description: Replacing installed equipment first requires Service to assess
+        the existing unit and context.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INSTALLED_PRODUCT::REQUEST_REPLACEMENT_PRODUCT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: REPLACEMENT_PRODUCT_ASSESSMENT
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Replacing installed equipment first requires Service to assess the
+            existing unit and context.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SPARE_PART_IDENTIFICATION -> SPARE_PARTS_SPECIALIST
+      description: The correct replacement component must be identified for the installed
+        equipment.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SPARE_PART::IDENTIFY_SPARE_PART
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SPARE_PART_IDENTIFICATION
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: SPARE_PARTS_SPECIALIST
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: The correct replacement component must be identified for the installed
+            equipment.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SPARE_PART_COMPATIBILITY -> SPARE_PARTS_SPECIALIST
+      description: A spare-parts request needs compatibility checked against the installed
+        product.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SPARE_PART::REQUEST_SPARE_PART
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SPARE_PART_COMPATIBILITY
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: SPARE_PARTS_SPECIALIST
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: A spare-parts request needs compatibility checked against the installed
+            product.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SPARE_PART_QUOTATION -> SPARE_PARTS_SPECIALIST
+      description: Aftermarket component quotation belongs to the Spare Parts function.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SPARE_PART::REQUEST_SPARE_PART_QUOTATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SPARE_PART_QUOTATION
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: SPARE_PARTS_SPECIALIST
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Aftermarket component quotation belongs to the Spare Parts function.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SPARE_PART_AVAILABILITY -> SPARE_PARTS_SPECIALIST
+      description: Availability/lead time for replacement components is handled by
+        Spare Parts.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SPARE_PART::CHECK_SPARE_PART_AVAILABILITY
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SPARE_PART::CHECK_SPARE_PART_LEAD_TIME
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SPARE_PART_AVAILABILITY
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: SPARE_PARTS_SPECIALIST
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Availability/lead time for replacement components is handled by
+            Spare Parts.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: SPARE_PART_ALTERNATIVE_SELECTION -> SPARE_PARTS_SPECIALIST
+      description: A substitute spare component needs compatibility/aftermarket knowledge.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: SPARE_PART::REQUEST_SPARE_PART_ALTERNATIVE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: SPARE_PART_ALTERNATIVE_SELECTION
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: SPARE_PARTS_SPECIALIST
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: A substitute spare component needs compatibility/aftermarket knowledge.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: WARRANTY_ASSESSMENT -> WARRANTY_COORDINATOR_SERVICE_ENGINEER
+      description: A possible warranty failure requires Service/Warranty assessment,
+        not an automatic verdict.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: WARRANTY::REPORT_POTENTIAL_WARRANTY_FAILURE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: WARRANTY::REQUEST_WARRANTY_ASSESSMENT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: WARRANTY_ASSESSMENT
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: WARRANTY_COORDINATOR_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: A possible warranty failure requires Service/Warranty assessment,
+            not an automatic verdict.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: WARRANTY_CLAIM_PROCESSING -> WARRANTY_COORDINATOR_SERVICE_ENGINEER
+      description: A formal warranty claim belongs to the Warranty/Service process.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: WARRANTY::SUBMIT_WARRANTY_CLAIM
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: WARRANTY_CLAIM_PROCESSING
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: WARRANTY_COORDINATOR_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: A formal warranty claim belongs to the Warranty/Service process.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: WARRANTY_CASE_STATUS -> WARRANTY_COORDINATOR_SERVICE_ENGINEER
+      description: Warranty-case status belongs to the warranty/service function.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: WARRANTY::CHECK_WARRANTY_STATUS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: WARRANTY_CASE_STATUS
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: WARRANTY_COORDINATOR_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: Warranty-case status belongs to the warranty/service function.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: INVOICE_INFORMATION -> BILLING_AR_SPECIALIST
+      description: Invoice issuance/copies are handled by Billing / Accounts Receivable.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INVOICE::REQUEST_INVOICE_COPY
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INVOICE::REPORT_INVOICE_NOT_RECEIVED
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: INVOICE_INFORMATION
+          department: FINANCE
+          role: BILLING_AR_SPECIALIST
+          owner_track: FINANCE_BILLING_QUEUE
+          crm_can_resolve: false
+          reason: Invoice issuance/copies are handled by Billing / Accounts Receivable.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: INVOICE_INVESTIGATION -> BILLING_AR_SPECIALIST
+      description: Questions/disputes about an invoice require Billing / AR investigation.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INVOICE::QUESTION_INVOICE
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INVOICE::DISPUTE_INVOICE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: INVOICE_INVESTIGATION
+          department: FINANCE
+          role: BILLING_AR_SPECIALIST
+          owner_track: FINANCE_BILLING_QUEUE
+          crm_can_resolve: false
+          reason: Questions/disputes about an invoice require Billing / AR investigation.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: INVOICE_CORRECTION -> BILLING_AR_SPECIALIST
+      description: Correcting a posted invoice is a Finance responsibility.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INVOICE::REQUEST_INVOICE_CORRECTION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: INVOICE_CORRECTION
+          department: FINANCE
+          role: BILLING_AR_SPECIALIST
+          owner_track: FINANCE_BILLING_QUEUE
+          crm_can_resolve: false
+          reason: Correcting a posted invoice is a Finance responsibility.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: CREDIT_NOTE_REVIEW -> BILLING_AR_SPECIALIST
+      description: A credit note request requires Finance review.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: INVOICE::REQUEST_CREDIT_NOTE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CREDIT_NOTE_REVIEW
+          department: FINANCE
+          role: BILLING_AR_SPECIALIST
+          owner_track: FINANCE_BILLING_QUEUE
+          crm_can_resolve: false
+          reason: A credit note request requires Finance review.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: PAYMENT_RECONCILIATION -> BILLING_AR_SPECIALIST
+      description: Payment receipt/allocation must be verified by Accounts Receivable.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PAYMENT_CREDIT::REPORT_PAYMENT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PAYMENT_CREDIT::CHECK_PAYMENT_STATUS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PAYMENT_RECONCILIATION
+          department: FINANCE
+          role: BILLING_AR_SPECIALIST
+          owner_track: FINANCE_BILLING_QUEUE
+          crm_can_resolve: false
+          reason: Payment receipt/allocation must be verified by Accounts Receivable.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: PAYMENT_TERMS_INFORMATION -> CREDIT_ANALYST
+      description: Questions about authoritative payment terms require Finance/Credit
+        context.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PAYMENT_CREDIT::QUESTION_PAYMENT_TERMS
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PAYMENT_TERMS_INFORMATION
+          department: FINANCE
+          role: CREDIT_ANALYST
+          owner_track: FINANCE_CREDIT_QUEUE
+          crm_can_resolve: false
+          reason: Questions about authoritative payment terms require Finance/Credit
+            context.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: PAYMENT_TERMS_REVIEW -> CREDIT_ANALYST
+      description: Changing payment terms requires Finance/Credit approval.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PAYMENT_CREDIT::REQUEST_PAYMENT_TERMS_CHANGE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: PAYMENT_TERMS_REVIEW
+          department: FINANCE
+          role: CREDIT_ANALYST
+          owner_track: FINANCE_CREDIT_QUEUE
+          crm_can_resolve: false
+          reason: Changing payment terms requires Finance/Credit approval.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: CREDIT_LIMIT_DECISION -> CREDIT_ANALYST
+      description: Changing a customer's credit limit requires a Credit Analyst.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PAYMENT_CREDIT::REQUEST_CREDIT_LIMIT_CHANGE
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CREDIT_LIMIT_DECISION
+          department: FINANCE
+          role: CREDIT_ANALYST
+          owner_track: FINANCE_CREDIT_QUEUE
+          crm_can_resolve: false
+          reason: Changing a customer's credit limit requires a Credit Analyst.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: CREDIT_HOLD_RESOLUTION -> CREDIT_ANALYST
+      description: Resolving a credit hold requires Finance/Credit authority.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: PAYMENT_CREDIT::RESOLVE_CREDIT_HOLD
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CREDIT_HOLD_RESOLUTION
+          department: FINANCE
+          role: CREDIT_ANALYST
+          owner_track: FINANCE_CREDIT_QUEUE
+          crm_can_resolve: false
+          reason: Resolving a credit hold requires Finance/Credit authority.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: COMPLEX_CASE_COORDINATION -> TECHNICAL_CASE_COORDINATOR
+      description: CRM owns coordination, customer communication and closure discipline
+        for a complaint/escalation.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_PRODUCT_COMPLAINT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_SERVICE_COMPLAINT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_DELIVERY_COMPLAINT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_BILLING_COMPLAINT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REQUEST_ESCALATION
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMPLEX_CASE_COORDINATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: CRM owns coordination, customer communication and closure discipline
+            for a complaint/escalation.
+    - name: INSTALLED_PRODUCT_DIAGNOSIS -> AFTERMARKET_SERVICE_ENGINEER
+      description: The complaint concerns product/service performance and needs technical
+        after-sales investigation.
+      when:
+        operator: or
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_PRODUCT_COMPLAINT
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_SERVICE_COMPLAINT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: INSTALLED_PRODUCT_DIAGNOSIS
+          department: PRODUCT_SERVICE_SPARE_PARTS
+          role: AFTERMARKET_SERVICE_ENGINEER
+          owner_track: SERVICE_OWNER
+          crm_can_resolve: false
+          reason: The complaint concerns product/service performance and needs technical
+            after-sales investigation.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: DELIVERY_EXCEPTION_RESOLUTION -> LOGISTICS_SHIPPING_COORDINATOR
+      description: The complaint concerns delivery execution and needs Logistics investigation.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_DELIVERY_COMPLAINT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: DELIVERY_EXCEPTION_RESOLUTION
+          department: SUPPLY_CHAIN_OPERATIONS
+          role: LOGISTICS_SHIPPING_COORDINATOR
+          owner_track: LOGISTICS_QUEUE
+          crm_can_resolve: false
+          reason: The complaint concerns delivery execution and needs Logistics investigation.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: INVOICE_INVESTIGATION -> BILLING_AR_SPECIALIST
+      description: The complaint concerns billing and needs Finance investigation.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: COMPLAINT::REPORT_BILLING_COMPLAINT
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: INVOICE_INVESTIGATION
+          department: FINANCE
+          role: BILLING_AR_SPECIALIST
+          owner_track: FINANCE_BILLING_QUEUE
+          crm_can_resolve: false
+          reason: The complaint concerns billing and needs Finance investigation.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: COMPLEX_CASE_COORDINATION -> TECHNICAL_CASE_COORDINATOR
+      description: The request does not fit a governed category and needs CRM triage.
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+          operator: contains
+          value: OTHER::OTHER_REQUEST
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMPLEX_CASE_COORDINATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: The request does not fit a governed category and needs CRM triage.
+    - name: Missing information needs CRM clarification
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.completeness.missing_information
+          operator: is_not_empty
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: MISSING_INFORMATION_RESOLUTION
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: Material information is missing before the customer's request can
+            be completed.
+    - name: Ambiguous information needs CRM coordination
+      when:
+        operator: and
+        conditions:
+        - field: outputs.interpret_customer_inquiry.parsed.completeness.ambiguous_information
+          operator: is_not_empty
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMPLEX_CASE_COORDINATION
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: The inquiry contains contradictory or ambiguous information that
+            CRM must clarify.
+    - name: CRM lookup failure needs customer identity resolution
+      when:
+        operator: and
+        conditions:
+        - field: outputs.customer_context.decisions.customer_state
+          operator: equals
+          value: SYSTEM_ERROR
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: CUSTOMER_IDENTITY_RESOLUTION
+          department: CRM_CUSTOMER_SUPPORT
+          role: TECHNICAL_CASE_COORDINATOR
+          owner_track: CRM_CASE_COORDINATOR_QUEUE
+          crm_can_resolve: true
+          reason: The customer could not be verified because the CRM lookup failed;
+            do not treat that as a new customer.
+    - name: Commercial decision -> Sales / KEY_ACCOUNT_MANAGER
+      when:
+        operator: and
+        conditions:
+        - operator: or
+          conditions:
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_QUOTE_REVISION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_DISCOUNT
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::NEGOTIATE_PRICE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_COMMERCIAL_TERMS
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::ACCEPT_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REJECT_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REQUEST_ORDER_CHANGE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::ADD_ITEMS_TO_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REPORT_ORDER_ERROR
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
+        - field: outputs.customer_context.decisions.sales_role
+          operator: equals
+          value: KEY_ACCOUNT_MANAGER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMMERCIAL_ACCOUNT_OWNERSHIP
+          department: SALES
+          role: KEY_ACCOUNT_MANAGER
+          owner_track: ACCOUNT_OWNER
+          crm_can_resolve: false
+          reason: The customer is asking for a commercial change, negotiation, acceptance/cancellation
+            decision, or commercial complaint.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: Commercial decision -> Sales / ACCOUNT_MANAGER
+      when:
+        operator: and
+        conditions:
+        - operator: or
+          conditions:
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_QUOTE_REVISION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_DISCOUNT
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::NEGOTIATE_PRICE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_COMMERCIAL_TERMS
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::ACCEPT_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REJECT_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REQUEST_ORDER_CHANGE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::ADD_ITEMS_TO_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REPORT_ORDER_ERROR
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
+        - field: outputs.customer_context.decisions.sales_role
+          operator: equals
+          value: ACCOUNT_MANAGER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMMERCIAL_ACCOUNT_OWNERSHIP
+          department: SALES
+          role: ACCOUNT_MANAGER
+          owner_track: ACCOUNT_OWNER
+          crm_can_resolve: false
+          reason: The customer is asking for a commercial change, negotiation, acceptance/cancellation
+            decision, or commercial complaint.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: Commercial decision -> Sales / TERRITORY_OUTSIDE_SALES
+      when:
+        operator: and
+        conditions:
+        - operator: or
+          conditions:
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_QUOTE_REVISION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_DISCOUNT
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::NEGOTIATE_PRICE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_COMMERCIAL_TERMS
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::NEGOTIATE_COMMERCIAL_TERMS
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::ACCEPT_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REJECT_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: CUSTOMER_PO::CHANGE_PURCHASE_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: CUSTOMER_PO::CANCEL_PURCHASE_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REQUEST_ORDER_CHANGE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REQUEST_ORDER_CANCELLATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::ADD_ITEMS_TO_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REMOVE_ITEMS_FROM_ORDER
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: SALES_ORDER::REPORT_ORDER_ERROR
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: COMPLAINT::REPORT_COMMERCIAL_COMPLAINT
+        - field: outputs.customer_context.decisions.sales_role
+          operator: equals
+          value: TERRITORY_OUTSIDE_SALES
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: COMMERCIAL_ACCOUNT_OWNERSHIP
+          department: SALES
+          role: TERRITORY_OUTSIDE_SALES
+          owner_track: TERRITORY_SALES_OWNER
+          crm_can_resolve: false
+          reason: The customer is asking for a commercial change, negotiation, acceptance/cancellation
+            decision, or commercial complaint.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: New customer opportunity -> Territory / Outside Sales
+      when:
+        operator: and
+        conditions:
+        - operator: or
+          conditions:
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: NEW_EQUIPMENT::REQUEST_PRODUCT_INFORMATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: NEW_EQUIPMENT::REQUEST_PRODUCT_RECOMMENDATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: NEW_EQUIPMENT::REQUEST_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: NEW_EQUIPMENT::REQUEST_PRICE
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: PRODUCT_APPLICATION::REQUEST_PUMP_SELECTION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: PRODUCT_APPLICATION::REQUEST_PUMP_SIZING
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: PRODUCT_APPLICATION::REQUEST_TECHNICAL_PROPOSAL
+        - field: outputs.customer_context.decisions.customer_state
+          operator: equals
+          value: NEW_CUSTOMER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: NEW_BUSINESS_DEVELOPMENT
+          department: SALES
+          role: TERRITORY_OUTSIDE_SALES
+          owner_track: TERRITORY_SALES_OWNER
+          crm_can_resolve: false
+          reason: A new customer enquiry is also a new-business opportunity that needs
+            commercial ownership.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    - name: Key account quotation -> Key Account Manager visibility
+      when:
+        operator: and
+        conditions:
+        - operator: or
+          conditions:
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: NEW_EQUIPMENT::REQUEST_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_QUOTATION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_QUOTE_REVISION
+          - field: outputs.interpret_customer_inquiry.parsed.routing_keys
+            operator: contains
+            value: QUOTATION::REQUEST_PRICE
+        - field: outputs.customer_context.decisions.sales_role
+          operator: equals
+          value: KEY_ACCOUNT_MANAGER
+      then:
+      - field: required_work
+        operation: append
+        value:
+          responsibility: STRATEGIC_ACCOUNT_MANAGEMENT
+          department: SALES
+          role: KEY_ACCOUNT_MANAGER
+          owner_track: ACCOUNT_OWNER
+          crm_can_resolve: false
+          reason: A quotation for a CRM-designated key account keeps the Key Account
+            Manager commercially involved.
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+    declared_fields:
+    - required_work
+- id: responsibility_metrics
+  type: DataTransformAgent
+  config:
+    operations:
+    - target: work_item_count
+      operation: count
+      source: responsibility_decision.decisions.required_work
+      default: 0
+- id: coordination_decision
+  type: DecisionAgent
+  config:
+    defaults:
+      specialist_required: false
+      multi_role: false
+      coordination_required: false
+      crm_can_fully_resolve: true
+      coordinator_department: CRM_CUSTOMER_SUPPORT
+      coordinator_role: INSIDE_SALES
+    rules:
+    - name: At least one specialist responsibility exists
+      when:
+        operator: and
+        conditions:
+        - field: outputs.responsibility_decision.decisions.specialist_required
+          operator: is_true
+      then:
+      - field: specialist_required
+        value: true
+      - field: crm_can_fully_resolve
+        value: false
+      - field: coordination_required
+        value: true
+      - field: coordinator_role
+        value: TECHNICAL_CASE_COORDINATOR
+    - name: More than one role is needed
+      when:
+        operator: and
+        conditions:
+        - field: outputs.responsibility_metrics.data.work_item_count
+          operator: greater_than
+          value: 1
+      then:
+      - field: multi_role
+        value: true
+      - field: coordination_required
+        value: true
+      - field: coordinator_role
+        value: TECHNICAL_CASE_COORDINATOR
+- id: build_crm_case_payload
+  type: DataTransformAgent
+  config:
+    operations:
+    - target: case
+      operation: object
+      value:
+        status: READY_FOR_CRM_CASE_CREATION
+        source_channel: $customer_inquiry.data.source_channel
+        received_at: $customer_inquiry.data.received_at
+        language: $understand_customer_inquiry.data.language
+        summary: $interpret_customer_inquiry.parsed.inquiry.summary
+        customer_state: $customer_context.decisions.customer_state
+        customer_verified: $customer_context.decisions.customer_verified
+        account_id: $find_customer.first.account_id
+        account_name: $find_customer.first.account_name
+        specialist_required: $coordination_decision.decisions.specialist_required
+        multi_role: $coordination_decision.decisions.multi_role
+        coordination_required: $coordination_decision.decisions.coordination_required
+        coordinator_department: $coordination_decision.decisions.coordinator_department
+        coordinator_role: $coordination_decision.decisions.coordinator_role
+    - target: understanding
+      operation: copy
+      source: understand_customer_inquiry.data
+    - target: attachment
+      operation: copy
+      source: understand_customer_inquiry.data.attachment
+    - target: required_work
+      operation: copy
+      source: responsibility_decision.decisions.required_work
+      default: []
+    - target: owner_directory
+      operation: copy
+      source: owner_directory.data
+      default: {}
+    - target: routing_rule_matches
+      operation: copy
+      source: responsibility_decision.matched_rules
+      default: []
+    - target: routing_explanation
+      operation: copy
+      source: responsibility_decision.summary
+      default: []
+    - target: customer_context
+      operation: copy
+      source: customer_context.decisions
+      default: {}
+edges:
+- from: load_attachments
+  to: interpret_customer_inquiry
+- from: interpret_customer_inquiry
+  to: understand_customer_inquiry
+- from: understand_customer_inquiry
+  to: understanding_metrics
+- from: understanding_metrics
+  to: understanding_quality
+- from: understanding_quality
+  to: understanding_router
+- from: understanding_router
+  condition: route
+  branches:
+    HUMAN_REVIEW: manual_understanding_review
+    CONTINUE: find_customer
+- from: find_customer
+  to: customer_match_router
+- from: customer_match_router
+  condition: route
+  branches:
+    AMBIGUOUS: customer_ambiguity_review
+    CONTINUE: get_account_ownership
+- from: get_account_ownership
+  to: customer_context
+- from: customer_context
+  to: owner_directory
+- from: owner_directory
+  to: responsibility_decision
+- from: responsibility_decision
+  to: responsibility_metrics
+- from: responsibility_metrics
+  to: coordination_decision
+- from: coordination_decision
+  to: build_crm_case_payload
+- from: customer_inquiry
+  to: load_attachments

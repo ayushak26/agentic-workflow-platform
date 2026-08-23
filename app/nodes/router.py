@@ -75,6 +75,11 @@ class RouteCase(BaseModel):
 
     @model_validator(mode="after")
     def case_is_decidable(self) -> "RouteCase":
+        """Compute the case is decidable.
+
+        Returns:
+            'RouteCase': The is decidable.
+        """
         if self.when is None:
             raise ValueError(
                 f"route case {self.route!r} needs conditions; use `fallback` for "
@@ -84,6 +89,18 @@ class RouteCase(BaseModel):
 
 
 class RouterConfig(BaseModel):
+    """Pydantic model defining the RouterConfig shape.
+
+    Attributes:
+        mode (Literal['field', 'conditions', 'rule', 'llm']).
+        selection (Literal['single', 'multi']).
+        route_field (str | None).
+        branches (dict[str, str]).
+        cases (list[RouteCase]).
+        fallback (str | None).
+        rules (list[RouteRule]).
+        model (str | None).
+    """
     mode: Literal["field", "conditions", "rule", "llm"] = Field(
         default="rule",
         description="How this step decides a branch: field (map a value to a branch), conditions (first matching rule group), rule (legacy expressions), or llm (ask a model).",
@@ -134,6 +151,11 @@ class RouterConfig(BaseModel):
 
     @model_validator(mode="after")
     def mode_has_what_it_needs(self) -> "RouterConfig":
+        """Compute the mode has what it needs.
+
+        Returns:
+            'RouterConfig': The has what it needs.
+        """
         if self.mode == "field":
             if not self.route_field:
                 raise ValueError("field mode needs a route_field")
@@ -152,6 +174,11 @@ class RouterConfig(BaseModel):
         # workflows — its first-match-wins loop (_route_by_rule) is not worth
         # the risk of changing to accumulate. field/conditions/llm all have a
         # well-defined "evaluate everything, collect every match" reading.
+        """Compute the multi selection not supported in rule mode.
+
+        Returns:
+            'RouterConfig': The selection not supported in rule mode.
+        """
         if self.selection == "multi" and self.mode == "rule":
             raise ValueError(
                 "multi selection is not supported in rule mode — use field, "
@@ -181,6 +208,17 @@ class RouterOutput(BaseModel):
     #: written before Multi-Route existed) still renders something
     #: meaningful — `.route` is display-only in multi mode, `.routes` is
     #: authoritative there.
+    """Pydantic model defining the RouterOutput shape.
+
+    Attributes:
+        route (str).
+        routes (list[str]).
+        reason (str | None).
+        route_value (Any).
+        explanation (list[dict[str, Any]]).
+        matched_conditions (list[str]).
+        used_fallback (bool).
+    """
     route: str = ""
     #: Every branch selected — always exactly one entry in single selection
     #: (mirroring `route`), the full selection in multi. This is the field
@@ -199,6 +237,7 @@ class RouterOutput(BaseModel):
 
 
 class RouterInput(BaseModel):
+    """Pydantic model defining the RouterInput shape."""
     pass
 
 
@@ -211,6 +250,13 @@ _SAFE_OPS = {
 
 @NodeRegistry.register
 class RouterAgent(NodeType):
+    """Workflow node type implementing the RouterAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "RouterAgent"
     description = (
         "Branch the workflow on a field value, on business conditions, or via "
@@ -267,11 +313,28 @@ class RouterAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         if config.get("mode", "rule") == "llm":
             return {"llm", "cost_ledger"}
         return set()
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = RouterConfig(**resolved_config)
         if cfg.selection == "multi":
             if cfg.mode == "field":
@@ -297,6 +360,15 @@ class RouterAgent(NodeType):
     # -- deterministic: one field, one branch per value -----------------
 
     def _route_by_field(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+        """Internal helper for the route by field step.
+
+        Args:
+            cfg (RouterConfig): The cfg.
+            state (dict): Current workflow state.
+
+        Returns:
+            dict[str, Any]: The by field.
+        """
         raw = resolve_path(dict(state), cfg.route_field or "")
         key = _branch_key(raw)
         # Case-insensitive match so a model returning "Technical_Support" still
@@ -425,6 +497,15 @@ class RouterAgent(NodeType):
     # -- deterministic: first matching condition group ------------------
 
     def _route_by_conditions(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+        """Internal helper for the route by conditions step.
+
+        Args:
+            cfg (RouterConfig): The cfg.
+            state (dict): Current workflow state.
+
+        Returns:
+            dict[str, Any]: The by conditions.
+        """
         context = dict(state)
         traces: list[dict[str, Any]] = []
         for case in cfg.cases:
@@ -505,6 +586,12 @@ class RouterAgent(NodeType):
     # -- legacy string-expression rules --------------------------------
 
     def _route_by_rule(self, cfg, state):
+        """Internal helper for the route by rule step.
+
+        Args:
+            cfg: The cfg.
+            state: Current workflow state.
+        """
         for rule in cfg.rules:
             if rule.default:
                 continue
@@ -556,6 +643,14 @@ class RouterAgent(NodeType):
 
     @staticmethod
     def _parse_literal(s: str) -> Any:
+        """Parse the literal.
+
+        Args:
+            s (str): The s.
+
+        Returns:
+            Any: The literal.
+        """
         s = s.strip()
         if s.startswith(("'", '"')) and s.endswith(("'", '"')):
             return s[1:-1]
@@ -569,6 +664,11 @@ class RouterAgent(NodeType):
         return s
 
     async def _route_by_llm(self, cfg):
+        """Internal helper for the route by llm step.
+
+        Args:
+            cfg: The cfg.
+        """
         llm = self.services["llm"]
         route_names = [r.name for r in cfg.rules]
         prompt = (
@@ -660,6 +760,14 @@ def _branch_key(value: Any) -> str:
 
 
 def _matched_summaries(trace: GroupTrace) -> list[str]:
+    """Internal helper for the matched summaries step.
+
+    Args:
+        trace (GroupTrace): The trace.
+
+    Returns:
+        list[str]: The summaries.
+    """
     collected: list[str] = []
     for child in trace.children:
         if isinstance(child, GroupTrace):

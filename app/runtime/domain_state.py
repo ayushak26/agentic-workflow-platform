@@ -39,6 +39,12 @@ class DomainStateRegistry:
 
     @classmethod
     def register(cls, namespace: str, reducer: DomainReducer) -> None:
+        """Register the result.
+
+        Args:
+            namespace (str): The namespace.
+            reducer (DomainReducer): The reducer.
+        """
         if not namespace or "." in namespace:
             raise ValueError(
                 "domain namespace must be a non-empty identifier without dots"
@@ -50,6 +56,14 @@ class DomainStateRegistry:
 
     @classmethod
     def reducer_for(cls, namespace: str) -> DomainReducer:
+        """Compute the reducer for.
+
+        Args:
+            namespace (str): The namespace.
+
+        Returns:
+            DomainReducer: The for.
+        """
         return cls._reducers.get(namespace, _merge_mapping)
 
 

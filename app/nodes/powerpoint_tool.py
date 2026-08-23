@@ -15,16 +15,31 @@ log = get_logger(__name__)
 
 
 class PPTInput(BaseModel):
+    """Pydantic model defining the PPTInput shape."""
     pass
 
 
 class PPTConfig(BaseModel):
+    """Pydantic model defining the PPTConfig shape.
+
+    Attributes:
+        sections (dict[str, str]).
+        proposal_title (str).
+        client_name (str).
+    """
     sections: dict[str, str]
     proposal_title: str
     client_name: str
 
 
 class PPTOutput(BaseModel):
+    """Pydantic model defining the PPTOutput shape.
+
+    Attributes:
+        minio_key (str).
+        slide_count (int).
+        byte_size (int).
+    """
     minio_key: str
     slide_count: int
     byte_size: int
@@ -32,6 +47,7 @@ class PPTOutput(BaseModel):
 
 @NodeRegistry.register
 class PowerPointProposalSlides(NodeType):
+    """Workflow node type implementing the PowerPointProposalSlides capability."""
     type_name = "PowerPointProposalSlides"
     description = "Build a .pptx deck from proposal sections."
     input_schema = PPTInput
@@ -40,9 +56,26 @@ class PowerPointProposalSlides(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         store = self.services["object_store"]
         cfg = PPTConfig(**resolved_config)
 

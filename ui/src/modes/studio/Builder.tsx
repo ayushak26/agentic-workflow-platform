@@ -407,7 +407,7 @@ export function Builder() {
     // sync-to-external-system loop — same justification as the analogous
     // effect in Cockpit.tsx.
     try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
+       
       hydrateWorkflow(parseYaml(navState.generatedYaml), null, undefined, { dirty: true });
     } catch (e) {
       // A generation that failed its static check can still be "opened" —

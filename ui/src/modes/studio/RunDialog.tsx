@@ -254,8 +254,10 @@ export function RunDialog({
     setLaunchStage('Checking workflow structure…');
     setLaunchError(null);
     try {
-      const preflight = await api.validateWorkflow(workflowYaml);
-      if (!preflight.valid) {
+      // Business View retains test-before-run. Technical Cockpit launches
+      // defer that choice to its separate Test and Run buttons.
+      const preflight = launchContext ? null : await api.validateWorkflow(workflowYaml);
+      if (preflight && !preflight.valid) {
         const errors = preflight.issues
           .filter(issue => issue.severity === 'error')
           .slice(0, 6)
@@ -290,13 +292,11 @@ export function RunDialog({
           : uploaded.files[0];
       }
 
-      setLaunchStage('Running full zero-token test…');
-      const fullPreflight = await api.validateWorkflow(
-        workflowYaml,
-        runInputs,
-        true,
+      setLaunchStage(launchContext ? 'Opening Cockpit…' : 'Running full zero-token test…');
+      const fullPreflight = launchContext ? null : await api.validateWorkflow(
+        workflowYaml, runInputs, true,
       );
-      if (!fullPreflight.valid) {
+      if (fullPreflight && !fullPreflight.valid) {
         const fullErrors = fullPreflight.issues
           .filter(issue => issue.severity === 'error')
           .slice(0, 8)
@@ -320,7 +320,13 @@ export function RunDialog({
       // the business-language Business View surface instead.
       const surface = launchContext ? 'cockpit' : 'business';
       navigate(`/${surface}/${runId}`, {
-        state: { workflowYaml, workflowName, inputs: runInputs, ...launchContext },
+        state: {
+          workflowYaml,
+          workflowName,
+          inputs: runInputs,
+          ...(launchContext ? { awaitLaunch: true } : {}),
+          ...launchContext,
+        },
       });
     } catch (error: unknown) {
       setLaunchError(error instanceof Error ? error.message : String(error));
@@ -544,8 +550,9 @@ export function RunDialog({
 
         <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between gap-3">
           <span className="text-xs text-ink-500">
-            Files are stored once, then services, model access, and inputs are
-            tested with 0 generation tokens before the run opens.
+            {launchContext
+              ? 'Files are stored once. In Cockpit, choose Test Workflow or Run Workflow.'
+              : 'Files are stored once, then services, model access, and inputs are tested with 0 generation tokens before the run opens.'}
           </span>
           <div className="flex gap-3">
             <button
@@ -560,7 +567,9 @@ export function RunDialog({
               disabled={uploading}
               className="px-4 py-2 rounded-md bg-accent-600 text-white text-sm hover:bg-accent-500 disabled:opacity-50"
             >
-              {uploading ? (launchStage ?? 'Checking…') : 'Test & run workflow'}
+              {uploading
+                ? (launchStage ?? 'Preparing…')
+                : (launchContext ? 'Open Cockpit' : 'Test & run workflow')}
             </button>
           </div>
         </div>

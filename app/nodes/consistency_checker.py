@@ -44,6 +44,7 @@ class ConsistencyCheckerOutput(BaseModel):
 
 
 class ConsistencyCheckerInput(BaseModel):
+    """Pydantic model defining the ConsistencyCheckerInput shape."""
     pass
 
 
@@ -54,9 +55,24 @@ class ConsistencyCheckerConfig(BaseModel):
 
 # (rule_id, description, blocking?)
 def _check(graph: ProposalGraph) -> list[dict[str, Any]]:
+    """Check the result.
+
+    Args:
+        graph (ProposalGraph): Compiled LangGraph graph.
+
+    Returns:
+        list[dict[str, Any]]: The result.
+    """
     findings: list[dict[str, Any]] = []
 
     def fail(rule: str, blocking: bool, msg: str) -> None:
+        """Compute the fail.
+
+        Args:
+            rule (str): The rule.
+            blocking (bool): The blocking.
+            msg (str): The msg.
+        """
         findings.append({"rule": rule, "blocking": blocking, "message": msg})
 
     partners = graph.partners
@@ -141,6 +157,15 @@ class ConsistencyChecker(NodeType):
     output_schema = ConsistencyCheckerOutput
 
     async def run(self, state: dict, config: dict) -> dict:
+        """Run the result.
+
+        Args:
+            state (dict): Current workflow state.
+            config (dict): Node configuration mapping.
+
+        Returns:
+            dict: The result.
+        """
         graph = proposal_graph_from_state(state)
 
         findings = _check(graph)

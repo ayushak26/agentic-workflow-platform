@@ -51,6 +51,15 @@ log = get_logger(__name__)
 
 
 class SubprocessConfig(BaseModel):
+    """Pydantic model defining the SubprocessConfig shape.
+
+    Attributes:
+        workflow (str).
+        inputs (dict[str, Any]).
+        result_from (Literal['workflow_output', 'node', 'all_outputs']).
+        result_node (str | None).
+        timeout_seconds (float).
+    """
     model_config = ConfigDict(extra="forbid")
 
     #: The referenced workflow's file name (without .yaml), same charset
@@ -82,10 +91,19 @@ class SubprocessConfig(BaseModel):
 
 
 class SubprocessInput(BaseModel):
+    """Pydantic model defining the SubprocessInput shape."""
     pass
 
 
 class SubprocessOutput(BaseModel):
+    """Pydantic model defining the SubprocessOutput shape.
+
+    Attributes:
+        status (Literal['completed']).
+        result (Any).
+        child_run_id (str).
+        child_workflow (str).
+    """
     status: Literal["completed"] = "completed"
     result: Any = None
     child_run_id: str = ""
@@ -94,6 +112,13 @@ class SubprocessOutput(BaseModel):
 
 @NodeRegistry.register
 class SubprocessAgent(NodeType):
+    """Workflow node type implementing the SubprocessAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "SubprocessAgent"
     description = (
         "Run another saved workflow as a reusable business subprocess. It "
@@ -130,9 +155,26 @@ class SubprocessAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"audit_db", "background_run_manager"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = SubprocessConfig(**resolved_config)
         launch = await self._get_or_create_launch(cfg, state)
 
@@ -156,6 +198,15 @@ class SubprocessAgent(NodeType):
     async def _get_or_create_launch(
         self, cfg: SubprocessConfig, state: dict[str, Any],
     ) -> dict[str, Any]:
+        """Return the or create launch.
+
+        Args:
+            cfg (SubprocessConfig): The cfg.
+            state (dict[str, Any]): Current workflow state.
+
+        Returns:
+            dict[str, Any]: The or create launch.
+        """
         db = self.services.get("audit_db")
         run_manager = self.services.get("background_run_manager")
         if db is None or run_manager is None:
@@ -265,6 +316,15 @@ class SubprocessAgent(NodeType):
         return doc
 
     def _finalize(self, cfg: SubprocessConfig, decision: dict[str, Any]) -> dict[str, Any]:
+        """Finalize the result.
+
+        Args:
+            cfg (SubprocessConfig): The cfg.
+            decision (dict[str, Any]): Human decision mapping.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         status = decision.get("status")
         if status == "rejected":
             # A rejected HITL gate *inside* the child (sp04_approval_gate,
@@ -301,6 +361,11 @@ class SubprocessAgent(NodeType):
 
 
 def _load_child_workflow(name: str):
+    """Load the child workflow.
+
+    Args:
+        name (str): Workflow or resource name.
+    """
     from pathlib import Path
 
     from app.runtime.loader import load_workflow_from_string

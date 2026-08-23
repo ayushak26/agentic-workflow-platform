@@ -16,6 +16,14 @@ from pydantic import BaseModel
 
 
 class GoldenExample(BaseModel):
+    """Pydantic model defining the GoldenExample shape.
+
+    Attributes:
+        id (str).
+        question (str).
+        context (str).
+        reference (str).
+    """
     id: str
     question: str
     context: str

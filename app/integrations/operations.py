@@ -48,16 +48,36 @@ class AmbiguousOperationFailure(RuntimeError):
 
 
 def _now() -> datetime:
+    """Internal helper for the now step.
+
+    Returns:
+        datetime: The result.
+    """
     return datetime.now(UTC)
 
 
 class ExternalOperationLedger:
+    """Provides the ExternalOperationLedger behaviour."""
     def __init__(self, db: Any = None, *, collection: str = "external_operations"):
+        """Initialize the ExternalOperationLedger.
+
+        Args:
+            db (Any): Mongo database handle (optional, default None).
+            collection (str): Mongo collection (optional, default 'external_operations').
+        """
         self.db = db
         self.collection = collection
         self._local: dict[str, dict[str, Any]] = {}
 
     async def find(self, key: str) -> dict[str, Any] | None:
+        """Find the result.
+
+        Args:
+            key (str): Lookup key.
+
+        Returns:
+            dict[str, Any] | None: The result.
+        """
         if self.db is None:
             return self._local.get(key)
         return await self.db[self.collection].find_one({"_id": key})
@@ -87,6 +107,12 @@ class ExternalOperationLedger:
         return None
 
     async def complete(self, key: str, outcome: dict[str, Any]) -> None:
+        """Complete the result.
+
+        Args:
+            key (str): Lookup key.
+            outcome (dict[str, Any]): The outcome.
+        """
         patch = {"status": "completed", "completed_at": _now(), **outcome}
         if self.db is None:
             self._local.setdefault(key, {}).update(patch)
@@ -94,6 +120,12 @@ class ExternalOperationLedger:
         await self.db[self.collection].update_one({"_id": key}, {"$set": patch})
 
     async def mark_ambiguous(self, key: str, error: str) -> None:
+        """Mark the ambiguous.
+
+        Args:
+            key (str): Lookup key.
+            error (str): Error value or message.
+        """
         patch = {"status": "ambiguous", "error": error[:500], "failed_at": _now()}
         if self.db is None:
             self._local.setdefault(key, {}).update(patch)

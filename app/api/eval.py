@@ -24,14 +24,35 @@ GOLDEN_DIR = Path("eval/golden_set")
 REFERENCE_PDF = Path("samples/FARMLOOPS_proposal.pdf")
 
 class RunEvalRequest(BaseModel):
+    """Pydantic model defining the RunEvalRequest shape.
+
+    Attributes:
+        golden_set (str).
+        judge_model (str).
+    """
     golden_set: str = "document_qa"   # filename stem under eval/golden_set/
     judge_model: str = "claude-sonnet-4-5"
 
 class WorkflowCompareRequest(BaseModel):
+    """Pydantic model defining the WorkflowCompareRequest shape.
+
+    Attributes:
+        golden_set (str).
+        models (list[str]).
+    """
     golden_set: str = "verder_customer_triage"   # filename stem under eval/golden_set/
     models: list[str] = ["claude-sonnet-4-5", "claude-haiku-4-5"]
 
 class ScoreOutputRequest(BaseModel):
+    """Pydantic model defining the ScoreOutputRequest shape.
+
+    Attributes:
+        answer (str).
+        sources (str).
+        question (str).
+        reference (str).
+        judge_model (str).
+    """
     answer: str
     sources: str = ""
     question: str = ""
@@ -52,6 +73,16 @@ async def score_output(
     request: Request,
     user: CurrentUser = Depends(require_permission("eval:run")),
 ) -> dict[str, Any]:
+    """Score the output.
+
+    Args:
+        req (ScoreOutputRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_permission('eval:run'))).
+
+    Returns:
+        dict[str, Any]: The output.
+    """
     services = request.app.state.services
     try:
         guarded = check_workflow_inputs(req.model_dump()).value
@@ -86,6 +117,15 @@ async def list_golden_set(
     name: str = "document_qa",
     _user: CurrentUser = Depends(require_permission("eval:run")),
 ) -> dict[str, Any]:
+    """List the golden set.
+
+    Args:
+        name (str): Workflow or resource name (optional, default 'document_qa').
+        _user (CurrentUser): The user (optional, default Depends(require_permission('eval:run'))).
+
+    Returns:
+        dict[str, Any]: The golden set.
+    """
     path = GOLDEN_DIR / f"{name}.jsonl"
     if not path.exists():
         raise HTTPException(404, f"Golden set not found: {name}")
@@ -100,6 +140,16 @@ async def run(
     request: Request,
     user: CurrentUser = Depends(require_permission("eval:run")),
 ) -> dict[str, Any]:
+    """Run the result.
+
+    Args:
+        req (RunEvalRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_permission('eval:run'))).
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     path = GOLDEN_DIR / f"{req.golden_set}.jsonl"
     if not path.exists():
         raise HTTPException(404, f"Golden set not found: {req.golden_set}")
@@ -122,6 +172,14 @@ async def run(
     # feed known-good context so the score reflects the model's grounding, not
     # the retriever's recall. (Evaluating retrieval separately is a follow-up.)
     async def produce_answer(ex: GoldenExample) -> tuple[str, str]:
+        """Compute the produce answer.
+
+        Args:
+            ex (GoldenExample): The ex.
+
+        Returns:
+            tuple[str, str]: The answer.
+        """
         resp = await llm.complete(
             model=req.judge_model,
             system=("Answer the question using ONLY the provided sources. "
@@ -155,6 +213,16 @@ async def history(
     limit: int = 20,
     _user: CurrentUser = Depends(require_permission("eval:run")),
 ) -> dict[str, Any]:
+    """Compute the history.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        limit (int): Maximum number of items to return (optional, default 20).
+        _user (CurrentUser): The user (optional, default Depends(require_permission('eval:run'))).
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     mongo = request.app.state.services.get("mongo")
     if mongo is None:
         return {"scorecards": []}
@@ -167,6 +235,15 @@ async def list_workflow_golden_set(
     name: str = "verder_customer_triage",
     _user: CurrentUser = Depends(require_permission("eval:run")),
 ) -> dict[str, Any]:
+    """List the workflow golden set.
+
+    Args:
+        name (str): Workflow or resource name (optional, default 'verder_customer_triage').
+        _user (CurrentUser): The user (optional, default Depends(require_permission('eval:run'))).
+
+    Returns:
+        dict[str, Any]: The workflow golden set.
+    """
     path = GOLDEN_DIR / f"{name}.json"
     if not path.exists():
         raise HTTPException(404, f"Golden set not found: {name}")

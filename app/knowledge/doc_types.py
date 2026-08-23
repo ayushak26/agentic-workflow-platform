@@ -21,12 +21,20 @@ from app.ingestion.embedding_catalog import PRECISION_SENSITIVE_DOC_TYPES
 
 @dataclass(frozen=True)
 class DocTypeChoice:
+    """Provides the DocTypeChoice behaviour.
+
+    Attributes:
+        id (str).
+        label (str).
+        description (str).
+    """
     id: str
     label: str
     description: str
 
     @property
     def precision_sensitive(self) -> bool:
+        """The precision sensitive."""
         return self.id in PRECISION_SENSITIVE_DOC_TYPES
 
 
@@ -57,6 +65,11 @@ DOC_TYPES_BY_ID = {choice.id: choice for choice in DOC_TYPES}
 
 
 def doc_type_catalog() -> list[dict[str, object]]:
+    """Compute the doc type catalog.
+
+    Returns:
+        list[dict[str, object]]: The type catalog.
+    """
     return [
         {**asdict(choice), "precision_sensitive": choice.precision_sensitive}
         for choice in DOC_TYPES

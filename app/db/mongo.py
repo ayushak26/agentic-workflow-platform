@@ -24,7 +24,11 @@ from app.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-DB_NAME = "eurskem_ai"
+# Derived from settings so the motor-based handles (manifests, scorecards,
+# audit_db, knowledge) always target the same database as the sync pymongo
+# handle built in app/main.py — a hardcoded name here would silently
+# split-brain the data if MONGO_DB were ever customised.
+DB_NAME = settings.mongo_db
 MANIFESTS_COLLECTION = "manifests"
 SCORECARDS_COLLECTION = "scorecards"
 COLLECTIONS_COLLECTION = "collections"
@@ -54,10 +58,20 @@ class MongoClient:
     """
 
     def __init__(self, url: str | None = None):
+        """Initialize the MongoClient.
+
+        Args:
+            url (str | None): Target URL (optional, default None).
+        """
         self._url = url or settings.mongo_uri
         self._client: AsyncIOMotorClient | None = None
 
     def _ensure_client(self) -> AsyncIOMotorClient:
+        """Ensure the client.
+
+        Returns:
+            AsyncIOMotorClient: The client.
+        """
         if self._client is None:
             timeout_ms = int(settings.external_request_timeout_seconds * 1_000)
             self._client = AsyncIOMotorClient(
@@ -76,6 +90,7 @@ class MongoClient:
         return self._ensure_client()[DB_NAME][MANIFESTS_COLLECTION]
 
     async def close(self) -> None:
+        """Close the result."""
         if self._client is not None:
             self._client.close()
             self._client = None
@@ -88,6 +103,7 @@ class MongoClient:
 
     @property
     def collections(self):
+        """The collections."""
         return self._ensure_client()[DB_NAME][COLLECTIONS_COLLECTION]   
 
     # ---- Index management ---------------------------------------------------

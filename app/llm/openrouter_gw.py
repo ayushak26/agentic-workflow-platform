@@ -57,6 +57,14 @@ class StructuredResult:
 
 
 def strip_openrouter_prefix(model: str) -> str:
+    """Compute the strip openrouter prefix.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        str: The openrouter prefix.
+    """
     return model[len(_PREFIX):] if model.startswith(_PREFIX) else model
 
 
@@ -92,6 +100,14 @@ def _parse_structured(content: str, response_model: Type[T]) -> T:
 
 
 def _usage_fields(usage: dict[str, Any] | None) -> dict[str, Any]:
+    """Internal helper for the usage fields step.
+
+    Args:
+        usage (dict[str, Any] | None): The usage.
+
+    Returns:
+        dict[str, Any]: The fields.
+    """
     usage = usage or {}
     prompt_details = usage.get("prompt_tokens_details") or {}
     return {
@@ -109,6 +125,12 @@ class OpenRouterGateway(LLMGateway):
     """OpenRouter-backed gateway. One httpx.AsyncClient per instance."""
 
     def __init__(self, api_key: str, *, base_url: str | None = None) -> None:
+        """Initialize the OpenRouterGateway.
+
+        Args:
+            api_key (str): API key.
+            base_url (str | None): Base URL (optional, default None).
+        """
         self._client = httpx.AsyncClient(
             base_url=base_url or settings.openrouter_base_url,
             headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
@@ -127,6 +149,14 @@ class OpenRouterGateway(LLMGateway):
         raise ValueError(f"OpenRouter model {bare!r} not found in the live catalog")
 
     async def _post(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Internal helper for the post step.
+
+        Args:
+            body (dict[str, Any]): Request body.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         response = await self._client.post("/chat/completions", json=body)
         response.raise_for_status()
         return response.json()
@@ -141,6 +171,19 @@ class OpenRouterGateway(LLMGateway):
         max_tokens: int = 1024,
         reasoning_effort: str | None = None,
     ) -> LLMResponse:
+        """Complete the result.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 1024).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+
+        Returns:
+            LLMResponse: The result.
+        """
         body: dict[str, Any] = {
             "model": strip_openrouter_prefix(model),
             "messages": [
@@ -175,6 +218,20 @@ class OpenRouterGateway(LLMGateway):
         max_tokens: int = 1024,
         reasoning_effort: str | None = None,
     ) -> StructuredResult:
+        """Complete the structured.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            response_model (Type[T]): The response model.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 1024).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+
+        Returns:
+            StructuredResult: The structured.
+        """
         schema = response_model.model_json_schema()
         system_with_schema = (
             f"{system}\n\n"
@@ -221,6 +278,19 @@ class OpenRouterGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> LLMToolUseResponse:
+        """Compute the chat with tools.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            messages (list[dict]): The messages.
+            tools (list[dict]): The tools.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+
+        Returns:
+            LLMToolUseResponse: The with tools.
+        """
         openai_messages: list[dict] = [{"role": "system", "content": system}] if system else []
         for msg in messages:
             role = msg["role"]
@@ -291,6 +361,14 @@ class OpenRouterGateway(LLMGateway):
 
 
 def _safe_json_loads(value: str) -> dict[str, Any]:
+    """Internal helper for the safe json loads step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        dict[str, Any]: The json loads.
+    """
     try:
         return json.loads(value)
     except (ValueError, TypeError):

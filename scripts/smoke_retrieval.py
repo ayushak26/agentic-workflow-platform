@@ -35,6 +35,7 @@ async def main():
     # Async Weaviate client because our retrieval pipeline is async.
     # The factory returns a client object; we still need to call
     # connect() before using it.
+    """Compute the main."""
     weaviate_client = weaviate.use_async_with_local(host="weaviate", port=8080)
     await weaviate_client.connect()
     embedder = Embedder()

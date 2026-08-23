@@ -4,6 +4,7 @@ from app.llm import get_gateway
 
 
 async def main():
+    """Compute the main."""
     gw, model = get_gateway("claude-haiku-4-5")
 
     r = await gw.complete(

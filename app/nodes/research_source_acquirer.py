@@ -33,10 +33,23 @@ from app.tools.pdf_io import extract_text_from_pdf
 
 
 class ResearchSourceAcquirerInput(BaseModel):
+    """Pydantic model defining the ResearchSourceAcquirerInput shape."""
     pass
 
 
 class ResearchSourceAcquirerConfig(BaseModel):
+    """Pydantic model defining the ResearchSourceAcquirerConfig shape.
+
+    Attributes:
+        candidates (str | list[CandidateSource] | list[str]).
+        policy (EvidencePolicy).
+        max_concurrent_requests (int).
+        max_sources_per_claim (int).
+        max_total_sources (int).
+        request_timeout_seconds (float).
+        max_redirects (int).
+        fail_when_none_acquired (bool).
+    """
     candidates: str | list[CandidateSource] | list[str]
     policy: EvidencePolicy = Field(default_factory=EvidencePolicy)
     max_concurrent_requests: int = Field(default=6, ge=1, le=12)
@@ -55,10 +68,27 @@ class ResearchSourceAcquirerConfig(BaseModel):
     @field_validator("candidates", mode="before")
     @classmethod
     def _coerce_candidates(cls, value: Any) -> Any:
+        """Internal helper for the coerce candidates step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The candidates.
+        """
         return coerce_typed_list_field(value, CandidateSource, "candidates")
 
 
 class ResearchSourceAcquirerOutput(BaseModel):
+    """Pydantic model defining the ResearchSourceAcquirerOutput shape.
+
+    Attributes:
+        candidates_processed (int).
+        full_text_documents_acquired (int).
+        documents (list[FullTextDocument]).
+        rejected_candidates (list[RejectedCandidate]).
+        report (str).
+    """
     candidates_processed: int = 0
     full_text_documents_acquired: int = 0
     documents: list[FullTextDocument] = Field(default_factory=list)
@@ -68,6 +98,7 @@ class ResearchSourceAcquirerOutput(BaseModel):
 
 @NodeRegistry.register
 class ResearchSourceAcquirer(NodeType):
+    """Workflow node type implementing the ResearchSourceAcquirer capability."""
     type_name = "ResearchSourceAcquirer"
     description = (
         "Resolve and store bounded Deep Research citations as immutable HTML "
@@ -79,6 +110,14 @@ class ResearchSourceAcquirer(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(
@@ -86,6 +125,15 @@ class ResearchSourceAcquirer(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ResearchSourceAcquirerConfig(**resolved_config)
         if isinstance(cfg.candidates, str):
             raise ValueError(
@@ -122,6 +170,11 @@ class ResearchSourceAcquirer(NodeType):
         ) as client:
 
             async def _one(candidate: CandidateSource) -> None:
+                """Internal helper for the one step.
+
+                Args:
+                    candidate (CandidateSource): The candidate.
+                """
                 async with semaphore:
                     try:
                         document = await _acquire_candidate(
@@ -181,6 +234,19 @@ async def _acquire_candidate(
     policy: EvidencePolicy,
     max_redirects: int,
 ) -> FullTextDocument:
+    """Acquire the candidate.
+
+    Args:
+        candidate (CandidateSource): The candidate.
+        client (httpx.AsyncClient): Client instance.
+        store (Any): Store instance.
+        run_id (str): Workflow run identifier.
+        policy (EvidencePolicy): The policy.
+        max_redirects (int): The max redirects.
+
+    Returns:
+        FullTextDocument: The candidate.
+    """
     source_url = candidate.pdf_url or candidate.canonical_url
     if not source_url:
         raise ValueError("candidate has no canonical URL")
@@ -290,6 +356,16 @@ def _bounded_candidates(
     # canonical work identity (see app/evidence/identifiers.py), so the same
     # work collapses even when the lanes disagree about its URL or resolved
     # only different subsets of its identifiers.
+    """Internal helper for the bounded candidates step.
+
+    Args:
+        candidates (list[CandidateSource]): The candidates.
+        per_claim (int): The per claim.
+        total (int): The total.
+
+    Returns:
+        list[CandidateSource]: The candidates.
+    """
     candidates = deduplicate_candidates(candidates)
     by_claim: dict[str, list[CandidateSource]] = defaultdict(list)
     for item in candidates:
@@ -316,6 +392,17 @@ async def _fetch_public_source(
     max_bytes: int,
     max_redirects: int,
 ) -> tuple[str, str, bytes]:
+    """Fetch the public source.
+
+    Args:
+        client (httpx.AsyncClient): Client instance.
+        url (str): Target URL.
+        max_bytes (int): The max bytes.
+        max_redirects (int): The max redirects.
+
+    Returns:
+        tuple[str, str, bytes]: The public source.
+    """
     current = url
     for redirect_count in range(max_redirects + 1):
         await _require_public_url(current)
@@ -348,6 +435,11 @@ async def _fetch_public_source(
 
 
 async def _require_public_url(url: str) -> None:
+    """Internal helper for the require public url step.
+
+    Args:
+        url (str): Target URL.
+    """
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("only public HTTP(S) sources are allowed")
@@ -360,6 +452,11 @@ async def _require_public_url(url: str) -> None:
         raise ValueError("private host is not allowed")
 
     def _resolve() -> set[str]:
+        """Resolve the result.
+
+        Returns:
+            set[str]: The result.
+        """
         return {
             item[4][0]
             for item in socket.getaddrinfo(
@@ -379,6 +476,15 @@ async def _require_public_url(url: str) -> None:
 
 
 def _html_pages(raw: bytes, *, chars_per_page: int = 9000) -> list[dict[str, Any]]:
+    """Internal helper for the html pages step.
+
+    Args:
+        raw (bytes): Raw value.
+        chars_per_page (int): The chars per page (optional, default 9000).
+
+    Returns:
+        list[dict[str, Any]]: The pages.
+    """
     soup = BeautifulSoup(raw, "html.parser")
     for element in soup(
         ["script", "style", "noscript", "svg", "nav", "footer", "form"]
@@ -404,6 +510,16 @@ async def _metadata_status(
     final_url: str,
     client: httpx.AsyncClient,
 ) -> tuple[bool, str]:
+    """Internal helper for the metadata status step.
+
+    Args:
+        candidate (CandidateSource): The candidate.
+        final_url (str): The final url.
+        client (httpx.AsyncClient): Client instance.
+
+    Returns:
+        tuple[bool, str]: The status.
+    """
     host = (urlsplit(final_url).hostname or "").lower()
     if candidate.authority == "official_eu" or host.endswith(
         (".europa.eu", "europa.eu")

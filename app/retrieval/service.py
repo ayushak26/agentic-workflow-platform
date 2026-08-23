@@ -37,10 +37,12 @@ from app.retrieval.weaviate_client import COLLECTION_NAME
 
 
 class RetrievalAuthorizationError(PermissionError):
+    """Exception raised for the RetrievalAuthorizationError case."""
     pass
 
 
 class RetrievalCompatibilityError(ValueError):
+    """Exception raised for the RetrievalCompatibilityError case."""
     pass
 
 
@@ -65,6 +67,7 @@ def _safe_candidate(chunk: RetrievedChunk) -> dict[str, Any]:
 
 
 class RetrievalService:
+    """Provides the RetrievalService behaviour."""
     def __init__(
         self,
         *,
@@ -75,6 +78,16 @@ class RetrievalService:
         collection_registry: Any | None = None,
         collection_name: str = COLLECTION_NAME,
     ) -> None:
+        """Initialize the RetrievalService.
+
+        Args:
+            weaviate_client (Any): The weaviate client.
+            embedder (Any): The embedder.
+            llm (Any): The llm.
+            repository (KnowledgeRepository | None): The repository (optional, default None).
+            collection_registry (Any | None): The collection registry (optional, default None).
+            collection_name (str): The collection name (optional, default COLLECTION_NAME).
+        """
         self.client = weaviate_client
         self.embedder = embedder
         self.llm = llm
@@ -84,6 +97,15 @@ class RetrievalService:
         self._embedding_providers: dict[str, Any] = {}
 
     async def __call__(self, request: RetrievalQuery, *, llm: Any | None = None) -> RetrievalResult:
+        """Implement the ``__call__`` protocol.
+
+        Args:
+            request (RetrievalQuery): Incoming FastAPI request.
+            llm (Any | None): The llm (optional, default None).
+
+        Returns:
+            RetrievalResult: The result.
+        """
         return await self.retrieve(
             request,
             owner_scope_id=request.filters.session_id,
@@ -97,6 +119,16 @@ class RetrievalService:
         owner_scope_id: str,
         llm: Any | None = None,
     ) -> RetrievalResult:
+        """Retrieve the result.
+
+        Args:
+            request (RetrievalQuery): Incoming FastAPI request.
+            owner_scope_id (str): The owner scope id.
+            llm (Any | None): The llm (optional, default None).
+
+        Returns:
+            RetrievalResult: The result.
+        """
         request_id = new_resource_id("retrieval_request")
         failed_started = time.perf_counter()
         try:
@@ -128,6 +160,15 @@ class RetrievalService:
         error: Exception,
         total_ms: float,
     ) -> None:
+        """Record the failed trace.
+
+        Args:
+            request (RetrievalQuery): Incoming FastAPI request.
+            request_id (str): The request id.
+            owner_scope_id (str): The owner scope id.
+            error (Exception): Error value or message.
+            total_ms (float): The total ms.
+        """
         if self.repository is None or request.filters.session_id != owner_scope_id:
             return
         try:
@@ -175,6 +216,17 @@ class RetrievalService:
         request_id: str,
         llm: Any | None = None,
     ) -> RetrievalResult:
+        """Retrieve the impl.
+
+        Args:
+            request (RetrievalQuery): Incoming FastAPI request.
+            owner_scope_id (str): The owner scope id.
+            request_id (str): The request id.
+            llm (Any | None): The llm (optional, default None).
+
+        Returns:
+            RetrievalResult: The impl.
+        """
         if request.filters.session_id != owner_scope_id:
             raise RetrievalAuthorizationError("retrieval security scope cannot be overridden")
         llm = llm or self.llm
@@ -596,6 +648,16 @@ class RetrievalService:
         owner_scope_id: str,
         llm: Any | None = None,
     ) -> list[RetrievalResult]:
+        """Compare the result.
+
+        Args:
+            requests (list[RetrievalQuery]): The requests.
+            owner_scope_id (str): The owner scope id.
+            llm (Any | None): The llm (optional, default None).
+
+        Returns:
+            list[RetrievalResult]: The result.
+        """
         if not 2 <= len(requests) <= 4:
             raise ValueError("comparison requires two to four retrieval configurations")
         results = []

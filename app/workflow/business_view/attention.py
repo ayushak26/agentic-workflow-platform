@@ -315,4 +315,12 @@ def build_attention(
 
 
 def blocking_items(items: list[BusinessAttentionItem]) -> list[BusinessAttentionItem]:
+    """Compute the blocking items.
+
+    Args:
+        items (list[BusinessAttentionItem]): Items to process.
+
+    Returns:
+        list[BusinessAttentionItem]: The items.
+    """
     return [item for item in items if item.severity == "blocking"]

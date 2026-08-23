@@ -7,9 +7,11 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.workflow_generation import (
+    _CONTRACT_GUIDANCE,
     _EXAMPLE_WORKFLOW_YAML,
     _MAX_SNIPPET_CHARS,
     _node_type_catalog,
+    _reference_workflow_examples,
     _real_usage_examples,
     _real_usage_snippet,
     _REPAIR_SYSTEM_PROMPT_TEMPLATE,
@@ -84,6 +86,14 @@ def test_system_prompt_states_the_three_step_process_in_order():
     assert step_1 < step_2 < step_3 < catalog_section < examples_section
     assert "{catalog}" in prompt
     assert "{examples}" in prompt
+    assert "{reference_examples}" in prompt
+    assert "400 machine-validated reference workflows" in prompt
+
+
+def test_hidden_reference_context_uses_real_preflight_clean_corpus():
+    context = _reference_workflow_examples(["KnowledgeRetrieval"], limit=1)
+    assert "# Reference for KnowledgeRetrieval" in context
+    assert "type: KnowledgeRetrieval" in context
 
 
 def test_real_usage_snippet_finds_a_real_config_for_a_type_with_a_known_example():
@@ -470,7 +480,12 @@ async def test_repair_mode_frames_the_call_as_editing_the_existing_document():
     assert original_yaml in call["user"]
     assert "WORKFLOW_SCHEMA: broken" in call["user"]
     assert "repair" in call["system"].lower()
-    assert call["system"] == _REPAIR_SYSTEM_PROMPT_TEMPLATE.format(catalog=_node_type_catalog())
+    assert call["system"] == _REPAIR_SYSTEM_PROMPT_TEMPLATE.format(
+        catalog=_node_type_catalog(), contract_guidance=_CONTRACT_GUIDANCE,
+        reference_examples=_reference_workflow_examples(
+            sorted(NodeRegistry._registry), limit=3,
+        ),
+    )
 
 
 class _FixedYamlLLM:

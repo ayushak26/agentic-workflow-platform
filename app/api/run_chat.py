@@ -25,6 +25,14 @@ CHAT_MODEL = "gpt-5.6-luna"
 # costs nothing until the user actually asks something. The third is
 # templated with the actual run_id rather than a literal placeholder.
 def starter_questions(run_id: str) -> list[str]:
+    """Compute the starter questions.
+
+    Args:
+        run_id (str): Workflow run identifier.
+
+    Returns:
+        list[str]: The questions.
+    """
     return [
         "Summary of this task",
         "Which specific step failed or was skipped during this run?",
@@ -48,6 +56,15 @@ _MAX_CONTEXT_CHARS = 12_000
 
 
 def _summarize_value(value: Any, limit: int = 800) -> str:
+    """Summarize the value.
+
+    Args:
+        value (Any): Value to process.
+        limit (int): Maximum number of items to return (optional, default 800).
+
+    Returns:
+        str: The value.
+    """
     if value is None:
         return "—"
     text = value if isinstance(value, str) else json.dumps(value, default=str)
@@ -65,6 +82,14 @@ _PROMPT_CONFIG_KEYS = ("prompt_template", "system_prompt", "instructions")
 
 
 def _node_configs_from_workflow_yaml(workflow_yaml: str | None) -> dict[str, dict[str, Any]]:
+    """Internal helper for the node configs from workflow yaml step.
+
+    Args:
+        workflow_yaml (str | None): Workflow YAML text.
+
+    Returns:
+        dict[str, dict[str, Any]]: The configs from workflow yaml.
+    """
     if not workflow_yaml:
         return {}
     try:
@@ -79,10 +104,23 @@ def _node_configs_from_workflow_yaml(workflow_yaml: str | None) -> dict[str, dic
 
 
 def _node_type_catalog() -> dict[str, dict[str, Any]]:
+    """Internal helper for the node type catalog step.
+
+    Returns:
+        dict[str, dict[str, Any]]: The type catalog.
+    """
     return {entry["type_name"]: entry for entry in NodeRegistry.manifest()}
 
 
 def _build_run_context(run: dict[str, Any]) -> str:
+    """Build the run context.
+
+    Args:
+        run (dict[str, Any]): The run.
+
+    Returns:
+        str: The run context.
+    """
     lines = [
         f"Workflow: {run.get('workflow_name')}",
         f"Status: {run.get('status')}",
@@ -134,16 +172,36 @@ def _build_run_context(run: dict[str, Any]) -> str:
 
 
 class ChatMessage(BaseModel):
+    """Pydantic model defining the ChatMessage shape.
+
+    Attributes:
+        role (str).
+        content (str).
+    """
     role: str
     content: str
 
 
 class AskAboutRunRequest(BaseModel):
+    """Pydantic model defining the AskAboutRunRequest shape.
+
+    Attributes:
+        question (str).
+        history (list[ChatMessage]).
+    """
     question: str
     history: list[ChatMessage] = []
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return getattr(user, "session_id", None) or user.username
 
 
@@ -153,6 +211,13 @@ async def get_run_chat(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Return the run chat.
+
+    Args:
+        run_id (str): Workflow run identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     db = request.app.state.services.get("audit_db")
     if db is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
@@ -168,6 +233,14 @@ async def ask_about_run(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the ask about run.
+
+    Args:
+        run_id (str): Workflow run identifier.
+        req (AskAboutRunRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = request.app.state.services
     db = services.get("audit_db")
     if db is None:

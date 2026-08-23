@@ -63,6 +63,14 @@ def scope_token(session_id: str) -> str:
 
 
 def workflow_input_prefix(session_id: str) -> str:
+    """Compute the workflow input prefix.
+
+    Args:
+        session_id (str): Session scope the record belongs to.
+
+    Returns:
+        str: The input prefix.
+    """
     return f"workflow-inputs/{scope_token(session_id)}/"
 
 
@@ -75,10 +83,26 @@ def safe_filename(filename: str | None) -> str:
 
 
 def extension_for(filename: str) -> str:
+    """Compute the extension for.
+
+    Args:
+        filename (str): File name.
+
+    Returns:
+        str: The for.
+    """
     return Path(filename).suffix.lower()
 
 
 def category_for_extension(extension: str) -> str:
+    """Compute the category for extension.
+
+    Args:
+        extension (str): The extension.
+
+    Returns:
+        str: The for extension.
+    """
     try:
         return EXTENSION_CATEGORY[extension.lower()]
     except KeyError as exc:
@@ -89,6 +113,15 @@ def category_for_extension(extension: str) -> str:
 
 
 def content_type_for(filename: str, extension: str) -> str:
+    """Compute the content type for.
+
+    Args:
+        filename (str): File name.
+        extension (str): The extension.
+
+    Returns:
+        str: The type for.
+    """
     guessed, _ = mimetypes.guess_type(filename)
     if guessed:
         return guessed

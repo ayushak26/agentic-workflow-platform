@@ -1,0 +1,1760 @@
+name: Reference InternalProjectEvidenceRetrieverAgent 06
+description: 'First stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence
+  -> drafts -> submission package; see workflows/pipelines/horizon_partb.pipeline.yaml).
+  Converts a concept note and supporting documents into: renderer metadata, an atomic
+  call checklist, a normalised source graph, bounded scientific research dossiers,
+  immutable source versions, PaperQA2 candidate synthesis, citation-grounded verified
+  claims, an integrity-stamped proposal truth graph, an audit record, a call-coverage
+  matrix, Method Cards, and the locked master blueprint every later section is drafted
+  against. PaperQA2 and raw research are never drafting authority. A deterministic
+  readiness router stops the stage when evidence or graph consistency is not ready.
+  Produces no proposal prose itself.'
+version: '5.0'
+use_case: eu_proposal
+inputs:
+  concept_note:
+    type: file
+    description: The selected project concept note. This is the concept to develop;
+      the workflow does not replace it with alternative concepts.
+    required: true
+    multiple: true
+    max_files: 5
+    accept:
+    - pdf
+    - document
+    - markdown
+    - presentation
+  documents:
+    type: file
+    description: 'Supporting proposal documents in any mixture: official call/topic
+      text, the downloaded Part B template, consortium profiles, work plan, budget,
+      pilot information, prior research, technical material, and guidance.'
+    required: true
+    multiple: true
+    max_files: 20
+    accept:
+    - pdf
+    - document
+    - markdown
+    - presentation
+    - spreadsheet
+  supporting_image:
+    type: file
+    description: Optional single image worth understanding on its own — a diagram,
+      scanned certificate/letter of support, org chart, or photo a partner supplied
+      outside the main documents. Leave empty if none applies; nothing downstream
+      depends on it being present.
+    required: false
+    multiple: false
+    accept:
+    - image
+nodes:
+- id: load_concept
+  type: WorkflowFileLoader
+  config:
+    files: '{{inputs.concept_note}}'
+    max_chars_per_file: 500000
+    fail_on_unreadable: true
+- id: load_documents
+  type: WorkflowFileLoader
+  config:
+    files: '{{inputs.documents}}'
+    max_chars_per_file: 500000
+    fail_on_unreadable: true
+- id: understand_supporting_image
+  type: KimiVisionAgent
+  config:
+    image: '{{inputs.supporting_image}}'
+    prompt: 'Describe this image and extract anything relevant to a Horizon Europe
+      Part B proposal: diagrams (architecture, methodology, work packages), organisation
+      charts, data/results visualisations, certificates, letters of support, or similar.
+      Separate what you observe directly from any inference. If the image carries
+      no proposal-relevant information, say so plainly.'
+    vision_model: kimi-k3
+- id: source_authority_curator
+  type: TransformAgent
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - gpt-5
+  - gpt-5-mini
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 10000
+    input_fields:
+    - name: file_manifest
+      description: Manifest (names/metadata) of the uploaded supporting files.
+      type: string
+      value: '{{load_documents.files}}'
+    - name: extracted_content
+      description: Extracted text content of the supporting documents.
+      type: string
+      value: '{{load_documents.text}}'
+    instructions: 'Classify every uploaded supporting file before any call interpretation
+
+      or research planning. Return one source_registry entry per file.
+
+
+      Allowed source classes:
+
+      - official_call_or_template
+
+      - human_approved_project_or_concept_fact
+
+      - consortium_or_partner_supplied_fact
+
+      - external_scientific_or_policy_evidence
+
+      - structured_dataset_or_database_export
+
+      - contextual_unverified_material
+
+
+      Authority order must put the official call/template first for call
+
+      requirements, human-approved project commitments first for project
+
+      design, and exact-passage-verified external evidence first for factual
+
+      claims. A partner document, concept note, research paper, web page or
+
+      dataset must never be promoted to official-call authority. This node
+
+      classifies provenance only; it does not verify external claims.'
+    output_fields:
+    - name: source_registry
+      type: list
+      item_type: object
+      description: One entry per uploaded file, classifying its provenance and authority.
+      fields:
+      - name: file_name
+        type: string
+        description: Name of the uploaded file this entry classifies.
+      - name: source_class
+        type: enum
+        description: The source class assigned to this file.
+        enum_values:
+        - official_call_or_template
+        - human_approved_project_or_concept_fact
+        - consortium_or_partner_supplied_fact
+        - external_scientific_or_policy_evidence
+        - structured_dataset_or_database_export
+        - contextual_unverified_material
+      - name: authority_scope
+        type: text
+        description: What this source has authority to support (e.g. call requirements,
+          project design, factual claims).
+      - name: facts_it_may_support
+        type: list
+        item_type: string
+        description: Facts or claims this source may be used to support.
+      - name: facts_it_may_not_support
+        type: list
+        item_type: string
+        description: Facts or claims this source must NOT be used to support.
+      - name: conflict_or_limitation
+        type: text
+        description: Any conflict with another source, or limitation on using this
+          file, or an empty string if none.
+    - name: authority_order
+      type: list
+      item_type: string
+      description: 'The precedence order among source classes: the official call/template
+        leads for call requirements, human-approved project facts lead for project
+        design, and exact-passage-verified external evidence leads for factual claims.'
+    - name: conflicts_and_duplicates
+      type: list
+      item_type: string
+      description: Cross-file conflicts or duplicate facts identified among the classified
+        sources.
+    - name: unreadable_or_truncated_files
+      type: list
+      item_type: string
+      description: Names of files that could not be read fully or were truncated during
+        extraction.
+    - name: missing_authoritative_inputs
+      type: list
+      item_type: string
+      description: Authoritative inputs (e.g. the official call text or template)
+        that appear to be missing from the supplied files.
+- id: partb_metadata
+  type: TransformAgent
+  selected_model: gpt-5-mini
+  allowed_models:
+  - gpt-5-mini
+  - gpt-5.6-luna
+  - gpt-4o-mini
+  - gpt-5.6-terra
+  - gpt-5
+  - gpt-5.6-sol
+  model_routing:
+    accuracy_priority: economy
+    prefer_low_latency: true
+    quality_scores:
+      gpt-5-mini: 0.95
+      gpt-5.6-luna: 0.9
+      gpt-4o-mini: 0.85
+      gpt-5.6-terra: 0.7
+      gpt-5: 0.6
+      gpt-5.6-sol: 0.25
+  config:
+    model: gpt-5-mini
+    max_tokens: 4000
+    input_fields:
+    - name: concept_note_text
+      description: Extracted text of the concept note.
+      type: string
+      value: '{{load_concept.text}}'
+    - name: supporting_documents_text
+      description: Extracted text of the supporting documents.
+      type: string
+      value: '{{load_documents.text}}'
+    instructions: 'Extract renderer metadata from the concept note and supporting
+
+      documents. Use only explicit facts. Use an empty string for an
+
+      unknown display field and list the exact missing item in
+
+      unresolved_metadata. Do not invent a title, acronym, call identifier,
+
+      action type, consortium or version.'
+    output_fields:
+    - name: proposal_title
+      type: string
+      description: The proposal's title, or an empty string if not explicitly stated.
+    - name: acronym
+      type: string
+      description: The proposal's acronym, or an empty string if not explicitly stated.
+    - name: call_id
+      type: string
+      description: The call identifier, or an empty string if not explicitly stated.
+    - name: action_type
+      type: string
+      description: The Horizon Europe action type (e.g. RIA, IA), or an empty string
+        if not explicitly stated.
+    - name: funding_model
+      type: string
+      description: The funding model (e.g. lump sum), or an empty string if not explicitly
+        stated.
+    - name: consortium_name
+      type: string
+      description: The consortium's name, or an empty string if not explicitly stated.
+    - name: part_label
+      type: string
+      description: Must always be "Part B – Technical Description".
+    - name: version
+      type: string
+      description: The document version, or an empty string if not explicitly stated.
+    - name: unresolved_metadata
+      type: list
+      item_type: string
+      description: The exact missing item for any display field left as an empty string
+        above.
+- id: call_intelligence
+  type: TransformAgent
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - gpt-5
+  - gpt-5-mini
+  model_routing:
+    accuracy_priority: balanced
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 12000
+    input_fields:
+    - name: source_authority_registry
+      description: The classified source registry produced by the source-authority
+        curation step.
+      type: string
+      value: '{{source_authority_curator.parsed}}'
+    - name: supporting_documents_text
+      description: Extracted text of the supporting documents.
+      type: string
+      value: '{{load_documents.text}}'
+    instructions: 'Identify the authoritative call/topic and template material within
+
+      the supporting documents, then extract an atomic, traceable Horizon
+
+      Europe checklist. Separate expected outcomes, scope, admissibility or
+
+      eligibility conditions, evaluator priorities, exclusions, and
+
+      page/format rules. Label the source and locator for every
+
+      requirement. Do not treat concept-note claims or partner documents as
+
+      call rules. Put absent or ambiguous authoritative information in
+
+      unresolved_call_questions. For a lump-sum RIA/IA, apply 45 pages only
+
+      when the supplied official template or topic conditions support it.'
+    output_fields:
+    - name: call_identity
+      type: object
+      description: The identified authoritative call/topic and template identity facts.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: expected_outcomes
+      type: list
+      item_type: object
+      description: Atomic, traceable expected-outcome requirements from the authoritative
+        call/topic text.
+      fields:
+      - name: requirement
+        type: text
+        description: The expected outcome as stated by the authoritative source.
+      - name: source
+        type: string
+        description: Which document/source this requirement comes from.
+      - name: locator
+        type: string
+        description: The exact locator (section/page) within the source where this
+          requirement appears.
+    - name: scope_requirements
+      type: list
+      item_type: object
+      description: Atomic, traceable scope requirements from the authoritative call/topic
+        text.
+      fields:
+      - name: requirement
+        type: text
+        description: The scope requirement as stated by the authoritative source.
+      - name: source
+        type: string
+        description: Which document/source this requirement comes from.
+      - name: locator
+        type: string
+        description: The exact locator (section/page) within the source where this
+          requirement appears.
+    - name: mandatory_conditions
+      type: list
+      item_type: object
+      description: Atomic, traceable admissibility or eligibility conditions from
+        the authoritative call/topic text.
+      fields:
+      - name: requirement
+        type: text
+        description: The admissibility or eligibility condition as stated by the authoritative
+          source.
+      - name: source
+        type: string
+        description: Which document/source this requirement comes from.
+      - name: locator
+        type: string
+        description: The exact locator (section/page) within the source where this
+          requirement appears.
+    - name: evaluation_priorities
+      type: list
+      item_type: object
+      description: Atomic, traceable evaluator priorities from the authoritative call/topic
+        text.
+      fields:
+      - name: requirement
+        type: text
+        description: The evaluator priority as stated by the authoritative source.
+      - name: source
+        type: string
+        description: Which document/source this requirement comes from.
+      - name: locator
+        type: string
+        description: The exact locator (section/page) within the source where this
+          requirement appears.
+    - name: exclusions
+      type: list
+      item_type: object
+      description: Atomic, traceable exclusions from the authoritative call/topic
+        text.
+      fields:
+      - name: requirement
+        type: text
+        description: The exclusion as stated by the authoritative source.
+      - name: source
+        type: string
+        description: Which document/source this requirement comes from.
+      - name: locator
+        type: string
+        description: The exact locator (section/page) within the source where this
+          requirement appears.
+    - name: page_and_format_rules
+      type: object
+      description: The page and format rules extracted from the authoritative call/topic
+        text.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: unresolved_call_questions
+      type: list
+      item_type: string
+      description: Absent or ambiguous authoritative call/topic information that could
+        not be resolved from the supplied documents.
+- id: approve_call_interpretation
+  type: HumanInLoopAgent
+  config:
+    question: Human Gate 1 — review the parsed call interpretation before it enters
+      the Proposal Graph and before any research budget is spent. Edit the checklist
+      if it misreads the official call or template; the approved version is the highest-authority
+      source for everything that follows.
+    context_fields:
+    - source_authority_curator.parsed
+    - call_intelligence.parsed
+    editable_content_field: call_intelligence.parsed
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+- id: normalise_source_graph
+  type: GraphNormalizer
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-sol
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 32000
+    concept_note: 'CONCEPT NOTE:
+
+      {{load_concept.text}}
+
+
+      SUPPORTING PROJECT DOCUMENTS:
+
+      {{load_documents.text}}
+
+      '
+    call_facts: 'HUMAN-APPROVED ATOMIC CALL CHECKLIST:
+
+      {{call_intelligence.parsed}}
+
+
+      SOURCE AUTHORITY REGISTRY:
+
+      {{source_authority_curator.parsed}}
+
+
+      OFFICIAL CALL AND TEMPLATE SOURCE TEXT:
+
+      {{load_documents.text}}
+
+      '
+- id: research_plan
+  type: ScientificResearchPlannerAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    call_context: '{{call_intelligence.parsed}}'
+    concept_context: '{{load_concept.text}}'
+    max_briefs: 8
+    max_total_tool_calls: 72
+    standard_tool_calls: 7
+    critical_tool_calls: 11
+    standard_research_model: gpt-5.6-sol
+    critical_research_model: gpt-5.6-sol
+    max_skills_per_brief: 4
+- id: deep_research
+  type: BoundedDeepResearchAgent
+  config:
+    research_briefs: '{{research_plan.research_briefs}}'
+    max_jobs: 8
+    max_parallel_jobs: 2
+    max_total_tool_calls: 72
+    max_tool_calls_per_job: 16
+    max_citations_per_brief: 20
+    max_candidates_per_claim: 12
+    max_duration_seconds: 1800
+    max_iterations: 15
+    max_cost_per_call_usd: 15
+- id: discover_candidates
+  type: ScholarlyCandidateDiscoveryAgent
+  data_protection_mode: public
+  selected_model: gpt-5.6-luna
+  allowed_models:
+  - gpt-5.6-luna
+  - gpt-5.6-terra
+  - claude-sonnet-4-5
+  model_routing:
+    accuracy_priority: balanced
+    prefer_low_latency: true
+  config:
+    model: gpt-5.6-luna
+    max_results_per_source: 8
+    max_candidates_per_claim: 20
+    max_claims: 30
+    claim_types:
+    - state_of_art
+    - problem
+    - impact
+    - method
+    require_contradiction_search: true
+- id: prior_project_research
+  type: PriorProjectRetrieverAgent
+  config:
+    research_briefs: '{{research_plan.research_briefs}}'
+    sources:
+    - cordis
+    - life
+    - eip_agri
+    provider: auto
+    max_briefs: 5
+    max_results_per_source: 5
+    max_candidates_per_claim: 8
+    max_total_searches: 15
+    max_parallel_searches: 3
+    only_prior_project_track: true
+- id: structured_dataset_research
+  type: StructuredDatasetRetrieverAgent
+  data_protection_mode: public
+  selected_model: gpt-5.6-terra
+  config:
+    queries: []
+    research_briefs: '{{research_plan.research_briefs}}'
+    candidate_context: '{{deep_research.dossiers}}'
+    auto_plan_queries: true
+    model: gpt-5.6-terra
+    max_queries: 8
+    max_api_calls: 20
+    max_records: 5000
+    max_response_bytes: 20971520
+    request_timeout_seconds: 45
+    fail_when_no_records: false
+- id: internal_project_evidence
+  type: InternalProjectEvidenceRetrieverAgent
+  selected_model: gpt-5.6-terra
+  config:
+    source_registry: '{{source_authority_curator.parsed}}'
+    source_text: '{{load_documents.text}}'
+    research_briefs: '{{research_plan.research_briefs}}'
+    model: gpt-5.6-terra
+    max_queries: 12
+    max_records: 80
+    max_source_chars: 300000
+    query_internal_index: true
+    require_internal_index: false
+    internal_index_filters: {}
+    top_k_candidates: 15
+    top_n_final: 6
+- id: acquire_research_sources
+  type: ResearchSourceAcquirer
+  config:
+    candidates:
+    - '{{deep_research.candidates}}'
+    - '{{discover_candidates.candidates}}'
+    - '{{prior_project_research.candidates}}'
+    max_concurrent_requests: 6
+    max_sources_per_claim: 7
+    max_total_sources: 90
+    request_timeout_seconds: 45
+    max_redirects: 4
+    fail_when_none_acquired: false
+- id: synthesize_literature
+  type: PaperQAEvidenceSynthesizerAgent
+  config:
+    documents: '{{acquire_research_sources.documents}}'
+    llm_model: gpt-5.6-luna
+    summary_llm_model: gpt-5.6-luna
+    embedding_model: text-embedding-3-small
+    evidence_k: 10
+    max_claims: 15
+    max_documents_per_claim: 12
+- id: verify_evidence
+  type: ProposalEvidenceFactoryAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    candidates:
+    - '{{deep_research.candidates}}'
+    - '{{discover_candidates.candidates}}'
+    - '{{prior_project_research.candidates}}'
+    documents: '{{acquire_research_sources.documents}}'
+    search_audit:
+    - '{{deep_research.search_audit}}'
+    - '{{discover_candidates.search_audit}}'
+    - '{{prior_project_research.search_audit}}'
+    rejected_candidates: '{{acquire_research_sources.rejected_candidates}}'
+    max_passages_per_document: 10
+- id: truth_graph
+  type: ProposalTruthGraphAgent
+  config:
+    verified_claims: '{{verify_evidence.verified_claims}}'
+    evidence_gaps: '{{verify_evidence.evidence_gaps}}'
+    blocking_issues: '{{verify_evidence.blocking_issues}}'
+    research_manifest:
+      deep_research: '{{deep_research.research_manifest}}'
+      structured_dataset_audit: '{{structured_dataset_research.audit}}'
+      prior_project_search_audit: '{{prior_project_research.search_audit}}'
+      internal_evidence_report: '{{internal_project_evidence.report}}'
+    structured_data_records: '{{structured_dataset_research.records}}'
+    internal_evidence_records: '{{internal_project_evidence.records}}'
+    evidence_approval_decision: '{{approve_evidence_report.decision}}'
+- id: evidence_readiness_router
+  type: RouterAgent
+  config:
+    mode: rule
+    rules:
+    - name: READY
+      condition: truth_graph.drafting_allowed == true
+    - name: BLOCKED
+      default: true
+- id: evidence_blocked
+  type: HumanInLoopAgent
+  config:
+    question: Evidence is not ready for drafting. Review the blocking issues, evidence
+      gaps, contradictions and human-review queue below. Reject this run, correct
+      the sources or research plan, and rerun Stage 1; this branch cannot advance
+      to concept or drafting work.
+    context_fields:
+    - truth_graph.report
+    - truth_graph.blocking_issues
+    - truth_graph.evidence_gaps
+    - truth_graph.human_review_queue
+    - verify_evidence.qa_report
+    - synthesize_literature.results
+    allow_document_override: false
+    allowed_actions:
+    - reject
+- id: call_coverage
+  type: CallCoverageMatrixAgent
+  config: {}
+- id: approve_evidence_report
+  type: HumanInLoopAgent
+  config:
+    question: Human Gate 2 — review verified evidence, unresolved gaps, and call coverage
+      before concept development begins. PaperQA2 is shown only as candidate literature
+      understanding; only ProposalEvidenceFactory's exact-passage-verified claims
+      become drafting authority. Approve or reject before the concept-evolution stage
+      spends further budget.
+    context_fields:
+    - verify_evidence.verified_claims
+    - verify_evidence.citation_registry
+    - verify_evidence.qa_report
+    - verify_evidence.evidence_gaps
+    - structured_dataset_research.records
+    - structured_dataset_research.audit
+    - structured_dataset_research.unresolved_questions
+    - internal_project_evidence.records
+    - internal_project_evidence.pending_human_approval
+    - internal_project_evidence.rejected_facts
+    - prior_project_research.candidates
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+- id: concept_evolution
+  type: ConceptAlternativesAgent
+  selected_model: claude-opus-5
+  allowed_models:
+  - claude-opus-5
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: claude-opus-5
+    judge_model: claude-opus-5
+    concept_note: '{{load_concept.text}}'
+- id: select_concept
+  type: HumanInLoopAgent
+  config:
+    question: Human Gate 3 — select and freeze ONE of the three independently generated,
+      scored, and adversarially-judged concepts (conservative, balanced, ambitious).
+      recommended_concept_id below defaults to the highest composite_score; edit it
+      to a different alternative's id to override the recommendation. Review each
+      alternative's critique before deciding.
+    context_fields:
+    - concept_evolution.alternatives
+    editable_content_field: concept_evolution.recommended_concept_id
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+- id: freeze_concept
+  type: ConceptFreezeAgent
+  config:
+    alternatives: '{{concept_evolution.alternatives}}'
+    selected_concept_id: '{{select_concept.content.text?}}'
+- id: methodology_engineering
+  type: MethodologyEngineeringAgent
+  selected_model: claude-opus-5
+  allowed_models:
+  - claude-opus-5
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: claude-opus-5
+    research_briefs: '{{research_plan.research_briefs}}'
+    selected_concept: '{{freeze_concept.selected_concept}}'
+    max_objectives: 10
+    max_skills_per_card: 2
+- id: approve_methodology
+  type: HumanInLoopAgent
+  config:
+    question: Human Gate 4 — approve the proposed Method Cards (method, baseline or
+      comparator, validation, uncertainty handling, failure condition) before proposal
+      engineering begins. Edit any card below directly if a method needs correcting.
+    context_fields:
+    - methodology_engineering.method_cards
+    editable_content_field: methodology_engineering.method_cards
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+- id: research_documentation
+  type: TransformAgent
+  selected_model: gpt-5.6-terra
+  allowed_models:
+  - gpt-5.6-terra
+  - gpt-5.6-luna
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-terra
+    max_tokens: 16000
+    input_fields:
+    - name: citation_registry
+      description: The verified citation registry.
+      type: string
+      value: '{{verify_evidence.citation_registry}}'
+    - name: verified_claims
+      description: The citation-grounded verified claims.
+      type: string
+      value: '{{verify_evidence.verified_claims}}'
+    - name: bounded_research_plan
+      description: The bounded research plan (research briefs).
+      type: string
+      value: '{{research_plan}}'
+    - name: deep_research_dossiers
+      description: Deep Research dossiers — candidate analysis only, not verified
+        evidence.
+      type: string
+      value: '{{deep_research.dossiers}}'
+    - name: deep_research_candidates
+      description: Candidate sources found by Deep Research.
+      type: string
+      value: '{{deep_research.candidates}}'
+    - name: deep_research_search_audit
+      description: Search and contradiction audit from Deep Research.
+      type: string
+      value: '{{deep_research.search_audit}}'
+    - name: scholarly_discovery_candidates
+      description: Candidate sources found by scholarly candidate discovery.
+      type: string
+      value: '{{discover_candidates.candidates}}'
+    - name: scholarly_discovery_search_audit
+      description: Search and contradiction audit from scholarly candidate discovery.
+      type: string
+      value: '{{discover_candidates.search_audit}}'
+    - name: scholarly_discovery_report
+      description: The scholarly candidate discovery report.
+      type: string
+      value: '{{discover_candidates.report}}'
+    - name: acquisition_rejections
+      description: Candidates rejected during research-source acquisition.
+      type: string
+      value: '{{acquire_research_sources.rejected_candidates}}'
+    - name: paperqa_literature_synthesis
+      description: PaperQA2 literature synthesis results — candidate analysis only.
+      type: string
+      value: '{{synthesize_literature.results}}'
+    - name: proposal_truth_graph
+      description: The integrity-stamped proposal truth graph.
+      type: string
+      value: '{{truth_graph.truth_graph}}'
+    - name: human_review_queue
+      description: The truth graph's human review queue.
+      type: string
+      value: '{{truth_graph.human_review_queue}}'
+    - name: supporting_image_analysis
+      description: Analysis of the optional supporting image, if one was supplied.
+      type: string
+      value: '{{understand_supporting_image.analysis}}'
+    - name: evidence_qa_report
+      description: The evidence verification QA report.
+      type: string
+      value: '{{verify_evidence.qa_report}}'
+    instructions: 'Produce a standalone, audit-ready research-documentation record
+      for
+
+      this proposal run. This is not proposal text — it is the evidence
+
+      paper trail: every bounded research question, skill bundle, cited
+
+      source, verification result, qualification, rejection, and unresolved
+
+      gap. Never invent a source, URL, DOI, or detail not present in the
+
+      supplied records. A Deep Research dossier is candidate analysis, not
+
+      verified evidence.
+
+
+      For bounded_research_dossiers, summarise limitations without copying
+
+      dossier assertions into the proposal truth graph.
+
+
+      For candidate_sources_considered, if more than ~40 candidates were
+
+      considered, group by rejection reason with representative examples
+
+      instead of listing every one.
+
+
+      For literature_synthesis_notes, label every entry
+
+      [UNVERIFIED SYNTHESIS] — this is candidate literature analysis, not a
+
+      verification result, and must never be treated as equivalent to an
+
+      entry in VERIFIED CLAIMS.'
+    output_fields:
+    - name: cited_sources
+      type: list
+      item_type: object
+      description: One entry per citation ID in the verified citation registry.
+      fields:
+      - name: id
+        type: string
+        description: The citation ID.
+      - name: title
+        type: string
+        description: Title of the cited work. Use [UNKNOWN] if missing.
+      - name: authors
+        type: list
+        item_type: string
+        description: Author names, if known. Use [UNKNOWN] entries, or leave empty
+          if genuinely unknown.
+      - name: year
+        type: string
+        description: Publication year. Use [UNKNOWN] if missing.
+      - name: source_type
+        type: enum
+        description: The type of source.
+        enum_values:
+        - official
+        - peer_reviewed
+        - standard
+        - dataset
+        - project
+        - market
+        - partner
+      - name: url_or_doi
+        type: string
+        description: URL or DOI for the source. Use [UNKNOWN] if missing.
+      - name: locator
+        type: string
+        description: The exact locator used. Use [UNKNOWN] if missing.
+      - name: verification_status
+        type: string
+        description: The verification status of this citation.
+      - name: supported_subsections
+        type: list
+        item_type: string
+        description: The exact Part B subsection(s) this source supports.
+    - name: bibliography_formatted
+      type: string
+      description: A clean, numbered reference list built only from cited_sources,
+        ready to paste into an evidence annex.
+    - name: bounded_research_dossiers
+      type: list
+      item_type: object
+      description: One entry per research brief.
+      fields:
+      - name: brief_id
+        type: string
+        description: The research brief's ID.
+      - name: track
+        type: enum
+        description: The research track this brief was run under.
+        enum_values:
+        - standard
+        - critical
+      - name: question
+        type: text
+        description: The bounded research question.
+      - name: selected_skills
+        type: list
+        item_type: string
+        description: The selected K-Dense Scientific Agent Skills used for this brief.
+      - name: deep_research_model
+        type: string
+        description: The Deep Research model used for this brief.
+      - name: max_tool_calls
+        type: integer
+        description: The maximum tool calls allowed for this brief.
+      - name: actual_tool_calls
+        type: integer
+        description: The actual tool calls used for this brief.
+      - name: source_count
+        type: integer
+        description: The number of sources found for this brief.
+      - name: produced_usable_evidence
+        type: boolean
+        description: Whether acquisition and verification produced usable evidence
+          for this brief.
+    - name: candidate_sources_considered
+      type: list
+      item_type: object
+      description: Discovery candidates that were found but never promoted to verified
+        evidence.
+      fields:
+      - name: source
+        type: text
+        description: The candidate source (title/citation or representative example
+          if grouped).
+      - name: rejection_reason
+        type: enum
+        description: Why this candidate (or group of candidates) was not promoted
+          to verified evidence.
+        enum_values:
+        - unverified
+        - contradicted
+        - superseded
+        - off-topic
+        - duplicate
+    - name: citation_coverage_summary
+      type: object
+      description: Counts describing the funnel from discovery to citation.
+      fields:
+      - name: candidates_discovered
+        type: integer
+        description: Count of candidates discovered.
+      - name: acquired_full_text
+        type: integer
+        description: Count of candidates acquired in full text.
+      - name: verified
+        type: integer
+        description: Count of candidates verified.
+      - name: cited_in_registry
+        type: integer
+        description: Count cited in the final citation registry.
+      - name: rejected
+        type: integer
+        description: Count rejected.
+      - name: qualified
+        type: integer
+        description: Count qualified.
+      - name: contradicted
+        type: integer
+        description: Count contradicted.
+      - name: excluded_from_truth_graph
+        type: integer
+        description: Count excluded from the truth graph.
+      - name: left_for_human_review
+        type: integer
+        description: Count left for human review.
+    - name: literature_synthesis_notes
+      type: list
+      item_type: object
+      description: One entry per claim covered by the PaperQA2 literature synthesis.
+      fields:
+      - name: claim_id
+        type: string
+        description: The claim's ID.
+      - name: synthesized_answer
+        type: text
+        description: The synthesized answer, labeled [UNVERIFIED SYNTHESIS].
+      - name: documents_contributing
+        type: integer
+        description: How many of the acquired documents actually contributed supporting
+          context.
+      - name: documents_unused
+        type: integer
+        description: How many of the acquired documents were acquired but unused.
+      - name: synthesis_error
+        type: text
+        description: Any synthesis error, or an empty string if none.
+- id: proposal_blueprint
+  type: TransformAgent
+  selected_model: gpt-5.6-sol
+  allowed_models:
+  - gpt-5.6-sol
+  - gpt-5.6-terra
+  - gpt-5
+  model_routing:
+    accuracy_priority: maximum
+  config:
+    model: gpt-5.6-sol
+    max_tokens: 34000
+    input_fields:
+    - name: frozen_concept
+      description: The selected project concept, approved at Human Gate 3 — authoritative
+        scope.
+      type: string
+      value: '{{freeze_concept.selected_concept}}'
+    - name: method_cards
+      description: The Method Cards approved at Human Gate 4.
+      type: string
+      value: '{{methodology_engineering.method_cards}}'
+    - name: concept_note_text
+      description: The raw concept note — supplementary source material only.
+      type: string
+      value: '{{load_concept.text}}'
+    - name: proposal_metadata
+      description: The renderer metadata extracted for this proposal.
+      type: string
+      value: '{{partb_metadata.parsed}}'
+    - name: call_checklist
+      description: The human-approved atomic call checklist.
+      type: string
+      value: '{{call_intelligence.parsed}}'
+    - name: call_coverage
+      description: The call-coverage matrix.
+      type: string
+      value: '{{call_coverage}}'
+    - name: normalised_source_report
+      description: The normalised source graph report.
+      type: string
+      value: '{{normalise_source_graph.report}}'
+    - name: normalised_source_warnings
+      description: Warnings from normalising the source graph.
+      type: string
+      value: '{{normalise_source_graph.warnings}}'
+    - name: supporting_documents_text
+      description: Extracted text of the supporting documents.
+      type: string
+      value: '{{load_documents.text}}'
+    - name: source_authority_registry
+      description: The classified source registry.
+      type: string
+      value: '{{source_authority_curator.parsed}}'
+    - name: verified_evidence_markdown
+      description: Citation-annotated narrative markdown of verified claims.
+      type: string
+      value: '{{verify_evidence.proposal_ready_cited_markdown}}'
+    - name: proposal_truth_graph
+      description: The approved drafting source — the proposal truth graph.
+      type: string
+      value: '{{truth_graph.truth_graph}}'
+    - name: truth_graph_integrity_sha256
+      description: The truth graph's integrity SHA-256 hash.
+      type: string
+      value: '{{truth_graph.integrity_sha256}}'
+    instructions: "Treat the frozen concept as the selected project concept and scope\
+      \ —\nit was chosen at Human Gate 3 from three independently generated,\nscored,\
+      \ and adversarially-judged alternatives. The raw concept note\nis supplementary\
+      \ source material only; where it conflicts with the\nfrozen concept's scope,\
+      \ scientific_advance, or assumptions, the\nfrozen concept wins. Create the master\
+      \ blueprint only for the\nHorizon Europe RIA/IA Part B technical description.\
+      \ Follow the\nofficial 2026 headings exactly, down to every numbered subsection\n\
+      below, and none may be silently skipped:\n\n1.1 Objectives and ambition\n  1.1.1\
+      \ Overall project objective: one row per approved objective —\n  never force\
+      \ the count to match a template's blank SO1-SO5\n  placeholders (specific_objectives_table).\
+      \ The causal objective ->\n  result -> outcome -> impact chain itself belongs\
+      \ in\n  objective_result_outcome_chain.\n  1.1.2 Ambitions: the central ambition\
+      \ (A1), state of the art, and\n  what goes beyond it (ambitions).\n1.2 Methodology\n\
+      \  1.2.1 Concept, 1.2.2 pilot strategy, and 1.2.3 overall methodology\n  and\
+      \ approach all belong in methodology_and_validation. Ground\n  1.2.3 in the\
+      \ supplied METHOD CARDS (approved at Human Gate 4):\n  synthesize each into\
+      \ prose but preserve every method_id,\n  baseline_or_comparator, validation,\
+      \ uncertainty_method, and\n  failure_condition — do not restate them as a bare\
+      \ bullet list,\n  and do not invent a method not present in the supplied cards.\n\
+      \  1.2.4 linked research and innovation activities this project\n  builds on.\
+      \ 1.2.5 interdisciplinary approach and SSH integration.\n  1.2.6 gender dimension:\
+      \ treat gender relevance in research content\n  (variables, disaggregation,\
+      \ bias controls) as its own topic,\n  separate from workforce/team balance.\n\
+      \  1.2.7 data management and open science practices (cover data\n  types, FAIR\
+      \ handling and planned open-access routes).\n2.1 Project's pathways towards\
+      \ impact\n  2.1.1-2.1.2 contribution to expected outcomes and impacts belong\n\
+      \  in impact_pathways_and_kpis. 2.1.3 requirements and potential\n  barriers\
+      \ beyond the project's scope: run a concrete PESTEL\n  (Political, Economic,\
+      \ Social, Technological, Environmental,\n  Legal) analysis naming factors specific\
+      \ to this call and domain,\n  never generic boilerplate. Give each barrier a\
+      \ category, the\n  external condition, likelihood, consequence, project response\n\
+      \  and a responsible monitor. These are external conditions beyond\n  the project's\
+      \ control; never restate one as an internal\n  implementation risk in risks_and_mitigations,\
+      \ and vice versa.\n2.2 Measures to maximise impact – dissemination, exploitation\
+      \ and\ncommunication\n  2.2.1 dissemination strategy and measures and 2.2.2\
+      \ communication\n  strategy belong in dissemination_communication_plan. 2.2.3\n\
+      \  dissemination and communication activities after the project ends\n  (post_project_dissemination).\
+      \ 2.2.4 exploitation strategy: one\n  key exploitable result (KER) per row,\
+      \ each with an owner, target\n  users, value proposition, protection/IPR route,\
+      \ exploitation\n  route and time to uptake. 2.2.5 multi-level policy impact\n\
+      \  strategy. Close section 2 with a short summary of impact.\noptional 2.3 Summary\n\
+      3.1 Work plan and resources\n  3.1.1 timing of work packages (work_plan_timing).\
+      \ 3.1.2 overall\n  structure of the work package set and 3.1.3 detailed work\n\
+      \  description both belong in work_packages_tasks_deliverables.\n3.2 Capacity\
+      \ of participants and consortium as a whole\n(consortium_and_resources).\n\n\
+      Do not create sections 1.3, 3.3, 3.4, Part A, ethics forms, security\nforms,\
+      \ budget forms or submission instructions. Treat any blank\nplaceholder label\
+      \ (e.g. an empty \"SO1\"/\"A1\" slot) or example/template\nproject name found\
+      \ in a supplied document as a structural cue only,\nnever as approved content\
+      \ — do not let either leak into the\nblueprint.\n\nDetermine the hard page limit\
+      \ from the call metadata and template,\nnot by default: a confirmed lump-sum\
+      \ RIA/IA topic gets a 45-page hard\nlimit with a 44-page working target (front\
+      \ matter 1; 1.1 = 4; 1.2 =\n13; 2.1 = 3; 2.2 = 3; optional 2.3 = 1; 3.1 = 16;\
+      \ 3.2 = 3). A standard\n(non-lump-sum) full proposal gets the normal 40-page\
+      \ hard limit with\na 39-page working target (front matter 1; 1.1 = 5; 1.2 =\
+      \ 12; 2.1 =\n4.5; 2.2 = 3; optional 2.3 = 0.5; 3.1 = 11.5; 3.2 = 2.5). If the\n\
+      funding model cannot be confirmed from the supplied call documents,\ndefault\
+      \ to the stricter 40-page profile and record the ambiguity in\nunresolved_inputs.\
+      \ Retain one page of safety against rendering\nvariation. If section 2.3 is\
+      \ omitted, reallocate its page only where\nevaluator value is highest.\n\nIn\
+      \ figure_and_table_plan, for each planned figure give a short stable\nslug (used\
+      \ later to match a generated image to its slot) and the exact\nevaluator-relevant\
+      \ content it must show. Plan only evaluator-useful\nfigures — never decoration.\n\
+      \nMap every call requirement to a Part B subsection, result, owner,\nevidence\
+      \ claim, KPI, WP, task, deliverable, milestone and risk where\ngrounded. Build\
+      \ an explicit objective -> result -> outcome -> impact chain.\nUse [INPUT NEEDED:\
+      \ exact item] for missing facts; never invent partner,\nbudget, KPI, TRL, timeline,\
+      \ pilot, source or evidence details.\nEvery item in unresolved_inputs must be\
+      \ written exactly as\n\"[INPUT NEEDED: exact item]\" so the deterministic completeness\
+      \ gate\ncan detect it. Return an empty unresolved_inputs list only when no\n\
+      consortium, work-plan, budget, pilot, metadata, evidence or\nmethodological\
+      \ commitment remains unresolved.\n\nRaw Deep Research dossiers are deliberately\
+      \ unavailable as drafting\nauthority. Use only truth-graph claims and supplied\
+      \ authoritative\nproject/call facts. Preserve every qualification and\n[INPUT\
+      \ NEEDED] item."
+    output_fields:
+    - name: proposal_identity
+      type: object
+      description: Proposal identity facts for the blueprint.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: source_hierarchy_and_fact_ledger
+      type: object
+      description: Source hierarchy and fact ledger for the blueprint.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: official_partb_structure
+      type: object
+      description: The official Part B structure this blueprint follows.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: hard_page_limit
+      type: integer
+      description: 'The hard page limit: 45 for a confirmed lump-sum RIA/IA topic,
+        otherwise the standard 40.'
+    - name: working_page_target
+      type: integer
+      description: 'The working page target, one page below the hard limit as a safety
+        margin: 44 for the lump-sum profile, 39 for the standard profile.'
+    - name: section_page_budget
+      type: object
+      description: Per-section page allocations. Values follow the lump-sum profile
+        (front matter 1; 1.1=4; 1.2=13; 2.1=3; 2.2=3; 2.3=1; 3.1=16; 3.2=3) or the
+        standard profile (front matter 1; 1.1=5; 1.2=12; 2.1=4.5; 2.2=3; 2.3=0.5;
+        3.1=11.5; 3.2=2.5), depending on which hard-page-limit profile applies.
+      fields:
+      - name: front_matter
+        type: number
+        description: Pages allocated to front matter.
+      - name: section_1_1
+        type: number
+        description: Pages allocated to section 1.1 (Objectives and ambition).
+      - name: section_1_2
+        type: number
+        description: Pages allocated to section 1.2 (Methodology).
+      - name: section_2_1
+        type: number
+        description: Pages allocated to section 2.1 (Pathways towards impact).
+      - name: section_2_2
+        type: number
+        description: Pages allocated to section 2.2 (Measures to maximise impact).
+      - name: section_2_3
+        type: number
+        nullable: true
+        description: Pages allocated to the optional section 2.3 (Summary), or null
+          if omitted and its page reallocated elsewhere.
+      - name: section_3_1
+        type: number
+        description: Pages allocated to section 3.1 (Work plan and resources).
+      - name: section_3_2
+        type: number
+        description: Pages allocated to section 3.2 (Capacity of participants).
+    - name: objective_result_outcome_chain
+      type: object
+      description: The causal objective -> result -> outcome -> impact chain (kept
+        separate from the SO-level specific_objectives_table).
+      fields:
+      - name: rows
+        type: list
+        item_type: object
+        description: One row per link in the causal chain.
+        fields:
+        - name: objective
+          type: text
+          description: The objective.
+        - name: result
+          type: text
+          description: The result the objective produces.
+        - name: outcome
+          type: text
+          description: The outcome the result leads to.
+        - name: impact
+          type: text
+          description: The impact the outcome contributes to.
+    - name: state_of_art_and_innovations
+      type: object
+      description: State-of-the-art and innovation content, distinct from the central-ambition
+        narrative in `ambitions` (see TODO above).
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: methodology_and_validation
+      type: object
+      description: 1.2.1 concept and 1.2.3 overall methodology and approach, grounded
+        in the Method Cards.
+      fields:
+      - name: concept
+        type: text
+        description: 1.2.1 — the overall concept.
+      - name: methodology_narrative
+        type: text
+        description: 1.2.3 — the overall methodology and approach in prose, synthesized
+          from the Method Cards without restating them as a bare bullet list.
+      - name: method_cards
+        type: list
+        item_type: object
+        description: The Method Cards this methodology is grounded in, preserving
+          every field from the source cards.
+        fields:
+        - name: method_id
+          type: string
+          description: The Method Card's ID.
+        - name: baseline_or_comparator
+          type: text
+          description: The baseline or comparator for this method.
+        - name: validation
+          type: text
+          description: How this method is validated.
+        - name: uncertainty_method
+          type: text
+          description: How uncertainty is handled for this method.
+        - name: failure_condition
+          type: text
+          description: The failure condition for this method.
+    - name: impact_pathways_and_kpis
+      type: object
+      description: 2.1.1-2.1.2 — contribution to expected outcomes and impacts.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: work_packages_tasks_deliverables
+      type: object
+      description: 3.1.2 overall work-package structure and 3.1.3 detailed work description.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: consortium_and_resources
+      type: object
+      description: 3.2 — capacity of participants and the consortium as a whole.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: risks_and_mitigations
+      type: object
+      description: Internal implementation risks and their mitigations — kept distinct
+        from the external PESTEL barriers in pestel_analysis.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: cross_cutting_compliance
+      type: object
+      description: Cross-cutting compliance content for the blueprint.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: figure_and_table_plan
+      type: object
+      description: The planned figures (and, if applicable, tables) for the proposal.
+      fields:
+      - name: figures
+        type: list
+        item_type: object
+        description: Planned evaluator-useful figures — never decoration.
+        fields:
+        - name: slug
+          type: string
+          description: A short stable slug used later to match a generated image to
+            its slot.
+        - name: content
+          type: text
+          description: The exact evaluator-relevant content this figure must show.
+      - name: tables
+        type: list
+        item_type: string
+        required: false
+        description: Planned tables, if applicable. The original prompt does not specify
+          a structured shape for tables (only for figures); leave empty unless a table
+          is clearly planned.
+    - name: unresolved_inputs
+      type: list
+      item_type: string
+      description: 'Every unresolved fact, written exactly as "[INPUT NEEDED: exact
+        item]" so the deterministic completeness gate can detect it. Empty only when
+        no consortium, work-plan, budget, pilot, metadata, evidence or methodological
+        commitment remains unresolved.'
+    - name: specific_objectives_table
+      type: object
+      description: 1.1.1 — one row per approved objective (never forced to match blank
+        SO1-SO5 placeholders).
+      fields:
+      - name: rows
+        type: list
+        item_type: object
+        description: One row per approved specific objective.
+        fields:
+        - name: so_id
+          type: string
+          description: The specific objective's ID (e.g. SO1).
+        - name: specific_objective
+          type: text
+          description: The specific objective itself.
+        - name: target_outcome
+          type: text
+          description: The target outcome for this objective.
+        - name: kpi
+          type: string
+          description: The KPI used to verify this objective.
+        - name: baseline
+          type: string
+          description: The baseline value for the KPI.
+        - name: target_value
+          type: string
+          description: The target value for the KPI.
+        - name: verification_route
+          type: text
+          description: How the KPI will be verified.
+        - name: call_requirement_answered
+          type: text
+          description: The call requirement this objective answers.
+    - name: ambitions
+      type: object
+      description: 1.1.2 — the central ambition, the state of the art, and what goes
+        beyond it.
+      fields:
+      - name: central_ambition
+        type: text
+        description: The central ambition (A1).
+      - name: state_of_the_art
+        type: text
+        description: The relevant state of the art.
+      - name: beyond_state_of_the_art
+        type: text
+        description: What this project does that goes beyond the state of the art.
+    - name: pilot_strategy
+      type: object
+      description: 1.2.2 — the pilot strategy.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: linked_research_activities
+      type: object
+      description: 1.2.4 — linked research and innovation activities this project
+        builds on.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: ssh_integration
+      type: object
+      description: 1.2.5 — interdisciplinary approach and SSH integration.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: gender_dimension
+      type: object
+      description: 1.2.6 — gender relevance in research content (e.g. variables, disaggregation,
+        bias controls), kept separate from workforce/team balance.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: data_management_open_science
+      type: object
+      description: 1.2.7 — data management and open science practices.
+      fields:
+      - name: data_types
+        type: text
+        description: The data types the project will generate or handle.
+      - name: fair_handling
+        type: text
+        description: How FAIR (Findable, Accessible, Interoperable, Reusable) principles
+          will be applied.
+      - name: open_access_routes
+        type: text
+        description: The planned open-access routes for data and outputs.
+    - name: pestel_analysis
+      type: object
+      description: 2.1.3 — a concrete PESTEL analysis of requirements and potential
+        barriers beyond the project's scope, specific to this call and domain (never
+        generic boilerplate). These are external conditions beyond the project's control
+        — kept separate from the internal implementation risks in risks_and_mitigations.
+      fields:
+      - name: rows
+        type: list
+        item_type: object
+        description: One row per identified barrier.
+        fields:
+        - name: category
+          type: enum
+          description: The PESTEL category of this barrier.
+          enum_values:
+          - Political
+          - Economic
+          - Social
+          - Technological
+          - Environmental
+          - Legal
+        - name: external_condition
+          type: text
+          description: The external condition constituting the barrier.
+        - name: likelihood
+          type: string
+          description: The likelihood of this condition.
+        - name: consequence
+          type: text
+          description: The consequence for the project if it occurs.
+        - name: project_response
+          type: text
+          description: The project's planned response.
+        - name: responsible_monitor
+          type: string
+          description: Who is responsible for monitoring this condition.
+    - name: dissemination_communication_plan
+      type: object
+      description: 2.2.1 dissemination strategy and measures, and 2.2.2 communication
+        strategy.
+      fields:
+      - name: dissemination_strategy_and_measures
+        type: text
+        description: 2.2.1 — the dissemination strategy and measures.
+      - name: communication_strategy
+        type: text
+        description: 2.2.2 — the communication strategy.
+    - name: post_project_dissemination
+      type: object
+      description: 2.2.3 — dissemination and communication activities after the project
+        ends.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: exploitation_strategy
+      type: object
+      description: 2.2.4 — one key exploitable result (KER) per row.
+      fields:
+      - name: rows
+        type: list
+        item_type: object
+        description: One row per key exploitable result (KER).
+        fields:
+        - name: ker_name
+          type: string
+          description: The key exploitable result's name or description.
+        - name: owner
+          type: string
+          description: The KER's owner.
+        - name: target_users
+          type: text
+          description: The KER's target users.
+        - name: value_proposition
+          type: text
+          description: The KER's value proposition.
+        - name: protection_or_ipr_route
+          type: text
+          description: The protection or IPR route for this KER.
+        - name: exploitation_route
+          type: text
+          description: The exploitation route for this KER.
+        - name: time_to_uptake
+          type: string
+          description: The expected time to uptake for this KER.
+    - name: policy_impact_strategy
+      type: object
+      description: 2.2.5 — multi-level policy impact strategy.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: impact_summary
+      type: object
+      description: A short summary of impact, closing section 2.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+    - name: work_plan_timing
+      type: object
+      description: 3.1.1 — timing of work packages.
+      fields:
+      - name: value
+        type: text
+        description: Free-form — see the node's original instructions for expected
+          shape.
+- id: evidence_consistency
+  type: ConsistencyChecker
+  config:
+    block_on_warn: true
+- id: blueprint_completeness_gate
+  type: ProposalSubmissionGate
+  config:
+    proposal_text: '{{proposal_blueprint.raw}}'
+    evidence_blockers: '{{truth_graph.blocking_issues}}'
+    consistency_gate: '{{evidence_consistency.gate}}'
+    consistency_findings: '{{evidence_consistency.findings}}'
+    evaluation_threshold_passed: true
+    evaluation_total_score: 0
+    evaluation_blockers: []
+    required_headings: []
+    minimum_proposal_characters: 1000
+    require_evaluation_pass: false
+    block_on_input_needed: true
+- id: blueprint_readiness_router
+  type: RouterAgent
+  config:
+    mode: rule
+    rules:
+    - name: READY
+      condition: blueprint_completeness_gate.submission_ready == true
+    - name: BLOCKED
+      default: true
+- id: blueprint_blocked
+  type: HumanInLoopAgent
+  config:
+    question: The locked blueprint cannot be released to section drafting because
+      the Proposal Graph still has blocking or advisory consistency issues. Reject
+      this run, close the listed project inputs in the concept and supporting documents,
+      and rerun Stage 1.
+    context_fields:
+    - blueprint_completeness_gate.report
+    - evidence_consistency.report
+    - evidence_consistency.findings
+    - proposal_blueprint.parsed.unresolved_inputs
+    allow_document_override: false
+    allowed_actions:
+    - reject
+- id: approve_locked_blueprint
+  type: HumanInLoopAgent
+  config:
+    question: Human Gate 5 — approve the locked proposal blueprint for section drafting.
+      Confirm that unresolved_inputs is empty and that the objectives, KPIs, partners,
+      work packages, resources, Method Cards, impact logic and page budget reflect
+      the consortium's approved commitments. Reject and rerun Stage 1 if anything
+      remains unresolved.
+    context_fields:
+    - proposal_blueprint.parsed
+    - proposal_blueprint.parsed.unresolved_inputs
+    - methodology_engineering.method_cards
+    - evidence_consistency.report
+    allow_document_override: false
+    allowed_actions:
+    - approve
+    - reject
+edges:
+- from: load_concept
+  to: load_documents
+- from: load_documents
+  to:
+  - partb_metadata
+  - understand_supporting_image
+  - source_authority_curator
+- from: source_authority_curator
+  to: call_intelligence
+- from: call_intelligence
+  to: approve_call_interpretation
+- from: approve_call_interpretation
+  to: normalise_source_graph
+- from: partb_metadata
+  to: normalise_source_graph
+- from: normalise_source_graph
+  to:
+  - research_plan
+  - discover_candidates
+- from: research_plan
+  to:
+  - deep_research
+  - prior_project_research
+  - internal_project_evidence
+- from: deep_research
+  to:
+  - acquire_research_sources
+  - structured_dataset_research
+- from: discover_candidates
+  to: acquire_research_sources
+- from: prior_project_research
+  to: acquire_research_sources
+- from: acquire_research_sources
+  to: synthesize_literature
+- from: synthesize_literature
+  to: verify_evidence
+- from: verify_evidence
+  to:
+  - call_coverage
+  - approve_evidence_report
+- from: structured_dataset_research
+  to: approve_evidence_report
+- from: internal_project_evidence
+  to: approve_evidence_report
+- from: call_coverage
+  to: truth_graph
+- from: approve_evidence_report
+  to: truth_graph
+- from: deep_research
+  to: research_documentation
+- from: synthesize_literature
+  to: research_documentation
+- from: understand_supporting_image
+  to: research_documentation
+- from: truth_graph
+  to:
+  - research_documentation
+  - proposal_blueprint
+  - evidence_readiness_router
+- from: evidence_readiness_router
+  condition: route
+  branches:
+    READY: concept_evolution
+    BLOCKED: evidence_blocked
+- from: concept_evolution
+  to: select_concept
+- from: select_concept
+  to: freeze_concept
+- from: freeze_concept
+  to:
+  - methodology_engineering
+  - proposal_blueprint
+- from: methodology_engineering
+  to: approve_methodology
+- from: approve_methodology
+  to: proposal_blueprint
+- from: proposal_blueprint
+  to: evidence_consistency
+- from: evidence_consistency
+  to: blueprint_completeness_gate
+- from: blueprint_completeness_gate
+  to: blueprint_readiness_router
+- from: blueprint_readiness_router
+  condition: route
+  branches:
+    READY: approve_locked_blueprint
+    BLOCKED: blueprint_blocked
+entry: load_concept
+exit:
+- approve_locked_blueprint
+- evidence_blocked
+- blueprint_blocked
+- research_documentation
+output:
+  include_input: false
+  nodes:
+  - node_id: load_concept
+    flatten: false
+  - node_id: load_documents
+    flatten: false
+  - node_id: partb_metadata
+    flatten: false
+  - node_id: call_intelligence
+    flatten: false
+  - node_id: source_authority_curator
+    flatten: false
+  - node_id: normalise_source_graph
+    flatten: false
+  - node_id: research_plan
+    flatten: false
+  - node_id: deep_research
+    flatten: false
+  - node_id: discover_candidates
+    flatten: false
+  - node_id: prior_project_research
+    flatten: false
+  - node_id: structured_dataset_research
+    flatten: false
+  - node_id: internal_project_evidence
+    flatten: false
+  - node_id: acquire_research_sources
+    flatten: false
+  - node_id: synthesize_literature
+    flatten: false
+  - node_id: call_coverage
+    flatten: false
+  - node_id: verify_evidence
+    flatten: false
+  - node_id: truth_graph
+    flatten: false
+  - node_id: understand_supporting_image
+    flatten: false
+  - node_id: approve_call_interpretation
+    flatten: false
+  - node_id: approve_evidence_report
+    flatten: false
+  - node_id: concept_evolution
+    flatten: false
+  - node_id: select_concept
+    flatten: false
+  - node_id: freeze_concept
+    flatten: false
+  - node_id: methodology_engineering
+    flatten: false
+  - node_id: approve_methodology
+    flatten: false
+  - node_id: research_documentation
+    flatten: false
+  - node_id: proposal_blueprint
+    flatten: false
+  - node_id: evidence_consistency
+    flatten: false
+  - node_id: blueprint_completeness_gate
+    flatten: false
+  - node_id: approve_locked_blueprint
+    flatten: false

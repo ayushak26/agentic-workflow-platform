@@ -697,7 +697,12 @@ nodes:
     type: ConceptFreezeAgent
     config:
       alternatives: "{{concept_evolution.alternatives}}"
-      selected_concept_id: "{{select_concept.content.text}}"
+      # Optional ref: select_concept.content is always populated from this
+      # gate's own editable_content_field (the recommended concept id), but
+      # HITL outputs declare content as nullable. The `?` satisfies
+      # preflight; a None here would fail ConceptFreezeAgent's required
+      # selected_concept_id loudly instead of crashing mid-template.
+      selected_concept_id: "{{select_concept.content.text?}}"
 
   - id: methodology_engineering
     type: MethodologyEngineeringAgent

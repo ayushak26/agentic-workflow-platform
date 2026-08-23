@@ -20,6 +20,15 @@ router = APIRouter(prefix="/api/llm", tags=["llm"])
 
 
 def _configured(model: str, provider: str) -> bool:
+    """Internal helper for the configured step.
+
+    Args:
+        model (str): Model name.
+        provider (str): Provider name.
+
+    Returns:
+        bool: The result.
+    """
     if model == "local-kimi-k3":
         return settings.local_kimi_enabled
     if model == "local-glm-5":

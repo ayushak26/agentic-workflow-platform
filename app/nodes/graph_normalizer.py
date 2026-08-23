@@ -61,6 +61,7 @@ class GraphNormalizerOutput(BaseModel):
 
 
 class GraphNormalizerInput(BaseModel):
+    """Pydantic model defining the GraphNormalizerInput shape."""
     pass
 
 
@@ -222,9 +223,26 @@ class GraphNormalizer(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger"}
 
     async def run(self, state: dict, config: dict) -> dict:
+        """Run the result.
+
+        Args:
+            state (dict): Current workflow state.
+            config (dict): Node configuration mapping.
+
+        Returns:
+            dict: The result.
+        """
         inputs = state.get("inputs", {})
         # Accept either the proposal-style inputs (concept_note + call_facts) or
         # zero-token file-loader output supplied through config. Plain-text and

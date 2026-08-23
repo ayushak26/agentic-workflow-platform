@@ -51,14 +51,13 @@ export type NodeTypeManifest = {
   description: string;
   category: string;
   icon: string;
-  /** 'core' = the small reusable vocabulary a new workflow starts from;
-   *  'specialized' = an existing domain capability, still available. */
   family: 'core' | 'specialized';
   execution_kind: ExecutionKind;
   uses_ai: boolean;
   external_action: boolean;
   about: NodeAbout;
   presets: NodePreset[];
+
   input_schema: Record<string, unknown>;
   output_schema: Record<string, unknown>;
   config_schema: Record<string, unknown>;

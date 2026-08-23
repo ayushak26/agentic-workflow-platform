@@ -1,3 +1,9 @@
+"""Jwt handler module.
+
+Part of the security layer: auth, rbac, middleware, guardrails, and entity protection.
+
+Public symbols: create_access_token, decode_token.
+"""
 from datetime import datetime, timedelta, timezone
 from typing import Any
 import uuid
@@ -8,6 +14,14 @@ from app.config import settings
 
 
 def create_access_token(data: dict[str, Any]) -> str:
+    """Create the access token.
+
+    Args:
+        data (dict[str, Any]): Data mapping.
+
+    Returns:
+        str: The access token.
+    """
     payload = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(
         minutes=settings.access_token_expire_minutes
@@ -27,6 +41,14 @@ def create_access_token(data: dict[str, Any]) -> str:
 
 
 def decode_token(token: str) -> dict[str, Any]:
+    """Decode the token.
+
+    Args:
+        token (str): Token value.
+
+    Returns:
+        dict[str, Any]: The token.
+    """
     try:
         return jwt.decode(
             token,

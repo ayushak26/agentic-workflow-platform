@@ -41,6 +41,14 @@ class PipelineExecutionError(RuntimeError):
 
 
 def load_stage_workflow(stage: PipelineStageSpec) -> tuple[WorkflowSpec, str]:
+    """Load the stage workflow.
+
+    Args:
+        stage (PipelineStageSpec): Pipeline stage label.
+
+    Returns:
+        tuple[WorkflowSpec, str]: The stage workflow.
+    """
     path = stage_workflow_path(stage.workflow)
     if not path.exists():
         raise PipelineExecutionError(
@@ -146,6 +154,14 @@ def materialize_stage_inputs(
 
 
 def _pending_stage_records(spec: PipelineSpec) -> list[dict[str, Any]]:
+    """Internal helper for the pending stage records step.
+
+    Args:
+        spec (PipelineSpec): Parsed workflow specification.
+
+    Returns:
+        list[dict[str, Any]]: The stage records.
+    """
     return [
         {"id": stage.id, "workflow": stage.workflow, "run_id": None, "status": "pending", "error": None}
         for stage in spec.stages
@@ -178,6 +194,22 @@ async def _run_stage(
     collection_id: str,
     run_id: str | None = None,
 ) -> dict[str, Any]:
+    """Run the stage.
+
+    Args:
+        pipeline_spec (PipelineSpec): The pipeline spec.
+        pipeline_run_id (str): The pipeline run id.
+        stage_index (int): The stage index.
+        session (str): Session scope the record belongs to.
+        services (dict[str, Any]): Shared application services dict.
+        pipeline_inputs (dict[str, Any]): The pipeline inputs.
+        stage_outputs_by_id (dict[str, dict[str, Any]]): The stage outputs by id.
+        collection_id (str): Knowledge collection identifier.
+        run_id (str | None): Workflow run identifier (optional, default None).
+
+    Returns:
+        dict[str, Any]: The stage.
+    """
     db = services.get("audit_db")
     stage = pipeline_spec.stages[stage_index]
     stage_spec, stage_yaml = load_stage_workflow(stage)

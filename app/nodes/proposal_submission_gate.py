@@ -11,10 +11,23 @@ from app.nodes.registry import NodeRegistry
 
 
 class ProposalSubmissionGateInput(BaseModel):
+    """Pydantic model defining the ProposalSubmissionGateInput shape."""
     pass
 
 
 class ProposalSubmissionGateConfig(BaseModel):
+    """Pydantic model defining the ProposalSubmissionGateConfig shape.
+
+    Attributes:
+        proposal_text (str).
+        evidence_blockers (str | list[Any]).
+        consistency_gate (str).
+        consistency_findings (str | list[Any]).
+        evaluation_threshold_passed (bool | str).
+        evaluation_total_score (float | str).
+        evaluation_blockers (str | list[Any]).
+        required_headings (list[str]).
+    """
     proposal_text: str
     evidence_blockers: str | list[Any] = Field(default_factory=list)
     consistency_gate: str = "PASS"
@@ -39,6 +52,18 @@ class ProposalSubmissionGateConfig(BaseModel):
 
 
 class ProposalSubmissionGateOutput(BaseModel):
+    """Pydantic model defining the ProposalSubmissionGateOutput shape.
+
+    Attributes:
+        status (Literal['READY', 'BLOCKED']).
+        submission_ready (bool).
+        blockers (list[str]).
+        warnings (list[str]).
+        checks (list[dict[str, Any]]).
+        input_needed_count (int).
+        proposal_characters (int).
+        evaluation_total_score (float).
+    """
     status: Literal["READY", "BLOCKED"]
     submission_ready: bool
     blockers: list[str] = Field(default_factory=list)
@@ -51,6 +76,14 @@ class ProposalSubmissionGateOutput(BaseModel):
 
 
 def _messages(value: str | list[Any]) -> list[str]:
+    """Internal helper for the messages step.
+
+    Args:
+        value (str | list[Any]): Value to process.
+
+    Returns:
+        list[str]: The result.
+    """
     if isinstance(value, str):
         stripped = value.strip()
         return [stripped] if stripped else []
@@ -94,6 +127,15 @@ class ProposalSubmissionGate(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         del state
         cfg = ProposalSubmissionGateConfig(**resolved_config)
         proposal = cfg.proposal_text.strip()
@@ -110,6 +152,13 @@ class ProposalSubmissionGate(NodeType):
         checks: list[dict[str, Any]] = []
 
         def check(name: str, passed: bool, detail: str) -> None:
+            """Check the result.
+
+            Args:
+                name (str): Workflow or resource name.
+                passed (bool): The passed.
+                detail (str): The detail.
+            """
             checks.append(
                 {
                     "name": name,

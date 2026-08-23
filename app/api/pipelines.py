@@ -32,6 +32,12 @@ router = APIRouter(prefix="/api/pipelines", tags=["pipelines"])
 
 
 class ValidatePipelineRequest(BaseModel):
+    """Pydantic model defining the ValidatePipelineRequest shape.
+
+    Attributes:
+        pipeline_yaml (str).
+        inputs (dict[str, Any] | None).
+    """
     pipeline_yaml: str
     inputs: dict[str, Any] | None = None
 
@@ -44,6 +50,15 @@ def validate_pipeline(req: ValidatePipelineRequest):
 
 
 class RunPipelineRequest(BaseModel):
+    """Pydantic model defining the RunPipelineRequest shape.
+
+    Attributes:
+        pipeline_yaml (str).
+        inputs (dict[str, Any]).
+        session_id (str | None).
+        pipeline_run_id (str | None).
+        stage_run_id (str | None).
+    """
     pipeline_yaml: str
     inputs: dict[str, Any] = Field(default_factory=dict)
     session_id: str | None = None
@@ -56,6 +71,14 @@ class RunPipelineRequest(BaseModel):
 
 
 def _preflight_http_detail(report) -> dict[str, Any]:
+    """Internal helper for the preflight http detail step.
+
+    Args:
+        report: Preflight report.
+
+    Returns:
+        dict[str, Any]: The http detail.
+    """
     return {
         "message": (
             f"Pipeline preflight found {len(report.errors)} blocking "
@@ -71,6 +94,13 @@ async def run(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Run the result.
+
+    Args:
+        req (RunPipelineRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     session = _scope(user, req.session_id)
 
@@ -126,6 +156,12 @@ async def run(
 
 
 class AdvancePipelineRequest(BaseModel):
+    """Pydantic model defining the AdvancePipelineRequest shape.
+
+    Attributes:
+        session_id (str | None).
+        stage_run_id (str | None).
+    """
     session_id: str | None = None
     # Client-supplied id for the next stage's underlying workflow run — same
     # purpose as RunPipelineRequest.stage_run_id, for the "Continue to next
@@ -140,6 +176,14 @@ async def advance(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the advance.
+
+    Args:
+        pipeline_run_id (str): The pipeline run id.
+        req (AdvancePipelineRequest): The req.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     session = _scope(user, req.session_id)
     stage_run_id = None
@@ -164,6 +208,13 @@ async def my_pipeline_runs(
     limit: int = 50,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the my pipeline runs.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        limit (int): Maximum number of items to return (optional, default 50).
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     db = services.get("audit_db")
     if db is None:
@@ -178,6 +229,13 @@ async def my_pipeline_run_detail(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the my pipeline run detail.
+
+    Args:
+        pipeline_run_id (str): The pipeline run id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     db = services.get("audit_db")
     if db is None:
@@ -189,6 +247,11 @@ async def my_pipeline_run_detail(
 
 
 class AbandonPipelineRequest(BaseModel):
+    """Pydantic model defining the AbandonPipelineRequest shape.
+
+    Attributes:
+        session_id (str | None).
+    """
     session_id: str | None = None
 
 
@@ -243,6 +306,11 @@ def list_pipelines():
 
 @router.get("/by-name/{name}")
 def get_pipeline(name: str):
+    """Return the pipeline.
+
+    Args:
+        name (str): Workflow or resource name.
+    """
     p = PIPELINES_DIR / f"{name}.yaml"
     if not p.exists():
         raise HTTPException(status_code=404, detail=f"pipeline '{name}' not found")
@@ -250,12 +318,23 @@ def get_pipeline(name: str):
 
 
 class SavePipelineRequest(BaseModel):
+    """Pydantic model defining the SavePipelineRequest shape.
+
+    Attributes:
+        name (str).
+        yaml (str).
+    """
     name: str
     yaml: str
 
 
 @router.post("/save")
 def save_pipeline(req: SavePipelineRequest):
+    """Save the pipeline.
+
+    Args:
+        req (SavePipelineRequest): The req.
+    """
     report = preflight_pipeline_yaml(req.yaml)
     if not report.valid:
         raise HTTPException(status_code=422, detail=_preflight_http_detail(report))

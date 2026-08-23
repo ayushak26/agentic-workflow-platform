@@ -1,0 +1,135 @@
+name: Reference IntegrationAgent 01
+description: Fetches one or more files from a Google Drive folder, extracts their
+  text, and answers a question grounded in the workflow's indexed knowledge collection
+  — with the freshly-extracted Drive files passed in as extra context for the answer.
+  See the note in this file's header comment about what "RAG on the Drive files" actually
+  means on this platform.
+version: '1.0'
+use_case: generic
+library:
+  title: Google Drive RAG Lookup
+  summary: Extract files from a Google Drive folder and use RAGAgent to answer a question,
+    grounded in the workspace's indexed knowledge collection plus the extracted Drive
+    files as extra context.
+  purpose:
+  - Demonstrate IntegrationAgent (Google Drive) feeding WorkflowFileLoader, then RAGAgent,
+    in one workflow
+  suitable_for:
+  - A reference example for combining cloud-file access with retrieval-augmented generation
+  not_suitable_for:
+  - Production use as-is — the connection id and file ids below are placeholders
+  outputs:
+  - A grounded, cited answer plus the text extracted from the Drive files
+  input_types:
+  - A question, and one or more Google Drive file ids
+  human_reviews:
+    count: 0
+    labels: []
+  visibility_status: draft
+inputs:
+  question:
+    type: text
+    required: true
+    description: What to ask, grounded in the knowledge collection and the Drive files.
+  file_ids:
+    type: json
+    required: true
+    description: One or more Google Drive file ids to fetch and read.
+entry: start
+exit:
+- end_answer
+nodes:
+- id: start
+  type: StartAgent
+  config:
+    mode: input_form
+    title: Ask About Drive Files
+    fields:
+    - name: question
+      label: Question
+      type: text
+      required: true
+    - name: file_ids
+      label: Google Drive File IDs
+      type: list
+      item_type: string
+      required: true
+  experience:
+    display_name: Ask About Drive Files
+    purpose: Collect the question and which Drive files it's about.
+    contribution: Everything downstream addresses this one typed entry point.
+    expected_output: A question and one or more Drive file ids.
+    failure_message: The request could not be read.
+- id: fetch_drive_files
+  type: IntegrationAgent
+  config:
+    provider: google_drive
+    connection: shared_drive
+    operation: get_file
+    file_id: '{{outputs.start.data.file_ids}}'
+  experience:
+    display_name: Fetch Drive Files
+    purpose: Download the requested files from Google Drive.
+    contribution: Turns a Drive file id into the same typed file reference an upload
+      would produce.
+    expected_output: One or more downloaded file references.
+    failure_message: The files could not be fetched from Google Drive.
+- id: extract_text
+  type: WorkflowFileLoader
+  config:
+    files: '{{outputs.fetch_drive_files.downloaded_files}}'
+    fail_on_unreadable: false
+  experience:
+    display_name: Extract File Text
+    purpose: Turn the downloaded Drive files into readable text.
+    contribution: Gives the RAG step real content to reference alongside the indexed
+      collection.
+    expected_output: The extracted text of every readable file.
+    failure_message: The Drive files could not be read.
+- id: answer_with_rag
+  type: RAGAgent
+  config:
+    query: '{{outputs.start.data.question}}'
+    runtime_context:
+      drive_files_extracted_text: '{{outputs.extract_text.text}}'
+    generation_prompt: Answer the question using the provided sources, plus the extracted
+      Drive file text given as additional context. Cite every factual claim drawn
+      from a numbered source with its [N] label. Content drawn from the Drive files
+      (not a numbered source) should be attributed to "the provided Drive files" in
+      the answer, not given a [N] citation. If neither the sources nor the Drive files
+      answer the question, say so.
+  experience:
+    display_name: Answer With RAG
+    purpose: Answer the question, grounded in the knowledge collection and the Drive
+      files.
+    contribution: Retrieval and citations come from the workspace's indexed collection;
+      the Drive files are passed in as extra context, not indexed by this step.
+    expected_output: A grounded answer, with citations where the indexed collection
+      was used.
+    failure_message: The question could not be answered.
+- id: end_answer
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: answer
+      value_from: '{{outputs.answer_with_rag.answer}}'
+    - key: citations
+      value_from: '{{outputs.answer_with_rag.citations}}'
+    - key: drive_files_text
+      value_from: '{{outputs.extract_text.text}}'
+  experience:
+    display_name: Answer
+    purpose: Return the grounded answer as the run's result.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: An answer, its citations, and the extracted Drive text.
+    failure_message: The result could not be produced.
+edges:
+- from: start
+  to: fetch_drive_files
+- from: fetch_drive_files
+  to: extract_text
+- from: extract_text
+  to: answer_with_rag
+- from: answer_with_rag
+  to: end_answer

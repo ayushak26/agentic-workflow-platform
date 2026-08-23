@@ -27,9 +27,15 @@ from .base import (
 
 
 class InMemoryEmailAdapter(EmailAdapter):
+    """Provides the InMemoryEmailAdapter behaviour."""
     provider = "memory"
 
     def __init__(self, messages: list[EmailMessage] | None = None):
+        """Initialize the InMemoryEmailAdapter.
+
+        Args:
+            messages (list[EmailMessage] | None): The messages (optional, default None).
+        """
         self.messages: dict[str, EmailMessage] = {
             message.id: message for message in (messages or [])
         }
@@ -37,12 +43,29 @@ class InMemoryEmailAdapter(EmailAdapter):
         self.sent: list[EmailDraft] = []
 
     def add(self, message: EmailMessage) -> EmailMessage:
+        """Add the result.
+
+        Args:
+            message (EmailMessage): Message text.
+
+        Returns:
+            EmailMessage: The result.
+        """
         self.messages[message.id] = message
         return message
 
     async def search(
         self, connection: EmailConnection, criteria: EmailSearchCriteria
     ) -> list[EmailMessage]:
+        """Search the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            criteria (EmailSearchCriteria): The criteria.
+
+        Returns:
+            list[EmailMessage]: The result.
+        """
         del connection
         cutoff = (
             datetime.now(UTC) - timedelta(days=criteria.newer_than_days)
@@ -83,6 +106,15 @@ class InMemoryEmailAdapter(EmailAdapter):
     async def read(
         self, connection: EmailConnection, message_id: str
     ) -> EmailMessage:
+        """Read the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            message_id (str): The message id.
+
+        Returns:
+            EmailMessage: The result.
+        """
         del connection
         message = self.messages.get(message_id)
         if message is None:
@@ -92,12 +124,30 @@ class InMemoryEmailAdapter(EmailAdapter):
     async def create_draft(
         self, connection: EmailConnection, draft: EmailDraft
     ) -> str:
+        """Create the draft.
+
+        Args:
+            connection (EmailConnection): The connection.
+            draft (EmailDraft): The draft.
+
+        Returns:
+            str: The draft.
+        """
         del connection
         draft_id = f"draft-{uuid.uuid4().hex[:12]}"
         self.drafts[draft_id] = draft
         return draft_id
 
     async def send(self, connection: EmailConnection, draft: EmailDraft) -> str:
+        """Send the result.
+
+        Args:
+            connection (EmailConnection): The connection.
+            draft (EmailDraft): The draft.
+
+        Returns:
+            str: The result.
+        """
         if not draft.to:
             raise EmailAdapterError("send needs at least one recipient")
         sent_id = f"sent-{uuid.uuid4().hex[:12]}"

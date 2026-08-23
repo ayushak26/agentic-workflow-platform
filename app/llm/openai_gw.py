@@ -166,6 +166,11 @@ class OpenAIGateway(LLMGateway):
     """OpenAI-backed gateway. One AsyncOpenAI client per instance."""
 
     def __init__(self, api_key: str):
+        """Initialize the OpenAIGateway.
+
+        Args:
+            api_key (str): API key.
+        """
         self._client = AsyncOpenAI(
             api_key=api_key,
             max_retries=0,
@@ -192,6 +197,20 @@ class OpenAIGateway(LLMGateway):
         reasoning_effort: str | None = None,
         on_token: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """Complete the result.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 1024).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+            on_token (Callable[[str], Awaitable[None]] | None): The on token (optional, default None).
+
+        Returns:
+            LLMResponse: The result.
+        """
         call_kwargs: dict = {
             "model": model,
             "messages": [
@@ -266,6 +285,20 @@ class OpenAIGateway(LLMGateway):
         # Non-strict JSON mode: allows free-form object fields that OpenAI's
         # strict schema mode (.parse) rejects. We validate with Pydantic
         # ourselves; the caller's retry loop re-prompts on validation failure.
+        """Complete the structured.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            response_model (Type[T]): The response model.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+
+        Returns:
+            T: The structured.
+        """
         schema = response_model.model_json_schema()
         system_with_schema = (
             f"{system}\n\n"
@@ -321,6 +354,19 @@ class OpenAIGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> LLMToolUseResponse:
+        """Compute the chat with tools.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            messages (list[dict]): The messages.
+            tools (list[dict]): The tools.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+
+        Returns:
+            LLMToolUseResponse: The with tools.
+        """
         import json  # local import keeps module-level imports lean
 
         # Translate neutral messages → OpenAI format

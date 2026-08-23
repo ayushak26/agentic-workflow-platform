@@ -1,0 +1,282 @@
+name: Reference PDFProposalRenderer 06
+use_case: project_alex
+description: Project Alex flagship workflow — RFP to approved proposal PDF.
+version: '1.0'
+inputs:
+  rfp_text:
+    type: text
+    description: Full text of the RFP document.
+  client_name:
+    type: text
+    description: Name of the client (used in proposal cover and headers).
+  client_context:
+    type: text
+    description: Description of the client
+  proposal_title:
+    type: text
+    description: Title for the proposal cover.
+nodes:
+- id: rfp_intel
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Read this RFP and extract structured intelligence.
+
+
+      RFP:
+
+      {{inputs.rfp_text}}
+
+      '
+    output_schema:
+      industry: str
+      client_pain_points: list
+      required_capabilities: list
+      evaluation_criteria: list
+      timeline_constraints: str
+- id: context_synthesis
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Synthesize the RFP intelligence into a focused project context.
+
+
+      Client:                  {{inputs.client_name}}
+
+      Industry:                {{rfp_intel.parsed.industry}}
+
+      Pain points:             {{rfp_intel.parsed.client_pain_points}}
+
+      Required capabilities:   {{rfp_intel.parsed.required_capabilities}}
+
+      '
+    output_schema:
+      engagement_summary: str
+      success_metrics: list
+- id: approve_requirements
+  type: HumanInLoopAgent
+  config:
+    question: Review the RFP intelligence — proceed to retrieval?
+    context_fields:
+    - rfp_intel.parsed.industry
+    - rfp_intel.parsed.client_pain_points
+    - rfp_intel.parsed.required_capabilities
+    - context_synthesis.parsed.engagement_summary
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+- id: knowledge_retrieval
+  type: RAGAgent
+  config:
+    model: claude-sonnet-4-5
+    query: Case studies and methodology for {{rfp_intel.parsed.industry}} engagements
+    top_n_final: 10
+    filters:
+      doc_types:
+      - proposal
+      - case_study
+- id: approve_retrievals
+  type: HumanInLoopAgent
+  config:
+    question: Review the retrieved sources — proceed to drafting?
+    context_fields:
+    - knowledge_retrieval.citations
+    - knowledge_retrieval.answer
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+- id: draft_understanding
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Draft the "Project Understanding and Objectives" section for
+      {{inputs.client_name}}.
+
+
+      Engagement context: {{context_synthesis.parsed.engagement_summary}}
+
+      Pain points:        {{rfp_intel.parsed.client_pain_points}}
+
+      Success metrics:    {{context_synthesis.parsed.success_metrics}}
+
+
+      Reference sources:
+
+      {{knowledge_retrieval.answer}}
+
+
+      Write 400-600 words. Cite sources using [N] format where N matches the source
+      label.
+
+      '
+    temperature: 0.7
+- id: draft_approach
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Draft the "Approach and Methodology" section.
+
+
+      Required capabilities: {{rfp_intel.parsed.required_capabilities}}
+
+      Engagement summary:    {{context_synthesis.parsed.engagement_summary}}
+
+
+      Reference methodology:
+
+      {{knowledge_retrieval.answer}}
+
+
+      Write 500-800 words. Cite sources using [N] format.
+
+      '
+- id: draft_experience
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Draft the "Relevant Experience and Case Studies" section.
+
+
+      Industry: {{rfp_intel.parsed.industry}}
+
+
+      Case studies retrieved:
+
+      {{knowledge_retrieval.answer}}
+
+
+      Write 400-600 words. Cite each case study using [N] format.
+
+      '
+- id: draft_team
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Draft the "Team Structure and Qualifications" section for a
+      Eurskem engagement.
+
+
+      Engagement scope: {{context_synthesis.parsed.engagement_summary}}
+
+
+      Write 300-400 words. Use the standard Eurskem consulting team structure
+
+      (Partner, Engagement Manager, Senior Consultants, Analysts).
+
+      '
+- id: draft_commercials
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'Draft the "Commercial Terms and Timeline" section.
+
+
+      Timeline constraints: {{rfp_intel.parsed.timeline_constraints}}
+
+      Engagement scope:     {{context_synthesis.parsed.engagement_summary}}
+
+
+      Write 300-500 words. Use placeholder commercial figures
+
+      (mark them as illustrative).
+
+      '
+- id: approve_drafts
+  type: HumanInLoopAgent
+  config:
+    question: Review all five section drafts — approve, reject, or edit?
+    context_fields:
+    - draft_understanding.raw
+    - draft_approach.raw
+    - draft_experience.raw
+    - draft_team.raw
+    - draft_commercials.raw
+    allowed_actions:
+    - approve
+    - reject
+    - edit
+- id: compile_and_qa
+  type: TransformAgent
+  config:
+    model: claude-sonnet-4-5
+    prompt_template: 'QA-pass each section: fix tone inconsistencies, remove duplicate
+      phrasing,
+
+      ensure logical flow, preserve all citations.
+
+
+      Project Understanding:
+
+      {{draft_understanding.raw}}
+
+
+      Approach:
+
+      {{draft_approach.raw}}
+
+
+      Experience:
+
+      {{draft_experience.raw}}
+
+
+      Team:
+
+      {{draft_team.raw}}
+
+
+      Commercials:
+
+      {{draft_commercials.raw}}
+
+      '
+    output_schema:
+      project_understanding: str
+      approach_and_methodology: str
+      relevant_experience: str
+      team_structure: str
+      commercial_terms: str
+- id: generate_pdf
+  type: PDFProposalRenderer
+  config:
+    sections:
+      Project Understanding and Objectives: '{{compile_and_qa.parsed.project_understanding}}'
+      Approach and Methodology: '{{compile_and_qa.parsed.approach_and_methodology}}'
+      Relevant Experience and Case Studies: '{{compile_and_qa.parsed.relevant_experience}}'
+      Team Structure and Qualifications: '{{compile_and_qa.parsed.team_structure}}'
+      Commercial Terms and Timeline: '{{compile_and_qa.parsed.commercial_terms}}'
+    template: corporate
+    proposal_title: '{{inputs.proposal_title}}'
+    client_name: '{{inputs.client_name}}'
+edges:
+- from: rfp_intel
+  to: context_synthesis
+- from: context_synthesis
+  to: approve_requirements
+- from: approve_requirements
+  to: knowledge_retrieval
+- from: knowledge_retrieval
+  to: approve_retrievals
+- from: approve_retrievals
+  to:
+  - draft_understanding
+  - draft_approach
+  - draft_experience
+  - draft_team
+  - draft_commercials
+- from: draft_understanding
+  to: approve_drafts
+- from: draft_approach
+  to: approve_drafts
+- from: draft_experience
+  to: approve_drafts
+- from: draft_team
+  to: approve_drafts
+- from: draft_commercials
+  to: approve_drafts
+- from: approve_drafts
+  to: compile_and_qa
+- from: compile_and_qa
+  to: generate_pdf

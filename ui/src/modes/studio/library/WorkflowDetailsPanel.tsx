@@ -63,7 +63,7 @@ export function WorkflowDetailsPanel({
     // Resets state for the newly-selected workflow, not a sync-to-external-
     // system loop — same justification as the analogous reset effects in
     // Builder.tsx's hydrateWorkflow.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     setParsed(null);
     setDetail(null);
     setLoadError(null);

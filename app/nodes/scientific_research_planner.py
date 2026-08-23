@@ -14,6 +14,18 @@ from app.research.deep_research import ResearchBrief, ResearchTrack
 
 
 class _ResearchBriefDraft(BaseModel):
+    """Pydantic model defining the ResearchBriefDraft shape.
+
+    Attributes:
+        track (ResearchTrack).
+        question (str).
+        purpose (str).
+        linked_claim_ids (list[str]).
+        linked_call_requirement_ids (list[str]).
+        required_source_types (list[str]).
+        geographic_scope (list[str]).
+        date_priority (str).
+    """
     track: ResearchTrack
     question: str
     purpose: str
@@ -27,15 +39,34 @@ class _ResearchBriefDraft(BaseModel):
 
 
 class _ResearchPlanDraft(BaseModel):
+    """Pydantic model defining the ResearchPlanDraft shape.
+
+    Attributes:
+        briefs (list[_ResearchBriefDraft]).
+        unresolved_questions (list[str]).
+    """
     briefs: list[_ResearchBriefDraft] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
 
 
 class ScientificResearchPlannerInput(BaseModel):
+    """Pydantic model defining the ScientificResearchPlannerInput shape."""
     pass
 
 
 class ScientificResearchPlannerConfig(BaseModel):
+    """Pydantic model defining the ScientificResearchPlannerConfig shape.
+
+    Attributes:
+        call_context (Any).
+        concept_context (Any).
+        model (str).
+        max_briefs (int).
+        max_total_tool_calls (int).
+        standard_tool_calls (int).
+        critical_tool_calls (int).
+        standard_research_model (Literal['gpt-5.6-sol', 'claude-fable-5']).
+    """
     call_context: Any = ""
     concept_context: Any = ""
     model: str = "gpt-5.6-terra"
@@ -55,6 +86,17 @@ class ScientificResearchPlannerConfig(BaseModel):
 
 
 class ScientificResearchPlannerOutput(BaseModel):
+    """Pydantic model defining the ScientificResearchPlannerOutput shape.
+
+    Attributes:
+        research_briefs (list[ResearchBrief]).
+        brief_count (int).
+        total_tool_call_budget (int).
+        skills_manifest (dict[str, list[str]]).
+        skill_versions (dict[str, str]).
+        unresolved_questions (list[str]).
+        governance_rules (list[str]).
+    """
     research_briefs: list[ResearchBrief] = Field(default_factory=list)
     brief_count: int = 0
     total_tool_call_budget: int = 0
@@ -90,6 +132,7 @@ _TRACK_GUIDANCE = {
 
 @NodeRegistry.register
 class ScientificResearchPlannerAgent(NodeType):
+    """Workflow node type implementing the ScientificResearchPlannerAgent capability."""
     type_name = "ScientificResearchPlannerAgent"
     description = (
         "Turn the call, selected concept, and proposal graph into several "
@@ -101,6 +144,14 @@ class ScientificResearchPlannerAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger", "scientific_skill_catalog"}
 
     async def run(
@@ -108,6 +159,15 @@ class ScientificResearchPlannerAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ScientificResearchPlannerConfig(**resolved_config)
         graph = proposal_graph_from_state(state)
         llm = self.services.get("llm")
@@ -288,6 +348,14 @@ class ScientificResearchPlannerAgent(NodeType):
 
 
 def _json_text(value: Any) -> str:
+    """Internal helper for the json text step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        str: The text.
+    """
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False)

@@ -45,6 +45,11 @@ _MAX_MEMORY_MB = 1024
 
 
 def _socket_path() -> str:
+    """Internal helper for the socket path step.
+
+    Returns:
+        str: The path.
+    """
     return os.environ.get("SNIPPET_RUNNER_SOCKET_PATH", _DEFAULT_SOCKET_PATH)
 
 
@@ -73,6 +78,7 @@ def _rlimit_preexec(memory_mb: int, timeout_seconds: float):
     """
 
     def setter() -> None:
+        """Compute the setter."""
         mem_bytes = memory_mb * 1024 * 1024
         # CPU time is a generous multiple of the wall-clock budget — the
         # real deadline is the wall-clock asyncio.wait_for below; this is
@@ -94,6 +100,14 @@ def _rlimit_preexec(memory_mb: int, timeout_seconds: float):
 
 
 async def _execute(request: SnippetRequest) -> dict[str, Any]:
+    """Execute the result.
+
+    Args:
+        request (SnippetRequest): Incoming FastAPI request.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     scratch = tempfile.mkdtemp(prefix="snippet-")
     started = time.monotonic()
     stdin_payload = json.dumps({"code": request["code"], "inputs": request["inputs"]}).encode(
@@ -156,6 +170,12 @@ async def _execute(request: SnippetRequest) -> dict[str, Any]:
 
 
 async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Handle the result.
+
+    Args:
+        reader (asyncio.StreamReader): The reader.
+        writer (asyncio.StreamWriter): The writer.
+    """
     try:
         raw = await read_message(reader)
         if not raw:
@@ -186,6 +206,7 @@ async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) ->
 
 
 async def main() -> None:
+    """Compute the main."""
     path = _socket_path()
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     if os.path.exists(path):

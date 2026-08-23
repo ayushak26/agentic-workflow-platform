@@ -11,6 +11,18 @@ BLOCKING_KINDS = {"hard_eligibility", "expected_outcome", "must_address"}
 
 
 class CallCoverageRow(BaseModel):
+    """Pydantic model defining the CallCoverageRow shape.
+
+    Attributes:
+        requirement_id (str).
+        kind (str).
+        requirement (str).
+        status (Status).
+        section (str | None).
+        mapped_object_ids (list[str]).
+        evidence_claim_ids (list[str]).
+        verified_claim_count (int).
+    """
     requirement_id: str
     kind: str
     requirement: str
@@ -25,6 +37,17 @@ class CallCoverageRow(BaseModel):
 
 
 class CallCoverageMatrix(BaseModel):
+    """Pydantic model defining the CallCoverageMatrix shape.
+
+    Attributes:
+        rows (list[CallCoverageRow]).
+        addressed (int).
+        partial (int).
+        missing (int).
+        coverage_percent (float).
+        blocking_requirement_ids (list[str]).
+        submission_blocked (bool).
+    """
     rows: list[CallCoverageRow]
     addressed: int
     partial: int
@@ -35,6 +58,14 @@ class CallCoverageMatrix(BaseModel):
 
 
 def _known_object_ids(graph: ProposalGraph) -> set[str]:
+    """Internal helper for the known object ids step.
+
+    Args:
+        graph (ProposalGraph): Compiled LangGraph graph.
+
+    Returns:
+        set[str]: The object ids.
+    """
     known: set[str] = set()
     for name in (
         "claims",
@@ -55,6 +86,14 @@ def _known_object_ids(graph: ProposalGraph) -> set[str]:
 
 
 def build_call_coverage_matrix(graph: ProposalGraph) -> CallCoverageMatrix:
+    """Build the call coverage matrix.
+
+    Args:
+        graph (ProposalGraph): Compiled LangGraph graph.
+
+    Returns:
+        CallCoverageMatrix: The call coverage matrix.
+    """
     known_ids = _known_object_ids(graph)
     rows: list[CallCoverageRow] = []
 

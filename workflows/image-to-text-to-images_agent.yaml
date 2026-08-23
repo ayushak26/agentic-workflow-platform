@@ -1,0 +1,118 @@
+name: Image-to-Text-to-Images Agent
+description: >-
+  Analyzes an uploaded image, converts the visual analysis into a polished image-generation prompt,
+  and creates two new image variations from that text.
+version: '1.0'
+use_case: multimodal
+inputs:
+  source_image:
+    type: file
+    required: true
+entry: analyze_source_image
+exit: return_results
+nodes:
+  - id: analyze_source_image
+    type: KimiVisionAgent
+    config:
+      image: '{{inputs.source_image}}'
+      prompt: >-
+        Analyze the uploaded image in detail. Describe its subjects, setting, composition, colors,
+        lighting, perspective, mood, style, textures, and other visually important elements. Clearly
+        distinguish visible details from uncertain inferences. Produce text that can be used to
+        create a related new image.
+      vision_model: kimi-k3
+      max_completion_tokens: 4000
+  - id: create_image_variation_one
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      size: auto
+      quality: auto
+      output_format: png
+      prompt: |-
+        Create a high-quality image using this prompt:
+
+
+
+        Variation direction: closely follow the described composition, mood,
+        subjects, and visual style.
+  - id: create_image_variation_two
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openai
+      image_model: gpt-image-2-2026-04-21
+      size: auto
+      quality: auto
+      output_format: png
+      prompt: |-
+        Create a high-quality image using this prompt:
+
+
+
+        Variation direction: preserve the central concept while using an
+        alternative composition, perspective, and lighting treatment.
+  - id: return_results
+    type: EndAgent
+    config:
+      mode: workflow_result
+      title: Generated Text and Images
+      message: Two new image variations were generated from the uploaded image.
+      outputs:
+        - key: generated_text
+        - key: first_image_storage_key
+          value_from: '{{create_image_variation_one.minio_key}}'
+        - key: first_image_content_type
+          value_from: '{{create_image_variation_one.content_type}}'
+        - key: first_image_revised_prompt
+          value_from: '{{create_image_variation_one.revised_prompt}}'
+        - key: second_image_storage_key
+          value_from: '{{create_image_variation_two.minio_key}}'
+        - key: second_image_content_type
+          value_from: '{{create_image_variation_two.content_type}}'
+        - key: second_image_revised_prompt
+          value_from: '{{create_image_variation_two.revised_prompt}}'
+  - id: transform_1
+    type: TransformAgent
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      prompt_template: null
+      system_prompt: null
+      input_fields:
+        - name: input_1
+          description: ''
+          type: string
+          value: '{{outputs.analyze_source_image.analysis}}'
+      instructions: >-
+        Convert the image analysis into one vivid, standalone image-generation prompt. Preserve the
+        important visual identity and subject matter while making the composition coherent and
+        visually compelling. Do not mention the analysis process or the uploaded source image.
+      output_fields:
+        - name: generated_text
+          type: text
+          description: A standalone prompt for generating new images.
+          required: true
+          nullable: false
+      language: null
+      temperature: 0.2
+      max_tokens: 16384
+      max_retries: 1
+      fail_on_error: true
+      operations: []
+      omit_empty: false
+    selected_model: auto
+    model_routing:
+      accuracy_priority: maximum
+      prefer_low_latency: false
+edges:
+  - from: create_image_variation_one
+    to: return_results
+  - from: create_image_variation_two
+    to: return_results
+  - from: analyze_source_image
+    to: transform_1
+  - from: transform_1
+    to: create_image_variation_one
+  - from: transform_1
+    to: create_image_variation_two

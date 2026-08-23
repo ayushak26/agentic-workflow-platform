@@ -7,10 +7,9 @@
  * outputs/inputs/variables namespacing the backend engine also understands.
  *
  * Kept as a small, separate reimplementation rather than a shared library
- * with the Python engine — the same house pattern already used for
- * deriveInputsFromStartNode's Python/JS twins (yaml-bridge.ts) — since a
- * cross-language shared engine isn't worth the build complexity for four
- * operators.
+ * with the Python engine — the same house pattern used elsewhere for
+ * Python/JS twins of small engine helpers — since a cross-language shared
+ * engine isn't worth the build complexity for four operators.
  */
 
 export type FormConditionOperator = 'equals' | 'not_equals' | 'contains' | 'in';

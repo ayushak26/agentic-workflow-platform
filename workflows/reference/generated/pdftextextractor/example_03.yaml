@@ -1,0 +1,18 @@
+name: Reference PDFTextExtractor 03
+description: Smallest valid workflow exercising PDFTextExtractor — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production.
+version: '1.0'
+nodes:
+- id: extract_text
+  type: PDFTextExtractor
+  config:
+    minio_key: uploads/sample.pdf
+- id: summarize
+  type: Echo
+  config:
+    template: Extracted {{extract_text.page_count}} pages.
+edges:
+- from: extract_text
+  to: summarize
+entry: extract_text
+exit: summarize

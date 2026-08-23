@@ -47,6 +47,7 @@ from typing import Any
 
 
 def _prepare_source_checkout() -> None:
+    """Internal helper for the prepare source checkout step."""
     value = os.getenv("PAPER_SEARCH_MCP_SOURCE_PATH", "").strip()
     if not value:
         return
@@ -88,12 +89,34 @@ class _JsonNullSafeOpenAireResponse:
     `response`/`results` for the OpenAIRE legacy search endpoint."""
 
     def __init__(self, response: Any) -> None:
+        """Initialize the _JsonNullSafeOpenAireResponse.
+
+        Args:
+            response (Any): Outgoing FastAPI response.
+        """
         self._response = response
 
     def __getattr__(self, name: str) -> Any:
+        """Implement the ``__getattr__`` protocol.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            Any: The result.
+        """
         return getattr(self._response, name)
 
     def json(self, *args: Any, **kwargs: Any) -> Any:
+        """Compute the json.
+
+        Args:
+            *args (Any): Positional arguments.
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            Any: The result.
+        """
         return _normalize_openaire_legacy_json(self._response.json(*args, **kwargs))
 
 
@@ -106,6 +129,12 @@ def patch_openaire_query_param(module_name: str = "paper_search_mcp.academic_pla
     original_get = openaire.OpenAiresearcher._get
 
     def patched_get(self, url, **kwargs):
+        """Compute the patched get.
+
+        Args:
+            url: Target URL.
+            **kwargs: Keyword arguments.
+        """
         is_legacy_search = url.rstrip("/").endswith("/search/publications")
         params = kwargs.get("params")
         if (
@@ -129,12 +158,34 @@ class _JsonDefaultsDataKey:
     """Wraps a requests.Response so `.json()` always has a `data` key."""
 
     def __init__(self, response: Any) -> None:
+        """Initialize the _JsonDefaultsDataKey.
+
+        Args:
+            response (Any): Outgoing FastAPI response.
+        """
         self._response = response
 
     def __getattr__(self, name: str) -> Any:
+        """Implement the ``__getattr__`` protocol.
+
+        Args:
+            name (str): Workflow or resource name.
+
+        Returns:
+            Any: The result.
+        """
         return getattr(self._response, name)
 
     def json(self, *args: Any, **kwargs: Any) -> Any:
+        """Compute the json.
+
+        Args:
+            *args (Any): Positional arguments.
+            **kwargs (Any): Keyword arguments.
+
+        Returns:
+            Any: The result.
+        """
         payload = self._response.json(*args, **kwargs)
         if isinstance(payload, dict):
             payload.setdefault("data", [])
@@ -177,6 +228,12 @@ def patch_semantic_scholar_empty_results(
     original_request_api = semantic.SemanticSearcher.request_api
 
     def patched_request_api(self, path, params):
+        """Compute the patched request api.
+
+        Args:
+            path: Filesystem path.
+            params: The params.
+        """
         _wait_for_semantic_scholar_rate_limit(min_interval_seconds)
         result = original_request_api(self, path, params)
         if not isinstance(result, dict) and hasattr(result, "json"):
@@ -187,6 +244,7 @@ def patch_semantic_scholar_empty_results(
 
 
 def main() -> None:
+    """Compute the main."""
     _prepare_source_checkout()
     module_name = (
         os.getenv("PAPER_SEARCH_MCP_MODULE", "").strip()

@@ -56,6 +56,15 @@ class MCPToolResult(BaseModel):
 
 
 def _depth(value: Any, current: int = 0) -> int:
+    """Internal helper for the depth step.
+
+    Args:
+        value (Any): Value to process.
+        current (int): Current value (optional, default 0).
+
+    Returns:
+        int: The result.
+    """
     if current > MAX_PARSE_DEPTH:
         return current
     if isinstance(value, dict):
@@ -191,6 +200,14 @@ def normalise_result(
 
 
 def _collect_text(content: Any) -> str:
+    """Internal helper for the collect text step.
+
+    Args:
+        content (Any): Content value.
+
+    Returns:
+        str: The text.
+    """
     parts: list[str] = []
     for block in content or []:
         value = getattr(block, "text", None)
@@ -200,6 +217,15 @@ def _collect_text(content: Any) -> str:
 
 
 def _trim(text: str, max_bytes: int) -> str:
+    """Internal helper for the trim step.
+
+    Args:
+        text (str): The text.
+        max_bytes (int): The max bytes.
+
+    Returns:
+        str: The result.
+    """
     if len(text) <= 4000:
         return text
     return text[:4000] + f"… (trimmed from {len(text)} characters)"
@@ -263,6 +289,14 @@ _JSON_TYPES = {
 
 
 def _json_type(schema: dict[str, Any]) -> str:
+    """Internal helper for the json type step.
+
+    Args:
+        schema (dict[str, Any]): Schema definition.
+
+    Returns:
+        str: The type.
+    """
     declared = schema.get("type")
     if isinstance(declared, list):
         # ["string", "null"] is how a nullable field is usually written.

@@ -11,10 +11,19 @@ from app.nodes.registry import NodeRegistry
 
 
 class WebSearchAgentInput(BaseModel):
+    """Pydantic model defining the WebSearchAgentInput shape."""
     pass
 
 
 class WebSearchAgentConfig(BaseModel):
+    """Pydantic model defining the WebSearchAgentConfig shape.
+
+    Attributes:
+        query (str).
+        provider (Literal['auto', 'tavily', 'openai', 'kimi']).
+        top_k (int).
+        fallback_to_openai (bool).
+    """
     query: str
     provider: Literal["auto", "tavily", "openai", "kimi"] = Field(
         default="auto",
@@ -33,6 +42,15 @@ class WebSearchAgentConfig(BaseModel):
 
 
 class WebSearchHit(BaseModel):
+    """Pydantic model defining the WebSearchHit shape.
+
+    Attributes:
+        title (str).
+        url (str).
+        snippet (str).
+        score (float).
+        status (Literal['candidate_only']).
+    """
     title: str
     url: str
     snippet: str
@@ -41,6 +59,18 @@ class WebSearchHit(BaseModel):
 
 
 class WebSearchAgentOutput(BaseModel):
+    """Pydantic model defining the WebSearchAgentOutput shape.
+
+    Attributes:
+        query (str).
+        requested_provider (str).
+        actual_provider (str).
+        fallback_reason (str | None).
+        results (list[WebSearchHit]).
+        result_count (int).
+        input_tokens (int).
+        output_tokens (int).
+    """
     query: str
     requested_provider: str
     actual_provider: str
@@ -53,6 +83,7 @@ class WebSearchAgentOutput(BaseModel):
 
 @NodeRegistry.register
 class WebSearchAgent(NodeType):
+    """Workflow node type implementing the WebSearchAgent capability."""
     type_name = "WebSearchAgent"
     description = (
         "Search the live public web with Auto, Tavily, OpenAI, or Kimi K3. "
@@ -64,6 +95,14 @@ class WebSearchAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"web_search"}
 
     async def run(
@@ -71,6 +110,15 @@ class WebSearchAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         _ = state
         cfg = WebSearchAgentConfig(**resolved_config)
         service = self.services.get("web_search")

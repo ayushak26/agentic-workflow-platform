@@ -68,6 +68,13 @@ class NarrationInput(BaseModel):
 
 
 class Narration(BaseModel):
+    """Pydantic model defining the Narration shape.
+
+    Attributes:
+        headline (str).
+        summary (str).
+        next_step (str).
+    """
     headline: str
     summary: str
     next_step: str = ""
@@ -130,6 +137,14 @@ _SAFE_WORDS = {
 
 
 def _claims(text: str) -> set[str]:
+    """Internal helper for the claims step.
+
+    Args:
+        text (str): The text.
+
+    Returns:
+        set[str]: The result.
+    """
     return {
         token.lower()
         for token in _CLAIM_TOKEN.findall(text or "")

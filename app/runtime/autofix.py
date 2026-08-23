@@ -60,12 +60,28 @@ NOT_AUTOFIXABLE_CODES: frozenset[str] = frozenset({
 
 @dataclass
 class DeterministicFixResult:
+    """Provides the DeterministicFixResult behaviour.
+
+    Attributes:
+        yaml_text (str).
+        changed (bool).
+        fixes_applied (list[str]).
+    """
     yaml_text: str
     changed: bool
     fixes_applied: list[str] = field(default_factory=list)
 
 
 def _get_path(raw: Any, path: str) -> Any:
+    """Return the path.
+
+    Args:
+        raw (Any): Raw value.
+        path (str): Filesystem path.
+
+    Returns:
+        Any: The path.
+    """
     cursor = raw
     for part in path.split("."):
         cursor = cursor[int(part)] if isinstance(cursor, list) else cursor[part]
@@ -73,6 +89,13 @@ def _get_path(raw: Any, path: str) -> Any:
 
 
 def _set_path(raw: Any, path: str, value: Any) -> None:
+    """Set the path.
+
+    Args:
+        raw (Any): Raw value.
+        path (str): Filesystem path.
+        value (Any): Value to process.
+    """
     parts = path.split(".")
     parent = _get_path(raw, ".".join(parts[:-1])) if len(parts) > 1 else raw
     last = parts[-1]
@@ -91,6 +114,14 @@ def _replace_template_reference(
     replaced = False
 
     def repl(match: re.Match[str]) -> str:
+        """Compute the repl.
+
+        Args:
+            match (re.Match[str]): Regex match.
+
+        Returns:
+            str: The result.
+        """
         nonlocal replaced
         parts = match.group(1).split(".")
         prefix_len = 1 if parts and parts[0] in ("outputs", "node_outputs") else 0
@@ -116,6 +147,14 @@ def _replace_template_node_id(
     replaced = False
 
     def repl(match: re.Match[str]) -> str:
+        """Compute the repl.
+
+        Args:
+            match (re.Match[str]): Regex match.
+
+        Returns:
+            str: The result.
+        """
         nonlocal replaced
         parts = match.group(1).split(".")
         prefix_len = 1 if parts and parts[0] in ("outputs", "node_outputs") else 0
@@ -129,6 +168,15 @@ def _replace_template_node_id(
 
 
 def _node_by_id(raw: dict, node_id: str) -> dict | None:
+    """Internal helper for the node by id step.
+
+    Args:
+        raw (dict): Raw value.
+        node_id (str): Workflow node identifier.
+
+    Returns:
+        dict | None: The by id.
+    """
     for node in raw.get("nodes") or []:
         if isinstance(node, dict) and node.get("id") == node_id:
             return node
@@ -136,6 +184,15 @@ def _node_by_id(raw: dict, node_id: str) -> dict | None:
 
 
 def _fix_template_unknown_output_field(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix template unknown output field step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The template unknown output field.
+    """
     if not issue.path or not issue.suggestion:
         return None
     message_match = re.match(
@@ -174,6 +231,15 @@ def _fix_template_unknown_output_field(raw: dict, issue: PreflightIssue) -> str 
 
 
 def _fix_template_unknown_structured_field(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix template unknown structured field step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The template unknown structured field.
+    """
     if not issue.path:
         return None
     message_match = re.match(
@@ -229,6 +295,15 @@ def _fix_template_unknown_structured_field(raw: dict, issue: PreflightIssue) -> 
 
 
 def _fix_template_unknown_node(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix template unknown node step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The template unknown node.
+    """
     if not issue.path or not issue.suggestion:
         return None
     message_match = re.match(r"^Template references unknown node/path '(.+)'\.$", issue.message)
@@ -268,6 +343,14 @@ def _replace_template_named_root_segment(
     replaced = False
 
     def repl(match: re.Match[str]) -> str:
+        """Compute the repl.
+
+        Args:
+            match (re.Match[str]): Regex match.
+
+        Returns:
+            str: The result.
+        """
         nonlocal replaced
         parts = match.group(1).split(".")
         if len(parts) > 1 and parts[0] == root and parts[1] == old_name:
@@ -282,6 +365,17 @@ def _replace_template_named_root_segment(
 def _fix_template_unknown_named_root(
     raw: dict, issue: PreflightIssue, *, root: str, noun: str,
 ) -> str | None:
+    """Internal helper for the fix template unknown named root step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+        root (str): The root.
+        noun (str): The noun.
+
+    Returns:
+        str | None: The template unknown named root.
+    """
     if not issue.path or not issue.suggestion:
         return None
     message_match = re.match(
@@ -309,10 +403,28 @@ def _fix_template_unknown_named_root(
 
 
 def _fix_template_unknown_input(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix template unknown input step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The template unknown input.
+    """
     return _fix_template_unknown_named_root(raw, issue, root="inputs", noun="input")
 
 
 def _fix_template_unknown_variable(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix template unknown variable step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The template unknown variable.
+    """
     return _fix_template_unknown_named_root(raw, issue, root="variables", noun="variable")
 
 
@@ -382,6 +494,15 @@ def _fix_router_duplicate_rule(raw: dict, issue: PreflightIssue) -> str | None:
 
 
 def _fix_unknown_node_type(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix unknown node type step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The unknown node type.
+    """
     if not issue.path or not issue.suggestion:
         return None
     suggestion_match = re.match(r"^Use one of: (.+)\.$", issue.suggestion)
@@ -399,6 +520,15 @@ def _fix_unknown_node_type(raw: dict, issue: PreflightIssue) -> str | None:
 
 
 def _fix_model_not_in_catalog(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix model not in catalog step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The model not in catalog.
+    """
     if not issue.path:
         return None
     try:
@@ -428,6 +558,15 @@ def _fix_model_not_in_catalog(raw: dict, issue: PreflightIssue) -> str | None:
 
 
 def _fix_unknown_node_config_field(raw: dict, issue: PreflightIssue) -> str | None:
+    """Internal helper for the fix unknown node config field step.
+
+    Args:
+        raw (dict): Raw value.
+        issue (PreflightIssue): Preflight issue.
+
+    Returns:
+        str | None: The unknown node config field.
+    """
     if not issue.path:
         return None
     parts = issue.path.split(".")
@@ -525,6 +664,15 @@ _SINGLE_ISSUE_FIXERS: dict[str, Callable[[dict, PreflightIssue], str | None]] = 
 def apply_deterministic_fixes(
     yaml_text: str, report: WorkflowPreflightReport,
 ) -> DeterministicFixResult:
+    """Apply the deterministic fixes.
+
+    Args:
+        yaml_text (str): Workflow YAML text.
+        report (WorkflowPreflightReport): Preflight report.
+
+    Returns:
+        DeterministicFixResult: The deterministic fixes.
+    """
     try:
         raw = yaml.safe_load(yaml_text)
     except yaml.YAMLError:
@@ -624,6 +772,14 @@ def _preserves_identity(original_yaml: str, candidate_yaml: str) -> bool:
 
 
 def format_preflight_feedback(report: WorkflowPreflightReport) -> str:
+    """Format the preflight feedback.
+
+    Args:
+        report (WorkflowPreflightReport): Preflight report.
+
+    Returns:
+        str: The preflight feedback.
+    """
     return "; ".join(
         f"{issue.code} ({issue.node_id or issue.path or 'workflow'}): {issue.message}"
         for issue in report.errors
@@ -632,6 +788,12 @@ def format_preflight_feedback(report: WorkflowPreflightReport) -> str:
 
 @dataclass
 class LlmRepairAttempt:
+    """Provides the LlmRepairAttempt behaviour.
+
+    Attributes:
+        success (bool).
+        detail (str).
+    """
     success: bool
     detail: str
 

@@ -34,14 +34,36 @@ router = APIRouter(prefix="/api/proposals", tags=["proposals"])
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return getattr(user, "session_id", None) or user.username
 
 
 def _services(request: Request) -> dict[str, Any]:
+    """Internal helper for the services step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return getattr(request.app.state, "services", {})
 
 
 def _store(request: Request, *, require_objects: bool = False):
+    """Internal helper for the store step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        require_objects (bool): The require objects (optional, default False).
+    """
     services = _services(request)
     db = services.get("audit_db")
     object_store = services.get("object_store")
@@ -59,6 +81,14 @@ def _store(request: Request, *, require_objects: bool = False):
 
 
 def _graph_from_checkpoint(checkpoint: dict[str, Any]) -> ProposalGraph:
+    """Internal helper for the graph from checkpoint step.
+
+    Args:
+        checkpoint (dict[str, Any]): Checkpoint document.
+
+    Returns:
+        ProposalGraph: The from checkpoint.
+    """
     graph: dict[str, Any] = ProposalGraph().model_dump()
     for node_result in (checkpoint.get("node_results") or {}).values():
         extra_state = node_result.get("extra_state") or {}
@@ -72,6 +102,11 @@ def _graph_from_checkpoint(checkpoint: dict[str, Any]) -> ProposalGraph:
 
 
 class GraphRequest(BaseModel):
+    """Pydantic model defining the GraphRequest shape.
+
+    Attributes:
+        graph (ProposalGraph).
+    """
     graph: ProposalGraph
 
 
@@ -80,6 +115,12 @@ async def coverage(
     body: GraphRequest,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the coverage.
+
+    Args:
+        body (GraphRequest): Request body.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     del user
     return build_call_coverage_matrix(body.graph).model_dump(mode="json")
 
@@ -90,6 +131,13 @@ async def review_run(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the review run.
+
+    Args:
+        run_id (str): Workflow run identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = _services(request)
     db = services.get("audit_db")
     if db is None:
@@ -120,6 +168,15 @@ async def review_run(
 
 
 class SourceVersionRequest(BaseModel):
+    """Pydantic model defining the SourceVersionRequest shape.
+
+    Attributes:
+        content (str).
+        title (str).
+        identifier (str | None).
+        authority (Authority).
+        metadata (dict[str, Any]).
+    """
     content: str
     title: str
     identifier: str | None = None
@@ -135,6 +192,15 @@ async def register_source_version(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Register the source version.
+
+    Args:
+        proposal_id (str): The proposal id.
+        source_id (str): The source id.
+        body (SourceVersionRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     try:
         record = await _store(
             request,
@@ -162,6 +228,14 @@ async def list_source_versions(
     source_id: str | None = None,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """List the source versions.
+
+    Args:
+        proposal_id (str): The proposal id.
+        request (Request): Incoming FastAPI request.
+        source_id (str | None): The source id (optional, default None).
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     versions = await _store(request).list_source_versions(
         session_id=_scope(user),
         proposal_id=proposal_id,
@@ -171,6 +245,13 @@ async def list_source_versions(
 
 
 class VerifyClaimsRequest(BaseModel):
+    """Pydantic model defining the VerifyClaimsRequest shape.
+
+    Attributes:
+        graph (ProposalGraph).
+        model (str).
+        minimum_support_confidence (float).
+    """
     graph: ProposalGraph
     model: str = "claude-sonnet-4-5"
     minimum_support_confidence: float = 0.72
@@ -183,6 +264,14 @@ async def verify_claims(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Verify the claims.
+
+    Args:
+        proposal_id (str): The proposal id.
+        body (VerifyClaimsRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = _services(request)
     store = _store(request, require_objects=True)
     graph = body.graph.model_copy(deep=True)
@@ -236,6 +325,13 @@ async def verify_claims(
 
 
 class ConceptRequest(BaseModel):
+    """Pydantic model defining the ConceptRequest shape.
+
+    Attributes:
+        graph (ProposalGraph).
+        concept_note (str).
+        model (str).
+    """
     graph: ProposalGraph
     concept_note: str = ""
     model: str = "claude-opus-5"
@@ -248,6 +344,14 @@ async def concept_alternatives(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the concept alternatives.
+
+    Args:
+        proposal_id (str): The proposal id.
+        body (ConceptRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = _services(request)
     result = await generate_concept_alternatives(
         services["llm"],
@@ -275,6 +379,13 @@ async def concept_alternatives(
 
 
 class ApprovalRequest(BaseModel):
+    """Pydantic model defining the ApprovalRequest shape.
+
+    Attributes:
+        graph (ProposalGraph).
+        stage (str).
+        selected_concept_id (str | None).
+    """
     graph: ProposalGraph
     stage: str
     selected_concept_id: str | None = None
@@ -287,6 +398,14 @@ async def request_approval(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the request approval.
+
+    Args:
+        proposal_id (str): The proposal id.
+        body (ApprovalRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     try:
         approval = await _store(request).request_approval(
             session_id=_scope(user),
@@ -302,6 +421,12 @@ async def request_approval(
 
 
 class ApprovalDecisionRequest(BaseModel):
+    """Pydantic model defining the ApprovalDecisionRequest shape.
+
+    Attributes:
+        decision (Literal['approved', 'rejected', 'changes_requested']).
+        comment (str | None).
+    """
     decision: Literal["approved", "rejected", "changes_requested"]
     comment: str | None = None
 
@@ -314,6 +439,15 @@ async def decide_approval(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the decide approval.
+
+    Args:
+        proposal_id (str): The proposal id.
+        approval_id (str): The approval id.
+        body (ApprovalDecisionRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     try:
         approval = await _store(request).decide_approval(
             session_id=_scope(user),
@@ -334,6 +468,13 @@ async def list_approvals(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """List the approvals.
+
+    Args:
+        proposal_id (str): The proposal id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     approvals = await _store(request).list_approvals(
         session_id=_scope(user),
         proposal_id=proposal_id,
@@ -342,6 +483,16 @@ async def list_approvals(
 
 
 class HorizonEvaluationRequest(BaseModel):
+    """Pydantic model defining the HorizonEvaluationRequest shape.
+
+    Attributes:
+        graph (ProposalGraph).
+        proposal_text (str).
+        generator_model (str | None).
+        evaluator_models (list[str]).
+        criterion_threshold (float).
+        total_threshold (float).
+    """
     graph: ProposalGraph
     proposal_text: str
     generator_model: str | None = None
@@ -359,6 +510,14 @@ async def horizon_evaluation(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the horizon evaluation.
+
+    Args:
+        proposal_id (str): The proposal id.
+        body (HorizonEvaluationRequest): Request body.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = _services(request)
     try:
         report = await evaluate_horizon_proposal(
@@ -386,6 +545,17 @@ async def horizon_evaluation(
 
 
 class ProposalEvidenceFactoryRequest(BaseModel):
+    """Pydantic model defining the ProposalEvidenceFactoryRequest shape.
+
+    Attributes:
+        graph (ProposalGraph).
+        candidates (list[CandidateSource]).
+        documents (list[FullTextDocument]).
+        search_audit (list[SearchAuditRecord]).
+        rejected_candidates (list[RejectedCandidate]).
+        policy (EvidencePolicy).
+        model (str).
+    """
     graph: ProposalGraph
     candidates: list[CandidateSource]
     documents: list[FullTextDocument]
@@ -447,6 +617,18 @@ async def run_proposal_evidence_factory(
 
 
 class RenderProposalRequest(BaseModel):
+    """Pydantic model defining the RenderProposalRequest shape.
+
+    Attributes:
+        content (str).
+        content_format (Literal['markdown', 'html']).
+        metadata (dict[str, Any]).
+        citation_registry (list[dict[str, Any]]).
+        evidence_qa (dict[str, Any]).
+        evidence_blockers (list[str]).
+        include_toc (bool).
+        include_bibliography (bool).
+    """
     content: str
     content_format: Literal["markdown", "html"] = "markdown"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -461,6 +643,11 @@ class RenderProposalRequest(BaseModel):
 
 
 class RenderDOCXProposalRequest(RenderProposalRequest):
+    """Provides the RenderDOCXProposalRequest behaviour.
+
+    Attributes:
+        max_embedded_image_bytes (int).
+    """
     max_embedded_image_bytes: int = Field(
         default=10_000_000,
         ge=1_000,

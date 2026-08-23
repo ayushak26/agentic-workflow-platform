@@ -22,20 +22,33 @@ log = get_logger(__name__)
 # ============================================================
 
 class PDFExtractInput(BaseModel):
+    """Pydantic model defining the PDFExtractInput shape."""
     pass
 
 
 class PDFExtractConfig(BaseModel):
+    """Pydantic model defining the PDFExtractConfig shape.
+
+    Attributes:
+        minio_key (str).
+    """
     minio_key: str
 
 
 class PDFExtractOutput(BaseModel):
+    """Pydantic model defining the PDFExtractOutput shape.
+
+    Attributes:
+        pages (list[dict[str, Any]]).
+        page_count (int).
+    """
     pages: list[dict[str, Any]]
     page_count: int
 
 
 @NodeRegistry.register
 class PDFTextExtractor(NodeType):
+    """Workflow node type implementing the PDFTextExtractor capability."""
     type_name = "PDFTextExtractor"
     description = "Extract text from a .pdf in object storage."
     input_schema = PDFExtractInput
@@ -44,9 +57,26 @@ class PDFTextExtractor(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         store = self.services["object_store"]
         cfg = PDFExtractConfig(**resolved_config)
         raw = await asyncio.to_thread(store.get_bytes, cfg.minio_key)
@@ -64,10 +94,19 @@ TemplateName = Literal["corporate", "professional", "warm"]
 
 
 class PDFRenderInput(BaseModel):
+    """Pydantic model defining the PDFRenderInput shape."""
     pass
 
 
 class PDFRenderConfig(BaseModel):
+    """Pydantic model defining the PDFRenderConfig shape.
+
+    Attributes:
+        sections (dict[str, str]).
+        template (TemplateName).
+        proposal_title (str).
+        client_name (str).
+    """
     sections: dict[str, str] = Field(
         description="Map of section_name -> section_text. Templated from upstream nodes."
     )
@@ -77,6 +116,13 @@ class PDFRenderConfig(BaseModel):
 
 
 class PDFRenderOutput(BaseModel):
+    """Pydantic model defining the PDFRenderOutput shape.
+
+    Attributes:
+        minio_key (str).
+        byte_size (int).
+        template_used (str).
+    """
     minio_key: str
     byte_size: int
     template_used: str
@@ -84,6 +130,7 @@ class PDFRenderOutput(BaseModel):
 
 @NodeRegistry.register
 class PDFProposalRenderer(NodeType):
+    """Workflow node type implementing the PDFProposalRenderer capability."""
     type_name = "PDFProposalRenderer"
     description = "Render proposal sections to a styled PDF (corporate, professional, warm)."
     input_schema = PDFRenderInput
@@ -92,9 +139,26 @@ class PDFProposalRenderer(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"object_store"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         store = self.services["object_store"]
         cfg = PDFRenderConfig(**resolved_config)
 

@@ -23,6 +23,18 @@ T = TypeVar("T", bound=BaseModel)
 
 @dataclass(frozen=True)
 class LocalModelProfile:
+    """Provides the LocalModelProfile behaviour.
+
+    Attributes:
+        alias (str).
+        provider (str).
+        enabled (bool).
+        base_url (str).
+        api_key (str).
+        served_model (str).
+        reasoning_effort (str).
+        enable_thinking (bool).
+    """
     alias: str
     provider: str
     enabled: bool
@@ -63,6 +75,14 @@ def normalize_openai_base_url(value: str) -> str:
 
 
 def _reasoning_content(message: Any) -> str | None:
+    """Internal helper for the reasoning content step.
+
+    Args:
+        message (Any): Message text.
+
+    Returns:
+        str | None: The content.
+    """
     direct = getattr(message, "reasoning_content", None)
     if isinstance(direct, str):
         return direct
@@ -72,6 +92,14 @@ def _reasoning_content(message: Any) -> str | None:
 
 
 def _usage(response: Any) -> tuple[int, int]:
+    """Internal helper for the usage step.
+
+    Args:
+        response (Any): Outgoing FastAPI response.
+
+    Returns:
+        tuple[int, int]: The result.
+    """
     usage = getattr(response, "usage", None)
     return (
         int(getattr(usage, "prompt_tokens", 0) or 0),
@@ -88,6 +116,12 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         *,
         client: Any | None = None,
     ) -> None:
+        """Initialize the LocalOpenAICompatibleGateway.
+
+        Args:
+            profile (LocalModelProfile): The profile.
+            client (Any | None): Client instance (optional, default None).
+        """
         if not profile.enabled:
             raise ValueError(f"{profile.alias} is disabled")
         if not profile.served_model.strip():
@@ -105,6 +139,11 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         # ``extra_body`` keeps compatibility with OpenAI SDK versions that do
         # not yet type provider-specific fields while still placing them at the
         # top level of the JSON request sent to the endpoint.
+        """Internal helper for the generation options step.
+
+        Returns:
+            dict[str, Any]: The options.
+        """
         extra_body: dict[str, Any] = {
             "reasoning_effort": self.profile.reasoning_effort,
         }
@@ -116,10 +155,20 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         # Moonshot's hosted K3 fixes temperature/top_p/n/penalties and errors
         # if any are sent. Detect by provider prefix so a hypothetical future
         # self-hosted K3 (which DOES accept sampling) is unaffected.
+        """Internal helper for the fixed sampling provider step.
+
+        Returns:
+            bool: The sampling provider.
+        """
         return self.profile.provider.startswith("moonshot")
 
     def _max_tokens_field(self) -> str:
         # Hosted K3 deprecated `max_tokens` in favour of `max_completion_tokens`.
+        """Internal helper for the max tokens field step.
+
+        Returns:
+            str: The tokens field.
+        """
         return (
             "max_completion_tokens"
             if self._fixed_sampling_provider()
@@ -137,6 +186,20 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         reasoning_effort: str | None = None,
         on_token: object | None = None,
     ) -> LLMResponse:
+        """Complete the result.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 1024).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+            on_token (object | None): The on token (optional, default None).
+
+        Returns:
+            LLMResponse: The result.
+        """
         _ = on_token  # accepted for registry-streaming parity; not emitted
         # Reasoning effort for local models is a fixed per-instance profile
         # setting (self._generation_options()), not a per-call override.
@@ -176,6 +239,20 @@ class LocalOpenAICompatibleGateway(LLMGateway):
     ) -> StructuredResult:
         # Reasoning effort for local models is a fixed per-instance profile
         # setting (self._generation_options()), not a per-call override.
+        """Complete the structured.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            response_model (Type[T]): The response model.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+            reasoning_effort (str | None): The reasoning effort (optional, default None).
+
+        Returns:
+            StructuredResult: The structured.
+        """
         _ = reasoning_effort
         schema = response_model.model_json_schema()
         structured_kwargs: dict[str, Any] = {
@@ -224,6 +301,19 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         temperature: float = 0.0,
         max_tokens: int = 4096,
     ) -> LLMToolUseResponse:
+        """Compute the chat with tools.
+
+        Args:
+            model (str): Model name.
+            system (str): The system.
+            messages (list[dict]): The messages.
+            tools (list[dict]): The tools.
+            temperature (float): The temperature (optional, default 0.0).
+            max_tokens (int): The max tokens (optional, default 4096).
+
+        Returns:
+            LLMToolUseResponse: The with tools.
+        """
         openai_messages: list[dict[str, Any]] = _system_messages(system)
         for message in messages:
             role = message["role"]
@@ -313,6 +403,11 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         )
 
     async def probe_details(self) -> dict[str, Any]:
+        """Probe the details.
+
+        Returns:
+            dict[str, Any]: The details.
+        """
         response = await self._client.models.list()
         model_ids = {
             item.id
@@ -332,6 +427,11 @@ class LocalOpenAICompatibleGateway(LLMGateway):
         }
 
     async def probe(self) -> bool:
+        """Probe the result.
+
+        Returns:
+            bool: The result.
+        """
         await self.probe_details()
         return True
 

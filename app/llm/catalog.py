@@ -11,6 +11,18 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ModelDefinition:
+    """Provides the ModelDefinition behaviour.
+
+    Attributes:
+        name (str).
+        display_name (str).
+        provider (str).
+        local (bool).
+        tool_calling (bool).
+        structured_output (bool).
+        reasoning_efforts (tuple[str, ...]).
+        platform_modalities (tuple[str, ...]).
+    """
     name: str
     display_name: str
     provider: str
@@ -28,6 +40,14 @@ class ModelDefinition:
 
     def permits_data_class(self, data_class: str | None) -> bool:
         # No restriction configured -> allow anything (back-compat).
+        """Compute the permits data class.
+
+        Args:
+            data_class (str | None): The data class.
+
+        Returns:
+            bool: The data class.
+        """
         if not self.allowed_data_classes:
             return True
         # A caller that declares no data class cannot be proven safe against a
@@ -37,6 +57,11 @@ class ModelDefinition:
         return data_class in self.allowed_data_classes
 
     def as_dict(self) -> dict[str, Any]:
+        """Compute the as dict.
+
+        Returns:
+            dict[str, Any]: The dict.
+        """
         value = asdict(self)
         value["reasoning_efforts"] = list(self.reasoning_efforts)
         value["platform_modalities"] = list(self.platform_modalities)
@@ -121,6 +146,14 @@ LOCAL_MODEL_NAMES = tuple(item.name for item in MODEL_CATALOG if item.local)
 
 
 def model_definition(model: str) -> ModelDefinition:
+    """Compute the model definition.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        ModelDefinition: The definition.
+    """
     try:
         return MODEL_BY_NAME[model]
     except KeyError as exc:
@@ -128,13 +161,37 @@ def model_definition(model: str) -> ModelDefinition:
 
 
 def provider_for_model(model: str) -> str:
+    """Compute the provider for model.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        str: The for model.
+    """
     return model_definition(model).provider
 
 
 def is_local_model(model: str) -> bool:
+    """Return whether local model.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        bool: True when local model.
+    """
     item = MODEL_BY_NAME.get(model)
     return bool(item and item.local)
 
 
 def local_service_name(model: str) -> str | None:
+    """Compute the local service name.
+
+    Args:
+        model (str): Model name.
+
+    Returns:
+        str | None: The service name.
+    """
     return f"llm:{model}" if is_local_model(model) else None

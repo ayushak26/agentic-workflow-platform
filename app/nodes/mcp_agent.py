@@ -20,6 +20,16 @@ log = get_logger(__name__)
 
 
 class MCPAgentConfig(BaseModel):
+    """Pydantic model defining the MCPAgentConfig shape.
+
+    Attributes:
+        model (str).
+        objective (str).
+        system_prompt (str).
+        max_iterations (int).
+        temperature (float).
+        allowed_tools (list[str] | None).
+    """
     model: str = "claude-sonnet-4-5"
     objective: str                                  # templated user goal
     system_prompt: str = (
@@ -38,10 +48,19 @@ class MCPAgentConfig(BaseModel):
 
 
 class MCPAgentInput(BaseModel):
+    """Pydantic model defining the MCPAgentInput shape."""
     pass
 
 
 class ToolCallRecord(BaseModel):
+    """Pydantic model defining the ToolCallRecord shape.
+
+    Attributes:
+        iteration (int).
+        tool (str).
+        arguments (dict).
+        result_preview (str).
+    """
     iteration: int
     tool: str
     arguments: dict
@@ -49,6 +68,14 @@ class ToolCallRecord(BaseModel):
 
 
 class MCPAgentOutput(BaseModel):
+    """Pydantic model defining the MCPAgentOutput shape.
+
+    Attributes:
+        answer (str).
+        tool_calls (list[ToolCallRecord]).
+        iterations_used (int).
+        completed (bool).
+    """
     answer: str
     tool_calls: list[ToolCallRecord]
     iterations_used: int
@@ -57,6 +84,7 @@ class MCPAgentOutput(BaseModel):
 
 @NodeRegistry.register
 class MCPAgent(NodeType):
+    """Workflow node type implementing the MCPAgent capability."""
     type_name = "MCPAgent"
     description = "LLM-driven agent loop using MCP tools."
     input_schema = MCPAgentInput
@@ -65,9 +93,26 @@ class MCPAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger", "mcp_client"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = MCPAgentConfig(**resolved_config)
         llm = self.services["llm"]
         mcp = self.services["mcp_client"]

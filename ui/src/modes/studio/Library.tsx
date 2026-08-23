@@ -55,7 +55,7 @@ export function Library() {
   useEffect(() => {
     // One-time mount fetch, not a sync-to-external-system loop — same
     // justification as the analogous effects in Builder.tsx/Cockpit.tsx.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     loadWorkflows();
   }, []);
 

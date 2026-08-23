@@ -1,3 +1,4 @@
+"""Proposal workspace graph: domain state and workspace store."""
 from app.runtime.domain_state import DomainStateRegistry
 
 from app.proposal_graph.graph import ProposalGraph, empty_graph, merge_graph

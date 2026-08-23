@@ -59,6 +59,16 @@ from app.proposal_graph.state import (
 
 
 class PairVerdict(BaseModel):
+    """Pydantic model defining the PairVerdict shape.
+
+    Attributes:
+        stance (str).
+        confidence (float).
+        exact_quote (str).
+        reason (str).
+        qualification (str).
+        limitation (str).
+    """
     stance: str
     confidence: float = Field(ge=0.0, le=1.0)
     exact_quote: str = ""
@@ -68,10 +78,23 @@ class PairVerdict(BaseModel):
 
 
 class ProposalEvidenceFactoryInput(BaseModel):
+    """Pydantic model defining the ProposalEvidenceFactoryInput shape."""
     pass
 
 
 class ProposalEvidenceFactoryConfig(BaseModel):
+    """Pydantic model defining the ProposalEvidenceFactoryConfig shape.
+
+    Attributes:
+        candidates (str | list[CandidateSource] | list[str]).
+        documents (str | list[FullTextDocument]).
+        search_audit (str | list[SearchAuditRecord] | list[str]).
+        rejected_candidates (str | list[RejectedCandidate]).
+        policy (EvidencePolicy).
+        model (str).
+        citation_style (str).
+        max_passages_per_document (int).
+    """
     candidates: str | list[CandidateSource] | list[str]
     documents: str | list[FullTextDocument]
     search_audit: str | list[SearchAuditRecord] | list[str] = Field(
@@ -88,33 +111,80 @@ class ProposalEvidenceFactoryConfig(BaseModel):
     @field_validator("candidates", mode="before")
     @classmethod
     def _coerce_candidates(cls, value: Any) -> Any:
+        """Internal helper for the coerce candidates step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The candidates.
+        """
         return coerce_typed_list_field(value, CandidateSource, "candidates")
 
     @field_validator("documents", mode="before")
     @classmethod
     def _coerce_documents(cls, value: Any) -> Any:
+        """Internal helper for the coerce documents step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The documents.
+        """
         return coerce_typed_list_field(value, FullTextDocument, "documents")
 
     @field_validator("search_audit", mode="before")
     @classmethod
     def _coerce_search_audit(cls, value: Any) -> Any:
+        """Internal helper for the coerce search audit step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The search audit.
+        """
         return coerce_typed_list_field(value, SearchAuditRecord, "search_audit")
 
     @field_validator("rejected_candidates", mode="before")
     @classmethod
     def _coerce_rejected_candidates(cls, value: Any) -> Any:
+        """Internal helper for the coerce rejected candidates step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The rejected candidates.
+        """
         return coerce_typed_list_field(
             value, RejectedCandidate, "rejected_candidates"
         )
 
 
 class ProposalEvidenceFactoryOutput(ProposalEvidencePackage):
+    """Provides the ProposalEvidenceFactoryOutput behaviour.
+
+    Attributes:
+        graph_sources_added (int).
+        graph_relations_added (int).
+        report (str).
+    """
     graph_sources_added: int = 0
     graph_relations_added: int = 0
     report: str = ""
 
 
 def _materiality(claim_type: str) -> str:
+    """Internal helper for the materiality step.
+
+    Args:
+        claim_type (str): The claim type.
+
+    Returns:
+        str: The result.
+    """
     if claim_type in {"problem", "state_of_art", "impact", "method"}:
         return "critical"
     if claim_type in {"policy", "market", "regulatory"}:
@@ -123,6 +193,14 @@ def _materiality(claim_type: str) -> str:
 
 
 def _authority(value: str) -> Authority:
+    """Internal helper for the authority step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        Authority: The result.
+    """
     try:
         return Authority(value)
     except ValueError:
@@ -130,6 +208,14 @@ def _authority(value: str) -> Authority:
 
 
 def _strength(score: int) -> str:
+    """Internal helper for the strength step.
+
+    Args:
+        score (int): The score.
+
+    Returns:
+        str: The result.
+    """
     if score >= 85:
         return "strong"
     if score >= 70:
@@ -165,6 +251,18 @@ def _evidence_score(
     # stance and confidence terms below still require a real exact-passage
     # match, and ProposalTruthGraphAgent's drafting_allowed gate keys on
     # accepted claims, evidence approval and blockers — never on this score.
+    """Internal helper for the evidence score step.
+
+    Args:
+        document (FullTextDocument): Document.
+        stance (str): The stance.
+        confidence (float): The confidence.
+        exact_locator (bool): The exact locator.
+        corroborated (bool): The corroborated.
+
+    Returns:
+        int: The score.
+    """
     authority = {
         "official_eu": 20,
         "peer_reviewed": 18,
@@ -233,6 +331,14 @@ def _evidence_score(
 
 
 def _bibtex_key(entry: CitationRegistryEntry) -> str:
+    """Internal helper for the bibtex key step.
+
+    Args:
+        entry (CitationRegistryEntry): Ledger entry.
+
+    Returns:
+        str: The key.
+    """
     first_author = (
         re.sub(r"[^A-Za-z0-9]", "", entry.authors[0].split()[-1])
         if entry.authors
@@ -243,6 +349,7 @@ def _bibtex_key(entry: CitationRegistryEntry) -> str:
 
 @NodeRegistry.register
 class ProposalEvidenceFactoryAgent(NodeType):
+    """Workflow node type implementing the ProposalEvidenceFactoryAgent capability."""
     type_name = "ProposalEvidenceFactoryAgent"
     description = (
         "Verify proposal claims against immutable full-text pages, build an "
@@ -254,6 +361,14 @@ class ProposalEvidenceFactoryAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger", "object_store"}
 
     async def run(
@@ -261,6 +376,15 @@ class ProposalEvidenceFactoryAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ProposalEvidenceFactoryConfig(**resolved_config)
         templated_fields = {
             "candidates": cfg.candidates,
@@ -631,6 +755,20 @@ class ProposalEvidenceFactoryAgent(NodeType):
         model: str,
         passage_limit: int,
     ) -> ClaimEvidenceLink | None:
+        """Verify the document.
+
+        Args:
+            llm (Any): The llm.
+            store (Any): Store instance.
+            claim_text (str): The claim text.
+            document (FullTextDocument): Document.
+            candidate (CandidateSource | None): The candidate.
+            model (str): Model name.
+            passage_limit (int): The passage limit.
+
+        Returns:
+            ClaimEvidenceLink | None: The document.
+        """
         raw = await asyncio.to_thread(
             store.get_bytes,
             document.pages_object_key,
@@ -770,6 +908,15 @@ class ProposalEvidenceFactoryAgent(NodeType):
         document_id: str,
         documents: list[FullTextDocument],
     ) -> FullTextDocument:
+        """Internal helper for the document step.
+
+        Args:
+            document_id (str): The document id.
+            documents (list[FullTextDocument]): The documents.
+
+        Returns:
+            FullTextDocument: The result.
+        """
         for document in documents:
             if document.document_id == document_id:
                 return document
@@ -777,6 +924,14 @@ class ProposalEvidenceFactoryAgent(NodeType):
 
     @staticmethod
     def _source_id_for_document(document: FullTextDocument) -> str:
+        """Internal helper for the source id for document step.
+
+        Args:
+            document (FullTextDocument): Document.
+
+        Returns:
+            str: The id for document.
+        """
         return stable_id(
             "SRC",
             document.identifier
@@ -791,6 +946,16 @@ class ProposalEvidenceFactoryAgent(NodeType):
         *,
         passage: str,
     ) -> EvidenceSource:
+        """Internal helper for the source from document step.
+
+        Args:
+            document (FullTextDocument): Document.
+            candidate (CandidateSource | None): The candidate.
+            passage (str): The passage.
+
+        Returns:
+            EvidenceSource: The from document.
+        """
         return EvidenceSource(
             id=self._source_id_for_document(document),
             citation=document.citation,
@@ -810,6 +975,15 @@ class ProposalEvidenceFactoryAgent(NodeType):
         link: ClaimEvidenceLink,
         document: FullTextDocument,
     ) -> EvidenceRelation:
+        """Internal helper for the relation from link step.
+
+        Args:
+            link (ClaimEvidenceLink): The link.
+            document (FullTextDocument): Document.
+
+        Returns:
+            EvidenceRelation: The from link.
+        """
         stance = (
             EvidenceStance.SUPPORTS
             if link.stance
@@ -848,6 +1022,22 @@ class ProposalEvidenceFactoryAgent(NodeType):
         retraction_ok: bool,
         policy: EvidencePolicy,
     ) -> EvidenceGap:
+        """Internal helper for the gap for claim step.
+
+        Args:
+            claim_id (str): The claim id.
+            final_status (str): The final status.
+            materiality (str): The materiality.
+            independent_count (int): The independent count.
+            required_independent (int): The required independent.
+            contradiction_searched (bool): The contradiction searched.
+            metadata_ok (bool): The metadata ok.
+            retraction_ok (bool): The retraction ok.
+            policy (EvidencePolicy): The policy.
+
+        Returns:
+            EvidenceGap: The for claim.
+        """
         reasons: list[str] = []
         if independent_count < required_independent:
             reasons.append(
@@ -893,6 +1083,16 @@ class ProposalEvidenceFactoryAgent(NodeType):
         candidates: dict[str, CandidateSource],
         claims: list[VerifiedClaim],
     ) -> list[CitationRegistryEntry]:
+        """Internal helper for the citation registry step.
+
+        Args:
+            retained (dict[str, FullTextDocument]): The retained.
+            candidates (dict[str, CandidateSource]): The candidates.
+            claims (list[VerifiedClaim]): The claims.
+
+        Returns:
+            list[CitationRegistryEntry]: The registry.
+        """
         claim_ids_by_source: dict[str, list[str]] = defaultdict(list)
         for claim in claims:
             for source_id in claim.source_ids:
@@ -928,6 +1128,14 @@ class ProposalEvidenceFactoryAgent(NodeType):
 
     @staticmethod
     def _cited_markdown(claims: list[VerifiedClaim]) -> str:
+        """Internal helper for the cited markdown step.
+
+        Args:
+            claims (list[VerifiedClaim]): The claims.
+
+        Returns:
+            str: The markdown.
+        """
         lines: list[str] = []
         for claim in claims:
             if claim.final_status in {
@@ -948,6 +1156,14 @@ class ProposalEvidenceFactoryAgent(NodeType):
 
     @staticmethod
     def _bibtex(entry: CitationRegistryEntry) -> str:
+        """Internal helper for the bibtex step.
+
+        Args:
+            entry (CitationRegistryEntry): Ledger entry.
+
+        Returns:
+            str: The result.
+        """
         fields = {
             "title": entry.title,
             "author": " and ".join(entry.authors),
@@ -967,6 +1183,15 @@ class ProposalEvidenceFactoryAgent(NodeType):
         claims: list[VerifiedClaim],
         links: list[ClaimEvidenceLink],
     ) -> list[dict[str, Any]]:
+        """Internal helper for the quantitative registry step.
+
+        Args:
+            claims (list[VerifiedClaim]): The claims.
+            links (list[ClaimEvidenceLink]): The links.
+
+        Returns:
+            list[dict[str, Any]]: The registry.
+        """
         registry: list[dict[str, Any]] = []
         for claim in claims:
             numbers = re.findall(r"\b\d+(?:\.\d+)?%?\b", claim.atomic_claim)
@@ -1017,6 +1242,20 @@ class ProposalEvidenceFactoryAgent(NodeType):
         rejected: list[RejectedCandidate],
         quantitative_registry: list[dict[str, Any]],
     ) -> tuple[EvidenceQAReport, list[str]]:
+        """Internal helper for the quality report step.
+
+        Args:
+            policy (EvidencePolicy): The policy.
+            verified_claims (list[VerifiedClaim]): The verified claims.
+            citation_registry (list[CitationRegistryEntry]): The citation registry.
+            links (list[ClaimEvidenceLink]): The links.
+            audit (list[SearchAuditRecord]): The audit.
+            rejected (list[RejectedCandidate]): The rejected.
+            quantitative_registry (list[dict[str, Any]]): The quantitative registry.
+
+        Returns:
+            tuple[EvidenceQAReport, list[str]]: The report.
+        """
         critical = [
             item for item in verified_claims if item.materiality == "critical"
         ]

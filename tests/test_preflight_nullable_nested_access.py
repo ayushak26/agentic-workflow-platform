@@ -132,15 +132,31 @@ class TestShippedWorkflows:
                 + "; ".join(i.message for i in report.errors)
             )
 
-    def test_the_known_real_instance_is_surfaced(self):
-        """horizon_partb_evidence.yaml reads {{select_concept.content.text}},
-        which fails whenever the HITL gate resolved no content."""
-        report = preflight_workflow_yaml(
-            Path("workflows/horizon_partb_evidence.yaml").read_text()
-        )
+    def test_the_known_real_instance_is_optional_and_exempt(self):
+        """horizon_partb_evidence.yaml reads {{select_concept.content.text?}}.
+        The gate always populates content from its own editable_content_field,
+        and the `?` marker makes a None resolution defined behaviour (the
+        resolver substitutes None instead of crashing), so the nullable
+        traversal warning is exempt for optional references. The unsafe
+        non-optional variant must still be surfaced."""
+        yaml_text = Path("workflows/horizon_partb_evidence.yaml").read_text()
+        report = preflight_workflow_yaml(yaml_text)
         hits = [
             i for i in report.issues
             if i.code == "TEMPLATE_NULLABLE_NESTED_ACCESS"
         ]
-        assert hits, "expected the select_concept.content.text warning"
-        assert any("select_concept" in i.message for i in hits)
+        assert not hits, "optional references are exempt by design"
+
+        # Drop the `?` and the same reference becomes unsafe again — the
+        # check itself must still catch it.
+        unsafe = yaml_text.replace(
+            "{{select_concept.content.text?}}",
+            "{{select_concept.content.text}}",
+        )
+        assert unsafe != yaml_text
+        unsafe_hits = [
+            i for i in preflight_workflow_yaml(unsafe).issues
+            if i.code == "TEMPLATE_NULLABLE_NESTED_ACCESS"
+        ]
+        assert unsafe_hits, "the non-optional variant must still warn"
+        assert any("select_concept" in i.message for i in unsafe_hits)

@@ -29,15 +29,34 @@ from app.proposal_graph.state import proposal_graph_from_state
 
 
 class _StructuredDatasetPlan(BaseModel):
+    """Pydantic model defining the StructuredDatasetPlan shape.
+
+    Attributes:
+        queries (list[StructuredDatasetQuery]).
+        unresolved_questions (list[str]).
+    """
     queries: list[StructuredDatasetQuery] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
 
 
 class StructuredDatasetRetrieverInput(BaseModel):
+    """Pydantic model defining the StructuredDatasetRetrieverInput shape."""
     pass
 
 
 class StructuredDatasetRetrieverConfig(BaseModel):
+    """Pydantic model defining the StructuredDatasetRetrieverConfig shape.
+
+    Attributes:
+        queries (str | list[StructuredDatasetQuery]).
+        research_briefs (Any).
+        candidate_context (Any).
+        auto_plan_queries (bool).
+        model (str).
+        max_queries (int).
+        max_api_calls (int).
+        max_records (int).
+    """
     queries: str | list[StructuredDatasetQuery] = Field(default_factory=list)
     research_briefs: Any = Field(default_factory=list)
     candidate_context: Any = Field(default_factory=list)
@@ -57,6 +76,14 @@ class StructuredDatasetRetrieverConfig(BaseModel):
     @field_validator("queries", mode="before")
     @classmethod
     def _coerce_queries(cls, value: Any) -> Any:
+        """Internal helper for the coerce queries step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The queries.
+        """
         if isinstance(value, str):
             text = value.strip()
             if "{{" in text and "}}" in text:
@@ -80,6 +107,18 @@ class StructuredDatasetRetrieverConfig(BaseModel):
 
 
 class StructuredDatasetRetrieverOutput(BaseModel):
+    """Pydantic model defining the StructuredDatasetRetrieverOutput shape.
+
+    Attributes:
+        retrieval_contracts (list[StructuredDatasetQuery]).
+        records (list[StructuredDataEvidenceRecord]).
+        quantitative_evidence_registry (list[dict[str, Any]]).
+        audit (list[DatasetRetrievalAudit]).
+        unresolved_questions (list[str]).
+        records_retrieved (int).
+        queries_completed (int).
+        queries_failed (int).
+    """
     retrieval_contracts: list[StructuredDatasetQuery] = Field(
         default_factory=list
     )
@@ -98,6 +137,7 @@ class StructuredDatasetRetrieverOutput(BaseModel):
 
 @NodeRegistry.register
 class StructuredDatasetRetrieverAgent(NodeType):
+    """Workflow node type implementing the StructuredDatasetRetrieverAgent capability."""
     type_name = "StructuredDatasetRetrieverAgent"
     description = (
         "Retrieve bounded Eurostat/official structured data with explicit "
@@ -110,6 +150,14 @@ class StructuredDatasetRetrieverAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         required = {"database_lookup", "object_store"}
         if config.get("auto_plan_queries", False):
             required.update({"llm", "cost_ledger"})
@@ -120,6 +168,15 @@ class StructuredDatasetRetrieverAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = StructuredDatasetRetrieverConfig(**resolved_config)
         if isinstance(cfg.queries, str) or any(
             isinstance(item, str) for item in cfg.queries
@@ -295,6 +352,15 @@ class StructuredDatasetRetrieverAgent(NodeType):
         cfg: StructuredDatasetRetrieverConfig,
         graph: Any,
     ) -> _StructuredDatasetPlan:
+        """Internal helper for the plan queries step.
+
+        Args:
+            cfg (StructuredDatasetRetrieverConfig): The cfg.
+            graph (Any): Compiled LangGraph graph.
+
+        Returns:
+            _StructuredDatasetPlan: The queries.
+        """
         llm = self.services.get("llm")
         if llm is None:
             raise RuntimeError(
@@ -337,6 +403,14 @@ class StructuredDatasetRetrieverAgent(NodeType):
 
 
 def _json_text(value: Any) -> str:
+    """Internal helper for the json text step.
+
+    Args:
+        value (Any): Value to process.
+
+    Returns:
+        str: The text.
+    """
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, default=str)
@@ -345,6 +419,14 @@ def _json_text(value: Any) -> str:
 def _deduplicate_queries(
     queries: list[StructuredDatasetQuery],
 ) -> list[StructuredDatasetQuery]:
+    """Internal helper for the deduplicate queries step.
+
+    Args:
+        queries (list[StructuredDatasetQuery]): The queries.
+
+    Returns:
+        list[StructuredDatasetQuery]: The queries.
+    """
     retained: dict[str, StructuredDatasetQuery] = {}
     for item in queries:
         retained.setdefault(item.query_id, item)
@@ -363,6 +445,22 @@ def _decode_jsonstat(
     limit: int,
     source_version: str,
 ) -> tuple[list[StructuredDataEvidenceRecord], CountReconciliation]:
+    """Decode the jsonstat.
+
+    Args:
+        query (StructuredDatasetQuery): Query filter.
+        payload (dict[str, Any]): Event or audit payload.
+        endpoint (str): The endpoint.
+        parameters (dict[str, Any]): The parameters.
+        accessed_at (str): The accessed at.
+        response_sha256 (str): The response sha256.
+        snapshot_object_key (str): The snapshot object key.
+        limit (int): Maximum number of items to return.
+        source_version (str): The source version.
+
+    Returns:
+        tuple[list[StructuredDataEvidenceRecord], CountReconciliation]: The jsonstat.
+    """
     dimension_ids = payload.get("id") or []
     sizes = payload.get("size") or []
     dimensions = payload.get("dimension") or {}
@@ -458,6 +556,15 @@ def _decode_jsonstat(
 
 
 def _coordinates(flat_index: int, sizes: list[int]) -> list[int]:
+    """Internal helper for the coordinates step.
+
+    Args:
+        flat_index (int): The flat index.
+        sizes (list[int]): The sizes.
+
+    Returns:
+        list[int]: The result.
+    """
     if flat_index < 0 or flat_index >= math.prod(sizes):
         raise ValueError("JSON-stat value index exceeds declared dimensions")
     coordinates: list[int] = []
@@ -469,6 +576,15 @@ def _coordinates(flat_index: int, sizes: list[int]) -> list[int]:
 
 
 def _dimension_code(dimension: dict[str, Any], position: int) -> str:
+    """Internal helper for the dimension code step.
+
+    Args:
+        dimension (dict[str, Any]): The dimension.
+        position (int): The position.
+
+    Returns:
+        str: The code.
+    """
     index = ((dimension.get("category") or {}).get("index") or {})
     if isinstance(index, list):
         if position >= len(index):
@@ -481,6 +597,15 @@ def _dimension_code(dimension: dict[str, Any], position: int) -> str:
 
 
 def _indexed_value(values: Any, index: int) -> Any:
+    """Internal helper for the indexed value step.
+
+    Args:
+        values (Any): The values.
+        index (int): Index.
+
+    Returns:
+        Any: The value.
+    """
     if isinstance(values, list):
         return values[index] if index < len(values) else None
     if isinstance(values, dict):

@@ -61,6 +61,18 @@ class TransformConfig(BaseModel):
     #: two node types converge on one config schema here rather than one
     #: needing to duplicate the other's logic; DataTransformAgent itself stays
     #: registered and untouched for existing workflows.
+    """Pydantic model defining the TransformConfig shape.
+
+    Attributes:
+        mode (Literal['ai', 'deterministic']).
+        model (str).
+        prompt_template (str | None).
+        system_prompt (str | None).
+        output_schema (dict[str, str]).
+        input_fields (list[TransformInputField]).
+        instructions (str).
+        output_fields (list[FieldSpec]).
+    """
     mode: Literal["ai", "deterministic"] = "ai"
     model: str = "claude-sonnet-4-5"
     #: Legacy hand-authored fields (raw prompt text with embedded `{{...}}`
@@ -94,6 +106,11 @@ class TransformConfig(BaseModel):
 
     @model_validator(mode="after")
     def has_a_prompt_source(self) -> "TransformConfig":
+        """Return whether a prompt source.
+
+        Returns:
+            bool: True when a prompt source.
+        """
         if self.mode != "ai":
             return self
         if not self.instructions.strip() and not (self.prompt_template or "").strip():
@@ -105,6 +122,11 @@ class TransformConfig(BaseModel):
 
     @model_validator(mode="after")
     def deterministic_mode_has_operations(self) -> "TransformConfig":
+        """Compute the deterministic mode has operations.
+
+        Returns:
+            'TransformConfig': The mode has operations.
+        """
         if self.mode != "deterministic":
             return self
         if not self.operations:
@@ -150,10 +172,21 @@ def _render_input_value(value: Any) -> str:
 
 
 class TransformInput(BaseModel):
+    """Pydantic model defining the TransformInput shape."""
     pass
 
 
 class TransformOutput(BaseModel):
+    """Pydantic model defining the TransformOutput shape.
+
+    Attributes:
+        raw (str).
+        parsed (dict[str, Any]).
+        status (Literal['ok', 'refused', 'invalid_output', 'provider_error']).
+        error (str | None).
+        data (dict[str, Any]).
+        defaulted (list[str]).
+    """
     raw: str
     parsed: dict[str, Any]
     #: "ok" unless `fail_on_error=False` and structured-output validation
@@ -219,6 +252,15 @@ def _build_response_model(
     name: str,
     schema: dict[str, str],
 ) -> Type[BaseModel]:
+    """Build the response model.
+
+    Args:
+        name (str): Workflow or resource name.
+        schema (dict[str, str]): Schema definition.
+
+    Returns:
+        Type[BaseModel]: The response model.
+    """
     fields: dict[str, Any] = {}
 
     for key, type_str in schema.items():
@@ -233,6 +275,7 @@ def _build_response_model(
 
 @NodeRegistry.register
 class TransformAgent(NodeType):
+    """Workflow node type implementing the TransformAgent capability."""
     type_name = "TransformAgent"
     description = (
         "Pure LLM transform: summarize, classify, rewrite, extract."
@@ -243,6 +286,14 @@ class TransformAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         if config.get("mode") == "deterministic":
             return set()
         return {"llm", "cost_ledger"}
@@ -254,6 +305,14 @@ class TransformAgent(NodeType):
         # mode — mirrors AITaskAgent's `declared = set(AITaskOutput.
         # model_fields)` so a template reference to `{{this_node.status}}`
         # authorises the same way on either node type.
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         declared = set(TransformOutput.model_fields)
         if config.get("mode") == "deterministic":
             targets = {
@@ -281,6 +340,14 @@ class TransformAgent(NodeType):
         # a bare {{this_node.parsed}} reference is then guaranteed to
         # substitute an empty object forever, regardless of what the LLM
         # actually returns.
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if config.get("mode") == "deterministic":
             if not (config.get("operations") or []):
                 return {"data": {}}
@@ -298,6 +365,15 @@ class TransformAgent(NodeType):
         state,
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = TransformConfig(**resolved_config)
         if cfg.mode == "deterministic":
             return self._run_deterministic(cfg, state)
@@ -309,6 +385,15 @@ class TransformAgent(NodeType):
     # -- deterministic path (identical semantics to DataTransformAgent) ----
 
     def _run_deterministic(self, cfg: TransformConfig, state: Any) -> dict[str, Any]:
+        """Run the deterministic.
+
+        Args:
+            cfg (TransformConfig): The cfg.
+            state (Any): Current workflow state.
+
+        Returns:
+            dict[str, Any]: The deterministic.
+        """
         context = dict(state)
         data: dict[str, Any] = {}
         defaulted: list[str] = []
@@ -334,6 +419,15 @@ class TransformAgent(NodeType):
     # -- legacy path (hand-authored prompt_template/system_prompt/output_schema) --
 
     async def _run_legacy(self, cfg: TransformConfig, llm: Any) -> dict[str, Any]:
+        """Run the legacy.
+
+        Args:
+            cfg (TransformConfig): The cfg.
+            llm (Any): The llm.
+
+        Returns:
+            dict[str, Any]: The legacy.
+        """
         system = cfg.system_prompt or ""
 
         if not cfg.output_schema:
@@ -413,6 +507,15 @@ class TransformAgent(NodeType):
     # -- new-style path (Inputs/Instructions/Outputs editor) --------------
 
     async def _run_new_style(self, cfg: TransformConfig, llm: Any) -> dict[str, Any]:
+        """Run the new style.
+
+        Args:
+            cfg (TransformConfig): The cfg.
+            llm (Any): The llm.
+
+        Returns:
+            dict[str, Any]: The new style.
+        """
         system = self._new_style_system_prompt(cfg)
         user = self._new_style_user_prompt(cfg)
 
@@ -445,6 +548,14 @@ class TransformAgent(NodeType):
         )
 
     def _new_style_system_prompt(self, cfg: TransformConfig) -> str:
+        """Internal helper for the new style system prompt step.
+
+        Args:
+            cfg (TransformConfig): The cfg.
+
+        Returns:
+            str: The style system prompt.
+        """
         parts = [
             "You are a precise business-process assistant inside an "
             "automated workflow. Your output is consumed by deterministic "
@@ -468,6 +579,14 @@ class TransformAgent(NodeType):
         return "\n\n".join(part for part in parts if part.strip())
 
     def _new_style_user_prompt(self, cfg: TransformConfig) -> str:
+        """Internal helper for the new style user prompt step.
+
+        Args:
+            cfg (TransformConfig): The cfg.
+
+        Returns:
+            str: The style user prompt.
+        """
         blocks: list[str] = []
         if cfg.input_fields:
             lines = [
@@ -504,6 +623,22 @@ class TransformAgent(NodeType):
         max_retries: int,
         fail_on_error: bool = True,
     ) -> dict[str, Any]:
+        """Complete the structured with retries.
+
+        Args:
+            llm (Any): The llm.
+            model (str): Model name.
+            system (str): The system.
+            user (str): Authenticated current user.
+            response_model (Type[BaseModel]): The response model.
+            temperature (float): The temperature.
+            max_tokens (int): The max tokens.
+            max_retries (int): The max retries.
+            fail_on_error (bool): The fail on error (optional, default True).
+
+        Returns:
+            dict[str, Any]: The structured with retries.
+        """
         prompt = user
         last_error: Exception | None = None
         total_attempts = max_retries + 1

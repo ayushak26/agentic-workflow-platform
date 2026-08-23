@@ -25,6 +25,14 @@ SCHEMA_SQL = Path(__file__).with_name("schema.sql")
 
 
 def _load(path: Path) -> dict[str, list[dict[str, Any]]]:
+    """Load the result.
+
+    Args:
+        path (Path): Filesystem path.
+
+    Returns:
+        dict[str, list[dict[str, Any]]]: The result.
+    """
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -41,6 +49,13 @@ def _dt(value: str | None) -> str | None:
 
 
 def _upsert(conn, table: str, row: dict[str, Any]) -> None:
+    """Upsert the result.
+
+    Args:
+        conn: The conn.
+        table (str): Table name.
+        row (dict[str, Any]): Table row.
+    """
     columns = list(row.keys())
     placeholders = ", ".join(["%s"] * len(columns))
     updates = ", ".join(f"{col} = VALUES({col})" for col in columns if col != columns[0])
@@ -99,6 +114,11 @@ def apply_schema(conn) -> None:
     # comment block glued onto the statement that follows it would otherwise
     # make the whole combined chunk start with "--" and get silently treated
     # as pure comment, dropping the real CREATE TABLE with it.
+    """Apply the schema.
+
+    Args:
+        conn: The conn.
+    """
     lines = (
         line for line in SCHEMA_SQL.read_text(encoding="utf-8").splitlines()
         if not line.strip().startswith("--")
@@ -116,6 +136,14 @@ def apply_schema(conn) -> None:
 
 
 def seed_d365_finance(conn) -> dict[str, int]:
+    """Seed the d365 finance.
+
+    Args:
+        conn: The conn.
+
+    Returns:
+        dict[str, int]: The d365 finance.
+    """
     data = _load(D365F_FIXTURES)
     counts: dict[str, int] = {}
 
@@ -248,6 +276,14 @@ def seed_d365_finance(conn) -> dict[str, int]:
 
 
 def seed_dynamics_crm(conn) -> dict[str, int]:
+    """Seed the dynamics crm.
+
+    Args:
+        conn: The conn.
+
+    Returns:
+        dict[str, int]: The dynamics crm.
+    """
     data = _load(CRM_FIXTURES)
     counts: dict[str, int] = {}
 
@@ -411,6 +447,14 @@ def seed_dynamics_crm(conn) -> dict[str, int]:
 
 
 def seed_all(app_settings=settings) -> dict[str, int]:
+    """Seed the all.
+
+    Args:
+        app_settings: The app settings (optional, default settings).
+
+    Returns:
+        dict[str, int]: The all.
+    """
     conn = connect(app_settings)
     try:
         apply_schema(conn)

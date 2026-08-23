@@ -17,11 +17,31 @@ from app.mcp.business_records.db import execute, execute_write
 
 
 def _collection(rows: list[dict[str, Any]], key: str, limit: int) -> dict[str, Any]:
+    """Internal helper for the collection step.
+
+    Args:
+        rows (list[dict[str, Any]]): Table rows.
+        key (str): Lookup key.
+        limit (int): Maximum number of items to return.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     truncated = len(rows) > limit
     return {key: rows[:limit], "count": min(len(rows), limit), "truncated": truncated}
 
 
 def _limit(arguments: dict[str, Any], default: int, maximum: int) -> int:
+    """Internal helper for the limit step.
+
+    Args:
+        arguments (dict[str, Any]): The arguments.
+        default (int): Default value.
+        maximum (int): The maximum.
+
+    Returns:
+        int: The result.
+    """
     value = arguments.get("limit", default)
     try:
         value = int(value)
@@ -33,6 +53,15 @@ def _limit(arguments: dict[str, Any], default: int, maximum: int) -> int:
 # ------------------------------------------------------------------- READ --
 
 async def customer_search(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Compute the customer search.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The search.
+    """
     name = arguments.get("customer_name")
     limit = _limit(arguments, 5, 25)
     if not name:
@@ -68,6 +97,15 @@ async def customer_search(conn: MySQLConnectionAbstract, arguments: dict[str, An
 
 
 async def order_search(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Compute the order search.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The search.
+    """
     order_number = arguments.get("order_number")
     purchase_order_number = arguments.get("purchase_order_number")
     limit = _limit(arguments, 5, 25)
@@ -115,6 +153,15 @@ async def order_search(conn: MySQLConnectionAbstract, arguments: dict[str, Any])
 
 
 async def inventory_check(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Compute the inventory check.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The check.
+    """
     pump_model = arguments.get("pump_model")
     if not pump_model:
         return {"inventory": [{"pump_model": "", "availability_status": "FEASIBLE", "lead_time_days": None}], "count": 1, "truncated": False}
@@ -136,6 +183,15 @@ async def inventory_check(conn: MySQLConnectionAbstract, arguments: dict[str, An
 
 
 async def product_search(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Compute the product search.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The search.
+    """
     product_name = arguments.get("product_name")
     product_family = arguments.get("product_family")
     limit = _limit(arguments, 10, 25)
@@ -211,6 +267,15 @@ async def query_readonly(conn: MySQLConnectionAbstract, arguments: dict[str, Any
 # ------------------------------------------------------------------ WRITE --
 
 async def create_case(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create the case.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The case.
+    """
     account_id = arguments.get("account_id")
     title = arguments.get("title")
     priority = arguments.get("priority", "normal")
@@ -231,6 +296,15 @@ async def create_case(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) 
 
 
 async def create_opportunity(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create the opportunity.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The opportunity.
+    """
     account_id = arguments.get("account_id")
     name = arguments.get("name")
     estimated_value = arguments.get("estimated_value")
@@ -250,6 +324,15 @@ async def create_opportunity(conn: MySQLConnectionAbstract, arguments: dict[str,
 
 
 async def create_order(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create the order.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The order.
+    """
     account_id = arguments.get("account_id")
     order_number = arguments.get("order_number")
     name = arguments.get("name")
@@ -286,6 +369,15 @@ def _order_view(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def update_order(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Update the order.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The order.
+    """
     order_number = arguments.get("order_number")
     if not order_number:
         return {"order": {}, "updated": False}
@@ -326,6 +418,15 @@ def _case_view(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def update_case(conn: MySQLConnectionAbstract, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Update the case.
+
+    Args:
+        conn (MySQLConnectionAbstract): The conn.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The case.
+    """
     case_number = arguments.get("service_case_number")
     if not case_number:
         return {"case": {}, "updated": False}

@@ -252,6 +252,7 @@ export function BuilderInspector({
               selected ? (
                 <AboutPanel
                   businessLabel={businessLabel}
+                  completedMessage={selected.data.experience?.completed_message ?? ''}
                   downstreamTypes={downstreamTypes}
                   manifest={manifest}
                   nodeId={selected.data.nodeId}
@@ -259,6 +260,15 @@ export function BuilderInspector({
                     ...(selected.data.experience ?? {}),
                     display_name: label || undefined,
                   })}
+                  onCompletedMessageChange={message => onExperienceChange({
+                    ...(selected.data.experience ?? {}),
+                    completed_message: message || undefined,
+                  })}
+                  onRunningMessageChange={message => onExperienceChange({
+                    ...(selected.data.experience ?? {}),
+                    running_message: message || undefined,
+                  })}
+                  runningMessage={selected.data.experience?.running_message ?? ''}
                   upstreamTypes={upstreamTypes}
                 />
               ) : (

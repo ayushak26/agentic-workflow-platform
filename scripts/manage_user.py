@@ -23,6 +23,11 @@ from app.security.users import ensure_user_indexes, upsert_local_user
 
 
 def parser() -> argparse.ArgumentParser:
+    """Compute the parser.
+
+    Returns:
+        argparse.ArgumentParser: The result.
+    """
     command = argparse.ArgumentParser(description="Manage Eurskem local users")
     sub = command.add_subparsers(dest="command", required=True)
     upsert = sub.add_parser("upsert", help="Create or rotate a user")
@@ -37,6 +42,11 @@ def parser() -> argparse.ArgumentParser:
 
 
 async def run(args: argparse.Namespace) -> None:
+    """Run the result.
+
+    Args:
+        args (argparse.Namespace): Positional arguments.
+    """
     if args.password_stdin:
         password = sys.stdin.read().rstrip("\r\n")
     else:
@@ -61,6 +71,7 @@ async def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Compute the main."""
     asyncio.run(run(parser().parse_args()))
 
 

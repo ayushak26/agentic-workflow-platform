@@ -44,6 +44,12 @@ _DEFAULT_SOURCES = [
 
 
 class ClaimSearchPlan(BaseModel):
+    """Pydantic model defining the ClaimSearchPlan shape.
+
+    Attributes:
+        discovery_queries (list[str]).
+        contradiction_queries (list[str]).
+    """
     discovery_queries: list[str] = Field(default_factory=list, max_length=4)
     contradiction_queries: list[str] = Field(default_factory=list, max_length=2)
 
@@ -67,10 +73,23 @@ def _sanitize_query(text: str) -> str:
 
 
 class ScholarlyCandidateDiscoveryInput(BaseModel):
+    """Pydantic model defining the ScholarlyCandidateDiscoveryInput shape."""
     pass
 
 
 class ScholarlyCandidateDiscoveryConfig(BaseModel):
+    """Pydantic model defining the ScholarlyCandidateDiscoveryConfig shape.
+
+    Attributes:
+        mcp_server (str).
+        tool (str).
+        sources (list[str]).
+        max_results_per_source (int).
+        max_candidates_per_claim (int).
+        max_claims (int).
+        claim_types (list[str]).
+        require_contradiction_search (bool).
+    """
     mcp_server: str = "paper-search-mcp"
     tool: str = "search_papers"
     sources: list[str] = Field(default_factory=lambda: list(_DEFAULT_SOURCES))
@@ -112,6 +131,18 @@ class ScholarlyCandidateDiscoveryConfig(BaseModel):
 
 
 class ScholarlyCandidateDiscoveryOutput(BaseModel):
+    """Pydantic model defining the ScholarlyCandidateDiscoveryOutput shape.
+
+    Attributes:
+        candidates_found (int).
+        claims_searched (int).
+        candidates (list[CandidateSource]).
+        search_audit (list[SearchAuditRecord]).
+        report (str).
+        timed_out (bool).
+        sources_added (int).
+        claims_linked (int).
+    """
     candidates_found: int = 0
     claims_searched: int = 0
     candidates: list[CandidateSource] = Field(default_factory=list)
@@ -128,12 +159,21 @@ class ScholarlyCandidateDiscoveryOutput(BaseModel):
 
 
 class _ScholarlyCandidateDiscovery(NodeType):
+    """Workflow node type implementing the ScholarlyCandidateDiscovery capability."""
     input_schema = ScholarlyCandidateDiscoveryInput
     config_schema = ScholarlyCandidateDiscoveryConfig
     output_schema = ScholarlyCandidateDiscoveryOutput
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"llm", "cost_ledger", "mcp_client"}
 
     async def run(
@@ -141,6 +181,15 @@ class _ScholarlyCandidateDiscovery(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ScholarlyCandidateDiscoveryConfig(**resolved_config)
         graph = proposal_graph_from_state(state)
         llm = self.services.get("llm")
@@ -361,6 +410,17 @@ class _ScholarlyCandidateDiscovery(NodeType):
         *,
         skill_guidance: str = "",
     ) -> ClaimSearchPlan:
+        """Search the plan.
+
+        Args:
+            llm (Any): The llm.
+            claim (Claim): The claim.
+            model (str | None): Model name.
+            skill_guidance (str): The skill guidance (optional, default '').
+
+        Returns:
+            ClaimSearchPlan: The plan.
+        """
         try:
             result = await llm.complete_structured(
                 model=model,
@@ -434,6 +494,7 @@ class _ScholarlyCandidateDiscovery(NodeType):
 
 @NodeRegistry.register
 class ScholarlyCandidateDiscoveryAgent(_ScholarlyCandidateDiscovery):
+    """Provides the ScholarlyCandidateDiscoveryAgent behaviour."""
     type_name = "ScholarlyCandidateDiscoveryAgent"
     description = (
         "Find scholarly candidate records with multi-query and contradiction "

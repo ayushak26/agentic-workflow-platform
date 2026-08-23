@@ -51,6 +51,13 @@ class OAuthExchangeError(RuntimeError):
 
 @dataclass
 class TokenSet:
+    """Provides the TokenSet behaviour.
+
+    Attributes:
+        access_token (str).
+        refresh_token (str | None).
+        expires_in_seconds (int).
+    """
     access_token: str
     refresh_token: str | None
     expires_in_seconds: int
@@ -58,6 +65,11 @@ class TokenSet:
 
 @dataclass
 class Profile:
+    """Provides the Profile behaviour.
+
+    Attributes:
+        address (str).
+    """
     address: str
 
 
@@ -66,6 +78,14 @@ def _redirect_uri(provider: Provider) -> str:
     # mounted at (same /api/builder prefix as the rest of the Builder API) —
     # this is also the URI registered with the Azure AD app / Google Cloud
     # OAuth client, so changing one without the other breaks the flow.
+    """Internal helper for the redirect uri step.
+
+    Args:
+        provider (Provider): Provider name.
+
+    Returns:
+        str: The uri.
+    """
     return f"{settings.oauth_redirect_base_url.rstrip('/')}/api/builder/email/oauth/callback/{provider}"
 
 
@@ -78,6 +98,16 @@ def generate_pkce_pair() -> tuple[str, str]:
 
 
 def authorize_url(provider: Provider, *, state: str, code_challenge: str | None = None) -> str:
+    """Authorize the url.
+
+    Args:
+        provider (Provider): Provider name.
+        state (str): Current workflow state.
+        code_challenge (str | None): The code challenge (optional, default None).
+
+    Returns:
+        str: The url.
+    """
     if provider == "microsoft":
         if not settings.microsoft_oauth_client_id:
             raise OAuthConfigurationError(
@@ -123,6 +153,17 @@ async def exchange_code(
     code_verifier: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> TokenSet:
+    """Compute the exchange code.
+
+    Args:
+        provider (Provider): Provider name.
+        code (str): The code.
+        code_verifier (str | None): The code verifier (optional, default None).
+        client (httpx.AsyncClient | None): Client instance (optional, default None).
+
+    Returns:
+        TokenSet: The code.
+    """
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=_TIMEOUT)
     try:
@@ -162,6 +203,16 @@ async def refresh_access_token(
     refresh_token: str,
     client: httpx.AsyncClient | None = None,
 ) -> TokenSet:
+    """Refresh the access token.
+
+    Args:
+        provider (Provider): Provider name.
+        refresh_token (str): The refresh token.
+        client (httpx.AsyncClient | None): Client instance (optional, default None).
+
+    Returns:
+        TokenSet: The access token.
+    """
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=_TIMEOUT)
     try:
@@ -199,6 +250,15 @@ async def refresh_access_token(
 
 
 def _parse_token_response(provider: Provider, response: httpx.Response) -> TokenSet:
+    """Parse the token response.
+
+    Args:
+        provider (Provider): Provider name.
+        response (httpx.Response): Outgoing FastAPI response.
+
+    Returns:
+        TokenSet: The token response.
+    """
     if response.status_code >= 400:
         raise OAuthExchangeError(
             f"{provider} token endpoint returned {response.status_code}: "
@@ -221,6 +281,16 @@ async def fetch_profile(
     access_token: str,
     client: httpx.AsyncClient | None = None,
 ) -> Profile:
+    """Fetch the profile.
+
+    Args:
+        provider (Provider): Provider name.
+        access_token (str): The access token.
+        client (httpx.AsyncClient | None): Client instance (optional, default None).
+
+    Returns:
+        Profile: The profile.
+    """
     owns_client = client is None
     client = client or httpx.AsyncClient(timeout=_TIMEOUT)
     headers = {"Authorization": f"Bearer {access_token}"}

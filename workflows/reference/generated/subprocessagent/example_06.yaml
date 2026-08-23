@@ -1,0 +1,354 @@
+name: Reference SubprocessAgent 06
+description: 'Child workflow of Workflow 01 (Intelligent Customer Inquiry Resolution).
+  Creates one CRM case per department the inquiry actually touches — using Multi-Route,
+  since more than one department can apply to the same inquiry — and, independently
+  and unconditionally, drafts and sends the customer acknowledgment. The department
+  cases and the acknowledgment never reconverge on a shared node: each department
+  branch ends on its own case record, and the acknowledgment ends on its own send.
+  Consolidation happens at the business-record level (all cases reference the same
+  resolved account), not by making the workflow graph wait for every branch that might
+  not have run — see this repo''s note on why Multi-Route branches must never share
+  a downstream Join.'
+version: '1.0'
+use_case: shared_subprocess
+library:
+  title: W01 Subprocess — Route To Departments And Notify
+  summary: Create one case per department an inquiry touches, and notify the customer,
+    independently.
+  purpose:
+  - Demonstrate Multi-Route creating real, separate business records per department
+  - Keep the customer notification on its own unconditional path, not gated behind
+    department routing succeeding
+  suitable_for:
+  - Called from Workflow 01 after identity resolution and business rules have decided
+    which departments apply
+  not_suitable_for:
+  - Direct end-user invocation — this has no Start node, it's a subprocess
+  outputs:
+  - Nothing consolidated — each department branch and the notification branch each
+    produce their own independent result
+  input_types:
+  - Department flags, the resolved company name, and case content
+  human_reviews:
+    count: 1
+    labels:
+    - Response Review (via SP05)
+  visibility_status: draft
+inputs:
+  needs_sales:
+    type: json
+    required: false
+  needs_service:
+    type: json
+    required: false
+  needs_engineering:
+    type: json
+    required: false
+  needs_supply_chain:
+    type: json
+    required: false
+  company_name:
+    type: text
+    required: true
+    description: The resolved company name to create CRM cases against.
+  issue:
+    type: text
+    required: false
+  requested_action:
+    type: text
+    required: false
+  urgency:
+    type: text
+    required: false
+    description: low, normal, or high — mapped directly to case priority.
+  case_summary:
+    type: text
+    required: true
+    description: A human-readable summary of the case, for the customer acknowledgment.
+  customer_email:
+    type: text
+    required: false
+    description: The customer's email address, if one is known — not every caller
+      can supply one.
+entry: find_crm_account
+exit:
+- end_sales
+- end_service
+- end_engineering
+- end_supply_chain
+- end_general
+- end_sent_direct
+nodes:
+- id: find_crm_account
+  type: MCPToolAgent
+  config:
+    server_id: dynamics365
+    tool: find_account
+    fail_on_error: false
+    arguments:
+      company_name: '{{inputs.company_name}}'
+  experience:
+    display_name: Look Up CRM Account
+    purpose: Resolve the CRM account id every department case will be filed against.
+    contribution: Cases are filed against a real, confirmed account, never a guessed
+      name.
+    expected_output: The matching CRM account, if one exists.
+    failure_message: The CRM account could not be looked up.
+- id: department_router
+  type: RouterAgent
+  config:
+    mode: conditions
+    selection: multi
+    cases:
+    - route: SALES
+      description: A commercial request — quoting, new equipment.
+      when:
+        operator: and
+        conditions:
+        - field: inputs.needs_sales
+          operator: is_true
+    - route: SERVICE
+      description: An equipment problem needing service attention.
+      when:
+        operator: and
+        conditions:
+        - field: inputs.needs_service
+          operator: is_true
+    - route: ENGINEERING
+      description: A technical/engineering question.
+      when:
+        operator: and
+        conditions:
+        - field: inputs.needs_engineering
+          operator: is_true
+    - route: SUPPLY_CHAIN
+      description: A delivery or order-execution question.
+      when:
+        operator: and
+        conditions:
+        - field: inputs.needs_supply_chain
+          operator: is_true
+    fallback: GENERAL
+  experience:
+    display_name: Route To Departments
+    purpose: Decide which department(s) need their own case for this inquiry.
+    contribution: More than one department can be selected — each gets its own real
+      case.
+    expected_output: One or more department routes, or GENERAL if none matched.
+    failure_message: The inquiry could not be routed to a department.
+- id: create_case_sales
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_case
+    fail_on_error: false
+    allow_unattended_write: true
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      title: 'Sales: {{inputs.requested_action}}'
+      priority: '{{inputs.urgency}}'
+  experience:
+    display_name: Create Sales Case
+    purpose: File a real case for Sales to act on.
+    contribution: Sales receives a structured case instead of a forwarded message.
+    expected_output: A created case record.
+    failure_message: The Sales case could not be created.
+- id: end_sales
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: department
+      value_from: SALES
+    - key: case
+      value_from: '{{outputs.create_case_sales.data.case?}}'
+  experience:
+    display_name: Sales Case Result
+    purpose: Return the created Sales case to the caller.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created case record.
+    failure_message: The result could not be produced.
+- id: create_case_service
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_case
+    fail_on_error: false
+    allow_unattended_write: true
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      title: 'Service: {{inputs.issue}}'
+      priority: '{{inputs.urgency}}'
+  experience:
+    display_name: Create Service Case
+    purpose: File a real case for Service to act on.
+    contribution: Service receives a structured case instead of a forwarded message.
+    expected_output: A created case record.
+    failure_message: The Service case could not be created.
+- id: end_service
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: department
+      value_from: SERVICE
+    - key: case
+      value_from: '{{outputs.create_case_service.data.case?}}'
+  experience:
+    display_name: Service Case Result
+    purpose: Return the created Service case to the caller.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created case record.
+    failure_message: The result could not be produced.
+- id: create_case_engineering
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_case
+    fail_on_error: false
+    allow_unattended_write: true
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      title: 'Engineering: {{inputs.issue}}'
+      priority: '{{inputs.urgency}}'
+  experience:
+    display_name: Create Engineering Case
+    purpose: File a real case for Engineering to act on.
+    contribution: Engineering receives a structured case instead of a forwarded message.
+    expected_output: A created case record.
+    failure_message: The Engineering case could not be created.
+- id: end_engineering
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: department
+      value_from: ENGINEERING
+    - key: case
+      value_from: '{{outputs.create_case_engineering.data.case?}}'
+  experience:
+    display_name: Engineering Case Result
+    purpose: Return the created Engineering case to the caller.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created case record.
+    failure_message: The result could not be produced.
+- id: create_case_supply_chain
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_case
+    fail_on_error: false
+    allow_unattended_write: true
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      title: 'Supply Chain: {{inputs.requested_action}}'
+      priority: '{{inputs.urgency}}'
+  experience:
+    display_name: Create Supply Chain Case
+    purpose: File a real case for Supply Chain to act on.
+    contribution: Supply Chain receives a structured case instead of a forwarded message.
+    expected_output: A created case record.
+    failure_message: The Supply Chain case could not be created.
+- id: end_supply_chain
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: department
+      value_from: SUPPLY_CHAIN
+    - key: case
+      value_from: '{{outputs.create_case_supply_chain.data.case?}}'
+  experience:
+    display_name: Supply Chain Case Result
+    purpose: Return the created Supply Chain case to the caller.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created case record.
+    failure_message: The result could not be produced.
+- id: create_case_general
+  type: MCPToolAgent
+  config:
+    server_id: business_records
+    tool: create_case
+    fail_on_error: false
+    allow_unattended_write: true
+    arguments:
+      account_id: '{{outputs.find_crm_account.first.account_id?}}'
+      title: 'General enquiry: {{inputs.issue}}'
+      priority: '{{inputs.urgency}}'
+  experience:
+    display_name: Create General Case
+    purpose: File a case when no specific department rule matched.
+    contribution: Nothing is lost when the rules genuinely don't recognize a case
+      shape.
+    expected_output: A created case record.
+    failure_message: The case could not be created.
+- id: end_general
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: department
+      value_from: GENERAL
+    - key: case
+      value_from: '{{outputs.create_case_general.data.case?}}'
+  experience:
+    display_name: General Case Result
+    purpose: Return the created general case to the caller.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The created case record.
+    failure_message: The result could not be produced.
+- id: prepare_response
+  type: SubprocessAgent
+  config:
+    workflow: sp05_response_preparation
+    inputs:
+      case_context: '{{inputs.case_summary}}'
+      customer_email: '{{inputs.customer_email}}'
+      skip_review: false
+    result_from: workflow_output
+  experience:
+    display_name: Prepare Customer Acknowledgment
+    purpose: Draft and send an acknowledgment, independently of how many departments
+      were involved.
+    contribution: The customer hears back even while department cases are still being
+      worked.
+    expected_output: A sent (or drafted, pending review) acknowledgment.
+    failure_message: The acknowledgment could not be prepared.
+- id: end_sent_direct
+  type: EndAgent
+  config:
+    mode: workflow_result
+    outputs:
+    - key: notification
+      value_from: '{{outputs.prepare_response.result}}'
+  experience:
+    display_name: Notification Result
+    purpose: Return the acknowledgment outcome to the caller.
+    contribution: A clean, typed result — never the whole accumulated state.
+    expected_output: The acknowledgment's outcome.
+    failure_message: The result could not be produced.
+edges:
+- from: find_crm_account
+  to:
+  - department_router
+  - prepare_response
+- from: department_router
+  condition: route
+  branches:
+    SALES: create_case_sales
+    SERVICE: create_case_service
+    ENGINEERING: create_case_engineering
+    SUPPLY_CHAIN: create_case_supply_chain
+    GENERAL: create_case_general
+- from: create_case_sales
+  to: end_sales
+- from: create_case_service
+  to: end_service
+- from: create_case_engineering
+  to: end_engineering
+- from: create_case_supply_chain
+  to: end_supply_chain
+- from: create_case_general
+  to: end_general
+- from: prepare_response
+  to: end_sent_direct

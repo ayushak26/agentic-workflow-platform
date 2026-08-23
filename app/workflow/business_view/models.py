@@ -381,6 +381,18 @@ class BusinessTimelineEntry(BaseModel):
 
 
 class BusinessWorkItem(BaseModel):
+    """Pydantic model defining the BusinessWorkItem shape.
+
+    Attributes:
+        id (str).
+        title (str).
+        type (str).
+        reference (str).
+        started_at (str | None).
+        updated_at (str | None).
+        assigned_to (str | None).
+        customer (str | None).
+    """
     id: str
     title: str
     type: str
@@ -403,6 +415,12 @@ class BusinessRequiredUserAction(BaseModel):
 
 
 class BusinessProcess(BaseModel):
+    """Pydantic model defining the BusinessProcess shape.
+
+    Attributes:
+        name (str).
+        goal (str).
+    """
     name: str
     goal: str
 

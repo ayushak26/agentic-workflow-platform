@@ -31,6 +31,12 @@ from app.nodes.registry import NodeRegistry
 
 
 class EndOutputField(BaseModel):
+    """Pydantic model defining the EndOutputField shape.
+
+    Attributes:
+        key (str).
+        value_from (Any).
+    """
     key: str
     # A "{{...}}" reference (or literal), resolved before run() sees it. Typed
     # Any, not str — whole-value template resolution preserves the referenced
@@ -40,6 +46,18 @@ class EndOutputField(BaseModel):
 
 
 class EndConfig(BaseModel):
+    """Pydantic model defining the EndConfig shape.
+
+    Attributes:
+        mode (str).
+        outputs (list[EndOutputField]).
+        title (str).
+        message (str).
+        chat_message (str).
+        outcome (str).
+        route_to (str | None).
+        route_to_label (str | None).
+    """
     mode: str = "workflow_result"  # "workflow_result" | "chat_response" | "custom_response"
 
     # workflow_result mode
@@ -62,19 +80,40 @@ class EndConfig(BaseModel):
 
 
 class EndInput(BaseModel):
+    """Pydantic model defining the EndInput shape."""
     pass
 
 
 class EndOutput(BaseModel):
+    """Pydantic model defining the EndOutput shape.
+
+    Attributes:
+        result (dict[str, Any]).
+    """
     result: dict[str, Any] = Field(default_factory=dict)
 
 
 def _humanize(value: str) -> str:
+    """Internal helper for the humanize step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        str: The result.
+    """
     return value.replace("_", " ").replace("-", " ").strip().title()
 
 
 @NodeRegistry.register
 class EndAgent(NodeType):
+    """Workflow node type implementing the EndAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "EndAgent"
     description = "What the workflow returns or shows when it finishes."
     input_schema = EndInput
@@ -114,10 +153,26 @@ class EndAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return set()
 
     @classmethod
     def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         declared = {"result"}
         try:
             cfg = EndConfig(**config)
@@ -138,6 +193,15 @@ class EndAgent(NodeType):
         return declared
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = EndConfig(**resolved_config)
 
         if cfg.mode == "workflow_result":

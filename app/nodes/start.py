@@ -52,10 +52,27 @@ class StartFileField(BaseModel):
     source: str | None = None
 
     def resolved_source(self) -> str:
+        """Compute the resolved source.
+
+        Returns:
+            str: The source.
+        """
         return self.source or f"inputs.{self.name}"
 
 
 class StartConfig(BaseModel):
+    """Pydantic model defining the StartConfig shape.
+
+    Attributes:
+        mode (str).
+        title (str).
+        description (str).
+        fields (list[InputFieldBinding]).
+        file_fields (list[StartFileField]).
+        sample (dict[str, Any]).
+        chatbot_name (str).
+        welcome_message (str).
+    """
     mode: str = "input_form"  # "input_form" | "chatbot"
 
     # input_form mode
@@ -74,11 +91,20 @@ class StartConfig(BaseModel):
 
 
 class StartInput(BaseModel):
+    """Pydantic model defining the StartInput shape."""
     pass
 
 
 class StartOutput(BaseModel):
     # input_form mode
+    """Pydantic model defining the StartOutput shape.
+
+    Attributes:
+        data (dict[str, Any]).
+        message (str | None).
+        attachments (list[dict[str, Any]]).
+        missing (list[str]).
+    """
     data: dict[str, Any] = Field(default_factory=dict)
     # chatbot mode
     message: str | None = None
@@ -89,6 +115,13 @@ class StartOutput(BaseModel):
 
 @NodeRegistry.register
 class StartAgent(NodeType):
+    """Workflow node type implementing the StartAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "StartAgent"
     description = (
         "How this workflow begins: a business-friendly input form, or a "
@@ -125,10 +158,26 @@ class StartAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return set()
 
     @classmethod
     def preflight_output_fields(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the preflight output fields.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The output fields.
+        """
         declared = set(StartOutput.model_fields)
         if config.get("mode") == "chatbot":
             return declared
@@ -146,6 +195,14 @@ class StartAgent(NodeType):
 
     @classmethod
     def preflight_static_output_values(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if config.get("mode") == "chatbot":
             return {}
         if not (config.get("fields") or []) and not (config.get("file_fields") or []):
@@ -153,6 +210,15 @@ class StartAgent(NodeType):
         return {}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = StartConfig(**resolved_config)
 
         if cfg.mode == "chatbot":
@@ -196,6 +262,14 @@ class StartAgent(NodeType):
 
 
 def _as_field_specs(fields: list[InputFieldBinding]) -> list[FieldSpec]:
+    """Internal helper for the as field specs step.
+
+    Args:
+        fields (list[InputFieldBinding]): Field names.
+
+    Returns:
+        list[FieldSpec]: The field specs.
+    """
     return [
         FieldSpec.model_validate({
             **field.model_dump(exclude=FORM_ONLY_ATTRS),

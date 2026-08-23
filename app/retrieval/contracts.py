@@ -14,6 +14,7 @@ from app.retrieval.models import RetrievalFilters, RetrievedChunk
 
 
 class RetrievalStrategy(Protocol):
+    """Provides the RetrievalStrategy behaviour."""
     async def __call__(
         self,
         *,
@@ -27,18 +28,21 @@ class RetrievalStrategy(Protocol):
 
 
 class FusionStrategy(Protocol):
+    """Provides the FusionStrategy behaviour."""
     def __call__(
         self, result_sets: list[list[RetrievedChunk]], *, limit: int
     ) -> list[RetrievedChunk]: ...
 
 
 class Reranker(Protocol):
+    """Provides the Reranker behaviour."""
     async def __call__(
         self, *, query: str, candidates: list[RetrievedChunk], top_n: int, llm: Any, model: str
     ) -> tuple[list[RetrievedChunk], float]: ...
 
 
 class ContextExpander(Protocol):
+    """Provides the ContextExpander behaviour."""
     async def __call__(
         self,
         chunks: list[RetrievedChunk],

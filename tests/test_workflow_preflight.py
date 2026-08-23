@@ -625,6 +625,45 @@ def test_every_shipped_workflow_passes_structural_preflight():
     assert failures == []
 
 
+@pytest.mark.asyncio
+async def test_explicit_direct_run_skips_preflight_but_keeps_runtime_boundaries(monkeypatch):
+    """Cockpit Run bypasses only preflight, not parsing/input/persistence/launch."""
+
+    async def forbidden_preflight(*_args, **_kwargs):
+        raise AssertionError("direct run must not invoke preflight")
+
+    records: list[str] = []
+
+    async def record_run(_db, *, run_id, **_kwargs):
+        records.append(run_id)
+
+    class RunManager:
+        def launch(self, coro, *, run_id, **_kwargs):
+            records.append(f"launched:{run_id}")
+            coro.close()
+
+    monkeypatch.setattr("app.api.workflows.preflight_workflow_for_run", forbidden_preflight)
+    monkeypatch.setattr("app.api.workflows.start_new_run_record", record_run)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services={
+        "audit_db": object(),
+        "background_run_manager": RunManager(),
+    })))
+    user = CurrentUser(username="user@example.com", role=Role.CONSULTANT, session_id=None)
+
+    response = await run(
+        RunRequest(
+            workflow_yaml=VALID,
+            inputs={"message": "world"},
+            skip_preflight=True,
+        ),
+        request,
+        user,
+    )
+
+    assert response["status"] == "running"
+    assert records == [response["run_id"], f"launched:{response['run_id']}"]
+
+
 GUIDED_COMPLETE = """
 name: Guided Preflight Test
 nodes:

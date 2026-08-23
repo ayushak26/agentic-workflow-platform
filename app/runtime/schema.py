@@ -1,3 +1,9 @@
+"""Schema module.
+
+Part of the workflow runtime: schema, loader, compiler, preflight, executor, hitl, and events.
+
+Public symbols: WorkflowFileRef, WorkflowInputSpec, ModelRoutingPolicy, GuidedStageSpec, WorkflowExperienceSpec, NodeExperienceSpec, ... (16 symbols total).
+"""
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -46,6 +52,16 @@ class WorkflowFileRef(BaseModel):
 
 
 class WorkflowInputSpec(BaseModel):
+    """Pydantic model defining the WorkflowInputSpec shape.
+
+    Attributes:
+        type (Literal['file', 'text', 'json']).
+        description (str | None).
+        required (bool).
+        multiple (bool).
+        accept (list[str]).
+        max_files (int | None).
+    """
     type: Literal["file", "text", "json"]
     description: str | None = None
     required: bool = False
@@ -57,6 +73,11 @@ class WorkflowInputSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_file_options(self) -> "WorkflowInputSpec":
+        """Validate the file options.
+
+        Returns:
+            'WorkflowInputSpec': The file options.
+        """
         if self.type != "file":
             return self
         if not self.accept:
@@ -68,6 +89,14 @@ class WorkflowInputSpec(BaseModel):
         return self
 
     def effective_max_files(self, platform_limit: int) -> int:
+        """Compute the effective max files.
+
+        Args:
+            platform_limit (int): The platform limit.
+
+        Returns:
+            int: The max files.
+        """
         if not self.multiple:
             return 1
         return min(self.max_files or platform_limit, platform_limit)
@@ -150,6 +179,12 @@ class NodeExperienceSpec(BaseModel):
 
 
 class LibraryDurationRange(BaseModel):
+    """Pydantic model defining the LibraryDurationRange shape.
+
+    Attributes:
+        minimum_minutes (int | None).
+        maximum_minutes (int | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     minimum_minutes: int | None = Field(default=None, ge=0)
@@ -157,6 +192,12 @@ class LibraryDurationRange(BaseModel):
 
 
 class LibraryHumanReviews(BaseModel):
+    """Pydantic model defining the LibraryHumanReviews shape.
+
+    Attributes:
+        count (int).
+        labels (list[str]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     count: int = Field(default=0, ge=0)
@@ -164,6 +205,12 @@ class LibraryHumanReviews(BaseModel):
 
 
 class LibraryEvidencePolicy(BaseModel):
+    """Pydantic model defining the LibraryEvidencePolicy shape.
+
+    Attributes:
+        drafting_requires_verified_evidence (bool | None).
+        deep_research_is_context_only (bool | None).
+    """
     model_config = ConfigDict(extra="forbid")
 
     drafting_requires_verified_evidence: bool | None = None
@@ -241,6 +288,11 @@ class NodeSpec(BaseModel):
         # is likewise exempt: OpenRouter's ~400-500 model catalog is not enumerated into
         # allowed_models, and OpenRouter itself is the authoritative source for whether
         # it's real. Any other explicit selection must be permitted.
+        """Compute the selected model must be allowed.
+
+        Returns:
+            'NodeSpec': The model must be allowed.
+        """
         if (
             self.selected_model
             and self.selected_model != AUTO_MODEL
@@ -254,6 +306,11 @@ class NodeSpec(BaseModel):
 
     @model_validator(mode="after")
     def data_protection_mode_must_be_valid(self) -> "NodeSpec":
+        """Compute the data protection mode must be valid.
+
+        Returns:
+            'NodeSpec': The protection mode must be valid.
+        """
         if self.data_protection_mode is not None:
             from app.security.entity_tokenizer import ProcessingMode
 
@@ -266,6 +323,11 @@ class NodeSpec(BaseModel):
         return self
 
     def effective_config(self) -> dict[str, Any]:
+        """Compute the effective config.
+
+        Returns:
+            dict[str, Any]: The config.
+        """
         config = dict(self.config)
         if self.selected_model:
             config["model"] = self.selected_model
@@ -273,17 +335,36 @@ class NodeSpec(BaseModel):
 
 
 class StaticVariable(BaseModel):
+    """Pydantic model defining the StaticVariable shape.
+
+    Attributes:
+        name (str).
+        type (str).
+        value (Any).
+    """
     name: str
     type: str
     value: Any
 
 
 class WorkflowOutputNode(BaseModel):
+    """Pydantic model defining the WorkflowOutputNode shape.
+
+    Attributes:
+        node_id (str).
+        flatten (bool).
+    """
     node_id: str
     flatten: bool = True
 
 
 class WorkflowOutputSpec(BaseModel):
+    """Pydantic model defining the WorkflowOutputSpec shape.
+
+    Attributes:
+        include_input (bool).
+        nodes (list[WorkflowOutputNode]).
+    """
     include_input: bool = False
     nodes: list[WorkflowOutputNode] = Field(default_factory=list)
 
@@ -323,6 +404,11 @@ class WorkflowSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_graph_references(self) -> "WorkflowSpec":
+        """Validate the graph references.
+
+        Returns:
+            'WorkflowSpec': The graph references.
+        """
         if self.data_protection_mode is not None:
             from app.security.entity_tokenizer import ProcessingMode
 

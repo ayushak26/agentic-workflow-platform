@@ -83,6 +83,20 @@ async def deliver_by_token(
     node_outputs: dict[str, Any],
     error: str | None,
 ) -> dict[str, Any]:
+    """Deliver the by token.
+
+    Args:
+        db (Any): Mongo database handle.
+        services (dict[str, Any]): Shared application services dict.
+        token (str): Token value.
+        status (str): Status value.
+        output (Any): Node output mapping.
+        node_outputs (dict[str, Any]): The node outputs.
+        error (str | None): Error value or message.
+
+    Returns:
+        dict[str, Any]: The by token.
+    """
     launch = await subprocess_launches.find_by_token(db, token)
     if launch is None or launch.get("status") != "pending":
         # Already delivered, expired, or the token never existed — a no-op,

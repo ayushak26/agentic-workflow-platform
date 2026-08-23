@@ -24,6 +24,14 @@ from .repository import KnowledgeRepository, ResourceConflictError
 
 
 def validate_metadata_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Validate the metadata schema.
+
+    Args:
+        schema (dict[str, Any]): Schema definition.
+
+    Returns:
+        dict[str, Any]: The metadata schema.
+    """
     properties = schema.get("properties", schema)
     if not isinstance(properties, dict):
         raise ValueError("metadata_schema properties must be an object")
@@ -61,11 +69,25 @@ def validate_metadata_schema(schema: dict[str, Any]) -> dict[str, Any]:
 
 
 def workspace_for_scope(owner_scope_id: str) -> str:
+    """Compute the workspace for scope.
+
+    Args:
+        owner_scope_id (str): The owner scope id.
+
+    Returns:
+        str: The for scope.
+    """
     return scoped_legacy_id("workspace", owner_scope_id, "default")
 
 
 class KnowledgeService:
+    """Provides the KnowledgeService behaviour."""
     def __init__(self, repository: KnowledgeRepository):
+        """Initialize the KnowledgeService.
+
+        Args:
+            repository (KnowledgeRepository): The repository.
+        """
         self.repository = repository
 
     async def create_collection(
@@ -77,6 +99,18 @@ class KnowledgeService:
         metadata_schema: dict[str, Any] | None = None,
         doc_types: list[str] | None = None,
     ) -> CollectionResource:
+        """Create the collection.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+            name (str): Workflow or resource name.
+            description (str): The description (optional, default '').
+            metadata_schema (dict[str, Any] | None): The metadata schema (optional, default None).
+            doc_types (list[str] | None): The doc types (optional, default None).
+
+        Returns:
+            CollectionResource: The collection.
+        """
         resource = CollectionResource(
             collection_id=new_resource_id("collection"),
             workspace_id=workspace_for_scope(owner_scope_id),
@@ -100,6 +134,21 @@ class KnowledgeService:
         description: str = "",
         based_on_preset: str | None = None,
     ) -> ProfileVersion:
+        """Create the profile version.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+            profile_type (ProfileType): The profile type.
+            name (str): Workflow or resource name.
+            strategy (str): The strategy.
+            config (dict[str, Any]): Node configuration mapping.
+            profile_id (str | None): The profile id (optional, default None).
+            description (str): The description (optional, default '').
+            based_on_preset (str | None): The based on preset (optional, default None).
+
+        Returns:
+            ProfileVersion: The profile version.
+        """
         id_kind = {
             ProfileType.PARSER: "parser_profile",
             ProfileType.CHUNKING: "chunking_profile",
@@ -130,6 +179,15 @@ class KnowledgeService:
 
     @staticmethod
     def validate_profile_config(profile_type: ProfileType, config: dict[str, Any]) -> dict[str, Any]:
+        """Validate the profile config.
+
+        Args:
+            profile_type (ProfileType): The profile type.
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The profile config.
+        """
         model = {
             ProfileType.PARSER: ParserProfileConfig,
             ProfileType.CHUNKING: ChunkingProfileConfig,
@@ -152,6 +210,21 @@ class KnowledgeService:
         embedding_profile_id: str,
         embedding_profile_version: int,
     ) -> IndexVersion:
+        """Create the index.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+            collection_id (str): Knowledge collection identifier.
+            parser_profile_id (str): The parser profile id.
+            parser_profile_version (int): The parser profile version.
+            chunking_profile_id (str): The chunking profile id.
+            chunking_profile_version (int): The chunking profile version.
+            embedding_profile_id (str): The embedding profile id.
+            embedding_profile_version (int): The embedding profile version.
+
+        Returns:
+            IndexVersion: The index.
+        """
         await self.repository.get_collection(owner_scope_id, collection_id)
         parser = await self.repository.get_profile(owner_scope_id, parser_profile_id, parser_profile_version, ProfileType.PARSER)
         chunking = await self.repository.get_profile(owner_scope_id, chunking_profile_id, chunking_profile_version, ProfileType.CHUNKING)
@@ -184,6 +257,16 @@ class KnowledgeService:
         return await self.repository.save_index(index)
 
     async def activate_index(self, *, owner_scope_id: str, collection_id: str, index_id: str) -> CollectionResource:
+        """Compute the activate index.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+            collection_id (str): Knowledge collection identifier.
+            index_id (str): The index id.
+
+        Returns:
+            CollectionResource: The index.
+        """
         collection = await self.repository.get_collection(owner_scope_id, collection_id)
         index = await self.repository.get_index(owner_scope_id, index_id)
         if index.collection_id != collection.collection_id:
@@ -214,6 +297,20 @@ class KnowledgeService:
         routing_profile_id: str | None = None,
         description: str = "",
     ) -> RAGAgentDefinition:
+        """Create the rag agent.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+            name (str): Workflow or resource name.
+            collection_id (str): Knowledge collection identifier.
+            retrieval_profile_id (str): The retrieval profile id.
+            generation_profile_id (str): The generation profile id.
+            routing_profile_id (str | None): The routing profile id (optional, default None).
+            description (str): The description (optional, default '').
+
+        Returns:
+            RAGAgentDefinition: The rag agent.
+        """
         await self.repository.get_collection(owner_scope_id, collection_id)
         retrieval = await self.repository.get_profile(owner_scope_id, retrieval_profile_id, expected_type=ProfileType.RETRIEVAL)
         generation = await self.repository.get_profile(owner_scope_id, generation_profile_id, expected_type=ProfileType.GENERATION)
@@ -248,6 +345,14 @@ class KnowledgeService:
         return await self.repository.save_rag_agent(agent)
 
     async def ensure_default_profiles(self, owner_scope_id: str) -> dict[str, ProfileVersion]:
+        """Ensure the default profiles.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+
+        Returns:
+            dict[str, ProfileVersion]: The default profiles.
+        """
         defaults: list[tuple[ProfileType, str, str, dict[str, Any]]] = [
             (ProfileType.PARSER, "Standard Parser", "standard", ParserProfileConfig().model_dump()),
             (ProfileType.CHUNKING, "Recursive Structure-Aware", "recursive", ChunkingProfileConfig().model_dump()),

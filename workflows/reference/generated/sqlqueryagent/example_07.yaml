@@ -1,0 +1,21 @@
+name: Reference SQLQueryAgent 07
+description: Smallest valid workflow exercising SQLQueryAgent — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production.
+version: '1.0'
+nodes:
+- id: lookup_account
+  type: SQLQueryAgent
+  config:
+    server_id: business_records
+    sql: SELECT name FROM crm_accounts WHERE name LIKE %(pattern)s
+    params:
+      pattern: '%acme%'
+- id: summarize
+  type: Echo
+  config:
+    template: Found {{lookup_account.count}} matching accounts.
+edges:
+- from: lookup_account
+  to: summarize
+entry: lookup_account
+exit: summarize

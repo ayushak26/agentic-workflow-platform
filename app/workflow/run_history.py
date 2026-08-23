@@ -42,6 +42,14 @@ _SIZE_ERROR_MARKERS = ("BSONObj size", "DocumentTooLarge", "too large")
 
 
 def _is_document_size_error(exc: Exception) -> bool:
+    """Return whether document size error.
+
+    Args:
+        exc (Exception): Exception that was raised.
+
+    Returns:
+        bool: True when document size error.
+    """
     text = str(exc)
     return any(marker in text for marker in _SIZE_ERROR_MARKERS)
 
@@ -468,6 +476,14 @@ async def record_node_completed(
     safe_output = redact_for_history(output)
 
     async def _build_set(force: bool) -> dict[str, Any]:
+        """Build the set.
+
+        Args:
+            force (bool): Force flag.
+
+        Returns:
+            dict[str, Any]: The set.
+        """
         stored_output = await _externalize_if_large(
             db, run_id=run_id, node_id=node_id, field="output", value=safe_output, force=force
         )
@@ -542,6 +558,14 @@ async def record_node_reused(
     safe_output = redact_for_history(output)
 
     async def _build_set(force: bool) -> dict[str, Any]:
+        """Build the set.
+
+        Args:
+            force (bool): Force flag.
+
+        Returns:
+            dict[str, Any]: The set.
+        """
         stored_output = await _externalize_if_large(
             db, run_id=run_id, node_id=node_id, field="output", value=safe_output, force=force
         )
@@ -674,6 +698,13 @@ async def request_pause(db, *, run_id: str, session_id: str) -> bool:
 
 
 async def clear_pause_request(db, *, run_id: str, session_id: str) -> None:
+    """Clear the pause request.
+
+    Args:
+        db: Mongo database handle.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+    """
     _require_session(session_id)
     await db["run_history"].update_one(
         {"run_id": run_id, "session_id": session_id},
@@ -811,6 +842,14 @@ async def record_checkpoint_node_completed(
     key = _node_key(node_id)
 
     async def _build_set(force: bool) -> dict[str, Any]:
+        """Build the set.
+
+        Args:
+            force (bool): Force flag.
+
+        Returns:
+            dict[str, Any]: The set.
+        """
         return {
             f"node_results.{key}": {
                 "node_id": node_id,
@@ -947,6 +986,14 @@ async def mark_checkpoint_status(
     session_id: str,
     status: str,
 ) -> None:
+    """Mark the checkpoint status.
+
+    Args:
+        db: Mongo database handle.
+        run_id (str): Workflow run identifier.
+        session_id (str): Session scope the record belongs to.
+        status (str): Status value.
+    """
     _require_session(session_id)
     update: dict[str, Any] = {
         "$set": {
@@ -1011,6 +1058,14 @@ async def get_resume_checkpoint(
 
 
 def _as_aware_utc(value: datetime) -> datetime:
+    """Internal helper for the as aware utc step.
+
+    Args:
+        value (datetime): Value to process.
+
+    Returns:
+        datetime: The aware utc.
+    """
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
@@ -1236,6 +1291,14 @@ async def workflow_stats(
     )
 
     def _median(values: list[float]) -> float | None:
+        """Internal helper for the median step.
+
+        Args:
+            values (list[float]): The values.
+
+        Returns:
+            float | None: The result.
+        """
         if not values:
             return None
         mid = len(values) // 2

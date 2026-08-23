@@ -48,7 +48,7 @@ export function VersionHistoryPanel({
   useEffect(() => {
     // Reset the preview whenever the selected version changes (including to
     // none) before fetching the newly selected one.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     if (!selectedId) { setPreviewYaml(null); return; }
     setPreviewYaml(null);
     setPreviewError(null);

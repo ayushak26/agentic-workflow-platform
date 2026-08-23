@@ -26,10 +26,23 @@ async def presets(
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return user.session_id or user.username
 
 
 def _service(request: Request):
+    """Internal helper for the service step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+    """
     service = request.app.state.services.get("retrieval_service")
     if service is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Retrieval service unavailable")
@@ -37,6 +50,14 @@ def _service(request: Request):
 
 
 def _llm(request: Request, scope: str, node_id: str, collection_id: str | None = None):
+    """Internal helper for the llm step.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        scope (str): Session scope the record belongs to.
+        node_id (str): Workflow node identifier.
+        collection_id (str | None): Knowledge collection identifier (optional, default None).
+    """
     services = request.app.state.services
     llm = services.get("llm")
     if llm is not None and hasattr(llm, "with_context"):
@@ -52,6 +73,18 @@ def _llm(request: Request, scope: str, node_id: str, collection_id: str | None =
 
 
 class RetrievalSearchRequest(BaseModel):
+    """Pydantic model defining the RetrievalSearchRequest shape.
+
+    Attributes:
+        collection_id (str).
+        retrieval_profile_id (str | None).
+        retrieval_profile_version (int | None).
+        index_id (str | None).
+        query (str).
+        filters (dict[str, Any] | None).
+        strategy (str).
+        candidate_count (int).
+    """
     collection_id: str
     retrieval_profile_id: str | None = None
     retrieval_profile_version: int | None = None
@@ -75,6 +108,14 @@ class RetrievalSearchRequest(BaseModel):
     diagnostic_components: bool = True
 
     def to_query(self, owner_scope_id: str) -> RetrievalQuery:
+        """Compute the to query.
+
+        Args:
+            owner_scope_id (str): The owner scope id.
+
+        Returns:
+            RetrievalQuery: The query.
+        """
         return RetrievalQuery(
             query=self.query,
             filters=RetrievalFilters(
@@ -99,6 +140,14 @@ class RetrievalSearchRequest(BaseModel):
 
 
 def _safe_query(value: str) -> str:
+    """Internal helper for the safe query step.
+
+    Args:
+        value (str): Value to process.
+
+    Returns:
+        str: The query.
+    """
     try:
         return check_workflow_inputs({"query": value}).value["query"]
     except GuardrailViolation as exc:
@@ -111,6 +160,13 @@ async def search(
     request: Request,
     user: CurrentUser = Depends(require_permission("rag:query")),
 ):
+    """Search the result.
+
+    Args:
+        payload (RetrievalSearchRequest): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_permission('rag:query'))).
+    """
     payload.query = _safe_query(payload.query)
     scope = _scope(user)
     try:
@@ -123,6 +179,11 @@ async def search(
 
 
 class RetrievalCompareRequest(BaseModel):
+    """Pydantic model defining the RetrievalCompareRequest shape.
+
+    Attributes:
+        experiments (list[RetrievalSearchRequest]).
+    """
     experiments: list[RetrievalSearchRequest] = Field(min_length=2, max_length=4)
 
 
@@ -132,6 +193,13 @@ async def compare(
     request: Request,
     user: CurrentUser = Depends(require_permission("rag:query")),
 ):
+    """Compare the result.
+
+    Args:
+        payload (RetrievalCompareRequest): Event or audit payload.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_permission('rag:query'))).
+    """
     scope = _scope(user)
     queries = []
     try:
@@ -173,6 +241,13 @@ async def list_traces(
     limit: int = Query(default=100, ge=1, le=500),
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """List the traces.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        limit (int): Maximum number of items to return (optional, default Query(default=100, ge=1, le=500)).
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     return await request.app.state.services["knowledge_repository"].list_traces(_scope(user), limit)
 
 
@@ -182,6 +257,13 @@ async def get_trace(
     request: Request,
     user: CurrentUser = Depends(require_permission("knowledge:read")),
 ):
+    """Return the trace.
+
+    Args:
+        retrieval_request_id (str): The retrieval request id.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default ...).
+    """
     try:
         return await request.app.state.services["knowledge_repository"].get_trace(
             _scope(user), retrieval_request_id

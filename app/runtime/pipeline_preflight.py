@@ -24,6 +24,15 @@ from app.runtime.preflight import (
 
 
 class PipelinePreflightReport(BaseModel):
+    """Pydantic model defining the PipelinePreflightReport shape.
+
+    Attributes:
+        valid (bool).
+        pipeline_name (str | None).
+        stage_count (int).
+        checks (list[PreflightCheck]).
+        issues (list[PreflightIssue]).
+    """
     valid: bool
     pipeline_name: str | None = None
     stage_count: int = 0
@@ -32,15 +41,27 @@ class PipelinePreflightReport(BaseModel):
 
     @property
     def errors(self) -> list[PreflightIssue]:
+        """The errors."""
         return [i for i in self.issues if i.severity == PreflightSeverity.ERROR]
 
     def refresh(self) -> "PipelinePreflightReport":
+        """Refresh the result.
+
+        Returns:
+            'PipelinePreflightReport': The result.
+        """
         self.valid = not self.errors
         return self
 
 
 class PipelinePreflightError(ValueError):
+    """Exception raised for the PipelinePreflightError case."""
     def __init__(self, report: PipelinePreflightReport):
+        """Initialize the PipelinePreflightError.
+
+        Args:
+            report (PipelinePreflightReport): Preflight report.
+        """
         self.report = report
         summary = "; ".join(issue.message for issue in report.errors[:5])
         super().__init__(
@@ -58,6 +79,16 @@ def _issue(
     stage_id: str | None = None,
     suggestion: str | None = None,
 ) -> None:
+    """Internal helper for the issue step.
+
+    Args:
+        report (PipelinePreflightReport): Preflight report.
+        code (str): The code.
+        message (str): Message text.
+        severity (PreflightSeverity): The severity (optional, default PreflightSeverity.ERROR).
+        stage_id (str | None): The stage id (optional, default None).
+        suggestion (str | None): The suggestion (optional, default None).
+    """
     report.issues.append(
         PreflightIssue(
             code=code,
@@ -74,6 +105,15 @@ def preflight_pipeline_yaml(
     *,
     provided_inputs: dict[str, Any] | None = None,
 ) -> PipelinePreflightReport:
+    """Compute the preflight pipeline yaml.
+
+    Args:
+        yaml_text (str): Workflow YAML text.
+        provided_inputs (dict[str, Any] | None): The provided inputs (optional, default None).
+
+    Returns:
+        PipelinePreflightReport: The pipeline yaml.
+    """
     report = PipelinePreflightReport(valid=False)
 
     try:
@@ -197,6 +237,14 @@ def _add_check(
     before: int,
     detail: str,
 ) -> None:
+    """Add the check.
+
+    Args:
+        report (PipelinePreflightReport): Preflight report.
+        name (str): Workflow or resource name.
+        before (int): The before.
+        detail (str): The detail.
+    """
     new_issues = report.issues[before:]
     if any(i.severity == PreflightSeverity.ERROR for i in new_issues):
         status = "failed"
@@ -208,5 +256,10 @@ def _add_check(
 
 
 def require_pipeline_preflight(report: PipelinePreflightReport) -> None:
+    """Compute the require pipeline preflight.
+
+    Args:
+        report (PipelinePreflightReport): Preflight report.
+    """
     if not report.valid:
         raise PipelinePreflightError(report)

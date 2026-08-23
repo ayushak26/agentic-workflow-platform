@@ -30,6 +30,13 @@ class RedisLease:
     """A renewable, compare-and-release distributed lease."""
 
     def __init__(self, redis: Any, key: str, *, ttl_seconds: int) -> None:
+        """Initialize the RedisLease.
+
+        Args:
+            redis (Any): Redis client.
+            key (str): Lookup key.
+            ttl_seconds (int): Lease TTL in seconds.
+        """
         self._redis = redis
         self.key = key
         self.ttl_seconds = max(3, int(ttl_seconds))
@@ -37,6 +44,11 @@ class RedisLease:
         self.acquired = False
 
     async def acquire(self) -> bool:
+        """Acquire the result.
+
+        Returns:
+            bool: The result.
+        """
         self.acquired = bool(
             await self._redis.set(
                 self.key,
@@ -48,6 +60,11 @@ class RedisLease:
         return self.acquired
 
     async def renew(self) -> bool:
+        """Renew the result.
+
+        Returns:
+            bool: The result.
+        """
         if not self.acquired:
             return False
         renewed = await self._redis.eval(
@@ -61,6 +78,7 @@ class RedisLease:
         return self.acquired
 
     async def release(self) -> None:
+        """Release the result."""
         if not self.acquired:
             return
         try:

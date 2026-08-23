@@ -14,6 +14,16 @@ from app.retrieval.models import RetrievalFilters, RetrievedChunk
 
 
 def _chunk_from_object(obj: Any, *, score_kind: str, rank: int) -> RetrievedChunk:
+    """Chunk the from object.
+
+    Args:
+        obj (Any): The obj.
+        score_kind (str): The score kind.
+        rank (int): The rank.
+
+    Returns:
+        RetrievedChunk: The from object.
+    """
     properties = dict(obj.properties)
     metadata = getattr(obj, "metadata", None)
     raw_score = getattr(metadata, "score", None)
@@ -61,6 +71,21 @@ async def dense_search(
     top_k: int,
     exclude_parent_chunks: bool = False,
 ) -> tuple[list[RetrievedChunk], float]:
+    """Compute the dense search.
+
+    Args:
+        client (Any): Client instance.
+        collection_name (str): The collection name.
+        embedder (Embedder): The embedder.
+        query (str): Query filter.
+        filters (RetrievalFilters): The filters.
+        index_id (str | None): The index id.
+        top_k (int): The top k.
+        exclude_parent_chunks (bool): The exclude parent chunks (optional, default False).
+
+    Returns:
+        tuple[list[RetrievedChunk], float]: The search.
+    """
     started = time.perf_counter()
     vector = (await embedder.embed([query]))[0]
     collection = client.collections.get(collection_name)
@@ -88,6 +113,20 @@ async def sparse_search(
     top_k: int,
     exclude_parent_chunks: bool = False,
 ) -> tuple[list[RetrievedChunk], float]:
+    """Compute the sparse search.
+
+    Args:
+        client (Any): Client instance.
+        collection_name (str): The collection name.
+        query (str): Query filter.
+        filters (RetrievalFilters): The filters.
+        index_id (str | None): The index id.
+        top_k (int): The top k.
+        exclude_parent_chunks (bool): The exclude parent chunks (optional, default False).
+
+    Returns:
+        tuple[list[RetrievedChunk], float]: The search.
+    """
     started = time.perf_counter()
     collection = client.collections.get(collection_name)
     response = await asyncio.to_thread(
@@ -116,6 +155,22 @@ async def native_hybrid_search(
     alpha: float,
     exclude_parent_chunks: bool = False,
 ) -> tuple[list[RetrievedChunk], float]:
+    """Compute the native hybrid search.
+
+    Args:
+        client (Any): Client instance.
+        collection_name (str): The collection name.
+        embedder (Embedder): The embedder.
+        query (str): Query filter.
+        filters (RetrievalFilters): The filters.
+        index_id (str | None): The index id.
+        top_k (int): The top k.
+        alpha (float): The alpha.
+        exclude_parent_chunks (bool): The exclude parent chunks (optional, default False).
+
+    Returns:
+        tuple[list[RetrievedChunk], float]: The hybrid search.
+    """
     from weaviate.classes.query import HybridFusion
 
     started = time.perf_counter()
@@ -143,6 +198,18 @@ async def fetch_chunks_by_id(
     *, client: Any, collection_name: str, chunk_ids: list[str], filters: RetrievalFilters,
     index_id: str | None = None,
 ) -> list[RetrievedChunk]:
+    """Fetch the chunks by id.
+
+    Args:
+        client (Any): Client instance.
+        collection_name (str): The collection name.
+        chunk_ids (list[str]): Weaviate chunk identifiers.
+        filters (RetrievalFilters): The filters.
+        index_id (str | None): The index id (optional, default None).
+
+    Returns:
+        list[RetrievedChunk]: The chunks by id.
+    """
     if not chunk_ids:
         return []
     from weaviate.classes.query import Filter

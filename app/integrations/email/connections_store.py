@@ -28,6 +28,15 @@ async def save_connection_record(
     display_name: str,
     address: str,
 ) -> None:
+    """Save the connection record.
+
+    Args:
+        db (Any): Mongo database handle.
+        connection_id (str): The connection id.
+        provider (str): Provider name.
+        display_name (str): The display name.
+        address (str): The address.
+    """
     await db[CONNECTIONS_COLLECTION].update_one(
         {"_id": connection_id},
         {
@@ -44,6 +53,12 @@ async def save_connection_record(
 
 
 async def delete_connection_record(db: Any, connection_id: str) -> None:
+    """Delete the connection record.
+
+    Args:
+        db (Any): Mongo database handle.
+        connection_id (str): The connection id.
+    """
     await db[CONNECTIONS_COLLECTION].delete_one({"_id": connection_id})
     await TokenVault(db).forget(connection_id)
 

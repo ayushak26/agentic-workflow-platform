@@ -34,6 +34,15 @@ _ENTITY_TYPE_MAP: dict[str, str] = {
 
 @dataclass(frozen=True)
 class PresidioMatch:
+    """Provides the PresidioMatch behaviour.
+
+    Attributes:
+        start (int).
+        end (int).
+        text (str).
+        entity_type (str).
+        score (float).
+    """
     start: int
     end: int
     text: str
@@ -42,6 +51,14 @@ class PresidioMatch:
 
 
 def _map_entity_type(presidio_type: str) -> str:
+    """Map the entity type.
+
+    Args:
+        presidio_type (str): The presidio type.
+
+    Returns:
+        str: The entity type.
+    """
     return _ENTITY_TYPE_MAP.get(presidio_type, presidio_type.lower())
 
 

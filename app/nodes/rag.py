@@ -17,6 +17,18 @@ from app.retrieval.models import RetrievalFilters, RetrievalQuery
 
 
 class RAGConfig(BaseModel):
+    """Pydantic model defining the RAGConfig shape.
+
+    Attributes:
+        rag_agent_id (str | None).
+        model (str | None).
+        query (str).
+        runtime_context (dict[str, Any] | None).
+        runtime_filters (dict[str, Any]).
+        filters (dict[str, Any]).
+        top_k_candidates (int).
+        top_n_final (int).
+    """
     rag_agent_id: str | None = Field(
         default=None,
         description="Saved RAG Agent resource. New workflows should set this.",
@@ -50,6 +62,11 @@ class RAGConfig(BaseModel):
 
     @model_validator(mode="after")
     def reject_ambiguous_saved_agent_config(self) -> "RAGConfig":
+        """Compute the reject ambiguous saved agent config.
+
+        Returns:
+            'RAGConfig': The ambiguous saved agent config.
+        """
         if self.rag_agent_id:
             changed_legacy = (
                 self.filters
@@ -68,10 +85,20 @@ class RAGConfig(BaseModel):
 
 
 class RAGInput(BaseModel):
+    """Pydantic model defining the RAGInput shape."""
     pass
 
 
 class Citation(BaseModel):
+    """Pydantic model defining the Citation shape.
+
+    Attributes:
+        label (int).
+        chunk_id (str).
+        source_doc (str).
+        snippet (str).
+        display_number (int | None).
+    """
     label: int                                  # the [N] used in the answer
     chunk_id: str
     source_doc: str
@@ -80,6 +107,18 @@ class Citation(BaseModel):
 
 
 class RAGOutput(BaseModel):
+    """Pydantic model defining the RAGOutput shape.
+
+    Attributes:
+        query (str).
+        answer (str).
+        citations (list[Citation]).
+        sources (list[dict]).
+        relevant_context (list[dict]).
+        answering_model (str).
+        resolved_answering_model (str).
+        retrievals (list[dict]).
+    """
     query: str = ""
     answer: str
     citations: list[Citation]
@@ -108,6 +147,7 @@ CITATION_RE = re.compile(r"\[(\d+)\]")
 
 @NodeRegistry.register
 class RAGAgent(NodeType):
+    """Workflow node type implementing the RAGAgent capability."""
     type_name = "RAGAgent"
     description = "Hybrid retrieval + grounded answer with citations."
     input_schema = RAGInput
@@ -116,11 +156,28 @@ class RAGAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         if config.get("rag_agent_id"):
             return {"llm", "cost_ledger", "rag_service"}
         return {"llm", "cost_ledger", "retriever"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = RAGConfig(**resolved_config)
         llm = self.services["llm"]
 

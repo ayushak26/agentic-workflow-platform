@@ -169,8 +169,39 @@ export type WorkflowCompareResponse = {
 
 // Central fetch wrapper: always send cookies so the HttpOnly auth cookie
 // rides along on every request (same-origin via the Vite proxy).
+//
+// Session expiry is handled here, once, for every API call: a 401 from any
+// /api/* route clears the in-memory identity and notifies the app shell
+// exactly once, so an expired cookie surfaces as a redirect to the login
+// screen with an explanation instead of opaque per-component errors.
+// /auth/* routes are exempt — a 401 there is a normal outcome of login or
+// rehydration attempts, not an expiry.
+let _onSessionExpired: (() => void) | null = null;
+let _expiryNotified = false;
+
+/** Subscribe to session-expiry events. Returns an unsubscribe function. */
+export function onSessionExpired(listener: () => void): () => void {
+  _onSessionExpired = listener;
+  return () => {
+    if (_onSessionExpired === listener) _onSessionExpired = null;
+  };
+}
+
+function _handleSessionExpired(): void {
+  _token = null;
+  _username = null;
+  if (_expiryNotified) return;
+  _expiryNotified = true;
+  _onSessionExpired?.();
+}
+
 function afetch(input: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, credentials: 'include' });
+  return fetch(input, { ...init, credentials: 'include' }).then(response => {
+    if (response.status === 401 && !input.includes('/auth/')) {
+      _handleSessionExpired();
+    }
+    return response;
+  });
 }
 
 export async function login(username: string, password: string): Promise<{ username: string }> {
@@ -184,6 +215,7 @@ export async function login(username: string, password: string): Promise<{ usern
   const data = await r.json();
   _token = data.access_token;
   _username = data.username;
+  _expiryNotified = false; // a fresh session may expire again later
   return { username: data.username };
 }
 
@@ -473,8 +505,14 @@ export const api = {
   // ---- workflow CRUD
   listWorkflows: () =>
     afetch(`${API}/workflows`, { headers: authHeaders() }).then(j<WorkflowSummary[]>),
-  getWorkflow: (name: string) =>
-    afetch(`${API}/workflows/by-name/${name}`, { headers: authHeaders() })
+  listChatWorkflows: () =>
+    afetch(`${API}/workflows/chat-catalog`, { headers: authHeaders() })
+      .then(j<WorkflowSummary[]>),
+  getWorkflow: (name: string, signal?: AbortSignal) =>
+    afetch(`${API}/workflows/by-name/${encodeURIComponent(name)}`, {
+      headers: authHeaders(),
+      signal,
+    })
       .then(j<{ name: string; yaml: string }>),
   getWorkflowDetail: (name: string) =>
     afetch(`${API}/workflows/${name}/detail`, { headers: authHeaders() })
@@ -595,11 +633,17 @@ export const api = {
   },
 
   // ---- execution
-  runWorkflow: (workflow_yaml: string, inputs: Record<string, unknown>, session_id?: string, run_id?: string) =>
+  runWorkflow: (
+    workflow_yaml: string,
+    inputs: Record<string, unknown>,
+    session_id?: string,
+    run_id?: string,
+    skip_preflight = false,
+  ) =>
     afetch(`${API}/workflows/run`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ workflow_yaml, inputs, session_id, run_id }),
+      body: JSON.stringify({ workflow_yaml, inputs, session_id, run_id, skip_preflight }),
     }).then(j<{ run_id: string; status: string; state?: unknown }>),
   resumeWorkflow: (run_id: string, decision: Record<string, unknown>) =>
     afetch(`${API}/workflows/${run_id}/resume`, {

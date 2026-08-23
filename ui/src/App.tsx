@@ -8,7 +8,7 @@ import { EvalRoot } from "./modes/eval/EvalRoot";
 import { CostRoot } from "./modes/cost/CostRoot";
 import { KnowledgeRoot } from "./modes/knowledge/KnowledgeRoot";
 import { RunCostContext } from "./RunCostContext";
-import { currentUsername, isAuthed, rehydrate } from "./api/client";
+import { currentUsername, isAuthed, onSessionExpired, rehydrate } from "./api/client";
 import type { RunCostSummary } from "./api/types";
 
 type Mode = "studio" | "eval" | "cost" | "knowledge";
@@ -28,6 +28,16 @@ export default function App() {
   // deciding whether to show the login screen; `checking` prevents a flash
   // of the login page while /auth/me is in flight.
   const [checking, setChecking] = useState(!isAuthed());
+  // Set when the API client reports the session expired mid-work, so the
+  // login screen explains why the user was signed out instead of leaving
+  // them to guess.
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  useEffect(() => onSessionExpired(() => {
+    setLoggedIn(false);
+    setUsername(null);
+    setSessionExpired(true);
+  }), []);
 
   useEffect(() => {
     if (isAuthed()) return; // live session already; nothing to recover
@@ -62,7 +72,12 @@ export default function App() {
   }
 
   if (!loggedIn) {
-    return <LoginPage onLogin={(u) => { setLoggedIn(true); setUsername(u); }} />;
+    return (
+      <LoginPage
+        notice={sessionExpired ? "Your session expired. Please sign in again." : undefined}
+        onLogin={(u) => { setLoggedIn(true); setUsername(u); setSessionExpired(false); }}
+      />
+    );
   }
 
   return (

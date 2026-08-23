@@ -26,15 +26,29 @@ from app.nodes.registry import NodeRegistry
 
 
 class TextAssemblerConfig(BaseModel):
+    """Pydantic model defining the TextAssemblerConfig shape.
+
+    Attributes:
+        parts (list[str]).
+        separator (str).
+    """
     parts: list[str] = Field(default_factory=list)
     separator: str = "\n\n"
 
 
 class TextAssemblerInput(BaseModel):
+    """Pydantic model defining the TextAssemblerInput shape."""
     pass
 
 
 class TextAssemblerOutput(BaseModel):
+    """Pydantic model defining the TextAssemblerOutput shape.
+
+    Attributes:
+        text (str).
+        part_count (int).
+        all_parts_present (bool).
+    """
     text: str
     #: How many parts were actually combined — the join's "count".
     part_count: int = 0
@@ -48,6 +62,13 @@ class TextAssemblerOutput(BaseModel):
 
 @NodeRegistry.register
 class TextAssemblerAgent(NodeType):
+    """Workflow node type implementing the TextAssemblerAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "TextAssemblerAgent"
     description = (
         "Join: waits for multiple upstream branches (e.g. from a Parallel "
@@ -84,6 +105,15 @@ class TextAssemblerAgent(NodeType):
         state: Any,
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (Any): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = TextAssemblerConfig(**resolved_config)
         return {
             "text": cfg.separator.join(cfg.parts),

@@ -1,0 +1,95 @@
+# Eurskem AI — minimum viable production alert rules.
+#
+# These fire inside Prometheus; routing to a pager (Alertmanager, email,
+# chat webhook) is a deployment decision — see docs/OPERATIONS_RUNBOOK.md.
+# Metric names come from app/observability/metrics.py (awp_* prefix).
+groups:
+  - name: eurskem-availability
+    rules:
+      - alert: InstanceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Eurskem AI target {{ $labels.instance }} is down"
+          description: >-
+            Prometheus has failed to scrape {{ $labels.instance }} for two
+            minutes. Check the app container and its /health endpoint.
+
+      - alert: HighApiErrorRate
+        expr: |
+          (
+            sum(rate(awp_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(awp_http_requests_total[5m]))
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 2% of API requests are failing (5xx)"
+          description: >-
+            The 5-minute 5xx ratio has exceeded 2% for five minutes.
+            Check app logs (request_id is attached to every failure).
+
+      - alert: ApiLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(awp_http_request_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency above 2s"
+          description: >-
+            p95 request latency has exceeded two seconds for ten minutes.
+            Likely causes: slow database, provider latency spilling into
+            request paths, or resource saturation.
+
+  - name: eurskem-workflows
+    rules:
+      - alert: WorkflowFailureRateHigh
+        expr: |
+          (
+            sum(rate(awp_workflow_runs_total{status="failed"}[15m]))
+            /
+            sum(rate(awp_workflow_runs_total[15m]))
+          ) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 20% of workflow runs are failing"
+          description: >-
+            Sustained workflow failures usually indicate a provider outage,
+            a broken workflow version, or a dependency (Mongo/Redis/Weaviate)
+            problem. Check the Cockpit failure diagnosis and run history.
+
+      - alert: LlmFailoverSurge
+        expr: rate(awp_llm_failovers_total[15m]) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM provider failovers are elevated"
+          description: >-
+            The gateway is substituting fallback models at an elevated rate.
+            Runs still complete, but cost and quality characteristics change;
+            check provider status and the cost ledger's intended-vs-actual.
+
+  - name: eurskem-abuse
+    rules:
+      - alert: RateLimitRejectionSurge
+        expr: rate(awp_rate_limit_rejections_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sustained rate-limit rejections"
+          description: >-
+            More than one rejection per second for five minutes. This is
+            either a traffic spike or an attack (credential stuffing on
+            /auth/token has its own tighter budget). Inspect source IPs.

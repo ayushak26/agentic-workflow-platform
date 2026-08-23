@@ -1,0 +1,22 @@
+name: Reference DOCXProposalRenderer 02
+description: Smallest valid workflow exercising DOCXProposalRenderer — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production.
+version: '1.0'
+nodes:
+- id: render_docx
+  type: DOCXProposalRenderer
+  config:
+    sections:
+      executive_summary: Sample executive summary content.
+    proposal_title: Sample Proposal
+    client_name: Acme Corp
+- id: confirm
+  type: Echo
+  config:
+    template: Rendered {{render_docx.template_used}} to {{render_docx.minio_key}}
+      ({{render_docx.byte_size}} bytes).
+edges:
+- from: render_docx
+  to: confirm
+entry: render_docx
+exit: confirm

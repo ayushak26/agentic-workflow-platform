@@ -89,6 +89,12 @@ class LLMJudge:
     """
 
     def __init__(self, llm, *, model: str = "claude-sonnet-4-5") -> None:
+        """Initialize the LLMJudge.
+
+        Args:
+            llm: The llm.
+            model (str): Model name (optional, default 'claude-sonnet-4-5').
+        """
         self.llm = llm
         self.model = model
 
@@ -101,6 +107,18 @@ class LLMJudge:
         context: str,
         reference: str,
     ) -> CriterionScore:
+        """Score the one.
+
+        Args:
+            criterion (str): The criterion.
+            question (str): Question text.
+            answer (str): The answer.
+            context (str): The context.
+            reference (str): The reference.
+
+        Returns:
+            CriterionScore: The one.
+        """
         rubric = _RUBRICS[criterion]
         ref_block = (
             f"\n\nREFERENCE (an ideal answer, for your guidance only — the "

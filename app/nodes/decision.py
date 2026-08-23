@@ -117,6 +117,13 @@ DECISION_PRESETS: list[dict[str, Any]] = [
 
 
 class DecisionConfig(BaseModel):
+    """Pydantic model defining the DecisionConfig shape.
+
+    Attributes:
+        rules (list[Rule]).
+        defaults (dict[str, Any]).
+        declared_fields (list[str]).
+    """
     model_config = ConfigDict(extra="forbid")
 
     rules: list[Rule] = Field(
@@ -141,6 +148,11 @@ class DecisionConfig(BaseModel):
     )
 
     def output_field_names(self) -> set[str]:
+        """Compute the output field names.
+
+        Returns:
+            set[str]: The field names.
+        """
         names = set(self.defaults) | set(self.declared_fields)
         for rule in self.rules:
             names.update(action.field for action in rule.then)
@@ -148,6 +160,7 @@ class DecisionConfig(BaseModel):
 
 
 class DecisionInput(BaseModel):
+    """Pydantic model defining the DecisionInput shape."""
     pass
 
 
@@ -164,6 +177,13 @@ class DecisionOutput(BaseModel):
 
 @NodeRegistry.register
 class DecisionAgent(NodeType):
+    """Workflow node type implementing the DecisionAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "DecisionAgent"
     description = (
         "Deterministic business rules: IF/THEN over typed fields, with nested "
@@ -194,6 +214,14 @@ class DecisionAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return set()
 
     @classmethod
@@ -208,11 +236,28 @@ class DecisionAgent(NodeType):
 
     @classmethod
     def preflight_static_output_values(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Compute the preflight static output values.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            dict[str, Any]: The static output values.
+        """
         if not (config.get("rules") or []) and not (config.get("defaults") or {}):
             return {"decisions": {}}
         return {}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = DecisionConfig(**resolved_config)
         evaluation = evaluate_rules(
             cfg.rules, dict(state), initial=dict(cfg.defaults)

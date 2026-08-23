@@ -17,11 +17,31 @@ from app.mcp.dynamics.client import DynamicsBackend
 
 
 def _collection(rows: list[dict[str, Any]], key: str, limit: int) -> dict[str, Any]:
+    """Internal helper for the collection step.
+
+    Args:
+        rows (list[dict[str, Any]]): Table rows.
+        key (str): Lookup key.
+        limit (int): Maximum number of items to return.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     truncated = len(rows) > limit
     return {key: rows[:limit], "count": min(len(rows), limit), "truncated": truncated}
 
 
 def _limit(arguments: dict[str, Any], default: int, maximum: int) -> int:
+    """Internal helper for the limit step.
+
+    Args:
+        arguments (dict[str, Any]): The arguments.
+        default (int): Default value.
+        maximum (int): The maximum.
+
+    Returns:
+        int: The result.
+    """
     value = arguments.get("limit", default)
     try:
         value = int(value)
@@ -31,6 +51,14 @@ def _limit(arguments: dict[str, Any], default: int, maximum: int) -> int:
 
 
 def _any_of_present(*filters: str | None) -> str | None:
+    """Internal helper for the any of present step.
+
+    Args:
+        *filters (str | None): The filters.
+
+    Returns:
+        str | None: The of present.
+    """
     present = [f for f in filters if f]
     return odata.any_of(*present) if present else None
 
@@ -60,6 +88,14 @@ CUSTOMER_COLUMNS = [
 
 
 def _customer(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the customer step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "account_id": row.get("customerid") or "",
         "account_name": row.get("name") or "",
@@ -148,6 +184,15 @@ async def find_account_ownership(backend: DynamicsBackend, arguments: dict[str, 
 
 
 async def find_credit_status(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the credit status.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The credit status.
+    """
     account_id = arguments.get("account_id")
     if not account_id:
         return {"credit": {}}
@@ -164,6 +209,16 @@ QUOTE_COLUMNS = [
 
 
 def _quote(row: dict[str, Any], *, account_id: str, purchase_order_number: str) -> dict[str, Any]:
+    """Internal helper for the quote step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+        account_id (str): The account id.
+        purchase_order_number (str): The purchase order number.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     owner_id = (row.get("_customerid_value") or "").strip().lower()
     # A quotation number is not proof of ownership. Only assert
     # belongs_to_customer when a confirmed account id was actually supplied —
@@ -246,6 +301,14 @@ def _order_filter(arguments: dict[str, Any]) -> str | None:
 
 
 def _sales_order(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the sales order step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The order.
+    """
     return {
         "order_number": row.get("order_number") or "",
         "purchase_order_number": row.get("purchase_order_number") or "",
@@ -258,6 +321,15 @@ def _sales_order(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def find_sales_order(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the sales order.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The sales order.
+    """
     limit = _limit(arguments, 5, 25)
     expression = _order_filter(arguments)
     if expression is None:
@@ -295,6 +367,14 @@ PRODUCT_LOOKUP_COLUMNS = ["productid", "product_name", "pump_model", "product_fa
 
 
 def _availability(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the availability step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "pump_model": row.get("pump_model") or "",
         "availability_status": row.get("availability_status") or "FEASIBLE",
@@ -324,6 +404,15 @@ async def _resolve_pump_models(backend: DynamicsBackend, arguments: dict[str, An
 
 
 async def find_inventory_availability(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the inventory availability.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The inventory availability.
+    """
     limit = _limit(arguments, 5, 25)
     pump_models = await _resolve_pump_models(backend, arguments)
     if not pump_models:
@@ -408,6 +497,14 @@ SHIPMENT_COLUMNS = [
 
 
 def _shipment(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the shipment step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "shipment_number": row.get("shipment_number") or "",
         "order_number": row.get("order_number") or "",
@@ -419,6 +516,15 @@ def _shipment(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def find_shipment(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the shipment.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The shipment.
+    """
     limit = _limit(arguments, 5, 25)
     expression = _priority_filter(
         ("shipment_number", arguments.get("shipment_number")),
@@ -441,6 +547,14 @@ INVOICE_COLUMNS = [
 
 
 def _invoice(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the invoice step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "invoice_number": row.get("invoice_number") or "",
         "order_number": row.get("order_number") or "",
@@ -452,6 +566,15 @@ def _invoice(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def find_invoice(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the invoice.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The invoice.
+    """
     limit = _limit(arguments, 5, 25)
     expression = _priority_filter(
         ("invoice_number", arguments.get("invoice_number")),
@@ -473,6 +596,14 @@ CONTRACT_COLUMNS = [
 
 
 def _contract(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the contract step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "contract_number": row.get("contract_number") or "",
         "name": row.get("name") or "",
@@ -483,6 +614,15 @@ def _contract(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def find_contract(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the contract.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The contract.
+    """
     limit = _limit(arguments, 5, 25)
     contract_number = arguments.get("contract_number")
     if not contract_number:
@@ -502,6 +642,14 @@ PRODUCT_COLUMNS = [
 
 
 def _product(row: dict[str, Any]) -> dict[str, Any]:
+    """Internal helper for the product step.
+
+    Args:
+        row (dict[str, Any]): Table row.
+
+    Returns:
+        dict[str, Any]: The result.
+    """
     return {
         "product_name": row.get("product_name") or "",
         "pump_model": row.get("pump_model") or "",
@@ -516,6 +664,15 @@ def _product(row: dict[str, Any]) -> dict[str, Any]:
 
 
 async def find_products(backend: DynamicsBackend, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Find the products.
+
+    Args:
+        backend (DynamicsBackend): The backend.
+        arguments (dict[str, Any]): The arguments.
+
+    Returns:
+        dict[str, Any]: The products.
+    """
     limit = _limit(arguments, 5, 25)
     product_name = arguments.get("product_name")
     pump_model = arguments.get("pump_model")

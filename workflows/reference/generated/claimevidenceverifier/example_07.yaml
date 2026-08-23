@@ -1,0 +1,20 @@
+name: Reference ClaimEvidenceVerifier 07
+description: Smallest valid workflow exercising ClaimEvidenceVerifier — used by tests/test_workflow_generation_node_coverage.py,
+  not run in production.
+version: '1.0'
+nodes:
+- id: verify_claims
+  type: ClaimEvidenceVerifier
+  config:
+    model: claude-sonnet-4-5
+    minimum_support_confidence: 0.72
+- id: report
+  type: Echo
+  config:
+    template: Checked {{verify_claims.claims_checked}} claims, {{verify_claims.supported_claims}}
+      supported.
+edges:
+- from: verify_claims
+  to: report
+entry: verify_claims
+exit: report

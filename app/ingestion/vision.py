@@ -37,6 +37,15 @@ NO_VISUAL = "NO_VISUAL_CONTENT"
 
 @dataclass(frozen=True)
 class PageDescription:
+    """Provides the PageDescription behaviour.
+
+    Attributes:
+        page_index (int).
+        text (str).
+        model (str).
+        input_tokens (int).
+        output_tokens (int).
+    """
     page_index: int
     text: str
     model: str
@@ -52,6 +61,12 @@ class PdfPageVisionDescriber:
     """
 
     def __init__(self, app_settings: Settings | None = None, *, client: Any | None = None):
+        """Initialize the PdfPageVisionDescriber.
+
+        Args:
+            app_settings (Settings | None): The app settings (optional, default None).
+            client (Any | None): Client instance (optional, default None).
+        """
         self.settings = app_settings or default_settings
         self._client = client
 
@@ -59,10 +74,12 @@ class PdfPageVisionDescriber:
 
     @property
     def provider(self) -> str:
+        """The provider."""
         return self.settings.ingestion_vision_provider
 
     @property
     def model(self) -> str:
+        """The model."""
         configured = self.settings.ingestion_vision_model.strip()
         if configured:
             return configured
@@ -71,6 +88,11 @@ class PdfPageVisionDescriber:
         return "google/gemini-2.5-flash"
 
     def available(self) -> bool:
+        """Compute the available.
+
+        Returns:
+            bool: The result.
+        """
         if self._client is not None:
             return True
         if not _can_render():
@@ -80,6 +102,11 @@ class PdfPageVisionDescriber:
         return bool(self.settings.openrouter_api_key.strip())
 
     def unavailable_reason(self) -> str:
+        """Compute the unavailable reason.
+
+        Returns:
+            str: The reason.
+        """
         if not _can_render():
             return "pypdfium2 is not installed, so PDF pages cannot be rendered"
         if self.provider == "kimi" and not self.settings.moonshot_api_key.strip():
@@ -109,6 +136,15 @@ class PdfPageVisionDescriber:
         semaphore = asyncio.Semaphore(max(1, int(self.settings.ingestion_vision_concurrency)))
 
         async def one(index: int, png: bytes) -> PageDescription | None:
+            """Compute the one.
+
+            Args:
+                index (int): Index.
+                png (bytes): The png.
+
+            Returns:
+                PageDescription | None: The result.
+            """
             async with semaphore:
                 try:
                     return await self._describe(index, png, prompt or DEFAULT_PROMPT)
@@ -138,6 +174,16 @@ class PdfPageVisionDescriber:
         return described
 
     async def _describe(self, index: int, png: bytes, prompt: str) -> PageDescription:
+        """Internal helper for the describe step.
+
+        Args:
+            index (int): Index.
+            png (bytes): The png.
+            prompt (str): Prompt text.
+
+        Returns:
+            PageDescription: The result.
+        """
         client = self._client or self._build_client()
         data_url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
         completion = await client.chat.completions.create(
@@ -164,6 +210,11 @@ class PdfPageVisionDescriber:
         )
 
     def _build_client(self) -> Any:
+        """Build the client.
+
+        Returns:
+            Any: The client.
+        """
         from openai import AsyncOpenAI
 
         reason = self.unavailable_reason()
@@ -186,6 +237,11 @@ class PdfPageVisionDescriber:
 
 
 def _can_render() -> bool:
+    """Return whether render.
+
+    Returns:
+        bool: True when render.
+    """
     try:
         import pypdfium2  # noqa: F401
     except Exception:  # noqa: BLE001 - optional dependency

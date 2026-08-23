@@ -55,7 +55,7 @@ export function ProposalReview() {
 
   useEffect(() => {
     // Fetching route-owned data is the external synchronization for this effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+     
     if (params.runId) void load(params.runId);
     // Route id is the load trigger; form edits should not auto-fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps

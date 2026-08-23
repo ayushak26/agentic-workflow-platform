@@ -112,7 +112,6 @@ COMPLEX_WORKFLOWS = [
     Path("workflows/horizon_partb_evidence.yaml"),
     Path("workflows/horizon_partb_drafts.yaml"),
     Path("workflows/horizon_partb_drafts_to_docx.yaml"),
-    Path("workflows/horizon_proposal_hitl_pdf.yaml"),
     Path("workflows/horizon_partb_backhalf_v2.yaml"),
 ]
 

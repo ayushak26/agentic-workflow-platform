@@ -42,6 +42,7 @@ EMAIL_FILES = [(f"02_Email #{i}.txt", f"Email {i:02d}") for i in range(1, 32)]
 
 
 async def main() -> None:
+    """Compute the main."""
     workflow = load_workflow(WORKFLOW_PATH)
     knowledge_cfg = json.loads(KNOWLEDGE_CONFIG_PATH.read_text())
 

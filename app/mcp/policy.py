@@ -65,6 +65,12 @@ class MCPPolicyError(RuntimeError):
     workflow author, not for a log reader."""
 
     def __init__(self, message: str, *, code: str):
+        """Initialize the MCPPolicyError.
+
+        Args:
+            message (str): Message text.
+            code (str): The code.
+        """
         self.code = code
         super().__init__(message)
 
@@ -78,6 +84,11 @@ class MCPApprovalRequired(MCPPolicyError):
     """
 
     def __init__(self, message: str):
+        """Initialize the MCPApprovalRequired.
+
+        Args:
+            message (str): Message text.
+        """
         super().__init__(message, code="MCP_APPROVAL_REQUIRED")
 
 
@@ -184,6 +195,7 @@ class PolicyDecision:
     code: str = ""
 
     def raise_if_denied(self) -> None:
+        """Raise the if denied."""
         if self.allowed:
             return
         if self.code == "MCP_APPROVAL_REQUIRED":

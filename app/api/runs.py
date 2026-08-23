@@ -1,3 +1,9 @@
+"""Runs module.
+
+Part of the http api layer: fastapi routers for auth, workflows, runs, knowledge, and administration.
+
+Public symbols: my_runs, my_run_detail, pending_gate, run_business_projection, run_business_narration, run_business_explanation, ... (19 symbols total).
+"""
 from datetime import datetime, timezone
 import time
 import uuid
@@ -44,6 +50,14 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 
 def _scope(user: CurrentUser) -> str:
+    """Internal helper for the scope step.
+
+    Args:
+        user (CurrentUser): Authenticated current user.
+
+    Returns:
+        str: The result.
+    """
     return getattr(user, "session_id", None) or user.username
 
 
@@ -53,6 +67,13 @@ async def my_runs(
     limit: int = 50,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the my runs.
+
+    Args:
+        request (Request): Incoming FastAPI request.
+        limit (int): Maximum number of items to return (optional, default 50).
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     db = request.app.state.services.get("audit_db")
     if db is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
@@ -69,6 +90,13 @@ async def my_run_detail(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Compute the my run detail.
+
+    Args:
+        run_id (str): Workflow run identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     db = request.app.state.services.get("audit_db")
     if db is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "run store unavailable")
@@ -176,6 +204,14 @@ async def _load_run_and_spec(db, scope: str, run_id: str):
 
 
 async def _pending_gate(db, scope: str, run_id: str, run: dict[str, Any]):
+    """Internal helper for the pending gate step.
+
+    Args:
+        db: Mongo database handle.
+        scope (str): Session scope the record belongs to.
+        run_id (str): Workflow run identifier.
+        run (dict[str, Any]): The run.
+    """
     if run.get("status") != "paused":
         return None
     checkpoint = await get_resume_checkpoint(db, scope, run_id)
@@ -417,6 +453,12 @@ async def run_business_technical_detail(
 
 
 class BusinessActionRequest(BaseModel):
+    """Pydantic model defining the BusinessActionRequest shape.
+
+    Attributes:
+        type (str).
+        params (dict[str, Any]).
+    """
     type: str
     params: dict[str, Any] = {}
 
@@ -492,6 +534,12 @@ async def run_business_action(
 
 
 class FactCorrectionRequest(BaseModel):
+    """Pydantic model defining the FactCorrectionRequest shape.
+
+    Attributes:
+        field (str).
+        value (Any).
+    """
     field: str
     value: Any
 
@@ -546,6 +594,11 @@ async def correct_fact(
 
 
 class AssignRunRequest(BaseModel):
+    """Pydantic model defining the AssignRunRequest shape.
+
+    Attributes:
+        assignee (str).
+    """
     assignee: str
 
 
@@ -598,6 +651,11 @@ def _hitl_config_fallback(
 
 
 class RetryRunRequest(BaseModel):
+    """Pydantic model defining the RetryRunRequest shape.
+
+    Attributes:
+        run_id (str | None).
+    """
     run_id: str | None = None
 
 
@@ -1100,6 +1158,13 @@ async def delete_run_endpoint(
     request: Request,
     user: CurrentUser = Depends(require_consultant),
 ):
+    """Delete the run endpoint.
+
+    Args:
+        run_id (str): Workflow run identifier.
+        request (Request): Incoming FastAPI request.
+        user (CurrentUser): Authenticated current user (optional, default Depends(require_consultant)).
+    """
     services = getattr(request.app.state, "services", {})
     db = services.get("audit_db")
     if db is None:

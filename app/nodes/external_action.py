@@ -43,6 +43,18 @@ _HTTPMethod = Literal["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 
 class ExternalActionConfig(BaseModel):
+    """Pydantic model defining the ExternalActionConfig shape.
+
+    Attributes:
+        action_type (Literal['rest_api', 'webhook']).
+        safety_class (Literal['read', 'write', 'external_action']).
+        method (_HTTPMethod).
+        url (str).
+        headers (dict[str, str]).
+        body (Any).
+        timeout_seconds (float).
+        allow_unattended_write (bool).
+    """
     model_config = ConfigDict(extra="forbid")
 
     action_type: Literal["rest_api", "webhook"] = Field(
@@ -94,10 +106,23 @@ class ExternalActionConfig(BaseModel):
 
 
 class ExternalActionInput(BaseModel):
+    """Pydantic model defining the ExternalActionInput shape."""
     pass
 
 
 class ExternalActionOutput(BaseModel):
+    """Pydantic model defining the ExternalActionOutput shape.
+
+    Attributes:
+        status (Literal['ok', 'error', 'needs_approval']).
+        safety_class (str).
+        response_status (int | None).
+        response_body (Any).
+        duration_s (float).
+        deduplicated (bool).
+        error (str | None).
+        error_code (str | None).
+    """
     status: Literal["ok", "error", "needs_approval"] = "ok"
     safety_class: str = ""
     response_status: int | None = None
@@ -111,6 +136,13 @@ class ExternalActionOutput(BaseModel):
 
 @NodeRegistry.register
 class ExternalActionAgent(NodeType):
+    """Workflow node type implementing the ExternalActionAgent capability.
+
+    Attributes:
+        family (ClassVar[str]).
+        execution_kind (ClassVar[str]).
+        about (ClassVar[dict[str, Any]]).
+    """
     type_name = "ExternalActionAgent"
     description = (
         "Call an external REST API or send a webhook. For a system this "
@@ -148,9 +180,26 @@ class ExternalActionAgent(NodeType):
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
+        """Compute the required services.
+
+        Args:
+            config (dict[str, Any]): Node configuration mapping.
+
+        Returns:
+            set[str]: The services.
+        """
         return {"external_action"}
 
     async def run(self, state, resolved_config: dict[str, Any]) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state: Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ExternalActionConfig(**resolved_config)
         service = self.services.get("external_action")
         if service is None:
@@ -194,6 +243,15 @@ class ExternalActionAgent(NodeType):
         }
 
     def _failure(self, cfg: ExternalActionConfig, error: Exception) -> dict[str, Any]:
+        """Internal helper for the failure step.
+
+        Args:
+            cfg (ExternalActionConfig): The cfg.
+            error (Exception): Error value or message.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         code = getattr(error, "code", None) or type(error).__name__
         status = "needs_approval" if code == "EXTERNAL_ACTION_APPROVAL_REQUIRED" else "error"
 

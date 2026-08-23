@@ -60,11 +60,21 @@ class ActionFactory:
     """
 
     def __init__(self, context: ActionContext) -> None:
+        """Initialize the ActionFactory.
+
+        Args:
+            context (ActionContext): The context.
+        """
         self._ctx = context
 
     # ---- run control -----------------------------------------------------
 
     def pause(self) -> BusinessAction | None:
+        """Pause the result.
+
+        Returns:
+            BusinessAction | None: The result.
+        """
         if not self._ctx.can_act or self._ctx.run.run_status not in ("running", "resuming"):
             return None
         return BusinessAction(
@@ -75,6 +85,11 @@ class ActionFactory:
         )
 
     def resume(self) -> BusinessAction | None:
+        """Resume the result.
+
+        Returns:
+            BusinessAction | None: The result.
+        """
         run = self._ctx.run
         paused_by_user = run.is_paused and (run.gate or {}).get("pause_kind") == "user_requested"
         if not self._ctx.can_act or not paused_by_user:
@@ -88,6 +103,11 @@ class ActionFactory:
         )
 
     def stop(self) -> BusinessAction | None:
+        """Stop the result.
+
+        Returns:
+            BusinessAction | None: The result.
+        """
         if not self._ctx.can_act or self._ctx.run.is_finished:
             return None
         return BusinessAction(
@@ -102,6 +122,14 @@ class ActionFactory:
         )
 
     def recheck(self, *, label: str | None = None) -> BusinessAction | None:
+        """Compute the recheck.
+
+        Args:
+            label (str | None): The label (optional, default None).
+
+        Returns:
+            BusinessAction | None: The result.
+        """
         mode = self._ctx.rerun_mode
         if not self._ctx.can_act or mode is None:
             return None
@@ -119,6 +147,11 @@ class ActionFactory:
         )
 
     def approve(self) -> BusinessAction | None:
+        """Compute the approve.
+
+        Returns:
+            BusinessAction | None: The result.
+        """
         run = self._ctx.run
         if not self._ctx.can_act or not run.awaits_approval:
             return None
@@ -134,6 +167,14 @@ class ActionFactory:
         )
 
     def assign(self, *, suggested: str | None = None) -> BusinessAction | None:
+        """Compute the assign.
+
+        Args:
+            suggested (str | None): The suggested (optional, default None).
+
+        Returns:
+            BusinessAction | None: The result.
+        """
         if not self._ctx.can_act:
             return None
         return BusinessAction(
@@ -149,6 +190,16 @@ class ActionFactory:
     def edit_fact(
         self, field: str, *, label: str | None = None, emphasis: str = "secondary"
     ) -> BusinessAction | None:
+        """Compute the edit fact.
+
+        Args:
+            field (str): The field.
+            label (str | None): The label (optional, default None).
+            emphasis (str): The emphasis (optional, default 'secondary').
+
+        Returns:
+            BusinessAction | None: The fact.
+        """
         if not self._ctx.can_act:
             return None
         return BusinessAction(
@@ -161,6 +212,14 @@ class ActionFactory:
         )
 
     def explain(self, *, target: str = "decision") -> BusinessAction:
+        """Compute the explain.
+
+        Args:
+            target (str): Target value (optional, default 'decision').
+
+        Returns:
+            BusinessAction: The result.
+        """
         return BusinessAction(
             id=f"explain:{target}",
             type=BusinessActionType.EXPLAIN_DECISION,
@@ -170,6 +229,15 @@ class ActionFactory:
         )
 
     def draft_clarification(self, *, topic: str, label: str = "Ask customer") -> BusinessAction | None:
+        """Draft the clarification.
+
+        Args:
+            topic (str): The topic.
+            label (str): The label (optional, default 'Ask customer').
+
+        Returns:
+            BusinessAction | None: The clarification.
+        """
         if not self._ctx.can_act:
             return None
         return BusinessAction(
@@ -185,6 +253,11 @@ class ActionFactory:
         )
 
     def add_note(self) -> BusinessAction | None:
+        """Add the note.
+
+        Returns:
+            BusinessAction | None: The note.
+        """
         if not self._ctx.can_act:
             return None
         return BusinessAction(
@@ -195,6 +268,14 @@ class ActionFactory:
         )
 
     def route_override(self, *, current: str | None) -> BusinessAction | None:
+        """Compute the route override.
+
+        Args:
+            current (str | None): Current value.
+
+        Returns:
+            BusinessAction | None: The override.
+        """
         if not self._ctx.can_act:
             return None
         return BusinessAction(
@@ -212,6 +293,15 @@ class ActionFactory:
     # ---- looking things up -----------------------------------------------
 
     def review_attachment(self, *, file_key: str, name: str) -> BusinessAction:
+        """Compute the review attachment.
+
+        Args:
+            file_key (str): The file key.
+            name (str): Workflow or resource name.
+
+        Returns:
+            BusinessAction: The attachment.
+        """
         return BusinessAction(
             id=f"document_review:{file_key}",
             type=BusinessActionType.DOCUMENT_REVIEW,
@@ -248,6 +338,15 @@ class ActionFactory:
         )
 
     def open_record(self, *, kind: str, reference: str) -> BusinessAction:
+        """Compute the open record.
+
+        Args:
+            kind (str): The kind.
+            reference (str): The reference.
+
+        Returns:
+            BusinessAction: The record.
+        """
         return BusinessAction(
             id=f"open_related_record:{kind}:{reference}",
             type=BusinessActionType.OPEN_RELATED_RECORD,
@@ -256,6 +355,15 @@ class ActionFactory:
         )
 
     def technical_details(self, activity_id: str, *, label: str = "Technical details") -> BusinessAction:
+        """Compute the technical details.
+
+        Args:
+            activity_id (str): The activity id.
+            label (str): The label (optional, default 'Technical details').
+
+        Returns:
+            BusinessAction: The details.
+        """
         return BusinessAction(
             id=f"open_technical_details:{activity_id}",
             type=BusinessActionType.OPEN_TECHNICAL_DETAILS,
@@ -265,6 +373,15 @@ class ActionFactory:
         )
 
     def ask_ai(self, *, question: str, label: str | None = None) -> BusinessAction:
+        """Compute the ask ai.
+
+        Args:
+            question (str): Question text.
+            label (str | None): The label (optional, default None).
+
+        Returns:
+            BusinessAction: The ai.
+        """
         return BusinessAction(
             id=f"ask_ai:{abs(hash(question)) % 10_000_000}",
             type=BusinessActionType.ASK_AI,

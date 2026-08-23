@@ -21,25 +21,46 @@ from app.proposal_graph.models import ConceptAlternative
 
 
 class ConceptFreezeInput(BaseModel):
+    """Pydantic model defining the ConceptFreezeInput shape."""
     pass
 
 
 class ConceptFreezeConfig(BaseModel):
+    """Pydantic model defining the ConceptFreezeConfig shape.
+
+    Attributes:
+        alternatives (str | list[ConceptAlternative]).
+        selected_concept_id (str).
+    """
     alternatives: str | list[ConceptAlternative]
     selected_concept_id: str
 
     @field_validator("alternatives", mode="before")
     @classmethod
     def _coerce_alternatives(cls, value: Any) -> Any:
+        """Internal helper for the coerce alternatives step.
+
+        Args:
+            value (Any): Value to process.
+
+        Returns:
+            Any: The alternatives.
+        """
         return coerce_typed_list_field(value, ConceptAlternative, "alternatives")
 
 
 class ConceptFreezeOutput(BaseModel):
+    """Pydantic model defining the ConceptFreezeOutput shape.
+
+    Attributes:
+        selected_concept (ConceptAlternative).
+    """
     selected_concept: ConceptAlternative
 
 
 @NodeRegistry.register
 class ConceptFreezeAgent(NodeType):
+    """Workflow node type implementing the ConceptFreezeAgent capability."""
     type_name = "ConceptFreezeAgent"
     description = (
         "Resolve the human gate's concept decision against the three "
@@ -55,6 +76,15 @@ class ConceptFreezeAgent(NodeType):
         state: dict[str, Any],
         resolved_config: dict[str, Any],
     ) -> dict[str, Any]:
+        """Run the result.
+
+        Args:
+            state (dict[str, Any]): Current workflow state.
+            resolved_config (dict[str, Any]): Configuration after template resolution.
+
+        Returns:
+            dict[str, Any]: The result.
+        """
         cfg = ConceptFreezeConfig(**resolved_config)
         if isinstance(cfg.alternatives, str):
             raise ValueError(

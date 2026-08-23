@@ -50,6 +50,14 @@ _STRUCTURED_DATASET_NODE_TYPE = "StructuredDatasetRetrieverAgent"
 
 
 def _discovery_candidate_url(candidate: dict[str, Any]) -> str | None:
+    """Internal helper for the discovery candidate url step.
+
+    Args:
+        candidate (dict[str, Any]): The candidate.
+
+    Returns:
+        str | None: The candidate url.
+    """
     url = candidate.get("canonical_url") or candidate.get("pdf_url")
     if url:
         return str(url)
@@ -95,7 +103,7 @@ def _discovered_candidates_from_run(run: dict[str, Any]) -> list[dict[str, Any]]
                 "found_by_type": node.get("type_name"),
             }
 
-    return by_id
+    return list(by_id.values())
 
 
 def _structured_dataset_query_url(record: dict[str, Any]) -> str | None:
@@ -203,6 +211,11 @@ def _internal_evidence_from_run(run: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 class VerifyClaimRequest(BaseModel):
+    """Pydantic model defining the VerifyClaimRequest shape.
+
+    Attributes:
+        record_id (str).
+    """
     record_id: str
 
 
@@ -251,7 +264,10 @@ async def list_candidates(
         except Exception:
             run = None
         if run is not None:
-            by_id = _discovered_candidates_from_run(run)
+            by_id = {
+                candidate["candidate_id"]: candidate
+                for candidate in _discovered_candidates_from_run(run)
+            }
             by_id.update(_structured_dataset_candidates_from_run(run))
             discovered = sorted(
                 by_id.values(),

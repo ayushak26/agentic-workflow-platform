@@ -18,6 +18,16 @@ from dataclasses import asdict, dataclass
 
 @dataclass(frozen=True)
 class EmbeddingModelChoice:
+    """Provides the EmbeddingModelChoice behaviour.
+
+    Attributes:
+        id (str).
+        label (str).
+        dimensions (int).
+        provider (str).
+        verified (bool).
+        note (str).
+    """
     id: str
     label: str
     dimensions: int
@@ -103,12 +113,25 @@ PRECISION_SENSITIVE_DOC_TYPES: frozenset[str] = frozenset({
 
 
 def embedding_model_catalog() -> list[dict[str, object]]:
+    """Compute the embedding model catalog.
+
+    Returns:
+        list[dict[str, object]]: The model catalog.
+    """
     return [asdict(choice) for choice in EMBEDDING_MODELS]
 
 
 # Non-ASCII beyond Latin-1 is the cheapest reliable signal that a corpus is not
 # plain English/European text, where a multilingual model earns its cost.
 def _looks_multilingual(sample: str) -> bool:
+    """Internal helper for the looks multilingual step.
+
+    Args:
+        sample (str): The sample.
+
+    Returns:
+        bool: The multilingual.
+    """
     if not sample:
         return False
     exotic = sum(1 for char in sample if ord(char) > 0x24F)

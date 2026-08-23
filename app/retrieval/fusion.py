@@ -41,6 +41,14 @@ def deduplicate(candidates: list[RetrievedChunk]) -> list[RetrievedChunk]:
     """
 
     def score(chunk: RetrievedChunk) -> float:
+        """Score the result.
+
+        Args:
+            chunk (RetrievedChunk): The chunk.
+
+        Returns:
+            float: The result.
+        """
         return chunk.fusion_score or chunk.hybrid_score or 0.0
 
     kept: dict[str, RetrievedChunk] = {}

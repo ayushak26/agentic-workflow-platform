@@ -26,6 +26,17 @@ ProviderName = Literal[
 
 @dataclass(frozen=True)
 class ModelProfile:
+    """Provides the ModelProfile behaviour.
+
+    Attributes:
+        name (str).
+        provider (ProviderName).
+        tier (ModelTier).
+        speed_rank (int).
+        strengths (frozenset[str]).
+        input_usd_per_1k (float).
+        output_usd_per_1k (float).
+    """
     name: str
     provider: ProviderName
     tier: ModelTier

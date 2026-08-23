@@ -1,0 +1,105 @@
+# REFERENCE EXEMPLAR — canonical chat-shaped knowledge workflow.
+# Lives in workflows/reference/ (hidden from the Library UI; scanned by
+# about_synthesis for generation grounding and by preflight CI as a
+# regression net). Pattern: Chat Input → Knowledge Retrieval → AI → Chat
+# Output, the fundamental Business View capability shape.
+name: Reference — Chat Knowledge Q&A
+description: >-
+  Canonical chat-shaped workflow: a chatbot Start collects the question,
+  KnowledgeRetrieval searches a knowledge base, an AI task drafts a grounded
+  answer from the retrieved context, and a chat_response End replies with it.
+version: '1.0'
+use_case: reference_exemplar
+library:
+  title: Reference — Chat Knowledge Q&A
+  summary: Chat input, knowledge retrieval, grounded AI answer, chat reply.
+  visibility_status: draft
+entry: start
+exit:
+  - reply
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+      chatbot_name: Knowledge Assistant
+      welcome_message: >-
+        Ask me anything covered by the knowledge base — policies, products,
+        or procedures.
+      allow_attachments: false
+      suggested_questions:
+        - What is our cancellation policy?
+        - Which products support enterprise contracts?
+    experience:
+      display_name: Chat Input
+      purpose: Collect the user's question in their own words.
+      contribution: The single conversational entry point.
+      expected_output: The question text.
+      failure_message: The question could not be collected.
+      running_message: Reading your question…
+      completed_message: Question received
+
+  - id: search_knowledge
+    type: KnowledgeRetrieval
+    config:
+      collection_id: internal-knowledge-base
+      retrieval_profile_id: default
+      query: "{{outputs.start.message}}"
+    experience:
+      display_name: Search Knowledge
+      purpose: Find the knowledge base passages relevant to the question.
+      contribution: Grounds the answer in approved sources.
+      expected_output: Retrieved chunks with citations.
+      failure_message: The knowledge base could not be searched.
+      running_message: Searching the knowledge base…
+      completed_message: Relevant passages found
+
+  - id: draft_answer
+    type: TransformAgent
+    config:
+      mode: ai
+      model: auto
+      input_fields:
+        - name: question
+          type: string
+          value: "{{outputs.start.message}}"
+        - name: knowledge
+          type: string
+          value: "{{search_knowledge.context}}"
+      instructions: >-
+        Answer the question using ONLY the supplied knowledge. Cite the
+        source document for each claim. If the supplied knowledge does not
+        contain the answer, say so plainly instead of guessing.
+      output_fields:
+        - name: answer
+          type: text
+          description: The grounded answer with inline source references.
+          required: true
+    experience:
+      display_name: Draft Grounded Answer
+      purpose: Compose an answer strictly from retrieved knowledge.
+      contribution: The reply the user will read.
+      expected_output: A cited answer or an honest "not covered" statement.
+      failure_message: The answer could not be generated.
+      running_message: Preparing your response…
+      completed_message: Response drafted
+
+  - id: reply
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: "{{draft_answer.parsed.answer}}"
+      outcome: answered
+    experience:
+      display_name: Chat Reply
+      purpose: Reply in the chat with the grounded answer.
+      contribution: The user receives an answer tied to real sources.
+      expected_output: A chat reply.
+      failure_message: The reply could not be sent.
+edges:
+  - from: start
+    to: search_knowledge
+  - from: search_knowledge
+    to: draft_answer
+  - from: draft_answer
+    to: reply

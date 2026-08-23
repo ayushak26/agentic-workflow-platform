@@ -58,10 +58,20 @@ _COMPOSITE_WEIGHTS = {
 
 
 class ConceptAlternativeSet(BaseModel):
+    """Pydantic model defining the ConceptAlternativeSet shape.
+
+    Attributes:
+        alternatives (list[ConceptAlternative]).
+    """
     alternatives: list[ConceptAlternative] = Field(min_length=3, max_length=3)
 
     @model_validator(mode="after")
     def one_of_each_posture(self) -> "ConceptAlternativeSet":
+        """Compute the one of each posture.
+
+        Returns:
+            'ConceptAlternativeSet': The of each posture.
+        """
         postures = [item.posture for item in self.alternatives]
         expected = set(ConceptPosture)
         if set(postures) != expected or len(postures) != len(set(postures)):
@@ -73,6 +83,18 @@ class ConceptAlternativeSet(BaseModel):
 
 
 class _ConceptDraft(BaseModel):
+    """Pydantic model defining the ConceptDraft shape.
+
+    Attributes:
+        title (str).
+        summary (str).
+        scientific_advance (str).
+        scope (str).
+        call_requirement_ids (list[str]).
+        objective_ids (list[str]).
+        evidence_claim_ids (list[str]).
+        required_capabilities (list[str]).
+    """
     title: str
     summary: str
     scientific_advance: str
@@ -86,6 +108,16 @@ class _ConceptDraft(BaseModel):
 
 
 class _ConceptJudgment(BaseModel):
+    """Pydantic model defining the ConceptJudgment shape.
+
+    Attributes:
+        innovation_score (float).
+        consortium_capability_score (float).
+        methodological_validity_score (float).
+        adoption_potential_score (float).
+        scope_discipline_score (float).
+        critique (list[str]).
+    """
     innovation_score: float = Field(ge=0.0, le=10.0)
     consortium_capability_score: float = Field(ge=0.0, le=10.0)
     methodological_validity_score: float = Field(ge=0.0, le=10.0)
@@ -95,6 +127,15 @@ class _ConceptJudgment(BaseModel):
 
 
 def _valid_ids(values: list[str], known: set[str]) -> list[str]:
+    """Internal helper for the valid ids step.
+
+    Args:
+        values (list[str]): The values.
+        known (set[str]): The known.
+
+    Returns:
+        list[str]: The ids.
+    """
     return list(dict.fromkeys(item for item in values if item in known))
 
 
@@ -153,6 +194,15 @@ def score_concept(
 
 
 def _composite_score(concept: ConceptAlternative, graph: ProposalGraph) -> float:
+    """Internal helper for the composite score step.
+
+    Args:
+        concept (ConceptAlternative): The concept.
+        graph (ProposalGraph): Compiled LangGraph graph.
+
+    Returns:
+        float: The score.
+    """
     required_call_ids = {
         item.id
         for item in graph.call_requirements.values()
@@ -215,6 +265,18 @@ async def _draft_one_concept(
     concept_note: str,
     model: str,
 ) -> _ConceptDraft:
+    """Draft the one concept.
+
+    Args:
+        llm (Any): The llm.
+        posture (ConceptPosture): The posture.
+        graph_payload (dict[str, Any]): The graph payload.
+        concept_note (str): The concept note.
+        model (str): Model name.
+
+    Returns:
+        _ConceptDraft: The one concept.
+    """
     return await llm.complete_structured(
         model=model,
         system=(
