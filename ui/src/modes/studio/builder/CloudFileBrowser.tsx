@@ -35,6 +35,17 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleDateString();
 }
 
+function asFileRef(entry: CloudFileMeta): CloudFileRef {
+  return {
+    id: entry.id,
+    name: entry.name,
+    mimeType: entry.mime_type,
+    sizeBytes: entry.size_bytes,
+    modifiedAt: entry.modified_at,
+    webUrl: entry.web_url,
+  };
+}
+
 export function CloudFileBrowser({
   connectionId,
   mode,
@@ -106,7 +117,7 @@ export function CloudFileBrowser({
     setChecked(previous => {
       const next = new Map(previous);
       if (next.has(entry.id)) next.delete(entry.id);
-      else next.set(entry.id, { id: entry.id, name: entry.name });
+      else next.set(entry.id, asFileRef(entry));
       return next;
     });
   };
@@ -176,7 +187,7 @@ export function CloudFileBrowser({
                     openFolder(entry);
                     return;
                   }
-                  if (!multiple && selectable(entry)) onSelect([{ id: entry.id, name: entry.name }]);
+                  if (!multiple && selectable(entry)) onSelect([asFileRef(entry)]);
                 }}
               >
                 {multiple && (
@@ -210,7 +221,7 @@ export function CloudFileBrowser({
                         className="text-[10px] font-medium text-accent-700 hover:underline"
                         onClick={event => {
                           event.stopPropagation();
-                          onSelect([{ id: entry.id, name: entry.name }]);
+                          onSelect([asFileRef(entry)]);
                         }}
                         type="button"
                       >

@@ -1,8 +1,14 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { knowledgeApi } from '../../../api/knowledge';
-import { ActivityDrawer, ChatHistoryDrawer, CitationDrawer, ExistingWorkflowDrawer } from './ChatWorkspaceOverlays';
+import { api } from '../../../api/client';
+import { ActivityDrawer, ChatHistoryDrawer, CitationDrawer, ExistingWorkflowDrawer, SourcePickerDialog } from './ChatWorkspaceOverlays';
+
+vi.mock('../../../api/client', () => ({ api: {
+  integrationConnections: vi.fn(), integrationConnectUrl: vi.fn(() => '/api/builder/integrations/connect/google_drive'),
+  browseIntegrationFiles: vi.fn(), downloadIntegrationFileUrl: vi.fn(),
+} }));
 
 vi.mock('../../../api/knowledge', () => ({
   knowledgeApi: {
@@ -17,6 +23,29 @@ describe('Chat workspace drawers', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(knowledgeApi.documentSourceUrl).mockRejectedValue(new Error('No source URL in this test'));
+    vi.mocked(api.integrationConnections).mockResolvedValue({ connections: [], configured: false });
+  });
+
+  it('adds entered URLs as explicit sources', async () => {
+    const onAddUrls = vi.fn();
+    render(<SourcePickerDialog open sourceCount={0} onClose={vi.fn()} onUpload={vi.fn()} onAddUrls={onAddUrls} onImportDrive={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /Website or URL/ }));
+    fireEvent.change(screen.getByPlaceholderText(/https:\/\/example.com\/report/), { target: { value: 'https://example.com/report' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add URLs' }));
+    expect(onAddUrls).toHaveBeenCalledWith('https://example.com/report');
+  });
+
+  it('shows connected Google Drive accounts and imports selected files', async () => {
+    const connection = { id: 'drive-1', provider: 'google_drive' as const, display_name: 'Work Drive', address: 'me@example.com', needs_reauth: false };
+    vi.mocked(api.integrationConnections).mockResolvedValue({ connections: [connection], configured: true });
+    vi.mocked(api.browseIntegrationFiles).mockResolvedValue({ files: [{ id: 'file-1', name: 'Board pack.pdf', is_folder: false, mime_type: 'application/pdf' }] });
+    const onImportDrive = vi.fn();
+    render(<SourcePickerDialog open sourceCount={2} onClose={vi.fn()} onUpload={vi.fn()} onAddUrls={vi.fn()} onImportDrive={onImportDrive} />);
+    fireEvent.click(screen.getByRole('button', { name: /Google Drive/ }));
+    expect(await screen.findByRole('option', { name: /Work Drive/ })).toBeVisible();
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Select Board pack.pdf' }));
+    fireEvent.click(screen.getByRole('button', { name: /Add 1 file/ }));
+    await waitFor(() => expect(onImportDrive).toHaveBeenCalledWith(connection, [expect.objectContaining({ id: 'file-1', name: 'Board pack.pdf', mimeType: 'application/pdf' })]));
   });
   it('closes on Escape and restores focus to the trigger', () => {
     const onClose = vi.fn();

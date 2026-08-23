@@ -186,6 +186,21 @@ async def test_runtime_context_omitted_when_not_supplied():
 
 
 @pytest.mark.asyncio
+async def test_selected_document_ids_are_enforced_as_retrieval_scope():
+    repository, agent = await _build_agent(owner_scope_id="owner-a", generation_model="claude-sonnet-4-5")
+    retrieval = FakeRetrievalService([_chunk()])
+    llm = FakeLLM()
+    rag_service = RAGService(repository=repository, retrieval_service=retrieval, llm=llm)
+
+    await rag_service.query(
+        owner_scope_id="owner-a", rag_agent_id=agent.rag_agent_id,
+        query="What was Q3 revenue growth?", document_ids=["document-1"], llm=llm,
+    )
+
+    assert retrieval.calls[0]["request"].filters.document_ids == ["document-1"]
+
+
+@pytest.mark.asyncio
 async def test_response_includes_deduplicated_sources_and_relevant_context():
     repository, agent = await _build_agent(owner_scope_id="owner-a", generation_model="claude-sonnet-4-5")
     llm = FakeLLM(response_text="Revenue increased 14% year over year in Q3. [1]")

@@ -14,7 +14,7 @@ function sourceIcon(source: WorkspaceSource): string {
 }
 
 export function NotebookSourcesPanel({
-  sources, notes, collapsed, loading, highlightedSourceId, onCollapse, onToggle, onToggleAll, onAddSources, onOpenSource, onShowUsage, onFilesDropped, onOpenNote, onNewNote,
+  sources, notes, collapsed, loading, highlightedSourceId, onCollapse, onToggle, onToggleAll, onAddSources, onOpenSource, onShowUsage, onRemoveSource, onFilesDropped, onOpenNote, onNewNote,
 }: {
   sources: WorkspaceSource[];
   notes: WorkspaceNote[];
@@ -27,6 +27,7 @@ export function NotebookSourcesPanel({
   onAddSources: () => void;
   onOpenSource?: (source: WorkspaceSource) => void;
   onShowUsage?: (source: WorkspaceSource) => void;
+  onRemoveSource?: (source: WorkspaceSource) => void;
   onFilesDropped?: (files: File[]) => void;
   onOpenNote: (note: WorkspaceNote) => void;
   onNewNote: () => void;
@@ -64,13 +65,14 @@ export function NotebookSourcesPanel({
         {loading && <p className="chat-muted">Loading sources…</p>}
         {!loading && visible.length === 0 && <div className="chat-empty-rail"><p>No sources yet.</p><button type="button" onClick={onAddSources}>Add your first source</button></div>}
         {dragging && <div className="chat-source-drop-message">Drop files to add them to context</div>}
-        {visible.map(source => <div key={source.id} className={`chat-source-row ${source.selected ? 'is-selected' : ''} ${highlightedSourceId === source.id ? 'is-highlighted' : ''} ${onShowUsage ? 'has-usage-action' : ''}`}>
+        {visible.map(source => <div key={source.id} className={`chat-source-row ${source.selected ? 'is-selected' : ''} ${highlightedSourceId === source.id ? 'is-highlighted' : ''} ${onShowUsage || onRemoveSource ? 'has-usage-action' : ''}`}>
           <input aria-label={`Use ${source.title} in the next prompt`} type="checkbox" checked={source.selected} disabled={!sourceSelectable(source)} onChange={() => onToggle(source.id)} />
           <button type="button" className="chat-source-open" onClick={() => onOpenSource?.(source)}>
             <span className="chat-source-icon" aria-hidden>{sourceIcon(source)}</span>
             <span className="chat-source-copy"><span className="chat-source-title"><strong>{source.title}</strong>{source.referenced && <em>Referenced</em>}</span><small>{source.subtitle || sourceKindLabel(source.kind)}</small><span className={`chat-source-status is-${source.status}`}>{sourceStatusLabel(source)}</span></span>
           </button>
           {onShowUsage && <button type="button" className="chat-source-usage" aria-label={`Show usage for ${source.title}`} onClick={() => onShowUsage(source)}>↗</button>}
+          {onRemoveSource && <button type="button" className="chat-source-remove" aria-label={`Remove ${source.title}`} onClick={() => onRemoveSource(source)}>×</button>}
         </div>)}
       </div>
       <div className="chat-notes-section">

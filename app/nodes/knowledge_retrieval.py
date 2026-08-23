@@ -51,6 +51,7 @@ class KnowledgeRetrievalConfig(BaseModel):
     retrieval_profile_id: str = Field(min_length=1, json_schema_extra={"x-resource": "retrieval_profile"})
     query: str = Field(min_length=1)
     runtime_filters: dict[str, Any] = Field(default_factory=dict)
+    document_ids: list[str] = Field(default_factory=list)
 
 
 class KnowledgeRetrievalInput(BaseModel):
@@ -137,6 +138,7 @@ class KnowledgeRetrieval(NodeType):
             filters=RetrievalFilters(
                 session_id=scope,
                 collection_id=cfg.collection_id,
+                document_ids=cfg.document_ids or None,
                 metadata=metadata,
             ),
             retrieval_profile_id=cfg.retrieval_profile_id,
@@ -248,7 +250,7 @@ class KnowledgeRetrieval(NodeType):
             )
         for attempt in range(2):
             try:
-                async with asyncio.timeout(settings.external_request_timeout_seconds):
+                async with asyncio.timeout(settings.knowledge_retrieval_timeout_seconds):
                     raw_result = await service.retrieve(
                         request, owner_scope_id=scope, llm=llm
                     )

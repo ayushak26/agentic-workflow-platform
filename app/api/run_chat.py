@@ -53,6 +53,7 @@ _SYSTEM_PROMPT = (
 # same spirit as run_history.py's _INLINE_VALUE_LIMIT_BYTES, just applied to
 # the flattened context string rather than a single Mongo field.
 _MAX_CONTEXT_CHARS = 12_000
+_MAX_SOURCE_CONTEXT_CHARS = 8_000
 
 
 def _summarize_value(value: Any, limit: int = 800) -> str:
@@ -140,6 +141,23 @@ def _build_run_context(run: dict[str, Any]) -> str:
     if type_names_used:
         lines.append(f"Node types used in this run: {', '.join(type_names_used)}")
 
+    # File-reader output is often the actual evidence a Business Chat
+    # follow-up needs. Put it before generic node summaries and give it most of
+    # the bounded context budget; otherwise an 800-character node preview can
+    # cut off later document sections (for example, Skills near the end of a
+    # resume) while preserving only the header and first job.
+    for node_run in node_runs.values():
+        if node_run.get("type_name") != "WorkflowFileLoader":
+            continue
+        output = node_run.get("output")
+        source_text = output.get("text") if isinstance(output, dict) else None
+        if isinstance(source_text, str) and source_text.strip():
+            lines.append(
+                "EXTRACTED SOURCE MATERIAL "
+                f"({node_run.get('node_id', '?')}):\n"
+                + _summarize_value(source_text, _MAX_SOURCE_CONTEXT_CHARS)
+            )
+
     lines.append("Nodes:")
     for node_run in node_runs.values():
         node_id = node_run.get("node_id", "?")
@@ -161,7 +179,7 @@ def _build_run_context(run: dict[str, Any]) -> str:
 
         if node_run.get("error"):
             parts.append(f"error={node_run['error']}")
-        if node_run.get("output") is not None:
+        if node_run.get("output") is not None and type_name != "WorkflowFileLoader":
             parts.append(f"output={_summarize_value(node_run['output'])}")
         lines.append(" ".join(parts))
 

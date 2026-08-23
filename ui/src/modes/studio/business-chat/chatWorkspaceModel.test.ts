@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activitySummary, artifactPrompt, collectionAsSource, friendlyError, httpUrlsInText, selectedCollectionId, webSourcesFromText } from './chatWorkspaceModel';
+import { activitySummary, artifactPrompt, collectionAsSource, driveFilesAsSources, friendlyError, httpUrlsInText, selectedCollectionId, selectedKnowledgeDocumentIds, webSourcesFromText } from './chatWorkspaceModel';
 
 describe('chat workspace presentation model', () => {
   it('only returns a collection when selected sources share one collection', () => {
@@ -21,6 +21,14 @@ describe('chat workspace presentation model', () => {
       id: 'collection:pump-docs', title: 'Pump ICP2', subtitle: '4 documents · ready',
       kind: 'collection', selected: true, collectionId: 'pump-docs',
     });
+  });
+
+  it('returns only explicitly selected Knowledge document ids', () => {
+    expect(selectedKnowledgeDocumentIds([
+      { id: 'collection:one', title: 'One', kind: 'collection', selected: true, status: 'ready', collectionId: 'one' },
+      { id: 'document:a', title: 'A', kind: 'document', selected: true, status: 'ready', collectionId: 'one', documentId: 'doc-a' },
+      { id: 'document:b', title: 'B', kind: 'document', selected: false, status: 'ready', collectionId: 'one', documentId: 'doc-b' },
+    ])).toEqual(['doc-a']);
   });
 
   it('projects technical failures into recoverable language', () => {
@@ -52,6 +60,19 @@ describe('chat workspace presentation model', () => {
       subtitle: 'Web source · used with this request',
       kind: 'web',
       selected: true,
+    });
+  });
+
+  it('preserves Google Drive provenance after importing through workflow files', () => {
+    expect(driveFilesAsSources([{
+      kind: 'workflow_file', file_id: 'upload-1', name: 'Board pack.pdf', extension: 'pdf', category: 'document',
+      content_type: 'application/pdf', size_bytes: 1200, sha256: 'abc', minio_key: 'files/board-pack.pdf', parseable_text: true,
+    }], [{ id: 'drive-1', name: 'Board pack.pdf', webUrl: 'https://drive.google.com/file/d/drive-1', modifiedAt: '2026-08-24T00:00:00Z' }], {
+      id: 'google-work', provider: 'google_drive', display_name: 'Work Drive', address: 'me@example.com', needs_reauth: false,
+    })[0]).toMatchObject({
+      id: 'drive:google-work:drive-1', title: 'Board pack.pdf', kind: 'drive', status: 'synced',
+      subtitle: 'Google Drive · me@example.com', sourceUrl: 'https://drive.google.com/file/d/drive-1',
+      file: { file_id: 'upload-1' },
     });
   });
 });

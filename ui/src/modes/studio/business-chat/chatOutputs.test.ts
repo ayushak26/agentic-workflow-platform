@@ -192,4 +192,9 @@ describe('normalizeChatOutputs', () => {
     expect(normalizeChatOutputs({ outputs: { result: null }, node_runs: {} }))
       .toEqual([{ kind: 'text', text: EMPTY_CHAT_RESULT }]);
   });
+
+  it.each(['null', '[]', '{}'])('does not render placeholder answer %s as a user-visible result', answer => {
+    expect(normalizeChatOutputs({ outputs: { message: answer }, node_runs: {} }))
+      .toEqual([{ kind: 'text', text: EMPTY_CHAT_RESULT }]);
+  });
 });

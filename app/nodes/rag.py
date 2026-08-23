@@ -48,6 +48,13 @@ class RAGConfig(BaseModel):
         default_factory=dict,
         description="Additional typed metadata filters; security scope is never overridable.",
     )
+    document_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional authorized Knowledge document scope. This is compiled "
+            "into the retrieval security filter, not generic metadata."
+        ),
+    )
     filters: dict[str, Any] = Field(default_factory=dict)
     top_k_candidates: int = 25
     top_n_final: int = 8
@@ -187,6 +194,7 @@ class RAGAgent(NodeType):
                 rag_agent_id=cfg.rag_agent_id,
                 query=cfg.query,
                 runtime_filters=cfg.runtime_filters,
+                document_ids=cfg.document_ids,
                 runtime_context=cfg.runtime_context,
                 llm=llm,
             )

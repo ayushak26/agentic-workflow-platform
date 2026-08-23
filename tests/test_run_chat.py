@@ -167,3 +167,39 @@ nodes:
     # The prompt the node was actually configured with, sourced from the
     # run's workflow_yaml (design-time), not the redacted per-run record.
     assert "Summarize the evidence for {{topic}}." in call_context
+
+
+@pytest.mark.asyncio
+async def test_ask_about_run_prioritizes_late_resume_source_text_for_followups():
+    db = InMemoryDB()
+    resume_text = (
+        "Ayush Khandelwal\nWORK EXPERIENCE\n"
+        + ("Product delivery and analysis experience. " * 40)
+        + "\nSKILLS & CERTIFICATIONS\n"
+          "Artificial Intelligence, Large Language Models, RAG, MCP, Agents, Python, SQL, "
+          "Power BI, Tableau, Kafka, Product Discovery, Sprint Planning, Stakeholder Communication."
+    )
+    await upsert_run(
+        db, "resume-run", "user@example.com", workflow_name="Resume Analyst", status="completed",
+        inputs={"message": "Fetch important skills from resume"}, outputs={"message": "null"},
+    )
+    await record_node_started(
+        db, run_id="resume-run", session_id="user@example.com",
+        node_id="load_files", type_name="WorkflowFileLoader", node_input={}, started_at=10.0,
+    )
+    await record_node_completed(
+        db, run_id="resume-run", session_id="user@example.com", node_id="load_files",
+        output={"text": resume_text, "text_file_count": 1, "files": [{"name": "resume.pdf"}]},
+        ended_at=11.0, duration_s=1.0,
+    )
+    llm = FakeLLM()
+
+    await ask_about_run(
+        "resume-run", AskAboutRunRequest(question="Check again and list the important skills."),
+        _request(db, llm), USER,
+    )
+
+    prompt = llm.calls[0]["user"]
+    assert "EXTRACTED SOURCE MATERIAL (load_files)" in prompt
+    assert "SKILLS & CERTIFICATIONS" in prompt
+    assert "Large Language Models, RAG, MCP" in prompt

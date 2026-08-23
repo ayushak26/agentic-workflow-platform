@@ -3,12 +3,12 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { api, apiBase, getAuthHeaders } from '../../../api/client';
 import { knowledgeApi } from '../../../api/knowledge';
-import type { AuditEvent, RunDetail, RunEvent, WorkflowFileReference } from '../../../api/types';
+import type { AuditEvent, CloudFileRef, IntegrationConnectionInfo, RunDetail, RunEvent, WorkflowFileReference } from '../../../api/types';
 import { CopyButton } from '../../../components/CopyButton';
 import { RunControlBar } from './RunControlBar';
 import { PromptTemplateLibrary } from './PromptTemplateLibrary';
 import { SourceFirstChatHome } from './SourceFirstChatHome';
-import { ArtifactCreationDrawer, ChatHistoryDrawer, CitationDrawer, NoteEditor } from './ChatWorkspaceOverlays';
+import { ArtifactCreationDrawer, ChatHistoryDrawer, CitationDrawer, NoteEditor, SourcePickerDialog } from './ChatWorkspaceOverlays';
 import { NotebookSourcesPanel } from './NotebookSourcesPanel';
 import { ChatWorkspaceShell, type ChatWorkspacePanel } from './ChatWorkspaceShell';
 import { SessionAuditPanel, type SessionTab } from './SessionAuditPanel';
@@ -33,6 +33,7 @@ import {
 } from './chatWorkspaceStorage';
 import {
   CREATE_OPTIONS,
+  driveFilesAsSources,
   friendlyError,
   selectedSourceCount,
   selectedFiles,
@@ -172,6 +173,7 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
   const [skills, setSkills] = useState<ComposerMenuItem[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<ComposerMenuItem | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [attachments, setAttachments] = useState<WorkflowFileReference[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -616,6 +618,32 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
       });
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : 'The files could not be uploaded.');
+    } finally {
+      setUploading(false);
+    }
+  }, [meta?.allowAttachments]);
+
+  const importDriveFiles = useCallback(async (connection: IntegrationConnectionInfo, picked: CloudFileRef[]) => {
+    if (!meta?.allowAttachments) throw new Error('This workflow does not accept file sources. You can still add website URLs.');
+    if (picked.length === 0) return;
+    setUploading(true);
+    setAttachmentError(null);
+    try {
+      const localFiles = await Promise.all(picked.map(async item => (
+        new File([await api.downloadIntegrationFile(connection.id, item.id)], item.name, {
+          type: item.mimeType || 'application/octet-stream',
+          lastModified: item.modifiedAt ? new Date(item.modifiedAt).getTime() : Date.now(),
+        })
+      )));
+      const uploaded = await api.uploadWorkflowFiles(localFiles);
+      setAttachments(current => [...current, ...uploaded.files.filter(file => !current.some(existing => existing.file_id === file.file_id))]);
+      setWorkspaceSources(current => {
+        const incoming = driveFilesAsSources(uploaded.files, picked, connection);
+        return [...current, ...incoming.filter(item => !current.some(existing => existing.id === item.id))];
+      });
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'The selected Drive files could not be imported.');
+      throw error;
     } finally {
       setUploading(false);
     }
@@ -1076,6 +1104,14 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     setMobilePanel('session');
   }
 
+  function removeWorkspaceSource(source: WorkspaceSource) {
+    setWorkspaceSources(current => current.filter(item => item.id !== source.id));
+    if (source.file) {
+      setAttachments(current => current.filter(file => file.file_id !== source.file?.file_id));
+    }
+    if (highlightedSourceId === source.id) setHighlightedSourceId(null);
+  }
+
   function selectSourceFromSession(sourceId: string) {
     setHighlightedSourceId(sourceId);
     setSourcesCollapsed(false);
@@ -1106,9 +1142,10 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
           onCollapse={() => setSourcesCollapsed(value => !value)}
           onToggle={sourceId => setWorkspaceSources(current => current.map(item => item.id === sourceId ? { ...item, selected: !item.selected } : item))}
           onToggleAll={selected => setWorkspaceSources(current => current.map(item => ({ ...item, selected: selected && ['ready', 'synced', 'outdated'].includes(item.status) })))}
-          onAddSources={() => fileInputRef.current?.click()}
+          onAddSources={() => setSourcePickerOpen(true)}
           onOpenSource={source => { setHighlightedSourceId(source.id); if (source.sourceUrl) window.open(source.sourceUrl, '_blank', 'noopener,noreferrer'); }}
           onShowUsage={showSourceUsage}
+          onRemoveSource={removeWorkspaceSource}
           onFilesDropped={files => void uploadAttachments(files)}
           onOpenNote={note => { setNoteDraft(note); setNoteEditorOpen(true); }}
           onNewNote={() => { setNoteDraft(null); setNoteEditorOpen(true); }}
@@ -1310,6 +1347,14 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
           setComposerText(`What does this passage mean in context?\n\n${item.snippet ?? item.title}`);
           setCitation(null);
         }}
+      />
+      <SourcePickerDialog
+        open={sourcePickerOpen}
+        sourceCount={workspaceSources.length}
+        onClose={() => setSourcePickerOpen(false)}
+        onUpload={files => uploadAttachments(files)}
+        onAddUrls={addWebSources}
+        onImportDrive={importDriveFiles}
       />
       <NoteEditor
         note={noteDraft}

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import { api } from '../../../api/client';
 import { knowledgeApi, type CollectionResource, type DocumentResource, type RetrievalChunkContext } from '../../../api/knowledge';
+import type { CloudFileRef, IntegrationConnectionInfo } from '../../../api/types';
+import { CloudFileBrowser } from '../builder/CloudFileBrowser';
 import type { AgentActivity } from './businessChatModel';
 import { artifactPrompt, CREATE_OPTIONS, type CitationTarget, type CreateArtifactKind, type WorkspaceNote } from './chatWorkspaceModel';
 import type { LocalChatRecord } from './chatWorkspaceStorage';
@@ -63,18 +66,75 @@ export function ExistingWorkflowDrawer({ open, workflows, loading, error, onClos
   return <Drawer title="Use existing workflow" onClose={onClose} wide><div className="chat-workflow-picker"><p>Builder workflows and private Chat workflows appear here. Workflow configuration stays in Workflows.</p><label>Search workflows<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search by name or purpose…" /></label>{loading && <p className="chat-muted" role="status">Loading workflows…</p>}{error && <p className="chat-entry-error" role="alert">{error}</p>}<div className="chat-workflow-list">{visible.map(workflow => { const blocked = workflow.status === 'blocked'; return <button type="button" key={`${workflow.source}:${workflow.id}`} disabled={blocked} title={blocked ? 'Open this workflow in Builder and resolve its readiness errors before using it in Chat.' : undefined} onClick={() => onOpen(workflow)}><span><strong>{workflow.title}</strong><small>{blocked ? 'Blocked · fix readiness errors in Builder' : workflow.description || 'No description provided.'}</small></span><span>{workflow.source === 'private' ? 'Private' : 'Builder'}</span></button>; })}</div>{!loading && !error && visible.length === 0 && <p className="chat-muted">No workflows match this search.</p>}</div></Drawer>;
 }
 
-export function SourcePickerDialog({ open, sources, onClose, onUpload, onSelectCollection }: {
-  open: boolean; sources: DocumentResource[]; onClose: () => void; onUpload: (files: File[]) => void; onSelectCollection: (collection: CollectionResource, documents: DocumentResource[]) => void;
+export function SourcePickerDialog({ open, sourceCount, knowledgeEnabled = false, onClose, onUpload, onAddUrls, onSelectCollection, onImportDrive }: {
+  open: boolean;
+  sourceCount: number;
+  knowledgeEnabled?: boolean;
+  onClose: () => void;
+  onUpload: (files: File[]) => void | Promise<void>;
+  onAddUrls: (text: string) => void;
+  onSelectCollection?: (collection: CollectionResource, documents: DocumentResource[]) => void;
+  onImportDrive: (connection: IntegrationConnectionInfo, files: CloudFileRef[]) => void | Promise<void>;
 }) {
   const [collections, setCollections] = useState<CollectionResource[]>([]);
+  const [connections, setConnections] = useState<IntegrationConnectionInfo[]>([]);
+  const [selectedConnectionId, setSelectedConnectionId] = useState('');
+  const [urlText, setUrlText] = useState('');
+  const [activeMethod, setActiveMethod] = useState<'upload' | 'url' | 'drive' | 'knowledge' | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open) void knowledgeApi.listCollections().then(setCollections).catch(() => setCollections([])); }, [open]);
+  const [error, setError] = useState<string | null>(null);
+  const refreshConnections = () => api.integrationConnections().then(result => {
+    const googleConnections = result.connections.filter(connection => connection.provider === 'google_drive');
+    setConnections(googleConnections);
+    setSelectedConnectionId(current => googleConnections.some(connection => connection.id === current) ? current : (googleConnections[0]?.id ?? ''));
+  }).catch(() => setConnections([]));
+  useEffect(() => {
+    if (!open) return;
+    setActiveMethod(null);
+    setUrlText('');
+    setError(null);
+    void refreshConnections();
+    if (knowledgeEnabled) void knowledgeApi.listCollections().then(setCollections).catch(() => setCollections([]));
+  }, [knowledgeEnabled, open]);
+  useEffect(() => {
+    if (!open) return;
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'integration-oauth-complete') void refreshConnections();
+    };
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [open]);
   if (!open) return null;
   const chooseCollection = async (collection: CollectionResource) => {
     setBusy(true);
-    try { onSelectCollection(collection, await knowledgeApi.listDocuments(collection.collection_id)); } finally { setBusy(false); }
+    setError(null);
+    try { onSelectCollection?.(collection, await knowledgeApi.listDocuments(collection.collection_id)); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'The collection could not be loaded.'); }
+    finally { setBusy(false); }
   };
-  return <Drawer title="Add sources" onClose={onClose} wide><div className="chat-source-picker"><h3>Upload</h3><div className="chat-picker-grid"><label className="chat-picker-card"><input type="file" multiple className="sr-only" onChange={event => { onUpload(Array.from(event.target.files ?? [])); event.target.value = ''; }} /><span>↑</span><strong>Files from your computer</strong><small>PDF, DOCX, PPTX, CSV, XLSX, images and text</small></label><button type="button" className="chat-picker-card" disabled><span>⌁</span><strong>Website or URL</strong><small>Paste a link in Chat to research the web</small></button></div><h3>Your knowledge</h3><div className="chat-collection-picker">{collections.map(collection => <button type="button" key={collection.collection_id} disabled={busy} onClick={() => void chooseCollection(collection)}><span><strong>{collection.name}</strong><small>{collection.document_count} documents · {collection.status}</small></span><span>Choose</span></button>)}{collections.length === 0 && <p className="chat-muted">No ready Knowledge collections were found. You can still upload files.</p>}</div>{sources.length > 0 && <p className="chat-picker-footnote">{sources.length} source{sources.length === 1 ? '' : 's'} currently available in Chat.</p>}</div></Drawer>;
+  const selectedConnection = connections.find(connection => connection.id === selectedConnectionId);
+  const importDrive = async (files: CloudFileRef[]) => {
+    if (!selectedConnection || files.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try { await onImportDrive(selectedConnection, files); setActiveMethod(null); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'The selected Drive files could not be imported.'); }
+    finally { setBusy(false); }
+  };
+  return <Drawer title="Add sources" onClose={onClose} wide><div className="chat-source-picker">
+    <div className="chat-source-picker-intro"><div><strong>Bring the right context into Chat</strong><p>Add local files, web pages, Google Drive documents or governed Knowledge.</p></div><span>{sourceCount} available</span></div>
+    <div className="chat-picker-grid chat-picker-grid--methods">
+      <label className="chat-picker-card"><input type="file" multiple className="sr-only" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void onUpload(files); }} /><span>↑</span><strong>Upload files</strong><small>PDF, Office, data, images, text and code</small></label>
+      <button type="button" className={`chat-picker-card ${activeMethod === 'url' ? 'is-active' : ''}`} onClick={() => setActiveMethod(activeMethod === 'url' ? null : 'url')}><span>⌁</span><strong>Website or URL</strong><small>Add one or several public web pages</small></button>
+      <button type="button" className={`chat-picker-card ${activeMethod === 'drive' ? 'is-active' : ''}`} onClick={() => setActiveMethod(activeMethod === 'drive' ? null : 'drive')}><span>◇</span><strong>Google Drive</strong><small>Connect, browse and import documents securely</small></button>
+      {knowledgeEnabled && <button type="button" className={`chat-picker-card ${activeMethod === 'knowledge' ? 'is-active' : ''}`} onClick={() => setActiveMethod(activeMethod === 'knowledge' ? null : 'knowledge')}><span>▦</span><strong>Your Knowledge</strong><small>Use a governed collection and its RAG Agent</small></button>}
+    </div>
+    {activeMethod === 'url' && <section className="chat-source-method" aria-label="Add website URLs"><div><h3>Website or URL</h3><p>Enter one URL per line. Chat records them as explicit web sources; it does not claim they were indexed.</p></div><textarea rows={4} value={urlText} onChange={event => setUrlText(event.target.value)} placeholder={'https://example.com/report\nhttps://example.com/research'} /><button type="button" className="is-primary" disabled={!urlText.trim()} onClick={() => { onAddUrls(urlText); setUrlText(''); setActiveMethod(null); }}>Add URLs</button></section>}
+    {activeMethod === 'drive' && <section className="chat-source-method" aria-label="Add Google Drive files"><div className="chat-source-method-heading"><div><h3>Google Drive</h3><p>Read-only access. Selected files are imported into Chat’s protected workflow-file store.</p></div><button type="button" onClick={() => window.open(api.integrationConnectUrl('google_drive'), 'integration-oauth-connect', 'width=640,height=760')}>{connections.length ? 'Connect another account' : 'Connect Google Drive'}</button></div>{connections.length > 0 ? <><label>Account<select value={selectedConnectionId} onChange={event => setSelectedConnectionId(event.target.value)}>{connections.map(connection => <option key={connection.id} value={connection.id}>{connection.display_name}{connection.address ? ` · ${connection.address}` : ''}{connection.needs_reauth ? ' · reconnect required' : ''}</option>)}</select></label>{selectedConnection && !selectedConnection.needs_reauth && <CloudFileBrowser connectionId={selectedConnection.id} mode="file" multiple onSelect={files => void importDrive(files)} />}{selectedConnection?.needs_reauth && <p className="chat-entry-error">This account needs to be reconnected before its files can be browsed.</p>}</> : <div className="chat-drive-empty"><span>◇</span><strong>No Google Drive connected</strong><p>Connect an account to browse folders and search files without exposing credentials to Chat.</p></div>}</section>}
+    {activeMethod === 'knowledge' && knowledgeEnabled && <section className="chat-source-method" aria-label="Add Knowledge collection"><div><h3>Your Knowledge</h3><p>Select a governed collection. Chat will resolve its active RAG Agent before running.</p></div><div className="chat-collection-picker">{collections.map(collection => <button type="button" key={collection.collection_id} disabled={busy} onClick={() => void chooseCollection(collection)}><span><strong>{collection.name}</strong><small>{collection.document_count} documents · {collection.status}</small></span><span>Choose</span></button>)}{collections.length === 0 && <p className="chat-muted">No ready Knowledge collections were found.</p>}</div></section>}
+    {busy && <p className="chat-muted" role="status">Adding sources…</p>}
+    {error && <p className="chat-entry-error" role="alert">{error}</p>}
+  </div></Drawer>;
 }
 
 export function CitationDrawer({ citation, onClose, onSave, onAsk }: { citation: CitationTarget | null; onClose: () => void; onSave: (citation: CitationTarget) => void; onAsk: (citation: CitationTarget) => void }) {

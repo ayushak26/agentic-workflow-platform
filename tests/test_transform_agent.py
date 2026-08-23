@@ -273,6 +273,31 @@ async def test_new_style_structured_failure_retries_then_raises(stub_llm):
     )
 
 
+@pytest.mark.asyncio
+async def test_new_style_reject_empty_fields_retries_literal_null_answer(stub_llm):
+    stub_llm.queue('{"answer": "null"}')
+    stub_llm.queue('{"answer": "Python, SQL, product discovery, RAG, MCP, and stakeholder communication."}')
+
+    cls = NodeRegistry.get("TransformAgent")
+    node = cls(
+        node_id="answer",
+        raw_config={
+            "model": "m",
+            "instructions": "Extract the important skills from the resume.",
+            "input_fields": [{"name": "source_text", "value": "Resume skills: Python, SQL, RAG, MCP"}],
+            "output_fields": [{"name": "answer", "type": "text", "required": True}],
+            "reject_empty_fields": ["answer"],
+        },
+        services={"llm": stub_llm},
+    )
+
+    result = await node.run(state={}, resolved_config=node.config.model_dump())
+
+    assert result["parsed"]["answer"].startswith("Python, SQL")
+    assert len(stub_llm.calls) == 2
+    assert all(call["method"] == "complete_structured" for call in stub_llm.calls)
+
+
 def test_config_requires_instructions_or_prompt_template():
     from pydantic import ValidationError
 

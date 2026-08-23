@@ -381,6 +381,10 @@ export type CloudFileMeta = {
 export type CloudFileRef = {
   id: string;
   name: string;
+  mimeType?: string;
+  sizeBytes?: number | null;
+  modifiedAt?: string | null;
+  webUrl?: string | null;
 };
 
 export type LLMModelInfo = {
@@ -492,47 +496,88 @@ export type WorkflowSummary = {
 };
 
 export type PrivateChatWorkflowSummary = {
-  id: string; slug: string; name: string; description: string;
-  source: 'generated' | 'imported' | 'existing'; visibility: 'private';
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  source: 'generated' | 'imported' | 'existing';
+  visibility: 'private';
   status: 'private' | 'publish_requested' | 'published' | 'archived';
   source_workflow_name?: string | null;
+  managed?: boolean;
   output_compatibility: {
     supported: boolean;
     detected_types: Array<'text' | 'code' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx'>;
-    fallback_to_text: boolean; warnings: string[];
+    fallback_to_text: boolean;
+    warnings: string[];
   };
-  created_at: string; updated_at: string;
+  created_at: string;
+  updated_at: string;
 };
-export type PrivateChatWorkflowDetail = PrivateChatWorkflowSummary & { yaml: string };
+
+export type PrivateChatWorkflowDetail = PrivateChatWorkflowSummary & {
+  yaml: string;
+};
+
 export type ChatWorkspaceExperience = {
-  id: string; title: string; examples: string[];
+  id: string;
+  title: string;
+  examples: string[];
   default_plan: 'llm' | 'files' | 'retrieval' | 'existing_workflow' | 'artifact';
-  existing_workflow: string | null; capabilities: string[];
+  existing_workflow: string | null;
+  capabilities: string[];
 };
+
 export type ChatWorkspacePlan = {
   kind: 'llm' | 'files' | 'vision' | 'web' | 'retrieval' | 'integration' | 'existing_workflow' | 'artifact';
-  title: string; reason: string; yaml: string | null; existing_workflow: string | null;
-  experience_id: string | null; missing_requirements: string[]; capabilities: string[];
+  title: string;
+  reason: string;
+  yaml: string | null;
+  existing_workflow: string | null;
+  experience_id: string | null;
+  missing_requirements: string[];
+  capabilities: string[];
 };
+
 export type ChatWorkspacePlanRequest = {
-  objective: string; experience_id?: string | null; selected_workflow?: string | null;
-  preferred_output?: 'auto' | 'text' | 'pdf' | 'pptx'; has_attachments?: boolean;
-  attachment_categories?: string[]; collection_id?: string | null;
-  retrieval_profile_id?: string | null; rag_agent_id?: string | null;
-  integration_connection?: string | null; integration_tool?: string | null;
+  objective: string;
+  experience_id?: string | null;
+  skill_name?: string | null;
+  selected_workflow?: string | null;
+  preferred_output?: 'auto' | 'text' | 'image' | 'pdf' | 'docx' | 'pptx';
+  has_attachments?: boolean;
+  attachment_categories?: string[];
+  collection_id?: string | null;
+  retrieval_profile_id?: string | null;
+  rag_agent_id?: string | null;
+  document_ids?: string[];
+  integration_connection?: string | null;
+  integration_tool?: string | null;
   previous_run_id?: string | null;
 };
+
 export type BusinessChatMessageRole = 'user' | 'assistant' | 'attempt' | 'error' | 'intervention';
+
 export type BusinessChatTranscriptMessage = {
-  id: string; role: BusinessChatMessageRole; content: Record<string, unknown>;
-  run_id: string | null; created_at: string; updated_at: string;
+  id: string;
+  role: BusinessChatMessageRole;
+  content: Record<string, unknown>;
+  run_id: string | null;
+  created_at: string;
+  updated_at: string;
 };
+
 export type BusinessChatConversation = {
-  id: string; workflow_source: 'shared' | 'private'; workflow_id: string;
-  created_at: string; updated_at: string;
+  id: string;
+  workflow_source: 'shared' | 'private';
+  workflow_id: string;
+  created_at: string;
+  updated_at: string;
 };
+
 export type BusinessChatConversationResponse = {
-  conversation: BusinessChatConversation; messages: BusinessChatTranscriptMessage[];
+  conversation: BusinessChatConversation;
+  messages: BusinessChatTranscriptMessage[];
 };
 
 export type WorkflowDetail = {
@@ -582,6 +627,16 @@ export type AutofixWorkflowResult = {
   preflight_report: WorkflowPreflightReport;
 };
 
+export type AutofixNodeResult = {
+  yaml: string;
+  node_id: string;
+  changed: boolean;
+  fixed: boolean;
+  deterministic_fixes_applied: string[];
+  llm_attempts: { success: boolean; detail: string }[];
+  preflight_report: WorkflowPreflightReport;
+};
+
 // Mirrors app/workflow/builder_store.py's save_draft/read_draft document.
 export type WorkflowDraft = {
   name: string;
@@ -607,6 +662,9 @@ export type WorkflowVersionSummary = {
   workflow_version: string;
   node_count: number;
   description: string;
+  restorable?: boolean;
+  preflight_issue_codes?: string[];
+  preflight_errors?: string[];
 };
 
 export type WorkflowFileReference = {
@@ -640,6 +698,15 @@ export type HITLReviewContent = {
   source_document?: WorkflowFileReference | null;
 };
 
+export type HITLReviewPanel = {
+  label: string;
+  field: string;
+  hint?: string;
+  editable?: boolean;
+  value: unknown;
+  available: boolean;
+};
+
 export type ExtractedWorkflowFile = {
   file: WorkflowFileReference;
   text: string;
@@ -670,7 +737,13 @@ export type RunStatus =
   | 'rejected'
   | 'failed';
 
-export type WorkflowRunOrigin = 'direct' | 'builder' | 'chat_saved_workflow' | 'chat_ad_hoc' | 'subworkflow';
+export type WorkflowRunOrigin =
+  | 'direct'
+  | 'builder'
+  | 'chat_saved_workflow'
+  | 'chat_ad_hoc'
+  | 'subworkflow';
+
 export type WorkflowRunHistoryVisibility = 'global' | 'conversation_only';
 
 export type EventType =
@@ -682,7 +755,7 @@ export type EventType =
   | 'hitl_reject'
   | 'hitl_edit';
 
-export type PauseKind = 'hitl_gate' | 'user_requested';
+export type PauseKind = 'hitl_gate' | 'user_requested' | 'subprocess';
 
 // GET /api/runs/mine/{run_id}/pending-gate — reconstructs the same HITL gate
 // a live Cockpit tab would have shown, from the durable checkpoint, so it can
@@ -691,8 +764,11 @@ export type PauseKind = 'hitl_gate' | 'user_requested';
 export type PendingGate =
   | { run_id: string; paused: false }
   | { run_id: string; paused: true; pause_kind: 'user_requested'; node_id: string | null }
+  | { run_id: string; paused: true; pause_kind: 'subprocess'; node_id: string | null }
   | {
+      gate_id?: string;
       run_id: string;
+      parent_run_id?: string | null;
       paused: true;
       pause_kind: 'hitl_gate';
       node_id: string;
@@ -700,6 +776,9 @@ export type PendingGate =
       context: Record<string, unknown> | null;
       allowed_actions: string[];
       content: HITLReviewContent | null;
+      panels: HITLReviewPanel[];
+      review_purpose: string;
+      display_name?: string;
       allow_document_override: boolean;
       max_edit_chars: number;
     };
@@ -729,15 +808,6 @@ export interface RunSummary {
   // decision) from a HITL gate's own pause ('hitl_gate', resumed from the
   // review screen with an approve/reject/edit decision instead).
   pause_kind?: PauseKind;
-  // Present only when this run is one stage of a pipeline (see
-  // app/runtime/pipeline_executor.py's _run_stage) — stamped at run
-  // creation so Run History can show/search/filter/sort by stage without a
-  // separate lookup into the pipeline_runs collection.
-  pipeline_run_id?: string | null;
-  pipeline_name?: string | null;
-  stage_id?: string | null;
-  stage_index?: number | null;
-  total_stages?: number | null;
   origin?: WorkflowRunOrigin;
   history_visibility?: WorkflowRunHistoryVisibility;
   workflow_id?: string | null;
@@ -937,9 +1007,16 @@ export interface RunChatTurn {
 
 export type PromptTemplateCategory = 'Research' | 'Summarize' | 'Compare' | 'Extract' | 'Brainstorm' | 'Writing' | 'Analysis';
 export interface PromptTemplate {
-  id: string; title: string; description: string; category: PromptTemplateCategory;
-  content: string; variables: string[]; favorite: boolean; built_in: boolean;
-  created_at: string; updated_at: string;
+  id: string;
+  title: string;
+  description: string;
+  category: PromptTemplateCategory;
+  content: string;
+  variables: string[];
+  favorite: boolean;
+  built_in: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 /** Compact, structured "what did the user click" context for a scoped Ask AI
@@ -978,354 +1055,6 @@ export interface RunDetail extends RunSummary {
   workflow_yaml?: string;
   retry_available?: boolean;
   retryable_node_count?: number;
-}
-
-// Business View's contract (app/workflow/business_view/models.py). The server
-// decides what a business activity is, where each fact came from, what needs
-// attention and what a person may do about it; React renders that, and never
-// re-derives meaning from node names or event types.
-//
-// Note what is absent: raw model output, parsed payloads and prompts. They are
-// served only by `businessTechnicalDetail`, so the default screen cannot show
-// them even by mistake.
-export type BusinessSource = 'ai' | 'rule' | 'system' | 'human' | 'customer_message' | 'workflow';
-
-export type BusinessActionType =
-  | 'pause_run' | 'resume_run' | 'stop_run' | 'rerun_dependency'
-  | 'approve' | 'reject' | 'assign_work_item'
-  | 'edit_fact' | 'explain_decision' | 'draft_clarification' | 'add_note' | 'route_override'
-  | 'related_record_lookup' | 'document_review' | 'open_related_record'
-  | 'open_technical_details' | 'ask_ai';
-
-export interface BusinessAction {
-  id: string;
-  type: BusinessActionType;
-  label: string;
-  description?: string | null;
-  emphasis: 'primary' | 'secondary' | 'danger';
-  enabled: boolean;
-  disabled_reason?: string | null;
-  requires_approval: boolean;
-  params: Record<string, unknown>;
-}
-
-export interface BusinessFact {
-  id: string;
-  label: string;
-  value: unknown;
-  display: string;
-  source: BusinessSource;
-  source_label: string;
-  node_id?: string | null;
-  editable: boolean;
-  stale: boolean;
-  confidence?: number | null;
-  missing: boolean;
-  actions: BusinessAction[];
-}
-
-export interface AIModelUsage {
-  requested?: string | null;
-  selected?: string | null;
-  executed?: string | null;
-  fallback: boolean;
-  fallback_reason?: string | null;
-  routing_reason?: string | null;
-  latency_ms?: number | null;
-  cost_usd?: number | null;
-  task_type?: string | null;
-  provider?: string | null;
-  call_count: number;
-}
-
-export interface BusinessDecisionRule {
-  id: string;
-  name: string;
-  description?: string | null;
-  node_id?: string | null;
-  matched: boolean;
-}
-
-export interface TechnicalNodeRef {
-  node_id: string;
-  display_name: string;
-  type_name?: string | null;
-  status: string;
-  duration_ms?: number | null;
-  error?: string | null;
-}
-
-export interface TechnicalActivityDetail {
-  node_ids: string[];
-  nodes: TechnicalNodeRef[];
-  ai_calls: AIModelUsage[];
-  rule_count: number;
-  rules: BusinessDecisionRule[];
-  duration_ms?: number | null;
-  has_raw_output: boolean;
-}
-
-export type BusinessActivityStatus = 'planned' | 'active' | 'completed' | 'attention' | 'skipped';
-export type BusinessActivityKind = 'ai' | 'rule' | 'system' | 'human' | 'workflow' | 'mixed';
-
-export interface BusinessActivityView {
-  id: string;
-  title: string;
-  status: BusinessActivityStatus;
-  status_label: string;
-  summary?: string | null;
-  kind: BusinessActivityKind;
-  kind_label: string;
-  facts: BusinessFact[];
-  actions: BusinessAction[];
-  source_nodes: string[];
-  ai?: AIModelUsage | null;
-  started_at?: string | null;
-  completed_at?: string | null;
-  duration_ms?: number | null;
-  technical: TechnicalActivityDetail;
-}
-
-export type BusinessAttentionSeverity = 'blocking' | 'warning' | 'info';
-
-export interface BusinessAttentionItem {
-  id: string;
-  title: string;
-  detail?: string | null;
-  severity: BusinessAttentionSeverity;
-  status_label: string;
-  field?: string | null;
-  actions: BusinessAction[];
-}
-
-export type BusinessStatusTone = 'progress' | 'attention' | 'blocked' | 'waiting' | 'done' | 'stopped';
-
-export interface BusinessStatusView {
-  code: string;
-  headline: string;
-  summary: string;
-  tone: BusinessStatusTone;
-  attention_count: number;
-  narration_source: 'deterministic' | 'ai';
-  narration_model?: string | null;
-  state_version: string;
-}
-
-export interface BusinessUnderstanding {
-  node_id?: string | null;
-  summary?: string | null;
-  confidence?: number | null;
-  fields: BusinessFact[];
-  source: BusinessSource;
-  source_label: string;
-  ai?: AIModelUsage | null;
-  actions: BusinessAction[];
-}
-
-export interface BusinessDecisionView {
-  id: string;
-  headline: string;
-  summary?: string | null;
-  reason?: string | null;
-  source: BusinessSource;
-  source_label: string;
-  facts: BusinessFact[];
-  rules: BusinessDecisionRule[];
-  actions: BusinessAction[];
-  node_ids: string[];
-  overridden: boolean;
-  overridden_by?: string | null;
-  overridden_at?: string | null;
-  original_headline?: string | null;
-  stale: boolean;
-}
-
-export interface BusinessNextStep {
-  headline: string;
-  description?: string | null;
-  blocked: boolean;
-  blocked_reason?: string | null;
-  owner?: string | null;
-  actions: BusinessAction[];
-}
-
-export interface BusinessRelatedRecord {
-  id: string;
-  kind: string;
-  label: string;
-  reference: string;
-  source: BusinessSource;
-  source_label: string;
-  actions: BusinessAction[];
-}
-
-export interface BusinessAttachment {
-  id: string;
-  name: string;
-  kind: string;
-  size_bytes?: number | null;
-  file_key?: string | null;
-  actions: BusinessAction[];
-}
-
-export type BusinessTimelineKind = 'activity' | 'human' | 'failure' | 'edit' | 'status' | 'override';
-
-export interface BusinessTimelineEntry {
-  id: string;
-  ts: string;
-  title: string;
-  detail?: string | null;
-  marks: string[];
-  kind: BusinessTimelineKind;
-  source?: BusinessSource | null;
-  source_label?: string | null;
-}
-
-export interface BusinessRequiredUserAction {
-  type: 'approval_review' | 'resume_decision';
-  node_id?: string | null;
-  question?: string | null;
-  allowed_actions: string[];
-  message?: string | null;
-}
-
-export interface BusinessProjection {
-  work_item: {
-    id: string;
-    title: string;
-    type: string;
-    reference: string;
-    started_at?: string | null;
-    updated_at?: string | null;
-    assigned_to?: string | null;
-    customer?: string | null;
-  };
-  process: { name: string; goal: string };
-  status: string;
-  business_status: BusinessStatusView;
-  attention: BusinessAttentionItem[];
-  understanding: BusinessUnderstanding;
-  activities: BusinessActivityView[];
-  happened: string[];
-  facts: BusinessFact[];
-  decision: BusinessDecisionView | null;
-  recommended_actions: BusinessAction[];
-  other_actions: BusinessAction[];
-  next_step: BusinessNextStep | null;
-  related_records: BusinessRelatedRecord[];
-  attachments: BusinessAttachment[];
-  timeline: BusinessTimelineEntry[];
-  allowed_actions: BusinessAction[];
-  required_user_actions: BusinessRequiredUserAction[];
-  suggested_questions: string[];
-  activity_summary: Record<string, number>;
-}
-
-export interface BusinessNarration {
-  state_version: string;
-  headline: string;
-  summary: string;
-  next_step: string;
-  source: 'deterministic' | 'ai';
-  model?: string | null;
-  cached: boolean;
-}
-
-export interface BusinessExplanation {
-  decision: string | null;
-  summary?: string | null;
-  facts: { id: string; label: string; value: string; source: string }[];
-  rules: { id: string; name: string; description: string }[];
-  source: 'deterministic' | 'ai';
-  model?: string | null;
-}
-
-export interface BusinessTechnicalDetail {
-  activity_id: string;
-  title: string;
-  technical: TechnicalActivityDetail | null;
-  nodes: {
-    node_id: string;
-    type_name?: string | null;
-    status?: string | null;
-    duration_s?: number | null;
-    error?: string | null;
-    model_selections: ModelSelection[];
-    output: unknown;
-  }[];
-  cost_entries: CostLedgerEntry[];
-}
-
-export type BusinessActionResult =
-  | { kind: 'note'; note: { text: string; by: string; at: string } }
-  | { kind: 'route_override'; override: { route: string; reason: string | null; by: string; at: string } }
-  | { kind: 'clarification_draft'; subject: string; body: string; asks: string[]; sent: boolean; note: string }
-  | { kind: 'record'; reference: string; record_kind: string; data: Record<string, unknown>; text?: string | null };
-
-export type PipelineSummary = {
-  name: string;
-  description: string;
-  version: string;
-  stage_count: number;
-};
-
-export type PipelinePreflightReport = {
-  valid: boolean;
-  pipeline_name?: string | null;
-  stage_count: number;
-  checks: PreflightCheck[];
-  issues: PreflightIssue[];
-};
-
-export type PipelineStageStatus =
-  | 'pending'
-  | 'running'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'rejected';
-
-export interface PipelineStageResult {
-  id: string;
-  workflow: string;
-  run_id: string | null;
-  status: PipelineStageStatus;
-  error?: string | null;
-}
-
-export type PipelineRunStatus = 'running' | 'gated' | 'completed' | 'failed' | 'abandoned';
-
-export interface PipelineRunSummary {
-  pipeline_run_id: string;
-  session_id: string;
-  pipeline_name: string;
-  status: PipelineRunStatus;
-  current_stage_index: number;
-  stages: PipelineStageResult[];
-  created_at: string;
-  updated_at: string;
-  ended_at?: string | null;
-}
-
-export interface PipelineRunDetail extends PipelineRunSummary {
-  pipeline_inputs: Record<string, unknown>;
-  pipeline_yaml?: string;
-}
-
-export interface PipelineStageOutcome {
-  pipeline_run_id: string;
-  stage_id: string;
-  stage_run_id: string;
-  stage_result: {
-    status: string;
-    run_id: string;
-    error?: string;
-    state?: unknown;
-    output?: Record<string, unknown>;
-    node_id?: string;
-    reason?: string;
-  };
-  pipeline: PipelineRunDetail;
 }
 
 export type CoverageStatus = 'ADDRESSED' | 'PARTIAL' | 'MISSING';

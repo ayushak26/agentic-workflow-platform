@@ -151,6 +151,7 @@ class RAGService:
         rag_agent_id: str,
         query: str,
         runtime_filters: dict[str, Any] | MetadataFilterGroup | None = None,
+        document_ids: list[str] | None = None,
         runtime_context: dict[str, Any] | None = None,
         llm: Any | None = None,
     ) -> RAGQueryResponse:
@@ -225,6 +226,7 @@ class RAGService:
             filters=RetrievalFilters(
                 session_id=owner_scope_id,
                 collection_id=collection.collection_id,
+                document_ids=document_ids or None,
                 metadata=metadata_group,
             ),
             index_id=index.index_id,

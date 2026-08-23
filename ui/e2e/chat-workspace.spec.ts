@@ -41,7 +41,7 @@ async function json(route: Route, body: unknown, status = 200) {
 }
 
 
-async function installApi(page: Page, options: { failRetrievalOnce?: boolean; exposeExistingWorkflow?: boolean; exposeCollection?: boolean; exposeRagAgent?: boolean; uploadDocument?: boolean; hitl?: boolean; builderWorkflow?: boolean } = {}) {
+async function installApi(page: Page, options: { failRetrievalOnce?: boolean; exposeExistingWorkflow?: boolean; exposeCollection?: boolean; exposeRagAgent?: boolean; exposeDrive?: boolean; uploadDocument?: boolean; hitl?: boolean; builderWorkflow?: boolean } = {}) {
   const runBodies: Array<Record<string, unknown>> = [];
   const retryBodies: Array<Record<string, unknown>> = [];
   const resumeBodies: Array<Record<string, unknown>> = [];
@@ -240,6 +240,7 @@ edges:
     created_at: '2026-08-23T00:00:00Z', updated_at: '2026-08-23T00:00:00Z',
   };
   let runId = 'workspace-run';
+  let preparedRagYaml = ragYaml;
   let retrievalFailed = false;
   let hitlPhase = options.hitl ? 1 : 0;
 
@@ -248,6 +249,17 @@ edges:
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/') && !url.pathname.startsWith('/auth/')) return route.continue();
     if (url.pathname === '/auth/me') return json(route, { username: 'workspace-user' });
+    if (url.pathname === '/api/builder/integrations/connections') return json(route, {
+      configured: Boolean(options.exposeDrive),
+      connections: options.exposeDrive ? [{ id: 'google-work', provider: 'google_drive', display_name: 'Work Drive', address: 'workspace@example.com', needs_reauth: false }] : [],
+    });
+    if (url.pathname === '/api/builder/integrations/connections/google-work/files') return json(route, {
+      files: [{ id: 'drive-board-pack', name: 'Board pack.pdf', mime_type: 'application/pdf', is_folder: false, size_bytes: 2048, modified_at: '2026-08-23T00:00:00Z', web_url: 'https://drive.google.com/file/d/drive-board-pack', parent_id: null }],
+      next_page_token: null,
+    });
+    if (url.pathname === '/api/builder/integrations/connections/google-work/download/drive-board-pack') {
+      return route.fulfill({ status: 200, contentType: 'application/pdf', headers: { 'content-disposition': 'attachment; filename="Board pack.pdf"' }, body: '%PDF-drive-file' });
+    }
     if (url.pathname === '/api/knowledge/collections') return json(route, options.exposeCollection ? [{
       collection_id: 'pump-collection', name: 'Pump ICP2 Collection', description: 'Pump manuals', status: 'ready',
       document_count: 2, chunk_count: 12, active_index_id: 'pump-index', metadata_schema: {}, doc_types: ['technical_documentation'],
@@ -309,10 +321,17 @@ edges:
         plan: { kind: 'web', title: 'Web Research Assistant', reason: 'Current public information is required.', yaml: webYaml, existing_workflow: null, experience_id: null, missing_requirements: [], capabilities: ['web', 'sources'] },
         workflow: { ...workflow, id: WEB_WORKFLOW_ID, name: 'Web Research Assistant', slug: 'workspace-web' },
       }, 201);
-      if (body.rag_agent_id === 'rag-pump' && body.collection_id === 'pump-collection') return json(route, {
-        plan: { kind: 'retrieval', title: 'Knowledge Assistant', reason: 'A saved RAG Agent is configured for this collection.', yaml: ragYaml, existing_workflow: null, experience_id: null, missing_requirements: [], capabilities: ['rag', 'citations'] },
+      if (body.rag_agent_id === 'rag-pump' && body.collection_id === 'pump-collection') {
+        const documentIds = Array.isArray(body.document_ids) ? body.document_ids.map(String) : [];
+        preparedRagYaml = ragYaml.replace(
+          "    config: { rag_agent_id: rag-pump, query: '{{outputs.rewrite_query.parsed.retrieval_query}}' }",
+          `    config:\n      rag_agent_id: rag-pump\n      query: '{{outputs.rewrite_query.parsed.retrieval_query}}'\n      document_ids:\n${documentIds.map(id => `        - ${id}`).join('\n')}`,
+        );
+        return json(route, {
+        plan: { kind: 'retrieval', title: 'Knowledge Assistant', reason: 'A saved RAG Agent is configured for this collection.', yaml: preparedRagYaml, existing_workflow: null, experience_id: null, missing_requirements: [], capabilities: ['rag', 'citations'] },
         workflow: { ...workflow, id: RAG_WORKFLOW_ID, name: 'Pump Knowledge Assistant', slug: 'workspace-rag' },
       }, 201);
+      }
       if (body.has_attachments === true && /architecture/i.test(String(body.objective ?? ''))) return json(route, {
         plan: { kind: 'artifact', title: 'Architecture Diagram', reason: 'The attached source grounds the requested diagram.', yaml: diagramYaml, existing_workflow: null, experience_id: null, missing_requirements: [], capabilities: ['files', 'diagram', 'image'] },
         workflow: { ...workflow, id: DIAGRAM_WORKFLOW_ID, name: 'Architecture Diagram', slug: 'workspace-diagram' },
@@ -322,7 +341,7 @@ edges:
     if (url.pathname === `/api/chat-workflows/${WORKFLOW_ID}`) return json(route, { ...workflow, yaml: llmYaml });
     if (url.pathname === `/api/chat-workflows/${SKILL_WORKFLOW_ID}`) return json(route, { ...workflow, id: SKILL_WORKFLOW_ID, name: 'Literature Review Skill', slug: 'workspace-skill', yaml: skillYaml });
     if (url.pathname === `/api/chat-workflows/${WEB_WORKFLOW_ID}`) return json(route, { ...workflow, id: WEB_WORKFLOW_ID, name: 'Web Research Assistant', slug: 'workspace-web', yaml: webYaml });
-    if (url.pathname === `/api/chat-workflows/${RAG_WORKFLOW_ID}`) return json(route, { ...workflow, id: RAG_WORKFLOW_ID, name: 'Pump Knowledge Assistant', slug: 'workspace-rag', yaml: ragYaml });
+    if (url.pathname === `/api/chat-workflows/${RAG_WORKFLOW_ID}`) return json(route, { ...workflow, id: RAG_WORKFLOW_ID, name: 'Pump Knowledge Assistant', slug: 'workspace-rag', yaml: preparedRagYaml });
     if (url.pathname === `/api/chat-workflows/${DIAGRAM_WORKFLOW_ID}`) return json(route, { ...workflow, id: DIAGRAM_WORKFLOW_ID, name: 'Architecture Diagram', slug: 'workspace-diagram', yaml: diagramYaml });
     if (url.pathname === '/api/chat-workflows/adapters/by-name/verder_email_intake') return json(route, { workflow_name: 'verder_email_intake', yaml: builderAdapterYaml, adapted: true });
     if (url.pathname === '/api/chat-conversations/resolve') return json(route, {
@@ -334,7 +353,10 @@ edges:
     });
     if (url.pathname === '/api/llm/models') return json(route, { models: [] });
     if (url.pathname === '/api/workflow-input-files' && request.method() === 'POST') {
-      return json(route, { files: [options.uploadDocument ? {
+      return json(route, { files: [options.exposeDrive ? {
+        kind: 'workflow_file', file_id: 'drive-board-pack-upload', minio_key: 'chat/drive-board-pack.pdf',
+        name: 'Board pack.pdf', extension: 'pdf', content_type: 'application/pdf', size_bytes: 15, sha256: 'drive-sha', category: 'document', parseable_text: true,
+      } : options.uploadDocument ? {
         kind: 'workflow_file', file_id: 'architecture-pdf', minio_key: 'chat/eurskem-architecture.pdf',
         name: 'eurskem-architecture.pdf', content_type: 'application/pdf', byte_size: 24, category: 'document',
       } : {
@@ -651,6 +673,34 @@ test('pasted URLs become explicit web sources and pasted images upload', async (
   }
   await expect(page.getByRole('complementary', { name: 'Sources panel' }).getByText('pasted-image.png', { exact: true })).toBeVisible();
   await expect(page.getByText('2 sources selected', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Remove pasted-image.png' }).click();
+  await expect(page.getByRole('complementary', { name: 'Sources panel' }).getByText('pasted-image.png', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('1 source selected', { exact: true })).toBeVisible();
+});
+
+
+test('Google Drive files import through the unified source picker with provenance', async ({ page }) => {
+  await installApi(page, { exposeDrive: true });
+  await page.goto('/chat');
+  if ((page.viewportSize()?.width ?? 1280) <= 1180) {
+    await page.getByRole('button', { name: 'Sources', exact: true }).click();
+  }
+  await page.getByRole('button', { name: '+ Add source' }).click();
+  const picker = page.getByRole('dialog', { name: 'Add sources' });
+  await expect(picker.getByRole('button', { name: /Upload files/ })).toBeVisible();
+  await expect(picker.getByRole('button', { name: /Website or URL/ })).toBeVisible();
+  await picker.getByRole('button', { name: /Google Drive/ }).click();
+  const account = picker.getByLabel('Account');
+  await expect(account).toBeVisible();
+  await expect(account).toHaveValue('google-work');
+  await picker.getByRole('checkbox', { name: 'Select Board pack.pdf' }).click();
+  const uploadRequest = page.waitForRequest(request => (
+    new URL(request.url()).pathname === '/api/workflow-input-files' && request.method() === 'POST'
+  ));
+  await picker.getByRole('button', { name: /Add 1 file/ }).click();
+  await uploadRequest;
+  await expect(page.getByRole('complementary', { name: 'Sources panel' }).getByText('Board pack.pdf', { exact: true })).toBeVisible();
+  await expect(page.getByRole('complementary', { name: 'Sources panel' }).getByText('Google Drive · workspace@example.com', { exact: true })).toBeVisible();
 });
 
 
@@ -842,6 +892,7 @@ test('Knowledge collection remains in Sources after opening an existing workflow
   if ((page.viewportSize()?.width ?? 1280) <= 1180) await page.getByRole('button', { name: 'Sources', exact: true }).click();
   await page.getByRole('button', { name: '+ Add source' }).click();
   const sourcePicker = page.getByRole('dialog', { name: 'Add sources' });
+  await sourcePicker.getByRole('button', { name: /Your Knowledge/ }).click();
   await sourcePicker.getByRole('button', { name: /Pump ICP2 Collection/ }).click();
   await expect(page.getByText('Pump ICP2 Collection', { exact: true })).toBeVisible();
   await expect(page.getByText('2 documents · ready', { exact: true })).toBeVisible();
@@ -864,7 +915,10 @@ test('selected Knowledge collection automatically uses its active RAG Agent', as
   await page.goto('/chat');
   if ((page.viewportSize()?.width ?? 1280) <= 1180) await page.getByRole('button', { name: 'Sources', exact: true }).click();
   await page.getByRole('button', { name: '+ Add source' }).click();
-  await page.getByRole('dialog', { name: 'Add sources' }).getByRole('button', { name: /Pump ICP2 Collection/ }).click();
+  const sourcePicker = page.getByRole('dialog', { name: 'Add sources' });
+  await sourcePicker.getByRole('button', { name: /Your Knowledge/ }).click();
+  await sourcePicker.getByRole('button', { name: /Pump ICP2 Collection/ }).click();
+  await page.getByRole('checkbox', { name: 'Use Pump Specification.docx in the next prompt' }).click();
   if ((page.viewportSize()?.width ?? 1280) <= 1180) await page.getByRole('button', { name: 'Chat', exact: true }).click();
 
   const question = 'What maintenance interval does the pump manual specify?';
@@ -891,7 +945,7 @@ test('selected Knowledge collection automatically uses its active RAG Agent', as
   await expect(page.getByText('General answer · not grounded in selected Knowledge')).toBeVisible();
 
   expect(state.prepareBodies).toEqual([{
-    objective: question, collection_id: 'pump-collection', rag_agent_id: 'rag-pump',
+    objective: question, collection_id: 'pump-collection', rag_agent_id: 'rag-pump', document_ids: ['pump-manual'],
   }]);
   expect(state.runBodies).toHaveLength(2);
   expect(state.runBodies[0]).toMatchObject({
@@ -901,6 +955,8 @@ test('selected Knowledge collection automatically uses its active RAG Agent', as
   expect((state.runBodies[0].inputs as Record<string, unknown>).conversation_summary).toBeUndefined();
   expect(String(state.runBodies[0].workflow_yaml)).toContain('type: RAGAgent');
   expect(String(state.runBodies[0].workflow_yaml)).toContain('rag_agent_id: rag-pump');
+  expect(String(state.runBodies[0].workflow_yaml)).toContain('- pump-manual');
+  expect(String(state.runBodies[0].workflow_yaml)).not.toContain('- pump-spec');
   expect(state.runBodies[1]).toMatchObject({
     history_visibility: 'conversation_only', workflow_id: WORKFLOW_ID,
     inputs: { message: question },

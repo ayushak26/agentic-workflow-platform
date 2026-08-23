@@ -10,6 +10,7 @@ import time
 import structlog
 import weaviate
 import asyncio
+from typing import Any, cast
 from weaviate.classes.query import Filter, HybridFusion
 
 from app.ingestion.embedder import Embedder
@@ -18,7 +19,7 @@ from app.retrieval.models import RetrievalFilters, RetrievedChunk
 log = structlog.get_logger(__name__)
 
 
-def _build_where_filter(f: RetrievalFilters) -> Filter:
+def _build_where_filter(f: RetrievalFilters) -> Any:
     """Translate filters into a Weaviate Filter expression.
     Always pins session_id — this is a security boundary."""
     clauses = [
@@ -31,15 +32,17 @@ def _build_where_filter(f: RetrievalFilters) -> Filter:
         clauses.append(Filter.by_property("doc_type").contains_any(f.doc_types))
     if f.collection_ids:                                                            
         clauses.append(Filter.by_property("collection_id").contains_any(f.collection_ids))    
+    if f.document_ids:
+        clauses.append(Filter.by_property("document_id").contains_any(f.document_ids))
     if f.date_after:
-        clauses.append(Filter.by_property("ingested_at").greater_than(f.date_after))
+        clauses.append(Filter.by_property("ingested_at").greater_than(f.date_after.isoformat()))
     if f.date_before:
-        clauses.append(Filter.by_property("ingested_at").less_than(f.date_before))
+        clauses.append(Filter.by_property("ingested_at").less_than(f.date_before.isoformat()))
     return Filter.all_of(clauses)
 
 
 async def hybrid_search(
-    client: weaviate.WeaviateAsyncClient,
+    client: Any,
     embedder: Embedder,
     collection_name: str,
     query: str,
@@ -77,23 +80,24 @@ async def hybrid_search(
     )
     latency_ms = (time.perf_counter() - started) * 1000
 
-    chunks = [
-        RetrievedChunk(
-            chunk_id=str(obj.properties.get("chunk_id", obj.uuid)),
-            display_number=obj.properties.get("display_number"),
-            doc_id=obj.properties.get("source_path", ""),
-            doc_title=obj.properties.get("source_path", "").split("/")[-1],
-            doc_type=obj.properties.get("doc_type", ""),
-            text=obj.properties["text"],
+    chunks: list[RetrievedChunk] = []
+    for obj in response.objects:
+        properties = cast(dict[str, Any], obj.properties)
+        source_path = str(properties.get("source_path", ""))
+        chunks.append(RetrievedChunk(
+            chunk_id=str(properties.get("chunk_id", obj.uuid)),
+            display_number=properties.get("display_number"),
+            doc_id=source_path,
+            doc_title=source_path.split("/")[-1],
+            doc_type=str(properties.get("doc_type", "")),
+            text=str(properties["text"]),
             compressed_text=None,
-            metadata={k: v for k, v in obj.properties.items()
+            metadata={k: v for k, v in properties.items()
                       if k not in {"text", "doc_type"}},
-            hybrid_score=obj.metadata.score,
+            hybrid_score=float(obj.metadata.score or 0.0),
             rerank_score=None,
             rerank_reason=None,
-        )
-        for obj in response.objects
-    ]
+        ))
     log.info(
         "hybrid_search.complete",
         candidates=len(chunks), alpha=alpha,

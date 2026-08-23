@@ -278,6 +278,8 @@ def build_secure_where_filter(
         clauses.append(Filter.by_property("doc_type").contains_any(filters.doc_types))
     if filters.collection_ids:
         clauses.append(Filter.by_property("collection_id").contains_any(filters.collection_ids))
+    if filters.document_ids:
+        clauses.append(Filter.by_property("document_id").contains_any(filters.document_ids))
     if filters.date_after:
         clauses.append(Filter.by_property("ingested_at").greater_than(filters.date_after))
     if filters.date_before:

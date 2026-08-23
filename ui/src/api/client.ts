@@ -2,6 +2,7 @@ import type {
   AskContext,
   AuditEvent,
   AutofixWorkflowResult,
+  AutofixNodeResult,
   BudgetsResponse,
   BusinessChatConversationResponse,
   BusinessChatMessageRole,
@@ -27,6 +28,8 @@ import type {
   OperatorCatalog,
   OutputContract,
   PricingResponse,
+  PromptTemplate,
+  PromptTemplateCategory,
   SchemaPreview,
   SimulationResult,
   ExtractedWorkflowFile,
@@ -37,23 +40,11 @@ import type {
   OpenRouterModelInfo,
   PrivateChatWorkflowDetail,
   PrivateChatWorkflowSummary,
-  PipelinePreflightReport,
-  PipelineRunDetail,
-  PipelineRunSummary,
-  PipelineStageOutcome,
-  PipelineSummary,
   PendingGate,
   ProposalApproval,
   ProposalRenderRequest,
   ProposalRenderResult,
   ProposalReview,
-  PromptTemplate,
-  PromptTemplateCategory,
-  BusinessActionResult,
-  BusinessExplanation,
-  BusinessNarration,
-  BusinessProjection,
-  BusinessTechnicalDetail,
   RunChatTurn,
   RunCostSummary,
   RunDetail,
@@ -472,6 +463,13 @@ export const api = {
    *  cookie login already sets, not a header this navigation could carry. */
   downloadIntegrationFileUrl: (connectionId: string, fileId: string) =>
     `${API}/builder/integrations/connections/${encodeURIComponent(connectionId)}/download/${encodeURIComponent(fileId)}`,
+  downloadIntegrationFile: (connectionId: string, fileId: string) =>
+    afetch(`${API}/builder/integrations/connections/${encodeURIComponent(connectionId)}/download/${encodeURIComponent(fileId)}`, {
+      headers: authHeaders(),
+    }).then(async response => {
+      if (!response.ok) throw new Error(await response.text() || `Drive download failed: ${response.status}`);
+      return response.blob();
+    }),
 
   // ---- MCP: business systems reached through configured servers
   mcpServers: () =>
@@ -526,30 +524,109 @@ export const api = {
   listChatWorkspaceExperiences: () =>
     afetch(`${API}/chat-workspace/experiences`, { headers: authHeaders() })
       .then(j<{ experiences: ChatWorkspaceExperience[] }>),
+  chatWorkflowLabels: (workflows: Array<{
+    name: string;
+    title: string;
+    description: string;
+    use_case: string;
+  }>) =>
+    afetch(`${API}/chat-workspace/workflow-labels`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ workflows }),
+    }).then(j<{ labels: Record<string, string> }>),
   planChatWorkspace: (body: ChatWorkspacePlanRequest) =>
-    afetch(`${API}/chat-workspace/plan`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<ChatWorkspacePlan>),
+    afetch(`${API}/chat-workspace/plan`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<ChatWorkspacePlan>),
   prepareChatWorkspace: (body: ChatWorkspacePlanRequest) =>
-    afetch(`${API}/chat-workspace/prepare`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<{ plan: ChatWorkspacePlan; workflow: PrivateChatWorkflowSummary }>),
+    afetch(`${API}/chat-workspace/prepare`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<{ plan: ChatWorkspacePlan; workflow: PrivateChatWorkflowSummary }>),
   getPrivateChatWorkflow: (id: string, signal?: AbortSignal) =>
-    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}`, { headers: authHeaders(), signal }).then(j<PrivateChatWorkflowDetail>),
-  ensureDeepResearchChatWorkflow: () =>
-    afetch(`${API}/chat-workflows/presets/deep-research`, { method: 'POST', headers: authHeaders() }).then(j<PrivateChatWorkflowSummary>),
+    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}`, {
+      headers: authHeaders(), signal,
+    }).then(j<PrivateChatWorkflowDetail>),
+  ensureDeepResearchChatWorkflow: (ragAgentId?: string | null) =>
+    afetch(`${API}/chat-workflows/presets/deep-research${ragAgentId ? `?rag_agent_id=${encodeURIComponent(ragAgentId)}` : ''}`, {
+      method: 'POST', headers: authHeaders(),
+    }).then(j<PrivateChatWorkflowSummary>),
+  ensureGeneralChatWorkflow: () =>
+    afetch(`${API}/chat-workflows/presets/general`, {
+      method: 'POST', headers: authHeaders(),
+    }).then(j<PrivateChatWorkflowSummary>),
+  getBuilderChatExecutionAdapter: (workflowName: string, signal?: AbortSignal) =>
+    afetch(`${API}/chat-workflows/adapters/by-name/${encodeURIComponent(workflowName)}`, {
+      headers: authHeaders(), signal,
+    }).then(j<{ workflow_name: string; yaml: string; adapted: true }>),
   importPrivateChatWorkflow: (body: { slug: string; display_name: string; yaml: string }) =>
-    afetch(`${API}/chat-workflows/import`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PrivateChatWorkflowSummary>),
+    afetch(`${API}/chat-workflows/import`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<PrivateChatWorkflowSummary>),
   copyPrivateChatWorkflow: (body: { workflow_name: string; slug: string; display_name: string }) =>
-    afetch(`${API}/chat-workflows/from-existing`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PrivateChatWorkflowSummary>),
-  generatePrivateChatWorkflow: (body: { prompt: string; slug: string; display_name: string; preferred_output_type: 'auto' | 'text' | 'code' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx'; sample_inputs?: Record<string, unknown> }) =>
-    afetch(`${API}/chat-workflows/generate`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PrivateChatWorkflowSummary>),
+    afetch(`${API}/chat-workflows/from-existing`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<PrivateChatWorkflowSummary>),
+  generatePrivateChatWorkflow: (body: {
+    prompt: string;
+    slug: string;
+    display_name: string;
+    preferred_output_type: 'auto' | 'text' | 'code' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx';
+    sample_inputs?: Record<string, unknown>;
+  }) =>
+    afetch(`${API}/chat-workflows/generate`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify(body),
+    }).then(j<PrivateChatWorkflowSummary>),
   archivePrivateChatWorkflow: (id: string) =>
-    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() }).then(j<{ id: string; archived: boolean }>),
+    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}`, {
+      method: 'DELETE', headers: authHeaders(),
+    }).then(j<{ id: string; archived: boolean }>),
   requestPrivateChatWorkflowPublication: (id: string) =>
-    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}/request-publication`, { method: 'POST', headers: authHeaders() }).then(j<PrivateChatWorkflowSummary>),
+    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}/request-publication`, {
+      method: 'POST', headers: authHeaders(),
+    }).then(j<PrivateChatWorkflowSummary>),
   resolveBusinessChatConversation: (workflow_source: 'shared' | 'private', workflow_id: string) =>
-    afetch(`${API}/chat-conversations/resolve`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ workflow_source, workflow_id }) }).then(j<BusinessChatConversationResponse>),
-  appendBusinessChatMessage: (conversationId: string, body: { message_id: string; role: BusinessChatMessageRole; content: Record<string, unknown>; run_id?: string | null }) =>
-    afetch(`${API}/chat-conversations/${encodeURIComponent(conversationId)}/messages`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<BusinessChatTranscriptMessage>),
-  replaceBusinessChatMessage: (conversationId: string, messageId: string, body: { role: BusinessChatMessageRole; content: Record<string, unknown>; run_id?: string | null }) =>
-    afetch(`${API}/chat-conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`, { method: 'PUT', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<BusinessChatTranscriptMessage>),
+    afetch(`${API}/chat-conversations/resolve`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ workflow_source, workflow_id }),
+    }).then(j<BusinessChatConversationResponse>),
+  appendBusinessChatMessage: (
+    conversationId: string,
+    body: {
+      message_id: string;
+      role: BusinessChatMessageRole;
+      content: Record<string, unknown>;
+      run_id?: string | null;
+    },
+  ) => afetch(`${API}/chat-conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: 'POST',
+    headers: authHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+  }).then(j<BusinessChatTranscriptMessage>),
+  replaceBusinessChatMessage: (
+    conversationId: string,
+    messageId: string,
+    body: {
+      role: BusinessChatMessageRole;
+      content: Record<string, unknown>;
+      run_id?: string | null;
+    },
+  ) => afetch(`${API}/chat-conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`, {
+    method: 'PUT',
+    headers: authHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify(body),
+  }).then(j<BusinessChatTranscriptMessage>),
   getWorkflow: (name: string, signal?: AbortSignal) =>
     afetch(`${API}/workflows/by-name/${encodeURIComponent(name)}`, {
       headers: authHeaders(),
@@ -598,7 +675,12 @@ export const api = {
       .then(j<WorkflowVersionSummary[]>),
   getWorkflowVersion: (name: string, versionId: string) =>
     afetch(`${API}/workflows/${name}/versions/${versionId}`, { headers: authHeaders() })
-      .then(j<{ yaml: string }>),
+      .then(j<{
+        yaml: string;
+        restorable: boolean;
+        preflight_issue_codes: string[];
+        preflight_errors: string[];
+      }>),
   restoreWorkflowVersion: (name: string, versionId: string) =>
     afetch(`${API}/workflows/${name}/versions/${versionId}/restore`, {
       method: 'POST',
@@ -624,6 +706,12 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ workflow_yaml, inputs, check_services }),
     }).then(j<AutofixWorkflowResult>),
+  autofixNode: (workflow_yaml: string, node_id: string, inputs?: Record<string, unknown>) =>
+    afetch(`${API}/workflows/autofix-node`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ workflow_yaml, node_id, inputs }),
+    }).then(j<AutofixNodeResult>),
   generateWorkflow: (prompt: string, sample_inputs?: Record<string, unknown>) =>
     afetch(`${API}/workflows/generate`, {
       method: 'POST',
@@ -678,7 +766,7 @@ export const api = {
   runWorkflow: (
     workflow_yaml: string,
     inputs: Record<string, unknown>,
-    optionsOrSession: {
+    options: {
       session_id?: string;
       run_id?: string;
       skip_preflight?: boolean;
@@ -688,25 +776,27 @@ export const api = {
       workflow_version_id?: string;
       conversation_id?: string;
       message_id?: string;
-    } | string = {},
-    legacyRunId?: string,
-    legacySkipPreflight = false,
-  ) => {
-    const options = typeof optionsOrSession === 'string'
-      ? { session_id: optionsOrSession, run_id: legacyRunId, skip_preflight: legacySkipPreflight }
-      : optionsOrSession;
-    return afetch(`${API}/workflows/run`, {
+    } = {},
+  ) =>
+    afetch(`${API}/workflows/run`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ workflow_yaml, inputs, ...options }),
-    }).then(j<{ run_id: string; status: string; state?: unknown }>);
-  },
+    }).then(j<{ run_id: string; status: string; state?: unknown }>),
   resumeWorkflow: (run_id: string, decision: Record<string, unknown>) =>
     afetch(`${API}/workflows/${run_id}/resume`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ decision }),
-    }).then(j<{ ok: true }>),
+    }).then(j<{
+      run_id: string;
+      status: 'paused' | 'completed' | 'rejected' | 'failed';
+      state?: unknown;
+      output?: unknown;
+      reason?: string;
+      error?: string;
+      resumed_node_id?: string;
+    }>),
   costForRun: (run_id: string) =>
     afetch(`${API}/cost/run/${run_id}`, { headers: authHeaders() })
       .then(j<RunCostSummary>),
@@ -845,40 +935,6 @@ export const api = {
       state?: unknown;
       error?: string;
     }>),
-  businessProjection: (run_id: string) =>
-    afetch(`${API}/runs/mine/${run_id}/business-projection`, { headers: authHeaders() })
-      .then(j<BusinessProjection>),
-  // Narration is a separate POST because it may cost a model call. The
-  // projection renders fully without it; this only improves the wording.
-  businessNarration: (run_id: string) =>
-    afetch(`${API}/runs/mine/${run_id}/business-narration`, {
-      method: 'POST',
-      headers: authHeaders(),
-    }).then(j<BusinessNarration>),
-  businessExplanation: (run_id: string) =>
-    afetch(`${API}/runs/mine/${run_id}/business-explanation`, { headers: authHeaders() })
-      .then(j<BusinessExplanation>),
-  businessTechnicalDetail: (run_id: string, activity_id: string) =>
-    afetch(`${API}/runs/mine/${run_id}/business-technical/${activity_id}`, { headers: authHeaders() })
-      .then(j<BusinessTechnicalDetail>),
-  businessAction: (run_id: string, type: string, params: Record<string, unknown> = {}) =>
-    afetch(`${API}/runs/mine/${run_id}/business-action`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ type, params }),
-    }).then(j<BusinessActionResult>),
-  assignRun: (run_id: string, assignee: string) =>
-    afetch(`${API}/runs/mine/${run_id}/assign`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ assignee }),
-    }).then(j<{ ok: boolean; assigned_to: string }>),
-  correctFact: (run_id: string, field: string, value: unknown) =>
-    afetch(`${API}/runs/mine/${run_id}/fact-correction`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ field, value }),
-    }).then(j<{ ok: boolean; edit: { field: string; value: unknown; stale_decisions: string[]; edited_at: string } }>),
   pendingGate: (run_id: string) =>
     afetch(`${API}/runs/mine/${run_id}/pending-gate`, { headers: authHeaders() })
       .then(j<PendingGate>),
@@ -911,7 +967,8 @@ export const api = {
       }),
     }).then(j<{ turns: RunChatTurn[]; answer: string }>),
   listPromptTemplates: () =>
-    afetch(`${API}/prompt-templates`, { headers: authHeaders() }).then(j<{ templates: PromptTemplate[] }>),
+    afetch(`${API}/prompt-templates`, { headers: authHeaders() })
+      .then(j<{ templates: PromptTemplate[] }>),
   createPromptTemplate: (body: { title: string; description: string; category: PromptTemplateCategory; content: string }) =>
     afetch(`${API}/prompt-templates`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PromptTemplate>),
   updatePromptTemplate: (id: string, body: { title: string; description: string; category: PromptTemplateCategory; content: string }) =>
@@ -970,55 +1027,6 @@ export const api = {
       headers: authHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify(body),
     }).then(j<{ answer: string }>),
-
-  // ---- pipelines (chain saved workflows: one's outputs become the next's inputs)
-  listPipelines: () =>
-    afetch(`${API}/pipelines`, { headers: authHeaders() }).then(j<PipelineSummary[]>),
-  getPipeline: (name: string) =>
-    afetch(`${API}/pipelines/by-name/${name}`, { headers: authHeaders() })
-      .then(j<{ name: string; yaml: string }>),
-  savePipeline: (name: string, yaml: string) =>
-    afetch(`${API}/pipelines/save`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ name, yaml }),
-    }).then(j<{ ok: true; name: string }>),
-  validatePipeline: (pipeline_yaml: string, inputs?: Record<string, unknown>) =>
-    afetch(`${API}/pipelines/validate`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ pipeline_yaml, inputs }),
-    }).then(j<PipelinePreflightReport>),
-  runPipeline: (
-    pipeline_yaml: string,
-    inputs: Record<string, unknown>,
-    session_id?: string,
-    pipeline_run_id?: string,
-    stage_run_id?: string,
-  ) =>
-    afetch(`${API}/pipelines/run`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ pipeline_yaml, inputs, session_id, pipeline_run_id, stage_run_id }),
-    }).then(j<PipelineStageOutcome>),
-  advancePipeline: (pipeline_run_id: string, session_id?: string, stage_run_id?: string) =>
-    afetch(`${API}/pipelines/${pipeline_run_id}/advance`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ session_id, stage_run_id }),
-    }).then(j<PipelineStageOutcome>),
-  pipelineRuns: () =>
-    afetch(`${API}/pipelines/mine`, { headers: authHeaders() })
-      .then(j<{ count: number; runs: PipelineRunSummary[] }>),
-  pipelineRunDetail: (pipeline_run_id: string) =>
-    afetch(`${API}/pipelines/mine/${pipeline_run_id}`, { headers: authHeaders() })
-      .then(j<PipelineRunDetail>),
-  abandonPipeline: (pipeline_run_id: string, session_id?: string) =>
-    afetch(`${API}/pipelines/${pipeline_run_id}/abandon`, {
-      method: 'POST',
-      headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ session_id }),
-    }).then(j<{ pipeline_run_id: string; status: string }>),
 
   proposalReview: (run_id: string) =>
     afetch(`${API}/proposals/runs/${run_id}/review`, {

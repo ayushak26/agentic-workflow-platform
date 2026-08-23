@@ -78,6 +78,11 @@ class RetrievalFilters(BaseModel):
     industry: Optional[str] = None
     doc_types: Optional[list[str]] = None
     collection_ids: Optional[list[str]] = None
+    # Optional server-resolved provenance scope. Kept separate from generic
+    # metadata filters because document_id is a reserved field: callers may
+    # narrow to documents selected through an authorized collection UI, but a
+    # self-query/runtime metadata filter may never forge this clause.
+    document_ids: Optional[list[str]] = None
     date_after: Optional[date] = None
     date_before: Optional[date] = None
     metadata: Optional[MetadataFilterGroup] = None

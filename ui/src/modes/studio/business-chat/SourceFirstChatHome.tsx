@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 import { api } from '../../../api/client';
 import { knowledgeApi, type CollectionResource, type DocumentResource, type RAGAgentDefinition } from '../../../api/knowledge';
+import type { CloudFileRef, IntegrationConnectionInfo } from '../../../api/types';
 import { ArtifactCreationDrawer, ChatHistoryDrawer, ExistingWorkflowDrawer, NoteEditor, SourcePickerDialog, type ExistingChatWorkflow } from './ChatWorkspaceOverlays';
 import { NotebookSourcesPanel } from './NotebookSourcesPanel';
 import { ChatWorkspaceShell, type ChatWorkspacePanel } from './ChatWorkspaceShell';
@@ -12,8 +13,10 @@ import {
   documentsAsSources,
   collectionAsSource,
   CREATE_OPTIONS,
+  driveFilesAsSources,
   selectedCollectionId,
   selectedFiles,
+  selectedKnowledgeDocumentIds,
   selectedSourceCount,
   uploadsAsSources,
   webSourcesFromText,
@@ -55,7 +58,6 @@ export function SourceFirstChatHome() {
   const [initialPreferences] = useState(() => loadWorkspacePreferences());
   const [composerText, setComposerText] = useState('');
   const [sources, setSources] = useState<WorkspaceSource[]>(() => loadWorkspaceSources(workspaceId));
-  const [documents, setDocuments] = useState<DocumentResource[]>([]);
   const [notes, setNotes] = useState<WorkspaceNote[]>(() => loadNotes(workspaceId));
   const [sourcesCollapsed, setSourcesCollapsed] = useState(initialPreferences.sourcesCollapsed);
   const [sessionsCollapsed, setSessionsCollapsed] = useState(initialPreferences.sessionsCollapsed);
@@ -114,7 +116,6 @@ export function SourceFirstChatHome() {
     setSources(loadWorkspaceSources(`local:${chat.id}`));
     setNotes(loadNotes(`local:${chat.id}`));
     setComposerText('');
-    setDocuments([]);
   }
 
   function newChat() {
@@ -173,6 +174,31 @@ export function SourceFirstChatHome() {
     }
   }
 
+  async function importDriveFiles(connection: IntegrationConnectionInfo, picked: CloudFileRef[]) {
+    if (picked.length === 0) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const localFiles = await Promise.all(picked.map(async item => (
+        new File([await api.downloadIntegrationFile(connection.id, item.id)], item.name, {
+          type: item.mimeType || 'application/octet-stream',
+          lastModified: item.modifiedAt ? new Date(item.modifiedAt).getTime() : Date.now(),
+        })
+      )));
+      const uploaded = await api.uploadWorkflowFiles(localFiles);
+      setSources(current => {
+        const incoming = driveFilesAsSources(uploaded.files, picked, connection);
+        return [...current, ...incoming.filter(source => !current.some(item => item.id === source.id))];
+      });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'The selected Drive files could not be imported.';
+      setError(message);
+      throw reason;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function addWebSources(text: string) {
     const incoming = webSourcesFromText(text);
     if (incoming.length === 0) return;
@@ -181,7 +207,6 @@ export function SourceFirstChatHome() {
 
   function selectCollection(collection: CollectionResource, items: DocumentResource[]) {
     setSourceLoading(true);
-    setDocuments(items);
     setSources(current => {
       const nonKnowledge = current.filter(source => source.kind !== 'collection' && source.kind !== 'document');
       const selectedIds = new Set(items.map(item => `document:${item.document_id}`));
@@ -192,6 +217,13 @@ export function SourceFirstChatHome() {
     setMobilePanel('sources');
   }
 
+  function removeSource(source: WorkspaceSource) {
+    setSources(current => current.filter(item => (
+      item.id !== source.id
+      && !(source.kind === 'collection' && item.collectionId === source.collectionId)
+    )));
+  }
+
   async function startWorkspace(request = composerText) {
     const objective = request.trim();
     if (!objective || busy) return;
@@ -200,7 +232,12 @@ export function SourceFirstChatHome() {
     try {
       const files = selectedFiles(sources);
       const collectionId = selectedCollectionId(sources);
+      const documentIds = selectedKnowledgeDocumentIds(sources);
       if (collectionId) {
+        if (documentIds.length === 0) {
+          setError('Select at least one document from this Knowledge collection.');
+          return;
+        }
         const agents = (await knowledgeApi.listRagAgents()).filter(agent => (
           agent.collection_id === collectionId && ['active', 'ready'].includes(agent.status)
         ));
@@ -214,7 +251,7 @@ export function SourceFirstChatHome() {
           setError(null);
           return;
         }
-        const prepared = await api.prepareChatWorkspace({ objective, collection_id: collectionId, rag_agent_id: agents[0].rag_agent_id });
+        const prepared = await api.prepareChatWorkspace({ objective, collection_id: collectionId, rag_agent_id: agents[0].rag_agent_id, document_ids: documentIds });
         const workflow = prepared.workflow;
         savePendingSources(workflow.id, sources);
         updateLocalChat(activeChat.id, {
@@ -261,11 +298,16 @@ export function SourceFirstChatHome() {
   async function chooseKnowledgeAgent(agent: RAGAgentDefinition) {
     const objective = composerText.trim();
     const collectionId = selectedCollectionId(sources);
+    const documentIds = selectedKnowledgeDocumentIds(sources);
     if (!objective || !collectionId || busy) return;
+    if (documentIds.length === 0) {
+      setError('Select at least one document from this Knowledge collection.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const prepared = await api.prepareChatWorkspace({ objective, collection_id: collectionId, rag_agent_id: agent.rag_agent_id });
+      const prepared = await api.prepareChatWorkspace({ objective, collection_id: collectionId, rag_agent_id: agent.rag_agent_id, document_ids: documentIds });
       const workflow = prepared.workflow;
       savePendingSources(workflow.id, sources);
       updateLocalChat(activeChat.id, {
@@ -339,6 +381,7 @@ export function SourceFirstChatHome() {
             onAddSources={() => setSourcePickerOpen(true)}
             onOpenSource={source => { if (source.sourceUrl) window.open(source.sourceUrl, '_blank', 'noopener,noreferrer'); }}
             onShowUsage={() => { setSessionTab('sources'); setSessionsCollapsed(false); setMobilePanel('session'); }}
+            onRemoveSource={removeSource}
             onFilesDropped={files => void uploadFiles(files)}
             onOpenNote={note => { setActiveNote(note); setNoteEditorOpen(true); }}
             onNewNote={() => { setActiveNote(null); setNoteEditorOpen(true); }}
@@ -358,7 +401,7 @@ export function SourceFirstChatHome() {
 
           <form className="chat-entry-composer" onSubmit={event => { event.preventDefault(); void startWorkspace(); }}>
             {hasKnowledgeSelection && (
-              <p className="chat-source-scope">Using the selected collection. Individual-document isolation is not available yet.</p>
+              <p className="chat-source-scope">Using {selectedKnowledgeDocumentIds(sources).length} selected Knowledge document{selectedKnowledgeDocumentIds(sources).length === 1 ? '' : 's'}.</p>
             )}
             {selectedCount === 0 && <p className="chat-source-warning">No sources selected. Chat can still answer general questions.</p>}
             <textarea
@@ -441,10 +484,13 @@ export function SourceFirstChatHome() {
 
       <SourcePickerDialog
         open={sourcePickerOpen}
-        sources={documents}
+        sourceCount={sources.length}
+        knowledgeEnabled
         onClose={() => setSourcePickerOpen(false)}
         onUpload={files => void uploadFiles(files)}
+        onAddUrls={addWebSources}
         onSelectCollection={selectCollection}
+        onImportDrive={importDriveFiles}
       />
       <ChatHistoryDrawer open={historyOpen} chats={loadLocalChatHistory().chats} activeChatId={activeChat.id} onClose={() => setHistoryOpen(false)} onNew={newChat} onOpen={openChat} onRename={chat => { const title = window.prompt('Rename chat', chat.title)?.trim(); if (title) { const updated = updateLocalChat(chat.id, { title }); if (updated?.id === activeChat.id) setActiveChat(updated); setHistoryRevision(value => value + 1); } }} onDelete={chat => { if (!window.confirm(`Delete “${chat.title}” from this browser?`)) return; const next = deleteLocalChat(chat.id) ?? createLocalChat(); setHistoryRevision(value => value + 1); if (chat.id === activeChat.id) openChat(next); }} key={historyRevision} />
       <ExistingWorkflowDrawer open={workflowPickerOpen} workflows={existingWorkflows} loading={workflowLoading} error={workflowError} onClose={() => setWorkflowPickerOpen(false)} onOpen={useExistingWorkflow} />

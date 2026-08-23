@@ -35,4 +35,11 @@ describe('NotebookSourcesPanel', () => {
     expect(onShowUsage).toHaveBeenCalledWith(sources[0]);
     expect(onToggle).not.toHaveBeenCalled();
   });
+
+  it('removes an individual source through its lifecycle action', () => {
+    const onRemoveSource = vi.fn();
+    render(<NotebookSourcesPanel sources={sources} notes={[]} collapsed={false} loading={false} onCollapse={vi.fn()} onToggle={vi.fn()} onAddSources={vi.fn()} onRemoveSource={onRemoveSource} onOpenNote={vi.fn()} onNewNote={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Annual Report.pdf' }));
+    expect(onRemoveSource).toHaveBeenCalledWith(sources[0]);
+  });
 });

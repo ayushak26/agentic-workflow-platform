@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, Literal, Type
+from typing import Annotated, Any, ClassVar, Literal, Type
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, create_model, model_validator
 
@@ -86,6 +86,11 @@ class TransformConfig(BaseModel):
     input_fields: list[TransformInputField] = Field(default_factory=list)
     instructions: str = ""
     output_fields: list[FieldSpec] = Field(default_factory=list)
+    #: New-style structured fields that must contain a useful value rather
+    #: than a schema-valid placeholder such as "null", [], or {}. Chat uses
+    #: this for its user-visible answer; extraction workflows can continue to
+    #: represent genuinely absent source data with nullable/empty fields.
+    reject_empty_fields: list[str] = Field(default_factory=list)
     #: Multilingual behaviour for the new-style (Inputs/Instructions/Outputs)
     #: path — ported from AITaskAgent's LanguagePolicy, the one capability
     #: this node lost when authoring moved off the deprecated AITaskAgent.
@@ -169,6 +174,25 @@ def _render_input_value(value: Any) -> str:
     if isinstance(value, str):
         return value
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+
+
+def _is_semantically_empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) == 0
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return True
+    if stripped.lower() in {"null", "none", "n/a", "undefined"}:
+        return True
+    try:
+        decoded = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return decoded != stripped and _is_semantically_empty(decoded)
 
 
 class TransformInput(BaseModel):
@@ -283,6 +307,79 @@ class TransformAgent(NodeType):
     input_schema = TransformInput
     output_schema = TransformOutput
     config_schema = TransformConfig
+
+    family: ClassVar[str] = "core"
+    execution_kind: ClassVar[str] = "ai"
+    about: ClassVar[dict[str, Any]] = {
+        "what": "Transforms one or more inputs with AI or deterministic operations.",
+        "why": "One configurable primitive covers common generation, analysis, extraction, and data-shaping tasks.",
+        "receives": "Named workflow inputs or outputs from any earlier step.",
+        "produces": "Structured fields in parsed (AI mode) or data (deterministic mode).",
+        "uses_ai": True,
+        "external_action": False,
+        "presets": [
+            {
+                "id": "summarize",
+                "label": "Summarize",
+                "summary": "Create a concise, faithful summary of the supplied material.",
+                "config": {"mode": "ai", "instructions": "Summarize the supplied material faithfully. Preserve the key facts, decisions, and caveats; do not invent details."},
+            },
+            {
+                "id": "analyze",
+                "label": "Analyze",
+                "summary": "Identify important findings, patterns, risks, and implications.",
+                "config": {"mode": "ai", "instructions": "Analyze the supplied material. Identify the most important findings, patterns, risks, assumptions, and practical implications."},
+            },
+            {
+                "id": "extract",
+                "label": "Extract fields",
+                "summary": "Extract facts into an editable structured output schema.",
+                "config": {"mode": "ai", "instructions": "Extract only the requested fields from the supplied material. Use null or an empty value when a fact is not supported; do not guess."},
+            },
+            {
+                "id": "classify",
+                "label": "Classify",
+                "summary": "Assign supplied material to an editable set of categories.",
+                "config": {"mode": "ai", "instructions": "Classify the supplied material using the categories and output fields configured below. Explain ambiguous classifications briefly."},
+            },
+            {
+                "id": "draft",
+                "label": "Draft",
+                "summary": "Draft content from supplied facts and instructions.",
+                "config": {"mode": "ai", "instructions": "Draft the requested content from the supplied material. Follow the requested audience, tone, and format, and do not add unsupported facts."},
+            },
+            {
+                "id": "rewrite",
+                "label": "Rewrite",
+                "summary": "Rewrite content while preserving its meaning and facts.",
+                "config": {"mode": "ai", "instructions": "Rewrite the supplied content for clarity and flow while preserving its meaning, facts, qualifications, and citations."},
+            },
+            {
+                "id": "critique",
+                "label": "Critique",
+                "summary": "Review content and return actionable weaknesses and improvements.",
+                "config": {"mode": "ai", "instructions": "Critique the supplied material constructively. Identify concrete weaknesses, unsupported claims, omissions, and prioritized improvements."},
+            },
+            {
+                "id": "translate",
+                "label": "Translate",
+                "summary": "Translate content while preserving terminology and meaning.",
+                "config": {"mode": "ai", "instructions": "Translate the supplied material into the target language specified by the user. Preserve meaning, terminology, formatting, names, numbers, and citations."},
+            },
+            {
+                "id": "compare",
+                "label": "Compare",
+                "summary": "Compare multiple inputs and explain similarities and differences.",
+                "config": {"mode": "ai", "instructions": "Compare the supplied materials. Identify material similarities, differences, contradictions, trade-offs, and a concise synthesis grounded in the inputs."},
+            },
+            {
+                "id": "faq",
+                "label": "Generate FAQ",
+                "summary": "Generate grounded questions and answers from source material.",
+                "config": {"mode": "ai", "instructions": "Generate a useful FAQ from the supplied material. Keep every answer grounded in the source and clearly mark information the source does not provide."},
+            },
+        ],
+    }
 
     @classmethod
     def required_services(cls, config: dict[str, Any]) -> set[str]:
@@ -502,6 +599,8 @@ class TransformAgent(NodeType):
                 f"structured output after {total_attempts} attempt(s): "
                 f"{last_error}"
             ) from last_error
+        if last_error is None:  # Defensive: every exhausted attempt records an exception.
+            last_error = RuntimeError("structured output failed without an error")
         return self._failure_result(last_error)
 
     # -- new-style path (Inputs/Instructions/Outputs editor) --------------
@@ -545,6 +644,7 @@ class TransformAgent(NodeType):
             max_tokens=cfg.max_tokens,
             max_retries=cfg.max_retries,
             fail_on_error=cfg.fail_on_error,
+            reject_empty_fields=cfg.reject_empty_fields,
         )
 
     def _new_style_system_prompt(self, cfg: TransformConfig) -> str:
@@ -622,6 +722,7 @@ class TransformAgent(NodeType):
         max_tokens: int,
         max_retries: int,
         fail_on_error: bool = True,
+        reject_empty_fields: list[str] | None = None,
     ) -> dict[str, Any]:
         """Complete the structured with retries.
 
@@ -655,6 +756,15 @@ class TransformAgent(NodeType):
                 )
 
                 parsed = instance.model_dump(mode="python")
+                empty_fields = [
+                    name for name in (reject_empty_fields or [])
+                    if name not in parsed or _is_semantically_empty(parsed.get(name))
+                ]
+                if empty_fields:
+                    raise ValueError(
+                        "The following fields must contain a useful, non-placeholder "
+                        f"value: {', '.join(empty_fields)}"
+                    )
 
                 return {
                     "raw": json.dumps(parsed, ensure_ascii=False),
@@ -689,4 +799,6 @@ class TransformAgent(NodeType):
                 f"structured output after {total_attempts} attempt(s): "
                 f"{last_error}"
             ) from last_error
+        if last_error is None:  # Defensive: every exhausted attempt records an exception.
+            last_error = RuntimeError("structured output failed without an error")
         return self._failure_result(last_error)

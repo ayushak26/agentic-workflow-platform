@@ -1,4 +1,4 @@
-import type { WorkflowFileReference } from '../../../api/types';
+import type { CloudFileRef, IntegrationConnectionInfo, WorkflowFileReference } from '../../../api/types';
 import type { CollectionResource, DocumentResource } from '../../../api/knowledge';
 import type { AssistantSegment, AgentActivity } from './businessChatModel';
 
@@ -89,6 +89,29 @@ export function uploadsAsSources(files: WorkflowFileReference[]): WorkspaceSourc
   }));
 }
 
+export function driveFilesAsSources(
+  files: WorkflowFileReference[],
+  picked: CloudFileRef[],
+  connection: IntegrationConnectionInfo,
+): WorkspaceSource[] {
+  return files.map((file, index) => {
+    const cloudFile = picked[index];
+    return {
+      id: `drive:${connection.id}:${cloudFile?.id ?? file.file_id}`,
+      title: cloudFile?.name ?? file.name,
+      subtitle: `Google Drive · ${connection.address || connection.display_name}`,
+      kind: 'drive',
+      selected: true,
+      status: 'synced',
+      origin: connection.display_name || 'Google Drive',
+      sizeBytes: cloudFile?.sizeBytes ?? file.size_bytes,
+      updatedAt: cloudFile?.modifiedAt ?? undefined,
+      sourceUrl: cloudFile?.webUrl ?? undefined,
+      file,
+    };
+  });
+}
+
 export function httpUrlsInText(text: string): string[] {
   const matches = text.match(/https?:\/\/[^\s<>"']+/gi) ?? [];
   const normalized = matches.flatMap(value => {
@@ -131,6 +154,12 @@ export function selectedCollectionId(sources: WorkspaceSource[]): string | null 
     source.kind === 'document' && source.selected && source.collectionId ? [source.collectionId] : []
   )))];
   return ids.length === 1 ? ids[0] : null;
+}
+
+export function selectedKnowledgeDocumentIds(sources: WorkspaceSource[]): string[] {
+  return sources.flatMap(source => (
+    source.kind === 'document' && source.selected && source.documentId ? [source.documentId] : []
+  ));
 }
 
 export function selectedSourceCount(sources: WorkspaceSource[]): number {

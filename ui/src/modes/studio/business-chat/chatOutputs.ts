@@ -203,7 +203,11 @@ function humanize(key: string): string {
 }
 
 function scalarText(value: unknown): string | null {
-  if (typeof value === 'string') return value.trim() || null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || ['null', 'none', 'undefined', '[]', '{}'].includes(trimmed.toLowerCase())) return null;
+    return trimmed;
+  }
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   return null;
 }
@@ -262,18 +266,19 @@ function answerFromTransformEnvelope(value: unknown): string | null {
   const envelope = record(value);
   if (!envelope) return null;
   const parsed = record(envelope.parsed);
-  if (typeof parsed?.answer === 'string' && parsed.answer.trim()) return parsed.answer.trim();
+  const parsedAnswer = scalarText(parsed?.answer);
+  if (parsedAnswer) return parsedAnswer;
   if (typeof envelope.raw !== 'string' || !envelope.raw.trim()) return null;
   try {
     const raw = record(JSON.parse(envelope.raw));
-    return typeof raw?.answer === 'string' && raw.answer.trim() ? raw.answer.trim() : null;
+    return scalarText(raw?.answer);
   } catch {
     return null;
   }
 }
 
 function nonEmptyText(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
+  return scalarText(value);
 }
 
 function projectedFinalAnswer(run: ChatOutputRun): string | null {
@@ -307,9 +312,10 @@ export function normalizeChatOutputs(run: ChatOutputRun): ChatOutput[] {
 
   for (const nodeRun of Object.values(nodeRuns)) {
     const message = record(nodeRun?.output)?.chat_message;
-    if (typeof message === 'string' && message.trim()) {
-      chatMessages.add(message.trim());
-      appendText(visible, message.trim());
+    const normalizedMessage = scalarText(message);
+    if (normalizedMessage) {
+      chatMessages.add(normalizedMessage);
+      appendText(visible, normalizedMessage);
     }
   }
 
