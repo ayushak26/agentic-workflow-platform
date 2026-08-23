@@ -21,8 +21,13 @@ export function StudioRoot() {
   return (
     <Routes>
       <Route element={<StudioLayout />}>
-        <Route index element={<Navigate to="business-chat" replace />} />
-        <Route path="my-work" element={<Navigate to="/business-chat" replace />} />
+        <Route index element={<Navigate to="chat" replace />} />
+        <Route path="my-work" element={<Navigate to="/chat" replace />} />
+        <Route path="chat" element={<BusinessChat />} />
+        <Route path="chat/shared/:workflowName" element={<BusinessChat />} />
+        <Route path="chat/private/:chatWorkflowId" element={<BusinessChat />} />
+        <Route path="chat/:workflowName" element={<BusinessChat />} />
+        <Route path="workflows" element={<Library />} />
         <Route path="library" element={<Library />} />
         <Route path="builder/:name" element={<Builder />} />
         <Route path="builder" element={<Builder />} />
@@ -33,6 +38,8 @@ export function StudioRoot() {
         <Route path="cockpit/:runId" element={<Cockpit />} />
         <Route path="history" element={<RunHistory />} />
         <Route path="history/:runId" element={<RunHistory />} />
+        <Route path="workflow-runs" element={<RunHistory />} />
+        <Route path="workflow-runs/:runId" element={<RunHistory />} />
         <Route path="candidates/:runId" element={<RunCandidates />} />
         <Route path="pipelines" element={<PipelineLibrary />} />
         <Route path="pipelines/runs" element={<PipelineRuns />} />

@@ -1,14 +1,20 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { api, apiBase, getAuthHeaders } from '../../../api/client';
-import type { LLMModelInfo, NodeRun, RunDetail, RunEvent, WorkflowFileReference, WorkflowSummary } from '../../../api/types';
+import type { ChatWorkspaceExperience, LLMModelInfo, NodeRun, PrivateChatWorkflowSummary, RunDetail, RunEvent, WorkflowFileReference, WorkflowSummary } from '../../../api/types';
 import { HITLPanel } from '../HITLPanel';
 import { CopyButton } from '../../../components/CopyButton';
 import { AgentActivityCard } from './AgentActivityCard';
 import { ChatNodeInspector } from './ChatNodeInspector';
 import { WorkflowContextPanel, WorkflowExecutionStrip } from './WorkflowContextPanel';
 import { RunControlBar } from './RunControlBar';
+import { AddWorkflowDialog } from './AddWorkflowDialog';
+import { PromptTemplateLibrary } from './PromptTemplateLibrary';
+import {
+  applySlashCommand, classifyResponseFormat, followUpExecutionOutput, formatHint, matchingSlashCommands,
+  type ResponseFormat, type SlashCommand, type WritingStyle,
+} from './chatEnhancements';
 import { observeChatRun } from './observeChatRun';
 import { attemptLabel, type RunControlAction } from './runControls';
 import {
@@ -33,10 +39,14 @@ import {
   withTransformModel,
   type AssistantSegment,
   type AgentActivity,
-  type InterventionRequest,
   type WorkflowChatMeta,
 } from './businessChatModel';
 import type { ChatArtifact } from './chatOutputs';
+import {
+  deserializeDurableMessage,
+  serializeDurableMessage,
+  type DurableChatMessage,
+} from './chatTranscript';
 
 /**
  * Business Chat: a published workflow experienced as a conversation.
@@ -49,19 +59,8 @@ import type { ChatArtifact } from './chatOutputs';
  * workflow runtime or re-implements retrieval, execution, or review.
  */
 
-type ChatMessage =
-  | { id: string; role: 'user'; text: string; attachments?: WorkflowFileReference[] }
-  | { id: string; role: 'assistant'; segments: AssistantSegment[]; runId: string | null }
-  | { id: string; role: 'activity'; nodeId: string; activityKey: string }
-  | { id: string; role: 'attempt'; text: string }
-  | { id: string; role: 'error'; text: string; runId: string | null }
-  | {
-      id: string;
-      role: 'intervention';
-      request: InterventionRequest;
-      status: 'pending' | 'resolved';
-      resolution?: string;
-    };
+type ChatMessage = DurableChatMessage
+  | { id: string; role: 'activity'; nodeId: string; activityKey: string };
 
 function newId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -72,12 +71,22 @@ function activityKey(runId: string, nodeId: string): string {
 }
 
 export function BusinessChat() {
-  const { workflowName } = useParams();
-  if (!workflowName) return <BusinessChatHome />;
+  const { workflowName, chatWorkflowId } = useParams();
+  if (!workflowName && !chatWorkflowId) return <BusinessChatHome />;
+  if (chatWorkflowId) {
+    return (
+      <BusinessChatConversation
+        key={`private:${chatWorkflowId}`}
+        workflowId={decodeURIComponent(chatWorkflowId)}
+        source="private"
+      />
+    );
+  }
   return (
     <BusinessChatConversation
-      key={workflowName}
-      workflowName={decodeURIComponent(workflowName)}
+      key={`shared:${workflowName}`}
+      workflowId={decodeURIComponent(workflowName as string)}
+      source="shared"
     />
   );
 }
@@ -86,30 +95,198 @@ export function BusinessChat() {
 
 function BusinessChatHome() {
   const navigate = useNavigate();
-  const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
+  const [shared, setShared] = useState<WorkflowSummary[] | null>(null);
+  const [personal, setPersonal] = useState<PrivateChatWorkflowSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const [personalActionId, setPersonalActionId] = useState<string | null>(null);
+  const [personalActionError, setPersonalActionError] = useState<string | null>(null);
+  const [experiences, setExperiences] = useState<ChatWorkspaceExperience[]>([]);
+  const [objective, setObjective] = useState('');
+  const [experienceId, setExperienceId] = useState('');
+  const [preferredOutput, setPreferredOutput] = useState<'auto' | 'text' | 'pdf' | 'pptx'>('auto');
+  const [selectedWorkflow, setSelectedWorkflow] = useState('');
+  const [collectionId, setCollectionId] = useState('');
+  const [retrievalProfileId, setRetrievalProfileId] = useState('');
+  const [ragAgentId, setRagAgentId] = useState('');
+  const [integrationConnection, setIntegrationConnection] = useState('');
+  const [integrationTool, setIntegrationTool] = useState('');
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkflowFileReference[]>([]);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const workspaceFileRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    api.listChatWorkflows()
-      .then(items => { if (!cancelled) setWorkflows(chatEligibleWorkflows(items)); })
+    Promise.all([
+      api.listChatWorkflows(), api.listPrivateChatWorkflows(), api.listChatWorkspaceExperiences(),
+    ])
+      .then(([sharedItems, privateItems, workspaceExperiences]) => {
+        if (cancelled) return;
+        setShared(chatEligibleWorkflows(sharedItems));
+        setPersonal(privateItems.workflows);
+        setExperiences(workspaceExperiences.experiences);
+      })
       .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
     return () => { cancelled = true; };
   }, []);
 
-  const visible = (workflows ?? []).filter(item => {
+  const visibleShared = (shared ?? []).filter(item => {
     if (query.trim() === '') return true;
     const haystack = `${item.name} ${item.description} ${item.library?.title ?? ''} ${item.use_case}`;
     return haystack.toLowerCase().includes(query.trim().toLowerCase());
   });
+  const visiblePersonal = (personal ?? []).filter(item => (
+    `${item.name} ${item.description} ${item.slug}`.toLowerCase().includes(query.trim().toLowerCase())
+  ));
+  const loaded = shared !== null && personal !== null;
+
+  async function requestPublication(item: PrivateChatWorkflowSummary) {
+    if (personalActionId) return;
+    setPersonalActionId(item.id);
+    setPersonalActionError(null);
+    try {
+      const updated = await api.requestPrivateChatWorkflowPublication(item.id);
+      setPersonal(current => (current ?? []).map(existing => (
+        existing.id === item.id ? updated : existing
+      )));
+    } catch (reason) {
+      setPersonalActionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPersonalActionId(null);
+    }
+  }
+
+  async function archivePersonal(item: PrivateChatWorkflowSummary) {
+    if (personalActionId) return;
+    setPersonalActionId(item.id);
+    setPersonalActionError(null);
+    try {
+      await api.archivePrivateChatWorkflow(item.id);
+      setPersonal(current => (current ?? []).filter(existing => existing.id !== item.id));
+    } catch (reason) {
+      setPersonalActionError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPersonalActionId(null);
+    }
+  }
+
+  async function uploadWorkspaceFiles(files: File[]) {
+    if (files.length === 0) return;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    try {
+      const uploaded = await api.uploadWorkflowFiles(files);
+      setWorkspaceFiles(current => [
+        ...current,
+        ...uploaded.files.filter(file => !current.some(item => item.file_id === file.file_id)),
+      ]);
+    } catch (reason) {
+      setWorkspaceError(reason instanceof Error ? reason.message : 'The files could not be uploaded.');
+    } finally {
+      setWorkspaceBusy(false);
+      if (workspaceFileRef.current) workspaceFileRef.current.value = '';
+    }
+  }
+
+  async function startWorkspace() {
+    if (!objective.trim() || workspaceBusy) return;
+    setWorkspaceBusy(true);
+    setWorkspaceError(null);
+    try {
+      const prepared = await api.prepareChatWorkspace({
+        objective: objective.trim(),
+        experience_id: experienceId || null,
+        selected_workflow: selectedWorkflow || null,
+        preferred_output: preferredOutput,
+        has_attachments: workspaceFiles.length > 0,
+        attachment_categories: [...new Set(workspaceFiles.map(file => file.category))],
+        collection_id: collectionId.trim() || null,
+        retrieval_profile_id: retrievalProfileId.trim() || null,
+        rag_agent_id: ragAgentId.trim() || null,
+        integration_connection: integrationConnection.trim() || null,
+        integration_tool: integrationTool.trim() || null,
+      });
+      if (workspaceFiles.length > 0) {
+        window.sessionStorage.setItem(
+          `eurskem.chat.pending-attachments:${prepared.workflow.id}`,
+          JSON.stringify(workspaceFiles),
+        );
+      }
+      navigate(`/chat/private/${encodeURIComponent(prepared.workflow.id)}?prompt=${encodeURIComponent(objective.trim())}`);
+    } catch (reason) {
+      setWorkspaceError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold text-ink-900">Business</h1>
-      <p className="mt-1 text-sm text-ink-500">
-        What would you like to do? Pick a workflow and talk to it.
-      </p>
+      <section className="rounded-2xl border border-accent-200 bg-gradient-to-br from-white to-accent-50 p-5 shadow-sm">
+        <div className="max-w-2xl">
+          <h1 className="text-2xl font-semibold text-ink-900">What do you want to accomplish?</h1>
+          <p className="mt-1 text-sm text-ink-500">Ask directly, attach files, select a Knowledge source, or choose an existing workflow. The workspace uses the smallest valid workflow path.</p>
+        </div>
+        <textarea
+          value={objective}
+          onChange={event => setObjective(event.target.value)}
+          rows={4}
+          placeholder="Analyze these documents, identify the key risks, and create an executive presentation…"
+          className="mt-4 block w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-inner"
+        />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="text-xs font-medium text-ink-600">Experience
+            <select aria-label="Workspace experience" value={experienceId} onChange={event => setExperienceId(event.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs">
+              <option value="">Auto</option>
+              {experiences.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-medium text-ink-600">Output
+            <select aria-label="Workspace output" value={preferredOutput} onChange={event => setPreferredOutput(event.target.value as typeof preferredOutput)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs">
+              <option value="auto">Auto</option><option value="text">Chat answer</option><option value="pdf">PDF</option><option value="pptx">Presentation</option>
+            </select>
+          </label>
+          <label className="text-xs font-medium text-ink-600">Existing workflow
+            <select aria-label="Existing workflow" value={selectedWorkflow} onChange={event => setSelectedWorkflow(event.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs">
+              <option value="">Auto-select</option>
+              {(shared ?? []).map(item => <option key={item.name} value={item.name}>{item.library?.title ?? item.name}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-medium text-ink-600">Files
+            <input ref={workspaceFileRef} type="file" multiple onChange={event => void uploadWorkspaceFiles(Array.from(event.target.files ?? []))} className="mt-1 block w-full text-xs" />
+          </label>
+        </div>
+        <details className="mt-3 text-xs text-ink-600">
+          <summary className="cursor-pointer font-medium">Use an indexed Knowledge source</summary>
+          <div className="mt-2 grid gap-3 sm:grid-cols-3">
+            <input aria-label="Knowledge collection ID" value={collectionId} onChange={event => setCollectionId(event.target.value)} placeholder="Collection ID" className="rounded-md border border-slate-300 px-3 py-2" />
+            <input aria-label="Retrieval profile ID" value={retrievalProfileId} onChange={event => setRetrievalProfileId(event.target.value)} placeholder="Retrieval Profile ID" className="rounded-md border border-slate-300 px-3 py-2" />
+            <input aria-label="RAG Agent ID" value={ragAgentId} onChange={event => setRagAgentId(event.target.value)} placeholder="Or saved RAG Agent ID" className="rounded-md border border-slate-300 px-3 py-2" />
+          </div>
+        </details>
+        <details className="mt-3 text-xs text-ink-600">
+          <summary className="cursor-pointer font-medium">Use a configured MCP or integration tool</summary>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <input aria-label="Integration connection ID" value={integrationConnection} onChange={event => setIntegrationConnection(event.target.value)} placeholder="MCP server / connection ID" className="rounded-md border border-slate-300 px-3 py-2" />
+            <input aria-label="Integration tool name" value={integrationTool} onChange={event => setIntegrationTool(event.target.value)} placeholder="Tool name" className="rounded-md border border-slate-300 px-3 py-2" />
+          </div>
+        </details>
+        {workspaceFiles.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{workspaceFiles.map(file => <span key={file.file_id} className="rounded-full bg-white px-2 py-1 text-[11px] text-ink-600 ring-1 ring-slate-200">{file.name}</span>)}</div>}
+        {workspaceError && <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-bad">{workspaceError}</p>}
+        <button type="button" disabled={!objective.trim() || workspaceBusy} onClick={() => void startWorkspace()} className="mt-4 rounded-lg bg-accent-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-700 disabled:opacity-50">
+          {workspaceBusy ? 'Preparing workflow…' : 'Start in Chat →'}
+        </button>
+      </section>
+
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="mt-10 text-xl font-semibold text-ink-900">Or open a workflow directly</h2>
+          <p className="mt-1 text-sm text-ink-500">Power users can keep selecting the exact workflow.</p>
+        </div>
+        <button type="button" onClick={() => setAddOpen(true)} className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-700">+ Add workflow</button>
+      </div>
       <input
         type="search"
         value={query}
@@ -118,44 +295,73 @@ function BusinessChatHome() {
         className="mt-5 block w-full rounded-md border-slate-300 text-sm py-2 px-3 border"
       />
       {error && <p className="mt-4 text-sm text-bad">{error}</p>}
-      {!workflows && !error && <p className="mt-6 text-sm text-ink-500">Loading workflows…</p>}
-      {workflows && visible.length === 0 && (
+      {personalActionError && <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-bad">{personalActionError}</p>}
+      {!loaded && !error && <p className="mt-6 text-sm text-ink-500">Loading workflows…</p>}
+      {loaded && visibleShared.length === 0 && visiblePersonal.length === 0 && (
         <p className="mt-6 text-sm text-ink-500">
-          No published workflows match. Approve workflows in the Library to offer them here.
+          No workflows match your search.
         </p>
       )}
-      <div className="mt-6 grid gap-4 sm:grid-cols-2">
-        {visible.map(item => (
-          <button
-            key={item.name}
-            type="button"
-            onClick={() => navigate(`/business-chat/${encodeURIComponent(item.name)}`)}
-            className="rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-accent-300 hover:shadow"
-          >
-            <div className="text-sm font-semibold text-ink-900">
-              {item.library?.title ?? item.name}
+      {loaded && <h2 className="mt-7 text-sm font-semibold text-ink-800">My workflows</h2>}
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        {visiblePersonal.map(item => (
+          <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm hover:border-accent-300 hover:shadow">
+            <button type="button" onClick={() => navigate(`/chat/private/${encodeURIComponent(item.id)}`)} className="block w-full text-left">
+              <div className="flex items-center justify-between gap-2"><div className="text-sm font-semibold text-ink-900">🔒 {item.name}</div><span className="text-[10px] uppercase tracking-wide text-ink-400">Private</span></div>
+              <div className="mt-1 line-clamp-2 text-xs text-ink-500">{item.description}</div>
+              {item.output_compatibility.detected_types.length > 0 && (
+                <div className="mt-2 text-[10px] uppercase tracking-wide text-ink-400">
+                  Output · {item.output_compatibility.detected_types.join(' · ')}
+                </div>
+              )}
+              {item.status === 'publish_requested' && <div className="mt-2 text-[11px] text-amber-700">Publication requested</div>}
+              <div className="mt-3 text-xs font-medium text-accent-700">Open →</div>
+            </button>
+            <div className="mt-3 flex items-center gap-3 border-t border-slate-100 pt-3 text-[11px]">
+              {item.status === 'private' && (
+                <button type="button" disabled={personalActionId !== null} onClick={() => void requestPublication(item)} className="font-medium text-accent-700 hover:underline disabled:opacity-50">
+                  {personalActionId === item.id ? 'Requesting…' : 'Request publication'}
+                </button>
+              )}
+              <button type="button" disabled={personalActionId !== null} onClick={() => void archivePersonal(item)} className="text-ink-500 hover:text-bad hover:underline disabled:opacity-50">
+                {personalActionId === item.id ? 'Working…' : 'Archive'}
+              </button>
             </div>
-            <div className="mt-1 line-clamp-2 text-xs text-ink-500">
-              {item.library?.summary ?? item.description}
-            </div>
+          </div>
+        ))}
+      </div>
+      {visibleShared.length > 0 && <h2 className="mt-7 text-sm font-semibold text-ink-800">Shared workflows</h2>}
+      <div className="mt-3 grid gap-4 sm:grid-cols-2">
+        {visibleShared.map(item => (
+          <button key={item.name} type="button" onClick={() => navigate(`/chat/shared/${encodeURIComponent(item.name)}`)} className="rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-accent-300 hover:shadow">
+            <div className="text-sm font-semibold text-ink-900">{item.library?.title ?? item.name}</div>
+            <div className="mt-1 line-clamp-2 text-xs text-ink-500">{item.library?.summary ?? item.description}</div>
             <div className="mt-3 text-xs font-medium text-accent-700">Open →</div>
           </button>
         ))}
       </div>
+      {addOpen && <AddWorkflowDialog onClose={() => setAddOpen(false)} onCreated={item => { setPersonal(current => [item, ...(current ?? [])]); setAddOpen(false); navigate(`/chat/private/${encodeURIComponent(item.id)}`); }} />}
     </div>
   );
 }
 
 // ---- Conversation ------------------------------------------------------
 
-function BusinessChatConversation({ workflowName }: { workflowName: string }) {
+function BusinessChatConversation({ workflowId, source }: { workflowId: string; source: 'shared' | 'private' }) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [yamlText, setYamlText] = useState<string | null>(null);
+  const [resourceName, setResourceName] = useState(workflowId);
   const [meta, setMeta] = useState<WorkflowChatMeta | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [transcriptSyncError, setTranscriptSyncError] = useState<string | null>(null);
   const [composerText, setComposerText] = useState('');
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [responseFormat, setResponseFormat] = useState<ResponseFormat>('auto');
+  const [writingStyle, setWritingStyle] = useState<WritingStyle>('concise');
   const [composerMode, setComposerMode] = useState<'auto' | 'ask' | 'run'>('auto');
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
@@ -168,7 +374,7 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
   const [controlBusy, setControlBusy] = useState<RunControlAction | null>(null);
   const [controlError, setControlError] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [contextOpen, setContextOpen] = useState(true);
+  const [contextOpen, setContextOpen] = useState(() => window.innerWidth >= 640);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [attachments, setAttachments] = useState<WorkflowFileReference[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -179,21 +385,74 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
   const [listening, setListening] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const runSubmissionRef = useRef(false);
   const finalizedRunsRef = useRef(new Set<string>());
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const contextManuallyToggledRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const syncContextPanel = () => {
+      if (!contextManuallyToggledRef.current) setContextOpen(window.innerWidth >= 640);
+    };
+    window.addEventListener('resize', syncContextPanel);
+    return () => window.removeEventListener('resize', syncContextPanel);
+  }, []);
+
+  useEffect(() => {
+    const prompt = searchParams.get('prompt');
+    if (!prompt) return;
+    setComposerText(prompt);
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const key = `eurskem.chat.pending-attachments:${workflowId}`;
+    const pending = window.sessionStorage.getItem(key);
+    if (!pending) return;
+    try {
+      const parsed = JSON.parse(pending) as WorkflowFileReference[];
+      if (Array.isArray(parsed)) setAttachments(parsed);
+    } catch {
+      // Ignore malformed ephemeral handoff state; the uploaded files remain in storage.
+    } finally {
+      window.sessionStorage.removeItem(key);
+    }
+  }, [workflowId]);
 
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 10_000);
     setLoadError(null);
-    api.getWorkflow(workflowName, controller.signal)
-      .then(({ yaml }) => {
+    const workflowLoad = source === 'private'
+      ? api.getPrivateChatWorkflow(workflowId, controller.signal)
+          .then(item => ({ yaml: item.yaml, name: item.name }))
+      : api.getWorkflow(workflowId, controller.signal)
+          .then(item => ({ yaml: item.yaml, name: item.name }));
+    Promise.all([
+      workflowLoad,
+      api.resolveBusinessChatConversation(source, workflowId),
+    ])
+      .then(([{ yaml, name }, transcript]) => {
         if (cancelled) return;
+        const restored = transcript.messages
+          .map(deserializeDurableMessage)
+          .filter((message): message is DurableChatMessage => message !== null);
         setYamlText(yaml);
+        setResourceName(name);
         setMeta(chatMetaFromYaml(yaml));
+        setConversationId(transcript.conversation.id);
+        setMessages(restored);
+        const latestRunMessage = [...restored].reverse().find(message => (
+          'runId' in message && message.runId
+        ) || message.role === 'intervention');
+        const latestRunId = latestRunMessage?.role === 'intervention'
+          ? latestRunMessage.request.runId
+          : latestRunMessage && 'runId' in latestRunMessage ? latestRunMessage.runId : null;
+        setCurrentRunId(latestRunId ?? null);
+        setHasCompletedRun(restored.some(message => message.role === 'assistant' && Boolean(message.runId)));
       })
       .catch(err => {
         if (cancelled) return;
@@ -208,7 +467,7 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [workflowName, loadAttempt]);
+  }, [workflowId, source, loadAttempt]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -234,6 +493,25 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
   const patchMessage = useCallback((id: string, patch: (message: ChatMessage) => ChatMessage) => {
     setMessages(current => current.map(item => (item.id === id ? patch(item) : item)));
   }, []);
+
+  const persistMessage = useCallback(async (message: DurableChatMessage) => {
+    if (!conversationId) throw new Error('The durable conversation is not ready.');
+    const serialized = serializeDurableMessage(message);
+    await api.appendBusinessChatMessage(conversationId, {
+      message_id: message.id,
+      ...serialized,
+    });
+    setTranscriptSyncError(null);
+  }, [conversationId]);
+
+  const appendDurableMessage = useCallback((message: DurableChatMessage) => {
+    setMessages(current => current.some(item => item.id === message.id)
+      ? current
+      : [...current, message]);
+    void persistMessage(message).catch(error => {
+      setTranscriptSyncError(error instanceof Error ? error.message : 'The transcript could not be saved.');
+    });
+  }, [persistMessage]);
 
   const selectNode = useCallback((nodeId: string, openInspector = true) => {
     setSelectedNodeId(nodeId);
@@ -275,8 +553,8 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
     try {
       const run = await hydrateRun(runId);
       if (run.status === 'failed' || run.status === 'rejected') {
-        setMessages(current => [...current, {
-          id: newId(),
+        appendDurableMessage({
+          id: `run-result-${runId}`,
           role: 'error',
           text: run.error
             ? `I couldn't complete this request: ${run.error}`
@@ -284,46 +562,44 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
               ? 'This attempt was rejected before producing a final result.'
               : 'I couldn\'t complete this request. Open the activity view for details.',
           runId,
-        }]);
+        });
         return;
       }
-      setMessages(current => [...current, {
-        id: newId(),
+      appendDurableMessage({
+        id: `run-result-${runId}`,
         role: 'assistant',
         segments: assistantSegments(run),
         runId,
-      }]);
+      });
       setHasCompletedRun(true);
       setCurrentRunId(runId);
     } catch {
       finalizedRunsRef.current.delete(runId);
-      setMessages(current => [...current, {
-        id: newId(),
+      appendDurableMessage({
+        id: `run-load-error-${runId}`,
         role: 'error',
         text: 'The workflow finished, but I could not load its result.',
         runId,
-      }]);
+      });
     }
-  }, [hydrateRun]);
+  }, [appendDurableMessage, hydrateRun]);
 
   const showGateOrResult = useCallback(async (runId: string) => {
     try {
       const gate = await api.pendingGate(runId);
       const intervention = meta ? interventionFromPendingGate(gate, meta) : null;
       if (intervention) {
-        setMessages(current => current.some(message => (
-          message.role === 'intervention'
-          && message.status === 'pending'
-          && message.request.runId === runId
-          && message.request.nodeId === intervention.nodeId
-        )) ? current : [...current, {
-          id: newId(), role: 'intervention', request: intervention, status: 'pending',
-        }]);
+        appendDurableMessage({
+          id: `intervention-${runId}-${intervention.nodeId}`,
+          role: 'intervention',
+          request: intervention,
+          status: 'pending',
+        });
       }
     } catch {
       // The durable run detail still drives controls if the gate fetch fails.
     }
-  }, [meta]);
+  }, [appendDurableMessage, meta]);
 
   const observeAttempt = useCallback((runId: string) => {
     if (!meta) return;
@@ -398,35 +674,53 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
   }, [appendAssistantFromRun, ensureActivityMessage, hydrateRun, meta, showGateOrResult]);
 
 
-  const runWorkflowOnce = useCallback(async (text: string) => {
-    if (!yamlText || !meta) return;
+  const runWorkflowOnce = useCallback(async (text: string, displayText = text) => {
+    if (!yamlText || !meta || !conversationId || runSubmissionRef.current) return;
+    runSubmissionRef.current = true;
     setRunDetail(null);
     setSelectedNodeId(null);
-    setMessages(current => [...current, {
-      id: newId(), role: 'user', text: text.trim() !== '' ? text : '(submitted form)',
+    const messageId = newId();
+    const requestedRunId = crypto.randomUUID();
+    const userMessage: DurableChatMessage = {
+      id: messageId, role: 'user', text: displayText.trim() !== '' ? displayText : '(submitted form)',
+      runId: requestedRunId,
       ...(attachments.length > 0 ? { attachments } : {}),
-    }]);
+    };
+    setMessages(current => [...current, userMessage]);
     setRunning(true);
     try {
+      await persistMessage(userMessage);
       const inputs = buildRunInputs(meta, text, formValues, attachments);
       const executionYaml = withTransformModel(yamlText, selectedModel);
-      const { run_id: runId } = await api.runWorkflow(executionYaml, inputs);
+      const { run_id: runId } = await api.runWorkflow(executionYaml, inputs, {
+        origin: 'chat_saved_workflow',
+        history_visibility: 'conversation_only',
+        run_id: requestedRunId,
+        workflow_id: workflowId,
+        conversation_id: conversationId,
+        message_id: messageId,
+      });
       setCurrentRunId(runId);
       setAttachments([]);
       observeAttempt(runId);
       await hydrateRun(runId).catch(() => undefined);
     } catch (err) {
       setRunning(false);
-      setMessages(current => [...current, {
+      appendDurableMessage({
         id: newId(),
         role: 'error',
         text: err instanceof Error ? err.message : 'The workflow could not be started.',
         runId: null,
-      }]);
+      });
+      runSubmissionRef.current = false;
     } finally {
       setComposerMode('auto');
     }
-  }, [yamlText, meta, formValues, attachments, selectedModel, hydrateRun, observeAttempt]);
+  }, [appendDurableMessage, attachments, conversationId, formValues, hydrateRun, meta, observeAttempt, persistMessage, selectedModel, workflowId, yamlText]);
+
+  useEffect(() => {
+    if (!running) runSubmissionRef.current = false;
+  }, [running]);
 
   const uploadAttachments = useCallback(async (files: File[]) => {
     if (!meta?.allowAttachments || files.length === 0) return;
@@ -477,30 +771,50 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
     setListening(true);
   }, [listening]);
 
-  const askFollowUp = useCallback(async (question: string) => {
+  const askFollowUp = useCallback(async (question: string, displayQuestion = question) => {
     if (!currentRunId) return;
-    setMessages(current => [...current, { id: newId(), role: 'user', text: question }]);
+    const userMessage: DurableChatMessage = { id: newId(), role: 'user', text: displayQuestion };
+    setMessages(current => [...current, userMessage]);
     setAskBusy(true);
+    try {
+      await persistMessage(userMessage);
+    } catch (error) {
+      setTranscriptSyncError(error instanceof Error ? error.message : 'The transcript could not be saved.');
+      setMessages(current => [...current, {
+        id: newId(),
+        role: 'error',
+        text: 'I could not save that follow-up, so it was not sent. Please try again.',
+        runId: currentRunId,
+      }]);
+      setAskBusy(false);
+      return;
+    }
     try {
       const history = await api.runChatHistory(currentRunId);
       const { answer } = await api.askAboutRun(currentRunId, question, history.turns);
-      setMessages(current => [...current, {
+      const assistantMessage: DurableChatMessage = {
         id: newId(),
         role: 'assistant',
         segments: [{ kind: 'text', text: answer }],
         runId: currentRunId,
-      }]);
+      };
+      setMessages(current => [...current, assistantMessage]);
+      await persistMessage(assistantMessage);
     } catch {
-      setMessages(current => [...current, {
+      const errorMessage: DurableChatMessage = {
         id: newId(),
         role: 'error',
         text: 'I couldn\'t answer that follow-up right now. The workflow result above is unchanged.',
         runId: currentRunId,
-      }]);
+      };
+      setMessages(current => [...current, errorMessage]);
+      void persistMessage(errorMessage).catch(syncError => setTranscriptSyncError(
+        syncError instanceof Error ? syncError.message : 'The transcript could not be saved.',
+      ));
     } finally {
       setAskBusy(false);
     }
-  }, [currentRunId]);
+  }, [currentRunId, persistMessage]);
 
   const pauseCurrentRun = useCallback(async () => {
     if (!currentRunId || runDetail?.status !== 'running' || pausePending) return;
@@ -545,17 +859,22 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
     setCurrentRunId(newRunId);
     setRunDetail(null);
     setSelectedNodeId(null);
-    setMessages(current => [...current, {
+    const attemptMessage: DurableChatMessage = {
       id: `attempt-${newRunId}`,
       role: 'attempt',
+      runId: newRunId,
       text: mode === 'retry'
         ? `Attempt ${nextAttempt} · retrying with completed steps`
         : `Attempt ${nextAttempt} · restarting from the beginning`,
-    }]);
+    };
+    setMessages(current => [...current, attemptMessage]);
     observeAttempt(newRunId);
     try {
       if (mode === 'retry') await api.retryFailedRun(sourceRunId, newRunId);
       else await api.restartRun(sourceRunId, newRunId);
+      void persistMessage(attemptMessage).catch(error => setTranscriptSyncError(
+        error instanceof Error ? error.message : 'The transcript could not be saved.',
+      ));
       await hydrateRun(newRunId);
     } catch (reason) {
       abortRef.current?.abort();
@@ -567,16 +886,26 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
     } finally {
       setControlBusy(null);
     }
-  }, [currentRunId, hydrateRun, observeAttempt, runDetail]);
+  }, [currentRunId, hydrateRun, observeAttempt, persistMessage, runDetail]);
 
   const onInterventionResult = useCallback(async (result: unknown, messageId: string) => {
     const record = (result ?? {}) as Record<string, unknown>;
     const status = typeof record.status === 'string' ? record.status : 'completed';
-    patchMessage(messageId, message => (
-      message.role === 'intervention'
-        ? { ...message, status: 'resolved', resolution: status }
-        : message
-    ));
+    const interventionMessage = messages.find(message => message.id === messageId);
+    const resolvedMessage = interventionMessage?.role === 'intervention'
+      ? { ...interventionMessage, status: 'resolved' as const, resolution: status }
+      : null;
+    if (resolvedMessage) {
+      patchMessage(messageId, () => resolvedMessage);
+      if (conversationId) {
+        const serialized = serializeDurableMessage(resolvedMessage);
+        void api.replaceBusinessChatMessage(conversationId, messageId, serialized)
+          .then(() => setTranscriptSyncError(null))
+          .catch(error => setTranscriptSyncError(
+            error instanceof Error ? error.message : 'The transcript could not be updated.',
+          ));
+      }
+    }
     const runId = currentRunId;
     if (!runId) return;
     observeAttempt(runId);
@@ -590,7 +919,21 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
       setRunning(false);
       await appendAssistantFromRun(runId);
     }
-  }, [appendAssistantFromRun, currentRunId, hydrateRun, observeAttempt, patchMessage, showGateOrResult]);
+  }, [appendAssistantFromRun, conversationId, currentRunId, hydrateRun, messages, observeAttempt, patchMessage, showGateOrResult]);
+
+  useEffect(() => {
+    if (!meta || !currentRunId) return;
+    let cancelled = false;
+    void hydrateRun(currentRunId).then(run => {
+      if (cancelled) return;
+      if (run.status === 'running') observeAttempt(currentRunId);
+      else if (run.status === 'paused') void showGateOrResult(currentRunId);
+      else if (run.status === 'completed' || run.status === 'failed' || run.status === 'rejected') {
+        void appendAssistantFromRun(currentRunId);
+      }
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [appendAssistantFromRun, currentRunId, hydrateRun, meta, observeAttempt, showGateOrResult]);
 
   const interventionPending = messages.some(
     message => message.role === 'intervention' && message.status === 'pending',
@@ -602,15 +945,99 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
       : 'Resolve the pending review to continue.'
     : composerDisabledReason(interventionPending, busy);
 
+  // These projections depend on workflow/run metadata, not composer text.
+  // Keeping them stable avoids rebuilding model menus and activity maps on
+  // every keystroke in this otherwise large conversation component.
+  const modelOptions = useMemo(() => {
+    if (!meta) return { visibleModels: [], workflowOpenRouterModels: [] };
+    const compatibleModels = compatibleTransformModels(meta);
+    const hasModelConstraints = meta.nodes.some(node => (
+      node.type === 'TransformAgent'
+      && node.config.mode !== 'deterministic'
+      && node.allowedModels.length > 0
+    ));
+    const visibleModels = models.filter(model => (
+      model.automatic || !hasModelConstraints || compatibleModels.includes(model.name)
+    ));
+    const workflowOpenRouterModels = [...new Set(meta.nodes.flatMap(node => (
+      node.type === 'TransformAgent' && node.selectedModel?.startsWith('openrouter/')
+        ? [node.selectedModel]
+        : []
+    )))].filter(model => !visibleModels.some(item => item.name === model));
+    return { visibleModels, workflowOpenRouterModels };
+  }, [meta, models]);
+  const contextActivities = useMemo(() => (
+    currentRunId && meta
+      ? Object.fromEntries(meta.nodes.flatMap(node => {
+          const activity = activities[activityKey(currentRunId, node.id)];
+          return activity ? [[node.id, activity]] : [];
+        }))
+      : {}
+  ), [activities, currentRunId, meta]);
+  const selectedNode = useMemo(
+    () => meta?.nodes.find(node => node.id === selectedNodeId) ?? null,
+    [meta, selectedNodeId],
+  );
+
+  const openDeepResearch = useCallback(async (question = '') => {
+    setControlError(null);
+    try {
+      const workflow = await api.ensureDeepResearchChatWorkflow();
+      const query = question.trim() ? `?prompt=${encodeURIComponent(question.trim())}` : '';
+      navigate(`/chat/private/${encodeURIComponent(workflow.id)}${query}`);
+    } catch (reason) {
+      setControlError(reason instanceof Error ? reason.message : 'Deep Research is unavailable.');
+    }
+  }, [navigate]);
+
+  const executeFollowUp = useCallback(async (text: string, output: 'pdf' | 'pptx') => {
+    if (!currentRunId) return;
+    setAskBusy(true);
+    setControlError(null);
+    try {
+      const prepared = await api.prepareChatWorkspace({
+        objective: text,
+        preferred_output: output,
+        previous_run_id: currentRunId,
+      });
+      navigate(`/chat/private/${encodeURIComponent(prepared.workflow.id)}?prompt=${encodeURIComponent(text)}`);
+    } catch (reason) {
+      setControlError(reason instanceof Error ? reason.message : 'The follow-up workflow could not be prepared.');
+    } finally {
+      setAskBusy(false);
+    }
+  }, [currentRunId, navigate]);
+
   const submit = useCallback((event?: FormEvent) => {
     event?.preventDefault();
     if (disabledReason || !meta) return;
     const text = composerText;
+    if (/^\/research(?:\s|$)/i.test(text)) {
+      setComposerText('');
+      void openDeepResearch(text.replace(/^\/research\s*/i, ''));
+      return;
+    }
+    const effectiveFormat = responseFormat === 'auto' ? classifyResponseFormat(text) : responseFormat;
+    const instructedText = `${formatHint(effectiveFormat, writingStyle)}\n\n${text}`;
     setComposerText('');
     const intent = resolveComposerIntent(hasCompletedRun, composerMode);
-    if (intent === 'run') void runWorkflowOnce(text);
-    else void askFollowUp(text);
-  }, [askFollowUp, composerMode, composerText, disabledReason, hasCompletedRun, meta, runWorkflowOnce]);
+    const executionOutput = composerMode === 'auto' && hasCompletedRun
+      ? followUpExecutionOutput(text)
+      : null;
+    if (executionOutput) void executeFollowUp(text, executionOutput);
+    else if (intent === 'run') void runWorkflowOnce(instructedText, text);
+    else void askFollowUp(instructedText, text);
+  }, [askFollowUp, composerMode, composerText, disabledReason, executeFollowUp, hasCompletedRun, meta, openDeepResearch, responseFormat, runWorkflowOnce, writingStyle]);
+
+  function chooseSlashCommand(command: SlashCommand) {
+    const result = applySlashCommand(command, composerText);
+    setComposerText(result.text);
+    if (result.format) setResponseFormat(result.format);
+    if (result.action === 'templates') setTemplatesOpen(true);
+    if (result.action === 'workflows') navigate('/chat');
+    if (result.action === 'research') void openDeepResearch(result.text);
+  }
+  const slashMatches = matchingSlashCommands(composerText);
 
 
   if (loadError) {
@@ -628,7 +1055,7 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
         </button>
         <button
           type="button"
-          onClick={() => navigate('/business-chat')}
+          onClick={() => navigate('/chat')}
           className="ml-2 mt-4 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
         >
           ← Back to workflows
@@ -641,31 +1068,9 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
     return <div className="px-6 py-10 text-sm text-ink-500">Loading workflow…</div>;
   }
 
-  const title = meta.chatbotName ?? workflowName;
-  const compatibleModels = compatibleTransformModels(meta);
-  const hasModelConstraints = meta.nodes.some(node => (
-    node.type === 'TransformAgent'
-    && node.config.mode !== 'deterministic'
-    && node.allowedModels.length > 0
-  ));
-  const visibleModels = models.filter(model => (
-    model.automatic || !hasModelConstraints || compatibleModels.includes(model.name)
-  ));
-  const workflowOpenRouterModels = [...new Set(meta.nodes.flatMap(node => (
-    node.type === 'TransformAgent' && node.selectedModel?.startsWith('openrouter/')
-      ? [node.selectedModel]
-      : []
-  )))].filter(model => (
-    model.startsWith('openrouter/') && !visibleModels.some(item => item.name === model)
-  ));
+  const title = meta.chatbotName ?? resourceName;
   const selectedModelInfo = models.find(model => model.name === selectedModel);
-  const contextActivities = currentRunId
-    ? Object.fromEntries(meta.nodes.flatMap(node => {
-        const activity = activities[activityKey(currentRunId, node.id)];
-        return activity ? [[node.id, activity]] : [];
-      }))
-    : {};
-  const selectedNode = meta.nodes.find(node => node.id === selectedNodeId) ?? null;
+  const { visibleModels, workflowOpenRouterModels } = modelOptions;
   const selectedNodeRun: NodeRun | undefined = selectedNodeId
     ? runDetail?.node_runs[selectedNodeId]
     : undefined;
@@ -676,11 +1081,11 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
       <header className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
         <div>
           <h1 className="text-lg font-semibold text-ink-900">{title}</h1>
-          <p className="mt-0.5 text-xs text-ink-500">{workflowName}</p>
+          <p className="mt-0.5 text-xs text-ink-500">{source === 'private' ? `🔒 ${resourceName} · Private` : resourceName}</p>
         </div>
         <div className="flex gap-2">
-          {!contextOpen && <button type="button" onClick={() => setContextOpen(true)} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-ink-700 hover:bg-slate-50">Workflow</button>}
-          <button type="button" onClick={() => navigate('/business-chat')} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-ink-700 hover:bg-slate-50">← All workflows</button>
+          {!contextOpen && <button type="button" onClick={() => { contextManuallyToggledRef.current = true; setContextOpen(true); }} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-ink-700 hover:bg-slate-50">Workflow</button>}
+          <button type="button" onClick={() => navigate('/chat')} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-ink-700 hover:bg-slate-50">← All workflows</button>
         </div>
       </header>
 
@@ -734,12 +1139,19 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
             selectedNodeId={selectedNodeId}
             onSelectNode={selectNode}
             onInterventionResult={onInterventionResult}
-            onOpenActivity={runId => navigate(`/business/${runId}`)}
+            onOpenActivity={runId => navigate(`/workflow-runs/${runId}`)}
           />
         ))}
       </div>
 
       <form onSubmit={submit} className="mt-4 border-t border-slate-200 pt-3">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setTemplatesOpen(true)} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-ink-700">Templates</button>
+          <button type="button" onClick={() => void openDeepResearch(composerText)} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-ink-700">Deep research</button>
+          <label className="text-[11px] text-ink-500">Format <select aria-label="Response format" value={responseFormat} onChange={e => setResponseFormat(e.target.value as ResponseFormat)} className="ml-1 rounded border border-slate-300 py-1 text-xs"><option value="auto">Auto</option><option value="prose">Prose</option><option value="bullets">Bullets</option><option value="numbered">Numbered</option><option value="table">Table</option><option value="chart">Chart</option></select></label>
+          <label className="text-[11px] text-ink-500">Style <select aria-label="Writing style" value={writingStyle} onChange={e => setWritingStyle(e.target.value as WritingStyle)} className="ml-1 rounded border border-slate-300 py-1 text-xs"><option value="concise">Concise</option><option value="detailed">Detailed</option><option value="academic">Academic</option><option value="casual">Casual</option><option value="executive">Executive</option><option value="bullet-first">Bullet-first</option></select></label>
+          <span className="text-[10px] text-ink-400">Auto: {classifyResponseFormat(composerText || 'explain')}</span>
+        </div>
         {meta.startMode === 'input_form' && meta.formFields.length > 0 && (
           <div className="mb-3 grid gap-2 sm:grid-cols-2">
             {meta.formFields.map(field => (
@@ -785,10 +1197,11 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
           </div>
         )}
         <div
-          className="rounded-xl border border-slate-300 bg-white p-2 shadow-sm focus-within:border-accent-400 focus-within:ring-2 focus-within:ring-accent-100"
+          className="relative rounded-xl border border-slate-300 bg-white p-2 shadow-sm focus-within:border-accent-400 focus-within:ring-2 focus-within:ring-accent-100"
           onDragOver={event => { if (meta.allowAttachments) event.preventDefault(); }}
           onDrop={event => { if (!meta.allowAttachments) return; event.preventDefault(); void uploadAttachments(Array.from(event.dataTransfer.files)); }}
         >
+          {slashMatches.length > 0 && <div className="absolute bottom-full left-0 z-20 mb-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">{slashMatches.map(command => <button key={command.command} type="button" onClick={() => chooseSlashCommand(command)} className="block w-full px-3 py-2 text-left hover:bg-slate-50"><span className="text-xs font-medium text-accent-700">{command.command}</span><span className="ml-2 text-xs text-ink-700">{command.label}</span><span className="block text-[10px] text-ink-400">{command.description}</span></button>)}</div>}
           <textarea
             value={composerText}
             onChange={e => setComposerText(e.target.value)}
@@ -858,6 +1271,11 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
         {attachmentError && <p className="mt-1 text-xs text-bad">{attachmentError}</p>}
         {modelsError && <p className="mt-1 text-xs text-bad">{modelsError}</p>}
         {speechError && <p className="mt-1 text-xs text-bad">{speechError}</p>}
+        {transcriptSyncError && (
+          <p className="mt-1 text-xs text-bad" role="alert">
+            Transcript sync failed: {transcriptSyncError}. New messages may not survive refresh.
+          </p>
+        )}
         {selectedModel !== 'workflow_default' && (
           <p className="mt-1 text-xs text-ink-500">
             {selectedModelInfo?.display_name ?? selectedModel} will be used by compatible LLM Transform steps for this run only.
@@ -866,8 +1284,9 @@ function BusinessChatConversation({ workflowName }: { workflowName: string }) {
         {disabledReason && <p className="mt-1 text-xs text-ink-500">{disabledReason}</p>}
       </form>
       </div>
-      {contextOpen && <WorkflowContextPanel meta={meta} activities={contextActivities} attemptLabel={runDetail ? attemptLabel(runDetail.attempt, runDetail.reused_node_count) : undefined} selectedNodeId={selectedNodeId} onSelect={nodeId => selectNode(nodeId)} onClose={() => setContextOpen(false)} />}
+      {contextOpen && <WorkflowContextPanel meta={meta} activities={contextActivities} attemptLabel={runDetail ? attemptLabel(runDetail.attempt, runDetail.reused_node_count) : undefined} selectedNodeId={selectedNodeId} onSelect={nodeId => selectNode(nodeId)} onClose={() => { contextManuallyToggledRef.current = true; setContextOpen(false); }} />}
       {inspectorOpen && selectedNode && <ChatNodeInspector node={selectedNode} nodeRun={selectedNodeRun} onClose={() => setInspectorOpen(false)} />}
+      {templatesOpen && <PromptTemplateLibrary onClose={() => setTemplatesOpen(false)} onInsert={text => setComposerText(text)} />}
     </div>
   );
 }
@@ -973,14 +1392,23 @@ function assistantSpeechText(segments: AssistantSegment[]): string {
   return segments.flatMap(segment => {
     if (segment.kind === 'text') return [segment.text];
     if (segment.kind === 'code') return [`${segment.language ?? 'Code'} snippet`];
-    if (segment.kind === 'sources') return [`Sources: ${segment.items.join(', ')}`];
+    if (segment.kind === 'sources') return [`Sources: ${segment.items.map(item => item.title).join(', ')}`];
     return [segment.title];
   }).join('. ');
 }
 
 function SegmentView({ segment }: { segment: AssistantSegment }) {
   if (segment.kind === 'text') {
-    return <p className="whitespace-pre-wrap text-sm text-ink-800">{segment.text}</p>;
+    const parts = segment.text.split(/(\[\d+\])/g);
+    return <p className="whitespace-pre-wrap text-sm text-ink-800">{parts.map((part, index) => {
+      const match = /^\[(\d+)\]$/.exec(part);
+      if (!match) return part;
+      const number = match[1];
+      return <button key={`${part}-${index}`} type="button" onClick={() => {
+        const target = document.getElementById(`chat-citation-${number}`) as HTMLDetailsElement | null;
+        if (target) { target.open = true; target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      }} className="mx-0.5 font-medium text-accent-700 hover:underline">{part}</button>;
+    })}</p>;
   }
   if (segment.kind === 'code') {
     return (
@@ -997,9 +1425,19 @@ function SegmentView({ segment }: { segment: AssistantSegment }) {
     return (
       <div>
         <div className="text-xs font-semibold uppercase tracking-wide text-ink-400">Sources</div>
-        <ul className="mt-1 space-y-0.5">
-          {segment.items.map((item, index) => <li key={`${item}-${index}`} className="text-xs text-ink-600">• {item}</li>)}
-        </ul>
+        <div className="mt-2 grid gap-2">
+          {segment.items.map(item => <details id={`chat-citation-${item.number}`} key={`${item.documentId ?? item.title}:${item.chunkId ?? item.number}`} className="scroll-mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+            <summary className="cursor-pointer font-medium text-ink-700"><span className="mr-1 text-accent-700">[{item.number}]</span>{item.title}{item.page ? ` · page ${item.page}` : ''}{item.section ? ` · ${item.section}` : ''}</summary>
+            {item.snippet && <blockquote className="mt-2 border-l-2 border-accent-300 pl-2 text-ink-600">{item.snippet}</blockquote>}
+            <div className="mt-2 flex items-center gap-3 text-[10px] text-ink-400">
+              {item.evidenceStatus === 'retrieved_not_verified' && <span>Retrieved passage · not independently verified</span>}
+              {item.evidenceStatus === 'candidate_only' && <span>{item.sourceType === 'research_paper' ? 'Research paper' : 'Web result'} · candidate source</span>}
+              {item.evidenceStatus === 'acquired_full_text' && <span>Acquired full text · not independently verified</span>}
+              {item.sourceUri && <a href={item.sourceUri} target="_blank" rel="noreferrer" className="text-accent-700 hover:underline">Visit webpage</a>}
+              {item.downloadUrl && <a href={`${apiBase()}${item.downloadUrl}`} className="text-accent-700 hover:underline">Download PDF</a>}
+            </div>
+          </details>)}
+        </div>
       </div>
     );
   }

@@ -1,0 +1,195 @@
+name: Chat Knowledge Five-Model Image Test
+description: >-
+  Deterministic integration fixture based on the canonical Chat Knowledge Q&A
+  workflow. A chatbot question retrieves an authorized Knowledge Studio source,
+  passes through five distinct model-backed transforms, creates an image, and
+  returns the grounded text, citation, and image through Business Chat.
+version: '1.0'
+use_case: integration_test
+library:
+  title: Chat Knowledge Five-Model Image Test
+  summary: Chat, Knowledge Retrieval, five models, image generation, and chat output.
+  visibility_status: draft
+entry: start
+exit: reply
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+      chatbot_name: Knowledge Multimodal Test
+      welcome_message: Dictate or type a question grounded in the test knowledge source.
+      message_placeholder: Ask the knowledge source…
+      allow_attachments: false
+    experience:
+      display_name: Chat Input
+      purpose: Collect a typed or dictated question from Business Chat.
+      contribution: Provides the exact user request that every later step answers.
+      expected_output: The normalized chat message.
+      failure_message: The chat question could not be collected.
+      running_message: Listening to your question…
+      completed_message: Question received
+
+  - id: knowledge
+    type: KnowledgeRetrieval
+    config:
+      collection_id: test-knowledge-source
+      retrieval_profile_id: test-retrieval-profile
+      query: '{{outputs.start.message}}'
+    experience:
+      display_name: Knowledge Source
+      purpose: Retrieve evidence from the authorized test Knowledge Studio collection.
+      contribution: Grounds all five model stages in the same approved source passage.
+      expected_output: Retrieved context and a source citation.
+      failure_message: The authorized knowledge source could not be searched.
+      running_message: Searching the authorized knowledge source…
+      completed_message: Grounding evidence retrieved
+
+  - id: model_one
+    type: TransformAgent
+    selected_model: gpt-5-mini
+    config:
+      mode: ai
+      model: gpt-5-mini
+      prompt_template: |-
+        Extract the key fact needed to answer this question.
+        QUESTION: {{outputs.start.message}}
+        KNOWLEDGE: {{outputs.knowledge.context}}
+      output_schema:
+        result: string
+    experience:
+      display_name: Model 1 · Extract
+      purpose: Extract the source-backed fact relevant to the question.
+      contribution: Gives later model stages a concise evidence statement.
+      expected_output: One extracted fact.
+      failure_message: Model 1 could not extract the grounded fact.
+
+  - id: model_two
+    type: TransformAgent
+    selected_model: claude-sonnet-4-5
+    config:
+      mode: ai
+      model: claude-sonnet-4-5
+      prompt_template: |-
+        Check this extracted fact against the supplied knowledge and improve it.
+        EXTRACTED: {{outputs.model_one.parsed.result}}
+        KNOWLEDGE: {{outputs.knowledge.context}}
+      output_schema:
+        result: string
+    experience:
+      display_name: Model 2 · Verify
+      purpose: Verify the extracted fact against the retrieved context.
+      contribution: Prevents an unsupported extraction from reaching the final answer.
+      expected_output: One verified fact.
+      failure_message: Model 2 could not verify the extracted fact.
+
+  - id: model_three
+    type: TransformAgent
+    selected_model: claude-opus-5
+    config:
+      mode: ai
+      model: claude-opus-5
+      prompt_template: |-
+        Identify the practical implication of this verified fact.
+        VERIFIED FACT: {{outputs.model_two.parsed.result}}
+      output_schema:
+        result: string
+    experience:
+      display_name: Model 3 · Analyze
+      purpose: Analyze the practical implication of the verified fact.
+      contribution: Adds useful interpretation without changing the source-backed fact.
+      expected_output: A concise practical implication.
+      failure_message: Model 3 could not analyze the verified fact.
+
+  - id: model_four
+    type: TransformAgent
+    selected_model: gpt-5.6-luna
+    config:
+      mode: ai
+      model: gpt-5.6-luna
+      prompt_template: |-
+        Turn the verified fact and implication into a concise answer outline.
+        FACT: {{outputs.model_two.parsed.result}}
+        IMPLICATION: {{outputs.model_three.parsed.result}}
+      output_schema:
+        result: string
+    experience:
+      display_name: Model 4 · Outline
+      purpose: Organize the fact and implication into a concise answer outline.
+      contribution: Gives the final model a bounded structure to follow.
+      expected_output: A grounded answer outline.
+      failure_message: Model 4 could not prepare the answer outline.
+
+  - id: model_five
+    type: TransformAgent
+    selected_model: openrouter/anthropic/claude-sonnet-4.5
+    config:
+      mode: ai
+      model: openrouter/anthropic/claude-sonnet-4.5
+      prompt_template: |-
+        Write the final grounded answer and a simple visual prompt. Include [1]
+        after the supported fact and do not add unsupported claims.
+        QUESTION: {{outputs.start.message}}
+        OUTLINE: {{outputs.model_four.parsed.result}}
+      output_schema:
+        answer: string
+        image_prompt: string
+    experience:
+      display_name: Model 5 · Finalize
+      purpose: Produce the final cited chat answer and visual prompt.
+      contribution: Creates the exact text and image instruction returned to the user.
+      expected_output: A cited answer and an image prompt.
+      failure_message: Model 5 could not finalize the multimodal answer.
+
+  - id: visual
+    type: OpenAIImageGenerationAgent
+    config:
+      backend: openrouter
+      openrouter_image_model: google/gemini-3.1-flash-image
+      prompt: '{{outputs.model_five.parsed.image_prompt}}'
+      size: 1024x1024
+      quality: medium
+      output_format: png
+    experience:
+      display_name: Generate Answer Image
+      purpose: Generate a visual summary from the final model's bounded prompt.
+      contribution: Adds a user-visible image artifact alongside the grounded answer.
+      expected_output: One stored PNG image.
+      failure_message: The visual summary could not be generated.
+      running_message: Creating a visual summary…
+      completed_message: Visual summary created
+
+  - id: reply
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: '{{outputs.model_five.parsed.answer}}'
+      outcome: answered
+      sources: '{{outputs.knowledge.citations}}'
+      handoff:
+        image: '{{outputs.visual.minio_key}}'
+    experience:
+      display_name: Chat Reply
+      purpose: Return the grounded answer, citation, and image in Business Chat.
+      contribution: Presents every workflow result through the conversational surface.
+      expected_output: A cited text answer with a generated image.
+      failure_message: The multimodal chat response could not be presented.
+      completed_message: Grounded multimodal answer ready
+
+edges:
+  - from: start
+    to: knowledge
+  - from: knowledge
+    to: model_one
+  - from: model_one
+    to: model_two
+  - from: model_two
+    to: model_three
+  - from: model_three
+    to: model_four
+  - from: model_four
+    to: model_five
+  - from: model_five
+    to: visual
+  - from: visual
+    to: reply

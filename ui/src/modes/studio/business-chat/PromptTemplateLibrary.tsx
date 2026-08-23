@@ -1,0 +1,34 @@
+import { useEffect, useMemo, useState } from 'react';
+import { api } from '../../../api/client';
+import type { PromptTemplate, PromptTemplateCategory } from '../../../api/types';
+import { renderPromptTemplate } from './chatEnhancements';
+
+const CATEGORIES: Array<'All' | PromptTemplateCategory> = ['All', 'Research', 'Summarize', 'Compare', 'Extract', 'Brainstorm', 'Writing', 'Analysis'];
+
+export function PromptTemplateLibrary({ onClose, onInsert }: { onClose: () => void; onInsert: (text: string) => void }) {
+  const [items, setItems] = useState<PromptTemplate[]>([]);
+  const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('All');
+  const [query, setQuery] = useState('');
+  const [selected, setSelected] = useState<PromptTemplate | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<PromptTemplate | 'new' | null>(null);
+  const [draft, setDraft] = useState({ title: '', description: '', category: 'Writing' as PromptTemplateCategory, content: '' });
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { api.listPromptTemplates().then(result => setItems(result.templates)).catch(reason => setError(String(reason))); }, []);
+  const visible = useMemo(() => items.filter(item => (category === 'All' || item.category === category) && `${item.title} ${item.description}`.toLowerCase().includes(query.toLowerCase())).sort((a, b) => Number(b.favorite) - Number(a.favorite)), [category, items, query]);
+  async function duplicate(item: PromptTemplate) { const created = await api.duplicatePromptTemplate(item.id); setItems(current => [created, ...current]); }
+  async function favorite(item: PromptTemplate) { const updated = await api.favoritePromptTemplate(item.id, !item.favorite); setItems(current => current.map(value => value.id === item.id ? updated : value)); }
+  async function remove(item: PromptTemplate) { await api.deletePromptTemplate(item.id); setItems(current => current.filter(value => value.id !== item.id)); }
+  async function save() {
+    const result = editing === 'new' ? await api.createPromptTemplate(draft) : await api.updatePromptTemplate(editing!.id, draft);
+    setItems(current => editing === 'new' ? [result, ...current] : current.map(item => item.id === result.id ? result : item)); setEditing(null);
+  }
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label="Prompt templates library"><div className="flex max-h-[85vh] w-full max-w-5xl flex-col rounded-xl bg-white shadow-xl">
+    <header className="flex items-center justify-between border-b px-5 py-4"><div><h2 className="font-semibold">Prompt templates</h2><p className="text-xs text-ink-500">Choose a template, fill its variables, and insert it into chat.</p></div><div className="flex gap-3"><button onClick={() => { setEditing('new'); setDraft({ title: '', description: '', category: 'Writing', content: '' }); }} className="text-xs text-accent-700">+ Create</button><button onClick={onClose}>×</button></div></header>
+    <div className="flex min-h-0 flex-1"><aside className="w-44 border-r p-3">{CATEGORIES.map(value => <button key={value} onClick={() => setCategory(value)} className={`mb-1 block w-full rounded px-2 py-1.5 text-left text-xs ${category === value ? 'bg-accent-50 text-accent-800' : ''}`}>{value}</button>)}</aside>
+      <main className="min-w-0 flex-1 overflow-y-auto p-4"><input aria-label="Search prompt templates" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search templates…" className="mb-3 w-full rounded border px-3 py-2 text-sm" />{error && <p className="text-xs text-bad">{error}</p>}<div className="grid gap-3 sm:grid-cols-2">{visible.map(item => <div key={item.id} className="rounded-lg border p-3"><button onClick={() => { setSelected(item); setValues({}); }} className="w-full text-left"><div className="flex justify-between"><b className="text-sm">{item.title}</b><span className="text-xs">{item.favorite ? '★' : item.built_in ? 'Built-in' : 'Custom'}</span></div><p className="mt-1 text-xs text-ink-500">{item.description}</p><div className="mt-2 text-[10px] uppercase text-ink-400">{item.category} · {item.variables.length} variables</div></button><div className="mt-2 flex gap-2 text-[11px]"><button onClick={() => void duplicate(item)}>Duplicate</button>{!item.built_in && <><button onClick={() => void favorite(item)}>{item.favorite ? 'Unfavorite' : 'Favorite'}</button><button onClick={() => { setEditing(item); setDraft({ title: item.title, description: item.description, category: item.category, content: item.content }); }}>Edit</button><button onClick={() => void remove(item)} className="text-bad">Delete</button></>}</div></div>)}</div></main>
+      {selected && <aside className="w-72 overflow-y-auto border-l p-4"><h3 className="text-sm font-semibold">{selected.title}</h3><p className="mt-2 whitespace-pre-wrap rounded bg-slate-50 p-2 text-xs">{selected.content}</p>{selected.variables.map(variable => <label key={variable} className="mt-3 block text-xs capitalize">{variable.replaceAll('_', ' ')}<input value={values[variable] ?? ''} onChange={e => setValues(current => ({ ...current, [variable]: e.target.value }))} className="mt-1 w-full rounded border px-2 py-1.5" /></label>)}<button onClick={() => { onInsert(renderPromptTemplate(selected.content, values)); onClose(); }} className="mt-4 w-full rounded bg-accent-600 px-3 py-2 text-sm text-white">Insert into chat</button></aside>}
+    </div>
+    {editing && <div className="border-t bg-slate-50 p-4"><div className="grid gap-2 sm:grid-cols-3"><input aria-label="Template title" value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} placeholder="Title" className="rounded border px-2 py-1.5 text-sm" /><select aria-label="Template category" value={draft.category} onChange={e => setDraft({ ...draft, category: e.target.value as PromptTemplateCategory })} className="rounded border text-sm">{CATEGORIES.slice(1).map(value => <option key={value}>{value}</option>)}</select><input aria-label="Template description" value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} placeholder="Description" className="rounded border px-2 py-1.5 text-sm" /></div><textarea aria-label="Template content" value={draft.content} onChange={e => setDraft({ ...draft, content: e.target.value })} placeholder="Use {{variables}} in your prompt" rows={4} className="mt-2 w-full rounded border p-2 text-sm" /><div className="mt-2 flex justify-end gap-2"><button onClick={() => setEditing(null)}>Cancel</button><button disabled={!draft.title.trim() || !draft.content.trim()} onClick={() => void save()} className="rounded bg-accent-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">Save template</button></div></div>}
+  </div></div>;
+}

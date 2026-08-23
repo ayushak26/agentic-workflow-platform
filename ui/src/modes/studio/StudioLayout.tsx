@@ -1,10 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
 const tabs = [
-  { to: 'business-chat', label: 'Chatbot' },
-  { to: 'library', label: 'Library' },
+  { to: 'chat', label: 'Chat' },
+  { to: 'workflows', label: 'Workflows' },
   { to: 'builder', label: 'Builder' },
-  { to: 'history', label: 'Run history' },
+  { to: 'workflow-runs', label: 'Workflow runs' },
   { to: 'pipelines', label: 'Pipelines' },
   { to: 'proposal-review', label: 'Proposal review' },
 ];

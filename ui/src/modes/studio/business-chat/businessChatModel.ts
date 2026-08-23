@@ -549,7 +549,20 @@ export function composerDisabledReason(
 // ---- Output rendering --------------------------------------------------
 // Primary visible output is normalized by chatOutputs.ts. Sources remain a
 // secondary segment because they explain a response rather than being one.
-export type AssistantSegment = ChatOutput | { kind: 'sources'; items: string[] };
+export type ChatCitation = {
+  number: number;
+  title: string;
+  snippet?: string;
+  page?: number;
+  section?: string;
+  sourceUri?: string;
+  documentId?: string;
+  chunkId?: string;
+  evidenceStatus?: string;
+  sourceType?: 'webpage' | 'research_paper' | 'internal_document';
+  downloadUrl?: string;
+};
+export type AssistantSegment = ChatOutput | { kind: 'sources'; items: ChatCitation[] };
 
 export function isFileReference(value: unknown): value is WorkflowFileReference {
   return isWorkflowFileReference(value);
@@ -578,8 +591,9 @@ function outputAsRecord(value: unknown): Record<string, unknown> {
 /** Build the assistant message from a finished run's state. Chat-reply End
  *  nodes become text; files become image previews / document cards; other
  *  workflow outputs become labelled fields (JSON as text); citations come
- *  only from real KnowledgeRetrieval output — never fabricated. */
+ *  only from real KnowledgeRetrieval and WebSearchAgent output — never fabricated. */
 export function assistantSegments(run: {
+  run_id?: string;
   outputs?: Record<string, unknown> | null;
   node_runs?: Record<string, { output?: unknown } | null> | null;
   node_types?: Record<string, string> | null;
@@ -588,21 +602,137 @@ export function assistantSegments(run: {
   const nodeRuns = run.node_runs ?? {};
   const nodeTypes = run.node_types ?? {};
 
-  // Sources from KnowledgeRetrieval citations only — never fabricated.
-  const sourceNames: string[] = [];
+  // Sources come only from source-producing node output — never fabricated.
+  const sourceItems: ChatCitation[] = [];
+  const acquiredByCandidate = new Map<string, Record<string, unknown>>();
   for (const [nodeId, nodeRun] of Object.entries(nodeRuns)) {
-    if (nodeTypes[nodeId] !== 'KnowledgeRetrieval') continue;
-    const citations = outputAsRecord(nodeRun?.output).citations;
+    if (nodeTypes[nodeId] !== 'ResearchSourceAcquirer') continue;
+    const documents = outputAsRecord(nodeRun?.output).documents;
+    if (!Array.isArray(documents)) continue;
+    for (const document of documents) {
+      const record = outputAsRecord(document);
+      if (typeof record.candidate_id === 'string') acquiredByCandidate.set(record.candidate_id, record);
+    }
+  }
+  for (const [nodeId, nodeRun] of Object.entries(nodeRuns)) {
+    const nodeType = nodeTypes[nodeId];
+    const output = outputAsRecord(nodeRun?.output);
+    if (nodeType === 'WebSearchAgent') {
+      const results = output.results;
+      if (!Array.isArray(results)) continue;
+      for (const result of results) {
+        const record = outputAsRecord(result);
+        const rawUrl = record.url;
+        const sourceUri = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl)
+          ? rawUrl
+          : undefined;
+        const title = typeof record.title === 'string' && record.title.trim()
+          ? record.title
+          : sourceUri;
+        if (!title) continue;
+        sourceItems.push({
+          number: sourceItems.length + 1,
+          title,
+          ...(typeof record.snippet === 'string' && record.snippet ? { snippet: record.snippet } : {}),
+          ...(sourceUri ? { sourceUri } : {}),
+          evidenceStatus: 'candidate_only',
+          sourceType: 'webpage',
+        });
+      }
+      continue;
+    }
+    if (nodeType === 'BoundedDeepResearchAgent' || nodeType === 'ScholarlyCandidateDiscoveryAgent') {
+      const candidates = output.candidates;
+      const dossiers = output.dossiers;
+      const citedTextByUrl = new Map<string, string>();
+      if (Array.isArray(dossiers)) {
+        for (const dossier of dossiers) {
+          const citations = outputAsRecord(dossier).citations;
+          if (!Array.isArray(citations)) continue;
+          for (const citation of citations) {
+            const record = outputAsRecord(citation);
+            if (typeof record.url === 'string' && typeof record.cited_text === 'string') {
+              citedTextByUrl.set(record.url, record.cited_text);
+            }
+          }
+        }
+      }
+      if (!Array.isArray(candidates)) continue;
+      for (const candidate of candidates) {
+        const record = outputAsRecord(candidate);
+        const candidateId = typeof record.candidate_id === 'string' ? record.candidate_id : undefined;
+        const acquired = candidateId ? acquiredByCandidate.get(candidateId) : undefined;
+        const rawUrl = record.canonical_url ?? record.pdf_url ?? (
+          typeof record.doi === 'string' ? `https://doi.org/${record.doi}` : undefined
+        );
+        const sourceUri = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl) ? rawUrl : undefined;
+        const title = typeof record.title === 'string' && record.title.trim() ? record.title : sourceUri;
+        if (!title) continue;
+        const sourceName = typeof record.source === 'string' ? record.source.toLowerCase() : '';
+        const identifiers = outputAsRecord(record.canonical_identifiers);
+        const paper = Boolean(record.doi || record.paper_id || identifiers.doi || identifiers.pmid
+          || identifiers.pmcid || identifiers.arxiv_id || ['arxiv', 'openalex', 'pubmed', 'semantic_scholar', 'europepmc'].includes(sourceName));
+        const documentId = typeof acquired?.document_id === 'string' ? acquired.document_id : undefined;
+        const pdfKey = typeof acquired?.pdf_object_key === 'string' ? acquired.pdf_object_key : undefined;
+        const downloadUrl = run.run_id && documentId && pdfKey?.toLowerCase().endsWith('.pdf')
+          ? `/api/candidates/${encodeURIComponent(run.run_id)}/documents/${encodeURIComponent(documentId)}/download`
+          : undefined;
+        const snippet = (sourceUri && citedTextByUrl.get(sourceUri))
+          || (typeof record.abstract === 'string' ? record.abstract : undefined);
+        sourceItems.push({
+          number: sourceItems.length + 1,
+          title,
+          ...(snippet ? { snippet } : {}),
+          ...(sourceUri ? { sourceUri } : {}),
+          ...(documentId ? { documentId } : {}),
+          ...(downloadUrl ? { downloadUrl } : {}),
+          evidenceStatus: acquired ? 'acquired_full_text' : 'candidate_only',
+          sourceType: paper ? 'research_paper' : 'webpage',
+        });
+      }
+      continue;
+    }
+    if (nodeType !== 'KnowledgeRetrieval') continue;
+    const citations = output.citations;
+    const chunks = output.retrieved_chunks;
     if (!Array.isArray(citations)) continue;
-    for (const citation of citations) {
+    const chunkList = Array.isArray(chunks) ? chunks.map(outputAsRecord) : [];
+    for (const [citationIndex, citation] of citations.entries()) {
       if (citation && typeof citation === 'object') {
         const record = citation as Record<string, unknown>;
         const name = record.filename ?? record.doc_title ?? record.document_id;
-        if (typeof name === 'string' && name !== '') sourceNames.push(name);
+        if (typeof name !== 'string' || name === '') continue;
+        const chunk = chunkList.find(item => item.chunk_id === record.chunk_id) ?? {};
+        const metadata = outputAsRecord(chunk.metadata);
+        const snippet = chunk.compressed_text ?? chunk.context_content ?? chunk.text;
+        const rawSourceUri = metadata.source_uri ?? metadata.url;
+        const sourceUri = typeof rawSourceUri === 'string' && /^https?:\/\//i.test(rawSourceUri)
+          ? rawSourceUri
+          : undefined;
+        sourceItems.push({
+          number: typeof chunk.display_number === 'number' ? chunk.display_number : citationIndex + 1,
+          title: name,
+          ...(typeof snippet === 'string' && snippet ? { snippet } : {}),
+          ...(typeof record.page === 'number' ? { page: record.page } : {}),
+          ...(typeof record.section === 'string' && record.section ? { section: record.section } : {}),
+          ...(sourceUri ? { sourceUri } : {}),
+          ...(typeof record.document_id === 'string' ? { documentId: record.document_id } : {}),
+          ...(typeof record.chunk_id === 'string' ? { chunkId: record.chunk_id } : {}),
+          ...(typeof record.evidence_status === 'string' ? { evidenceStatus: record.evidence_status } : {}),
+          sourceType: 'internal_document',
+        });
       }
     }
   }
-  const deduped = [...new Set(sourceNames)];
+  const uniqueSources = new Map<string, ChatCitation>();
+  for (const item of sourceItems) {
+    const key = item.sourceUri ?? item.chunkId ?? item.documentId ?? item.title;
+    if (!uniqueSources.has(key)) uniqueSources.set(key, item);
+  }
+  const deduped = [...uniqueSources.values()].map((item, index) => ({
+    ...item,
+    number: index + 1,
+  }));
   if (deduped.length > 0) segments.push({ kind: 'sources', items: deduped });
 
   return segments;

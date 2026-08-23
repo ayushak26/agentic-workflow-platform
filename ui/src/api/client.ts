@@ -3,6 +3,12 @@ import type {
   AuditEvent,
   AutofixWorkflowResult,
   BudgetsResponse,
+  BusinessChatConversationResponse,
+  BusinessChatMessageRole,
+  BusinessChatTranscriptMessage,
+  ChatWorkspaceExperience,
+  ChatWorkspacePlan,
+  ChatWorkspacePlanRequest,
   BusinessRule,
   CacheSummary,
   ConceptAlternative,
@@ -29,6 +35,8 @@ import type {
   LLMModelInfo,
   NodeTypeManifest,
   OpenRouterModelInfo,
+  PrivateChatWorkflowDetail,
+  PrivateChatWorkflowSummary,
   PipelinePreflightReport,
   PipelineRunDetail,
   PipelineRunSummary,
@@ -39,6 +47,8 @@ import type {
   ProposalRenderRequest,
   ProposalRenderResult,
   ProposalReview,
+  PromptTemplate,
+  PromptTemplateCategory,
   BusinessActionResult,
   BusinessExplanation,
   BusinessNarration,
@@ -57,6 +67,8 @@ import type {
   WorkflowStats,
   WorkflowSummary,
   WorkflowVersionSummary,
+  WorkflowRunHistoryVisibility,
+  WorkflowRunOrigin,
 } from './types';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
@@ -508,6 +520,36 @@ export const api = {
   listChatWorkflows: () =>
     afetch(`${API}/workflows/chat-catalog`, { headers: authHeaders() })
       .then(j<WorkflowSummary[]>),
+  listPrivateChatWorkflows: () =>
+    afetch(`${API}/chat-workflows`, { headers: authHeaders() })
+      .then(j<{ workflows: PrivateChatWorkflowSummary[] }>),
+  listChatWorkspaceExperiences: () =>
+    afetch(`${API}/chat-workspace/experiences`, { headers: authHeaders() })
+      .then(j<{ experiences: ChatWorkspaceExperience[] }>),
+  planChatWorkspace: (body: ChatWorkspacePlanRequest) =>
+    afetch(`${API}/chat-workspace/plan`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<ChatWorkspacePlan>),
+  prepareChatWorkspace: (body: ChatWorkspacePlanRequest) =>
+    afetch(`${API}/chat-workspace/prepare`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<{ plan: ChatWorkspacePlan; workflow: PrivateChatWorkflowSummary }>),
+  getPrivateChatWorkflow: (id: string, signal?: AbortSignal) =>
+    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}`, { headers: authHeaders(), signal }).then(j<PrivateChatWorkflowDetail>),
+  ensureDeepResearchChatWorkflow: () =>
+    afetch(`${API}/chat-workflows/presets/deep-research`, { method: 'POST', headers: authHeaders() }).then(j<PrivateChatWorkflowSummary>),
+  importPrivateChatWorkflow: (body: { slug: string; display_name: string; yaml: string }) =>
+    afetch(`${API}/chat-workflows/import`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PrivateChatWorkflowSummary>),
+  copyPrivateChatWorkflow: (body: { workflow_name: string; slug: string; display_name: string }) =>
+    afetch(`${API}/chat-workflows/from-existing`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PrivateChatWorkflowSummary>),
+  generatePrivateChatWorkflow: (body: { prompt: string; slug: string; display_name: string; preferred_output_type: 'auto' | 'text' | 'code' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx'; sample_inputs?: Record<string, unknown> }) =>
+    afetch(`${API}/chat-workflows/generate`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PrivateChatWorkflowSummary>),
+  archivePrivateChatWorkflow: (id: string) =>
+    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() }).then(j<{ id: string; archived: boolean }>),
+  requestPrivateChatWorkflowPublication: (id: string) =>
+    afetch(`${API}/chat-workflows/${encodeURIComponent(id)}/request-publication`, { method: 'POST', headers: authHeaders() }).then(j<PrivateChatWorkflowSummary>),
+  resolveBusinessChatConversation: (workflow_source: 'shared' | 'private', workflow_id: string) =>
+    afetch(`${API}/chat-conversations/resolve`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ workflow_source, workflow_id }) }).then(j<BusinessChatConversationResponse>),
+  appendBusinessChatMessage: (conversationId: string, body: { message_id: string; role: BusinessChatMessageRole; content: Record<string, unknown>; run_id?: string | null }) =>
+    afetch(`${API}/chat-conversations/${encodeURIComponent(conversationId)}/messages`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<BusinessChatTranscriptMessage>),
+  replaceBusinessChatMessage: (conversationId: string, messageId: string, body: { role: BusinessChatMessageRole; content: Record<string, unknown>; run_id?: string | null }) =>
+    afetch(`${API}/chat-conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`, { method: 'PUT', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<BusinessChatTranscriptMessage>),
   getWorkflow: (name: string, signal?: AbortSignal) =>
     afetch(`${API}/workflows/by-name/${encodeURIComponent(name)}`, {
       headers: authHeaders(),
@@ -636,15 +678,29 @@ export const api = {
   runWorkflow: (
     workflow_yaml: string,
     inputs: Record<string, unknown>,
-    session_id?: string,
-    run_id?: string,
-    skip_preflight = false,
-  ) =>
-    afetch(`${API}/workflows/run`, {
+    optionsOrSession: {
+      session_id?: string;
+      run_id?: string;
+      skip_preflight?: boolean;
+      origin?: WorkflowRunOrigin;
+      history_visibility?: WorkflowRunHistoryVisibility;
+      workflow_id?: string;
+      workflow_version_id?: string;
+      conversation_id?: string;
+      message_id?: string;
+    } | string = {},
+    legacyRunId?: string,
+    legacySkipPreflight = false,
+  ) => {
+    const options = typeof optionsOrSession === 'string'
+      ? { session_id: optionsOrSession, run_id: legacyRunId, skip_preflight: legacySkipPreflight }
+      : optionsOrSession;
+    return afetch(`${API}/workflows/run`, {
       method: 'POST',
       headers: authHeaders({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ workflow_yaml, inputs, session_id, run_id, skip_preflight }),
-    }).then(j<{ run_id: string; status: string; state?: unknown }>),
+      body: JSON.stringify({ workflow_yaml, inputs, ...options }),
+    }).then(j<{ run_id: string; status: string; state?: unknown }>);
+  },
   resumeWorkflow: (run_id: string, decision: Record<string, unknown>) =>
     afetch(`${API}/workflows/${run_id}/resume`, {
       method: 'POST',
@@ -854,6 +910,18 @@ export const api = {
         history: history.map(({ role, content }) => ({ role, content })),
       }),
     }).then(j<{ turns: RunChatTurn[]; answer: string }>),
+  listPromptTemplates: () =>
+    afetch(`${API}/prompt-templates`, { headers: authHeaders() }).then(j<{ templates: PromptTemplate[] }>),
+  createPromptTemplate: (body: { title: string; description: string; category: PromptTemplateCategory; content: string }) =>
+    afetch(`${API}/prompt-templates`, { method: 'POST', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PromptTemplate>),
+  updatePromptTemplate: (id: string, body: { title: string; description: string; category: PromptTemplateCategory; content: string }) =>
+    afetch(`${API}/prompt-templates/${encodeURIComponent(id)}`, { method: 'PUT', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify(body) }).then(j<PromptTemplate>),
+  duplicatePromptTemplate: (id: string) =>
+    afetch(`${API}/prompt-templates/${encodeURIComponent(id)}/duplicate`, { method: 'POST', headers: authHeaders() }).then(j<PromptTemplate>),
+  favoritePromptTemplate: (id: string, favorite: boolean) =>
+    afetch(`${API}/prompt-templates/${encodeURIComponent(id)}/favorite`, { method: 'PUT', headers: authHeaders({ 'content-type': 'application/json' }), body: JSON.stringify({ favorite }) }).then(j<PromptTemplate>),
+  deletePromptTemplate: (id: string) =>
+    afetch(`${API}/prompt-templates/${encodeURIComponent(id)}`, { method: 'DELETE', headers: authHeaders() }).then(j<{ id: string; deleted: boolean }>),
   askAboutNodeTypes: (
     question: string,
     focus_type_name?: string,

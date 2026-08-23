@@ -265,7 +265,9 @@ describe('assistantSegments', () => {
     // Unsupported file references remain a readable text fallback instead of
     // becoming a new primary output kind.
     expect(segments[4]).toEqual(expect.objectContaining({ kind: 'text' }));
-    expect(segments[5]).toEqual({ kind: 'sources', items: ['Handbook.pdf'] });
+    expect(segments[5]).toEqual({ kind: 'sources', items: [{
+      number: 1, title: 'Handbook.pdf', documentId: 'd1', sourceType: 'internal_document',
+    }] });
   });
 
   it('never fabricates sources without a KnowledgeRetrieval node', () => {
@@ -275,6 +277,80 @@ describe('assistantSegments', () => {
       node_types: { e: 'EndAgent' },
     });
     expect(segments.some(s => s.kind === 'sources')).toBe(false);
+  });
+
+  it('projects real web results as citation cards with snippets and safe links', () => {
+    const segments = assistantSegments({
+      outputs: { answer: 'Current information [1][2]' },
+      node_types: { web: 'WebSearchAgent' },
+      node_runs: { web: { output: { results: [
+        { title: 'Official update', url: 'https://example.com/update', snippet: 'The update was published today.', status: 'candidate_only' },
+        { title: 'Unsafe result', url: 'javascript:alert(1)', snippet: 'Returned by the provider.', status: 'candidate_only' },
+      ] } } },
+    });
+    expect(segments.at(-1)).toEqual({ kind: 'sources', items: [
+      { number: 1, title: 'Official update', snippet: 'The update was published today.', sourceUri: 'https://example.com/update', evidenceStatus: 'candidate_only', sourceType: 'webpage' },
+      { number: 2, title: 'Unsafe result', snippet: 'Returned by the provider.', evidenceStatus: 'candidate_only', sourceType: 'webpage' },
+    ] });
+  });
+
+  it('deduplicates repeated web URLs and numbers mixed sources sequentially', () => {
+    const segments = assistantSegments({
+      node_types: { web: 'WebSearchAgent', knowledge: 'KnowledgeRetrieval' },
+      node_runs: {
+        web: { output: { results: [
+          { title: 'First title', url: 'https://example.com/a', snippet: 'First' },
+          { title: 'Duplicate title', url: 'https://example.com/a', snippet: 'Duplicate' },
+        ] } },
+        knowledge: { output: {
+          citations: [{ filename: 'Handbook.pdf', document_id: 'doc-1', chunk_id: 'chunk-1' }],
+          retrieved_chunks: [{ chunk_id: 'chunk-1', display_number: 42, text: 'Internal passage' }],
+        } },
+      },
+    });
+    const sources = segments.at(-1);
+    expect(sources).toEqual({ kind: 'sources', items: [
+      { number: 1, title: 'First title', snippet: 'First', sourceUri: 'https://example.com/a', evidenceStatus: 'candidate_only', sourceType: 'webpage' },
+      { number: 2, title: 'Handbook.pdf', snippet: 'Internal passage', documentId: 'doc-1', chunkId: 'chunk-1', sourceType: 'internal_document' },
+    ] });
+  });
+
+  it('projects Deep Research web and paper candidates and enriches acquired PDFs', () => {
+    const segments = assistantSegments({
+      run_id: 'run research/1',
+      node_types: { research: 'BoundedDeepResearchAgent', acquire: 'ResearchSourceAcquirer' },
+      node_runs: {
+        research: { output: {
+          dossiers: [{ citations: [
+            { url: 'https://doi.org/10.1000/paper', cited_text: 'The study reported a significant effect.' },
+            { url: 'https://agency.example/policy', cited_text: 'The agency published updated guidance.' },
+          ] }],
+          candidates: [
+            { candidate_id: 'CAND-PAPER', title: 'Peer-reviewed study', canonical_url: 'https://doi.org/10.1000/paper', doi: '10.1000/paper', source: 'crossref' },
+            { candidate_id: 'CAND-WEB', title: 'Agency guidance', canonical_url: 'https://agency.example/policy', source: 'web' },
+          ],
+        } },
+        acquire: { output: { documents: [{
+          document_id: 'DOC/PAPER', candidate_id: 'CAND-PAPER',
+          pdf_object_key: 'evidence/run/paper.pdf',
+        }] } },
+      },
+    });
+    expect(segments.at(-1)).toEqual({ kind: 'sources', items: [
+      {
+        number: 1, title: 'Peer-reviewed study',
+        snippet: 'The study reported a significant effect.',
+        sourceUri: 'https://doi.org/10.1000/paper', documentId: 'DOC/PAPER',
+        downloadUrl: '/api/candidates/run%20research%2F1/documents/DOC%2FPAPER/download',
+        evidenceStatus: 'acquired_full_text', sourceType: 'research_paper',
+      },
+      {
+        number: 2, title: 'Agency guidance',
+        snippet: 'The agency published updated guidance.',
+        sourceUri: 'https://agency.example/policy', evidenceStatus: 'candidate_only',
+        sourceType: 'webpage',
+      },
+    ] });
   });
 });
 
@@ -476,6 +552,24 @@ describe('value helpers', () => {
     expect(isFileReference(fileRef())).toBe(true);
     expect(isFileReference({ kind: 'workflow_file' })).toBe(false);
     expect(isFileReference('text')).toBe(false);
+  });
+});
+
+describe('rich source citations', () => {
+  it('projects exact retrieved passages and real provenance without fabricating links', () => {
+    const segments = assistantSegments({
+      outputs: { answer: 'Grounded answer [1]' },
+      node_types: { retrieve: 'KnowledgeRetrieval' },
+      node_runs: { retrieve: { output: {
+        citations: [{ document_id: 'doc-1', chunk_id: 'chunk-1', filename: 'Policy.pdf', page: 4, section: 'Scope', evidence_status: 'retrieved_not_verified' }],
+        retrieved_chunks: [{ chunk_id: 'chunk-1', display_number: 7, compressed_text: 'The exact passage used by generation.', metadata: { source_uri: 'https://example.com/policy.pdf' } }],
+      } } },
+    });
+    expect(segments.at(-1)).toEqual({ kind: 'sources', items: [{
+      number: 1, title: 'Policy.pdf', snippet: 'The exact passage used by generation.',
+      page: 4, section: 'Scope', sourceUri: 'https://example.com/policy.pdf',
+      documentId: 'doc-1', chunkId: 'chunk-1', evidenceStatus: 'retrieved_not_verified', sourceType: 'internal_document',
+    }] });
   });
 });
 

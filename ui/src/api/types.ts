@@ -491,6 +491,50 @@ export type WorkflowSummary = {
   readiness: ReadinessSummary;
 };
 
+export type PrivateChatWorkflowSummary = {
+  id: string; slug: string; name: string; description: string;
+  source: 'generated' | 'imported' | 'existing'; visibility: 'private';
+  status: 'private' | 'publish_requested' | 'published' | 'archived';
+  source_workflow_name?: string | null;
+  output_compatibility: {
+    supported: boolean;
+    detected_types: Array<'text' | 'code' | 'image' | 'pdf' | 'docx' | 'pptx' | 'xlsx'>;
+    fallback_to_text: boolean; warnings: string[];
+  };
+  created_at: string; updated_at: string;
+};
+export type PrivateChatWorkflowDetail = PrivateChatWorkflowSummary & { yaml: string };
+export type ChatWorkspaceExperience = {
+  id: string; title: string; examples: string[];
+  default_plan: 'llm' | 'files' | 'retrieval' | 'existing_workflow' | 'artifact';
+  existing_workflow: string | null; capabilities: string[];
+};
+export type ChatWorkspacePlan = {
+  kind: 'llm' | 'files' | 'vision' | 'web' | 'retrieval' | 'integration' | 'existing_workflow' | 'artifact';
+  title: string; reason: string; yaml: string | null; existing_workflow: string | null;
+  experience_id: string | null; missing_requirements: string[]; capabilities: string[];
+};
+export type ChatWorkspacePlanRequest = {
+  objective: string; experience_id?: string | null; selected_workflow?: string | null;
+  preferred_output?: 'auto' | 'text' | 'pdf' | 'pptx'; has_attachments?: boolean;
+  attachment_categories?: string[]; collection_id?: string | null;
+  retrieval_profile_id?: string | null; rag_agent_id?: string | null;
+  integration_connection?: string | null; integration_tool?: string | null;
+  previous_run_id?: string | null;
+};
+export type BusinessChatMessageRole = 'user' | 'assistant' | 'attempt' | 'error' | 'intervention';
+export type BusinessChatTranscriptMessage = {
+  id: string; role: BusinessChatMessageRole; content: Record<string, unknown>;
+  run_id: string | null; created_at: string; updated_at: string;
+};
+export type BusinessChatConversation = {
+  id: string; workflow_source: 'shared' | 'private'; workflow_id: string;
+  created_at: string; updated_at: string;
+};
+export type BusinessChatConversationResponse = {
+  conversation: BusinessChatConversation; messages: BusinessChatTranscriptMessage[];
+};
+
 export type WorkflowDetail = {
   name: string;
   description: string;
@@ -626,6 +670,9 @@ export type RunStatus =
   | 'rejected'
   | 'failed';
 
+export type WorkflowRunOrigin = 'direct' | 'builder' | 'chat_saved_workflow' | 'chat_ad_hoc' | 'subworkflow';
+export type WorkflowRunHistoryVisibility = 'global' | 'conversation_only';
+
 export type EventType =
   | 'node_start'
   | 'node_end'
@@ -691,6 +738,12 @@ export interface RunSummary {
   stage_id?: string | null;
   stage_index?: number | null;
   total_stages?: number | null;
+  origin?: WorkflowRunOrigin;
+  history_visibility?: WorkflowRunHistoryVisibility;
+  workflow_id?: string | null;
+  workflow_version_id?: string | null;
+  conversation_id?: string | null;
+  message_id?: string | null;
 }
 
 export type NodeRunStatus =
@@ -880,6 +933,13 @@ export interface RunChatTurn {
   content: string;
   model?: string;
   ts: number;
+}
+
+export type PromptTemplateCategory = 'Research' | 'Summarize' | 'Compare' | 'Extract' | 'Brainstorm' | 'Writing' | 'Analysis';
+export interface PromptTemplate {
+  id: string; title: string; description: string; category: PromptTemplateCategory;
+  content: string; variables: string[]; favorite: boolean; built_in: boolean;
+  created_at: string; updated_at: string;
 }
 
 /** Compact, structured "what did the user click" context for a scoped Ask AI
