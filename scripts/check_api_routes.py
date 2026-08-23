@@ -10,6 +10,12 @@ import app.main
 REQUIRED_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/workflows/validate"),
     ("POST", "/api/workflows/run"),
+    ("POST", "/api/chat-conversations/resolve"),
+    ("POST", "/api/chat-conversations/{conversation_id}/messages"),
+    ("PUT", "/api/chat-conversations/{conversation_id}/messages/{message_id}"),
+    ("GET", "/api/chat-workspace/experiences"),
+    ("POST", "/api/chat-workspace/plan"),
+    ("POST", "/api/chat-workspace/prepare"),
     ("GET", "/api/workflow-input-files/capabilities"),
     ("POST", "/api/workflow-input-files"),
     ("POST", "/api/workflow-input-files/extract"),

@@ -39,6 +39,9 @@ from app.workflow.pipeline_history import ensure_pipeline_indexes
 from app.workflow.claim_verifications import ensure_indexes as ensure_claim_verification_indexes
 from app.workflow.business_view.store import ensure_business_view_indexes
 from app.workflow.run_chat_store import ensure_run_chat_indexes
+from app.workflow.chat_workflow_store import ensure_chat_workflow_indexes
+from app.workflow.chat_conversation_store import ensure_chat_conversation_indexes
+from app.workflow.prompt_template_store import ensure_prompt_template_indexes
 from app.workflow.preflight_stats import ensure_indexes as ensure_preflight_stats_indexes
 from app.proposal_graph.workspace_store import ProposalWorkspaceStore
 from app.security.entity_tokenizer import EntityTokenizerService
@@ -69,6 +72,10 @@ from app.api import candidates as candidates_api
 from app.api import run_chat as run_chat_api
 from app.api import node_types_chat as node_types_chat_api
 from app.api import workflow_generation as workflow_generation_api
+from app.api import chat_workflows as chat_workflows_api
+from app.api import chat_conversations as chat_conversations_api
+from app.api import chat_workspace as chat_workspace_api
+from app.api import prompt_templates as prompt_templates_api
 from app.api import builder as builder_api
 from app.api import email_oauth as email_oauth_api
 from app.api import integration_oauth as integration_oauth_api
@@ -133,6 +140,9 @@ async def lifespan(app: FastAPI):
             await ensure_pipeline_indexes(services["audit_db"])
             await ensure_claim_verification_indexes(services["audit_db"])
             await ensure_run_chat_indexes(services["audit_db"])
+            await ensure_chat_workflow_indexes(services["audit_db"])
+            await ensure_chat_conversation_indexes(services["audit_db"])
+            await ensure_prompt_template_indexes(services["audit_db"])
             await ensure_business_view_indexes(services["audit_db"])
             await ensure_preflight_stats_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
@@ -716,6 +726,10 @@ app.include_router(candidates_api.router)
 app.include_router(run_chat_api.router)
 app.include_router(node_types_chat_api.router)
 app.include_router(workflow_generation_api.router)
+app.include_router(chat_workflows_api.router)
+app.include_router(chat_conversations_api.router)
+app.include_router(chat_workspace_api.router)
+app.include_router(prompt_templates_api.router)
 app.include_router(entity_registry_api.router)
 app.include_router(builder_api.router)
 app.include_router(email_oauth_api.router)
