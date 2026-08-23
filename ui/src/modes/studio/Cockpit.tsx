@@ -39,7 +39,7 @@ import {
 import { STAGE_BAND_TYPE, StageBandNode } from './cockpit/StageBandNode';
 import { StagePlaceholderNode } from './cockpit/StagePlaceholderNode';
 import { api } from '../../api/client';
-import type { NodeTypeManifest, PipelineRunDetail, WorkflowPreflightReport } from '../../api/types';
+import type { NodeTypeManifest, WorkflowPreflightReport } from '../../api/types';
 
 const nodeTypes = {
   workflow: CockpitNode,
@@ -62,8 +62,7 @@ export function Cockpit() {
     runId, navState, parsedWf, navigate, triggerError, liveRun,
     gate, gateHidden, setGateHidden, gateFetchError, retryGateFetch,
     finished, streamError, cockpit, activeNodeId, reusedNodeCount,
-    applyResumeResult, pipelineDoc, continueToNextStage, continuingStage,
-    continueError, liveRunNodeStatus, costSummary,
+    applyResumeResult, liveRunNodeStatus, costSummary,
     streamOpen, runTriggered, requestRun,
   } = run;
 
@@ -393,38 +392,10 @@ export function Cockpit() {
     }
   }, [navState.inputs, navState.workflowYaml]);
 
-  const pipelineBanner = navState.pipeline && (
-    <PipelineStageBanner
-      pipeline={navState.pipeline}
-      pipelineDoc={pipelineDoc}
-      onContinue={continueToNextStage}
-      continuing={continuingStage}
-      continueError={continueError}
-      onViewOverview={() => navigate(`/pipelines/runs/${navState.pipeline!.pipelineRunId}`)}
-    />
-  );
-
   // ✅ early returns go AFTER all hooks
   if (finished?.status === 'completed') {
     return (
       <div className="h-full flex flex-col">
-        {pipelineBanner}
-        {!navState.testLabel && (
-          <div className="flex-none flex justify-end border-b border-slate-200 bg-white px-4 py-2">
-            <button
-              onClick={() => navigate(`/business/${runId}`, {
-                state: {
-                  attach: true,
-                  workflowYaml: navState.workflowYaml ?? liveRun?.workflow_yaml,
-                  workflowName: navState.workflowName ?? liveRun?.workflow_name ?? parsedWf?.name,
-                },
-              })}
-              className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
-            >
-              Open Business View
-            </button>
-          </div>
-        )}
         <div className="flex-1 min-h-0">
           <OutputViewer
             runId={runId}
@@ -449,10 +420,10 @@ export function Cockpit() {
           (Phase 11 will add a snapshot endpoint that lets you reattach).
         </div>
         <button
-          onClick={() => navigate('/library')}
+          onClick={() => navigate('/workflows')}
           className="mt-4 px-4 py-2 rounded-md bg-accent-600 text-white text-sm"
         >
-          Back to Library
+          Back to Workflows
         </button>
       </div>
     );
@@ -476,7 +447,7 @@ export function Cockpit() {
         streamReady={streamOpen}
         onTest={() => void testWorkflow()}
         onRun={requestRun}
-        onBack={() => navigate(navState.builderReturnPath ?? '/library')}
+        onBack={() => navigate(navState.builderReturnPath ?? '/workflows')}
       />
     );
   }
@@ -510,7 +481,6 @@ export function Cockpit() {
 
   return (
     <div className="h-full flex flex-col">
-      {pipelineBanner}
       <div className="flex-1 flex min-h-0">
         {!fullscreenGraph && !fullscreenOutput && (
           <>
@@ -618,21 +588,6 @@ export function Cockpit() {
             <ToolbarButton onClick={() => setFullscreenGraph((v) => !v)} active={fullscreenGraph}>
               {fullscreenGraph ? 'Exit full screen' : 'Full-screen graph'}
             </ToolbarButton>
-            {/* A node/branch test's YAML is a synthetic slice with no
-                business meaning of its own — Business View isn't offered for it. */}
-            {!navState.testLabel && (
-              <ToolbarButton
-                onClick={() => navigate(`/business/${runId}`, {
-                  state: {
-                    attach: true,
-                    workflowYaml: navState.workflowYaml ?? liveRun?.workflow_yaml,
-                    workflowName: navState.workflowName ?? liveRun?.workflow_name,
-                  },
-                })}
-              >
-                Open Business View
-              </ToolbarButton>
-            )}
             {navState.builderReturnPath && (
               <ToolbarButton
                 onClick={() => navigate(navState.builderReturnPath!, {
@@ -722,7 +677,6 @@ export function Cockpit() {
     </div>
   );
 }
-
 function CockpitLaunchPanel({
   workflowName,
   inputs,
@@ -893,58 +847,5 @@ function GraphMenuButton({
     >
       {children}
     </button>
-  );
-}
-
-function PipelineStageBanner({
-  pipeline,
-  pipelineDoc,
-  onContinue,
-  continuing,
-  continueError,
-  onViewOverview,
-}: {
-  pipeline: NonNullable<ReturnType<typeof useCockpitRun>['navState']['pipeline']>;
-  pipelineDoc: PipelineRunDetail | null;
-  onContinue: () => void;
-  continuing: boolean;
-  continueError: string | null;
-  onViewOverview: () => void;
-}) {
-  const nextStage = pipelineDoc?.status === 'gated'
-    ? pipelineDoc.stages[pipelineDoc.current_stage_index + 1]
-    : null;
-
-  return (
-    <div className="flex-none px-4 py-2.5 bg-cyan-50 border-b border-cyan-200 flex items-center justify-between gap-3">
-      <div className="text-xs text-cyan-900 min-w-0">
-        <span className="font-semibold">{pipeline.pipelineName ?? pipelineDoc?.pipeline_name ?? 'Pipeline'}</span>
-        {' '}— stage {pipeline.stageIndex + 1}/{pipeline.totalStages} · <span className="font-mono">{pipeline.stageId}</span>
-        {!pipelineDoc && ' · loading status…'}
-        {pipelineDoc?.status === 'gated' && !nextStage && ' · complete'}
-        {pipelineDoc?.status === 'completed' && ' · all stages complete'}
-        {pipelineDoc?.status === 'failed' && ' · pipeline stopped'}
-        {continueError && <span className="text-red-700 ml-2">{continueError}</span>}
-      </div>
-      <div className="flex-none flex items-center gap-2">
-        {nextStage && (
-          <button
-            type="button"
-            onClick={onContinue}
-            disabled={continuing}
-            className="px-3 py-1.5 rounded-md bg-accent-600 text-white text-xs font-medium hover:bg-accent-500 disabled:opacity-50"
-          >
-            {continuing ? `Opening ${nextStage.id}…` : `Continue to ${nextStage.id}`}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={onViewOverview}
-          className="px-3 py-1.5 rounded-md border border-cyan-300 bg-white text-cyan-800 text-xs hover:bg-cyan-50"
-        >
-          Pipeline overview
-        </button>
-      </div>
-    </div>
   );
 }

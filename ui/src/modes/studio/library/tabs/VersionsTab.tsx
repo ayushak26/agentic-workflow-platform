@@ -35,6 +35,7 @@ export function VersionsTab({
             <div className="library-version-row">
               <strong>{new Date(version.created_at).toLocaleString()}</strong>
               {version.current && <span className="library-version-badge">Current</span>}
+              {version.restorable === false && <span className="library-version-badge">Incompatible</span>}
             </div>
             <div className="library-version-meta">
               {version.node_count} nodes · workflow v{version.workflow_version}

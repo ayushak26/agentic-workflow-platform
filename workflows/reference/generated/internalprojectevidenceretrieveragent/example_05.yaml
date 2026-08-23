@@ -1,6 +1,6 @@
 name: Reference InternalProjectEvidenceRetrieverAgent 05
-description: 'First stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence
-  -> drafts -> submission package; see workflows/pipelines/horizon_partb.pipeline.yaml).
+description: 'Evidence workflow for the Horizon Europe RIA/IA Part B sequence. It produces
+  the approved evidence package consumed by the separate drafts workflow.
   Converts a concept note and supporting documents into: renderer metadata, an atomic
   call checklist, a normalised source graph, bounded scientific research dossiers,
   immutable source versions, PaperQA2 candidate synthesis, citation-grounded verified

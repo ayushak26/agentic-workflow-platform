@@ -1,0 +1,45 @@
+{
+  "generated_at": "2026-08-23",
+  "chat_entity_tested": "private_business_chat_workflow",
+  "isolated": true,
+  "persisted_data_mutated": false,
+  "random_seed": "0x5eed2026",
+  "records_created": 100,
+  "viewports": ["1920x1080", "390x844"],
+  "browser_executions": 14,
+  "passed": 14,
+  "failed": 0,
+  "features": [
+    "list_scale",
+    "search",
+    "unicode",
+    "empty_state",
+    "rapid_switching",
+    "cross_chat_identity",
+    "prompt_templates",
+    "response_format",
+    "writing_style",
+    "model_override",
+    "workflow_context",
+    "message_execution",
+    "run_association",
+    "duplicate_submission",
+    "publication_request",
+    "archive",
+    "browser_back_forward",
+    "durable_transcript_refresh"
+  ],
+  "bug_fixed": {
+    "severity": "P1",
+    "title": "Same-tick Send events created duplicate workflow runs",
+    "before": "10 clicks produced 10 run requests",
+    "after": "10 clicks produce 1 run request"
+  },
+  "refresh_bug_fixed": {
+    "severity": "P1",
+    "title": "Business Chat transcript was lost on browser refresh",
+    "storage": "owner-scoped Mongo conversation and message collections",
+    "browser_validation": "desktop and mobile restore user and assistant turns exactly once"
+  },
+  "remaining_open_issue": null
+}

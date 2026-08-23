@@ -10,6 +10,36 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.llm.anthropic_gw import AnthropicGateway
+from app.llm.openai_gw import OpenAIGateway
+
+
+async def smoke_openai() -> None:
+    """Make one bounded, low-cost OpenAI completion."""
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise SystemExit(
+            "OPENAI_API_KEY is required in the protected "
+            "live-llm-tests environment"
+        )
+
+    gateway = OpenAIGateway(api_key=api_key)
+    response = await gateway.complete(
+        model=os.environ.get("LIVE_OPENAI_MODEL", "gpt-4o-mini"),
+        system="You are a health-check endpoint.",
+        user="Reply with OK.",
+        temperature=0.0,
+        max_tokens=16,
+    )
+    if not response.text.strip():
+        raise RuntimeError("OpenAI returned an empty response")
+    print(
+        "OpenAI smoke test passed",
+        {
+            "model": response.model,
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+        },
+    )
 
 
 async def smoke_anthropic() -> None:
@@ -46,12 +76,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--provider",
-        choices=("anthropic",),
+        choices=("openai", "anthropic"),
         required=True,
     )
     args = parser.parse_args()
 
-    if args.provider == "anthropic":
+    if args.provider == "openai":
+        asyncio.run(smoke_openai())
+    elif args.provider == "anthropic":
         asyncio.run(smoke_anthropic())
 
 

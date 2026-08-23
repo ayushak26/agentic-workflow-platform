@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.knowledge.models import ProfileType, ResourceStatus
+from app.config import settings
 from app.knowledge.repository import ResourceNotFoundError
 from app.nodes.knowledge_retrieval import KnowledgeRetrieval, KnowledgeRetrievalError
 from app.retrieval.models import RetrievalFilters, RetrievalResult, RetrievedChunk
@@ -43,6 +44,17 @@ class Retrieval:
         self.calls += 1
         if self.errors:
             raise self.errors.pop(0)
+        return self.result
+
+
+class DelayedRetrieval(Retrieval):
+    def __init__(self, delay: float, result_value):
+        super().__init__(result_value)
+        self.delay = delay
+
+    async def retrieve(self, request, *, owner_scope_id, llm=None):
+        self.calls += 1
+        await asyncio.sleep(self.delay)
         return self.result
 
 
@@ -133,6 +145,38 @@ async def test_transient_failure_retries_once_then_succeeds(monkeypatch):
         },
     )
     assert output["status"] == "success"
+    assert retrieval.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_retrieval_uses_dedicated_pipeline_deadline_not_generic_io_timeout(monkeypatch):
+    monkeypatch.setattr(settings, "external_request_timeout_seconds", 0.001)
+    monkeypatch.setattr(settings, "knowledge_retrieval_timeout_seconds", 0.05)
+    retrieval = DelayedRetrieval(0.01, result())
+
+    output = await node(Repository(), retrieval).run(
+        {"session_id": "tenant-a"}, {
+            "collection_id": "col-1", "retrieval_profile_id": "rp-1", "query": "q",
+        },
+    )
+
+    assert output["status"] == "success"
+    assert retrieval.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_dedicated_retrieval_deadline_retries_once_then_returns_stable_timeout(monkeypatch):
+    monkeypatch.setattr(settings, "knowledge_retrieval_timeout_seconds", 0.001)
+    monkeypatch.setattr("app.nodes.knowledge_retrieval.random.uniform", lambda *_: 0)
+    retrieval = DelayedRetrieval(0.01, result())
+
+    with pytest.raises(KnowledgeRetrievalError, match="RETRIEVAL_TIMEOUT"):
+        await node(Repository(), retrieval).run(
+            {"session_id": "tenant-a"}, {
+                "collection_id": "col-1", "retrieval_profile_id": "rp-1", "query": "q",
+            },
+        )
+
     assert retrieval.calls == 2
 
 

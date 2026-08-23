@@ -314,7 +314,7 @@ test('uses templates, formatting, style, model, context, and message execution',
   await page.getByLabel('option b').fill('Option Beta');
   await page.getByRole('button', { name: 'Insert into chat' }).click();
 
-  const composer = page.getByPlaceholder('Ask a question…');
+  const composer = page.getByPlaceholder('Ask anything about your sources…');
   await expect(composer).toHaveValue('Compare Option Alpha with Option Beta for an executive audience.');
   await page.getByRole('button', { name: /Send/ }).click();
   await expect(page.getByText('Compare Option Alpha with Option Beta for an executive audience.')).toBeVisible();
@@ -323,7 +323,7 @@ test('uses templates, formatting, style, model, context, and message execution',
   expect(state.runBodies).toHaveLength(1);
   expect(state.runBodies[0]).toMatchObject({
     origin: 'chat_saved_workflow',
-    history_visibility: 'conversation_only',
+    history_visibility: 'global',
     workflow_id: chat.id,
   });
   expect(String((state.runBodies[0].inputs as Record<string, unknown>).message)).toContain('table');
@@ -335,7 +335,7 @@ test('prevents duplicate execution when Send is triggered ten times', async ({ p
   const errors = runtimeErrors(page);
   const state = await installChatApi(page);
   await page.goto(`/chat/private/${state.chats()[9].id}`);
-  await page.getByPlaceholder('Ask a question…').fill('Only execute once');
+  await page.getByPlaceholder('Ask anything about your sources…').fill('Only execute once');
   const send = page.getByRole('button', { name: /Send/ });
   await send.evaluate((button: HTMLButtonElement) => {
     for (let index = 0; index < 10; index += 1) button.click();
@@ -349,7 +349,7 @@ test('restores the durable transcript after refresh without duplicating the run 
   const state = await installChatApi(page);
   const chat = state.chats()[33];
   await page.goto(`/chat/private/${chat.id}`);
-  await page.getByPlaceholder('Ask a question…').fill('Refresh persistence Ω 🚀');
+  await page.getByPlaceholder('Ask anything about your sources…').fill('Refresh persistence Ω 🚀');
   await page.getByRole('button', { name: /Send/ }).click();
   await expect(page.getByText('Refresh persistence Ω 🚀')).toBeVisible();
   await expect(page.getByText(`Completed ${chat.id}`)).toBeVisible();

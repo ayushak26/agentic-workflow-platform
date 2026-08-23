@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 _WORKFLOW_GLOBS = (
     "workflows/*.yaml",
     "workflows/collections/*.yaml",
-    "workflows/pipelines/*.yaml",
     "workflows/test_fixtures/*.yaml",
     "workflows/test_fixtures/**/*.yaml",
     # Reference exemplars come LAST on purpose: `examples` is filled with
@@ -115,7 +114,10 @@ def _adjacency() -> dict[str, dict[str, Any]]:
             for edge in doc.get("edges") or []:
                 if not isinstance(edge, dict):
                     continue
-                src_type = node_type_by_id.get(edge.get("from_") or edge.get("from"))
+                src_id = edge.get("from_") or edge.get("from")
+                if not isinstance(src_id, str):
+                    continue
+                src_type = node_type_by_id.get(src_id)
                 if not src_type:
                     continue
                 for dst_id in _edge_targets(edge):

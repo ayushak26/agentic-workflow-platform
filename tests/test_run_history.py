@@ -5,17 +5,18 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 import app.nodes  # noqa: F401
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from app.api.runs import RetryRunRequest, retry_failed_run, pending_gate, delete_run_endpoint
 from app.api.workflows import _scope
 from app.config import settings
 from app.runtime.executor import run_workflow
-from app.runtime.events import RunEventBus
+from app.runtime.events import RunEvent, RunEventBus
 from app.runtime.loader import load_workflow_from_string
 from app.security.dependencies import CurrentUser
 from app.security.rbac import Role
@@ -25,10 +26,12 @@ from app.workflow.run_history import (
     get_retry_checkpoint,
     get_run,
     initialize_run_checkpoint,
+    list_runs,
     record_checkpoint_node_completed,
     record_node_completed,
     record_node_reused,
     upsert_run,
+    workflow_stats,
 )
 from tests.fake_mongo import InMemoryDB
 
@@ -104,6 +107,48 @@ async def test_running_upsert_has_no_mongo_operator_conflicts():
     assert update["$set"]["status"] == "running"
     assert update["$set"]["error"] is None
     assert not (set(update["$set"]) & set(update["$setOnInsert"]))
+
+
+@pytest.mark.asyncio
+async def test_conversation_only_run_is_directly_visible_but_globally_isolated():
+    db = InMemoryDB()
+    session = "user@example.com"
+    workflow_name = "Shared workflow"
+    await upsert_run(
+        db, "global-run", session,
+        workflow_name=workflow_name,
+        status="completed",
+        origin="direct",
+        history_visibility="global",
+    )
+    await upsert_run(
+        db, "chat-run", session,
+        workflow_name=workflow_name,
+        status="failed",
+        error="Chat-only failure",
+        origin="chat_saved_workflow",
+        history_visibility="conversation_only",
+        workflow_id="research-helper",
+        conversation_id="conversation-1",
+        message_id="message-1",
+    )
+
+    global_runs = await list_runs(db, session)
+    all_runs = await list_runs(db, session, include_conversation_only=True)
+    stats = await workflow_stats(db, session, workflow_name)
+
+    assert [run["run_id"] for run in global_runs] == ["global-run"]
+    assert {run["run_id"] for run in all_runs} == {"global-run", "chat-run"}
+    assert stats["sample_size"] == 1
+    assert stats["completed_runs"] == 1
+    assert stats["failed_runs"] == 0
+    assert stats["last_run_status"] == "completed"
+    chat_run = await get_run(db, session, "chat-run")
+    assert chat_run is not None
+    assert chat_run["origin"] == "chat_saved_workflow"
+    assert chat_run["workflow_id"] == "research-helper"
+    assert chat_run["conversation_id"] == "conversation-1"
+    assert chat_run["message_id"] == "message-1"
 
 
 @pytest.mark.asyncio
@@ -236,6 +281,7 @@ async def test_stale_running_run_with_dead_owner_process_is_marked_failed():
 
     run = await get_run(db, "user@example.com", "run-stale")
 
+    assert run is not None
     assert run["status"] == "failed"
     assert "no longer running" in run["error"]
     assert run["active_nodes"] == []
@@ -268,6 +314,7 @@ async def test_running_run_with_live_owner_process_is_left_alone():
 
     run = await get_run(db, "user@example.com", "run-still-going")
 
+    assert run is not None
     assert run["status"] == "running"
     db["run_history"].update_one.assert_not_awaited()
 
@@ -285,6 +332,7 @@ async def test_recently_updated_running_run_is_left_alone():
 
     run = await get_run(db, "user@example.com", "run-live")
 
+    assert run is not None
     assert run["status"] == "running"
     db["run_history"].update_one.assert_not_awaited()
 
@@ -367,8 +415,8 @@ exit: writer
     bus = RunEventBus()
     published = []
 
-    async def capture(event):
-        published.append(event)
+    async def capture(evt: RunEvent) -> None:
+        published.append(evt)
 
     bus.publish = capture
     result = await run_workflow(
@@ -400,12 +448,12 @@ exit: writer
     ]
 
 
-def _pending_gate_request(db):
-    return SimpleNamespace(
+def _pending_gate_request(db) -> Request:
+    return cast(Request, SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(services={"audit_db": db})
         )
-    )
+    ))
 
 
 @pytest.mark.asyncio
@@ -448,6 +496,38 @@ async def test_pending_gate_for_user_requested_pause_omits_review_fields():
 
 
 @pytest.mark.asyncio
+async def test_pending_gate_for_subprocess_wait_omits_review_fields():
+    db = FakeDB()
+    db["run_checkpoints"].find_one.return_value = {
+        "run_id": "run-1",
+        "session_id": "user@example.com",
+        "status": "paused",
+        "paused_node_id": "run_workflow",
+        "pause_kind": "subprocess",
+        "pause_context": {
+            "interrupt": {
+                "kind": "subprocess_pause",
+                "node_id": "run_workflow",
+                "child_run_id": "child-1",
+            },
+        },
+        "node_results": {},
+    }
+    user = CurrentUser(
+        username="user@example.com", role=Role.CONSULTANT, session_id=None,
+    )
+
+    result = await pending_gate("run-1", _pending_gate_request(db), user)
+
+    assert result == {
+        "run_id": "run-1",
+        "paused": True,
+        "pause_kind": "subprocess",
+        "node_id": "run_workflow",
+    }
+
+
+@pytest.mark.asyncio
 async def test_pending_gate_for_hitl_gate_returns_the_real_review_content():
     db = FakeDB()
     db["run_checkpoints"].find_one.return_value = {
@@ -463,6 +543,11 @@ async def test_pending_gate_for_hitl_gate_returns_the_real_review_content():
                 "context": {"topic": "bioeconomy"},
                 "allowed_actions": ["approve", "reject", "edit"],
                 "content": {"text": "Draft body", "format": "text", "source": "workflow"},
+                "panels": [{
+                    "label": "Topic", "field": "seed.topic", "hint": "Confirm scope.",
+                    "editable": False, "value": "bioeconomy", "available": True,
+                }],
+                "review_purpose": "A person confirms the final scope.",
                 "allow_document_override": True,
                 "max_edit_chars": 50_000,
             }
@@ -476,7 +561,9 @@ async def test_pending_gate_for_hitl_gate_returns_the_real_review_content():
     result = await pending_gate("run-1", _pending_gate_request(db), user)
 
     assert result == {
+        "gate_id": "run-1:approval:",
         "run_id": "run-1",
+        "parent_run_id": None,
         "paused": True,
         "pause_kind": "hitl_gate",
         "node_id": "approval",
@@ -484,9 +571,90 @@ async def test_pending_gate_for_hitl_gate_returns_the_real_review_content():
         "context": {"topic": "bioeconomy"},
         "allowed_actions": ["approve", "reject", "edit"],
         "content": {"text": "Draft body", "format": "text", "source": "workflow"},
+        "panels": [{
+            "label": "Topic", "field": "seed.topic", "hint": "Confirm scope.",
+            "editable": False, "value": "bioeconomy", "available": True,
+        }],
+        "review_purpose": "A person confirms the final scope.",
+        "display_name": "Human review",
         "allow_document_override": True,
         "max_edit_chars": 50_000,
     }
+
+
+@pytest.mark.asyncio
+async def test_pending_gate_follows_subprocess_to_child_human_review():
+    db = InMemoryDB()
+    parent_run_id = "parent-run"
+    child_run_id = "child-run"
+    session_id = "user@example.com"
+    db["run_checkpoints"].docs.extend([
+        {
+            "run_id": parent_run_id,
+            "session_id": session_id,
+            "status": "paused",
+            "paused_node_id": "run_workflow",
+            "pause_kind": "subprocess",
+            "pause_context": {"interrupt": {"kind": "subprocess_pause"}},
+            "node_results": {},
+        },
+        {
+            "run_id": child_run_id,
+            "session_id": session_id,
+            "status": "paused",
+            "paused_node_id": "approval",
+            "pause_kind": "hitl_gate",
+            "workflow_yaml": """
+name: Child Review
+version: '1.0'
+entry: approval
+exit: approval
+nodes:
+  - id: approval
+    type: HumanInLoopAgent
+    config:
+      question: Approve?
+    experience:
+      display_name: Identity Ambiguity Review
+edges: []
+""",
+            "pause_context": {"interrupt": {
+                "node_id": "approval",
+                "question": "Which customer account should be used?",
+                "review_purpose": "The records match more than one account.",
+                "context": {},
+                "panels": [{
+                    "label": "Customer message", "field": "start.message", "hint": "Original request",
+                    "editable": False, "value": "Please check order SO-1", "available": True,
+                }],
+                "allowed_actions": ["approve", "reject"],
+                "content": None,
+                "allow_document_override": False,
+                "max_edit_chars": 10_000,
+            }},
+            "node_results": {},
+        },
+    ])
+    db["subprocess_launches"].docs.append({
+        "_id": f"{parent_run_id}:run_workflow",
+        "parent_run_id": parent_run_id,
+        "parent_node_id": "run_workflow",
+        "parent_session_id": session_id,
+        "child_run_id": child_run_id,
+        "status": "pending",
+    })
+    user = CurrentUser(username=session_id, role=Role.CONSULTANT, session_id=None)
+
+    result = await pending_gate(parent_run_id, _pending_gate_request(db), user)
+
+    assert result["run_id"] == child_run_id
+    assert result["gate_id"].startswith(f"{child_run_id}:approval:")
+    assert result["parent_run_id"] == parent_run_id
+    assert result["node_id"] == "approval"
+    assert result["display_name"] == "Identity Ambiguity Review"
+    assert result["review_purpose"] == "The records match more than one account."
+    assert result["panels"][0]["value"] == "Please check order SO-1"
+    assert result["content"] is None
 
 
 @pytest.mark.asyncio
@@ -563,6 +731,12 @@ exit: first
             "workflow_name": "retry_api",
             "status": "failed",
             "attempt": 1,
+            "origin": "chat_saved_workflow",
+            "history_visibility": "conversation_only",
+            "workflow_id": "research-helper",
+            "workflow_version_id": "version-2",
+            "conversation_id": "conversation-1",
+            "message_id": "message-1",
         },
         None,
         {"started_at": 10.0},
@@ -581,7 +755,7 @@ exit: first
             }
         },
     }
-    request = SimpleNamespace(
+    request = cast(Request, SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
                 services={
@@ -590,7 +764,7 @@ exit: first
                 }
             )
         )
-    )
+    ))
     user = CurrentUser(
         username="user@example.com",
         role=Role.CONSULTANT,
@@ -616,6 +790,17 @@ exit: first
         == "failed-1"
         for call in history_updates
     )
+    created_attempt = next(
+        call.args[1]["$set"]
+        for call in history_updates
+        if call.args[1].get("$set", {}).get("retry_of_run_id") == "failed-1"
+    )
+    assert created_attempt["origin"] == "chat_saved_workflow"
+    assert created_attempt["history_visibility"] == "conversation_only"
+    assert created_attempt["workflow_id"] == "research-helper"
+    assert created_attempt["workflow_version_id"] == "version-2"
+    assert created_attempt["conversation_id"] == "conversation-1"
+    assert created_attempt["message_id"] == "message-1"
     assert any(
         call.args[1].get("$set", {}).get("node_runs.first.status")
         == "reused"
@@ -628,10 +813,10 @@ exit: first
     )
 
 
-def _delete_request(db):
-    return SimpleNamespace(
+def _delete_request(db) -> Request:
+    return cast(Request, SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(services={"audit_db": db}))
-    )
+    ))
 
 
 def _delete_user():
@@ -652,7 +837,6 @@ async def test_delete_blocks_a_running_run_younger_than_the_minimum_age():
         "owner_pid": os.getpid(),
         "active_nodes": [],
     }
-    db["pipeline_runs"].find_one.return_value = None
 
     with pytest.raises(HTTPException) as exc_info:
         await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
@@ -675,7 +859,6 @@ async def test_delete_allows_a_running_run_older_than_the_minimum_age():
         "owner_pid": os.getpid(),
         "active_nodes": [],
     }
-    db["pipeline_runs"].find_one.return_value = None
     db["run_history"].delete_one.return_value = SimpleNamespace(deleted_count=1)
 
     result = await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
@@ -695,7 +878,6 @@ async def test_delete_always_allowed_for_non_running_statuses_regardless_of_age(
         "updated_at": datetime.now(timezone.utc),
         "active_nodes": [],
     }
-    db["pipeline_runs"].find_one.return_value = None
     db["run_history"].delete_one.return_value = SimpleNamespace(deleted_count=1)
 
     result = await delete_run_endpoint("run-1", _delete_request(db), _delete_user())
@@ -763,26 +945,3 @@ async def test_cleanup_leaves_young_running_and_paused_runs_alone():
     assert deleted == []
     assert await db["run_history"].find_one({"run_id": "run-paused-young"}) is not None
     assert await db["run_history"].find_one({"run_id": "run-running-young"}) is not None
-
-
-@pytest.mark.asyncio
-async def test_cleanup_unsticks_the_parent_pipeline_before_deleting_its_stage_run():
-    db = InMemoryDB()
-    await _seed_run(
-        db, run_id="run-orphaned-stage", status="running",
-        age_seconds=settings.run_auto_cleanup_after_seconds + 60,
-        owner_pid=_spawn_and_reap_dead_pid(),
-    )
-    await db["pipeline_runs"].insert_one({
-        "pipeline_run_id": "pipeline-1",
-        "session_id": "user@example.com",
-        "status": "running",
-        "current_stage_index": 0,
-        "stages": [{"id": "stage-0", "run_id": "run-orphaned-stage", "status": "running"}],
-    })
-
-    deleted = await cleanup_stale_runs(db)
-
-    assert deleted == ["run-orphaned-stage"]
-    pipeline = await db["pipeline_runs"].find_one({"pipeline_run_id": "pipeline-1"})
-    assert pipeline["status"] == "failed"

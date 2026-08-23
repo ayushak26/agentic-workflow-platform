@@ -228,6 +228,7 @@ export function Builder() {
   const autosaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const autosaveSeqRef = useRef(0);
   const [validating, setValidating] = useState(false);
+  const [nodeAutofixing, setNodeAutofixing] = useState(false);
   const [preflight, setPreflight] = useState<WorkflowPreflightReport | null>(null);
   const [autofixing, setAutofixing] = useState(false);
   const [recovery, setRecovery] = useState<WorkflowDraft | null>(null);
@@ -817,6 +818,30 @@ export function Builder() {
       setAutofixing(false);
     }
   }, [currentWorkflow, hydrateWorkflow, validate, workflowName]);
+
+  const autofixSelectedNode = useCallback(async () => {
+    if (!currentWorkflow || !selectedId) return;
+    setNodeAutofixing(true);
+    setError(null);
+    try {
+      const result = await api.autofixNode(dumpYaml(currentWorkflow), selectedId);
+      if (result.changed) {
+        const fixedWorkflow = parseYaml(result.yaml);
+        hydrateWorkflow(fixedWorkflow, workflowName, undefined, { dirty: true });
+      }
+      setPreflight(result.preflight_report);
+      setInspectorOpen(true);
+      setShowInputs(false);
+      setInspectorTab(result.fixed ? 'configure' : 'checks');
+      if (!result.changed && result.fixed) {
+        setError(`Node "${selectedId}" already matches its configuration contract.`);
+      }
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setNodeAutofixing(false);
+    }
+  }, [currentWorkflow, hydrateWorkflow, selectedId, workflowName]);
 
   const onSave = useCallback(async () => {
     if (!currentWorkflow) return;
@@ -1430,7 +1455,7 @@ export function Builder() {
         {paletteOpen && (
           <aside className="builder-palette" aria-label="Node library">
             <NodePalette
-              onAdd={typeName => addNode(typeName)}
+              onAdd={(typeName, config) => addNode(typeName, undefined, { config })}
               onAddMcpTool={(serverId, tool) => addNode('MCPToolAgent', undefined, {
                 config: { server_id: serverId, tool: tool.name, arguments: {} },
                 experience: tool.title ? { display_name: tool.title } : undefined,
@@ -1632,7 +1657,9 @@ export function Builder() {
               manifests={manifests}
               nodes={nodes}
               onAutofix={() => void autofix()}
+              onAutofixNode={() => void autofixSelectedNode()}
               autofixing={autofixing}
+              nodeAutofixing={nodeAutofixing}
               onClose={() => setInspectorOpen(false)}
               onCloseInputs={() => setShowInputs(false)}
               onToggleWide={() => setInspectorWide(value => !value)}

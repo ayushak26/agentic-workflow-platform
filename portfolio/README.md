@@ -31,7 +31,7 @@ portfolio/
 ### 1. Technical Portfolio Reference (41 pp)
 
 The engineering reference. Eleven sections plus three appendices, covering the truth boundary, users
-and product thesis, the three product surfaces, the runtime boundary, the workflow contract and
+and product thesis, the canonical Workflow surfaces, the runtime boundary, the workflow contract and
 zero-token preflight, evidence integrity, model routing and cost, security, deployment, testing and
 failure modes, and an interview walkthrough.
 
@@ -75,8 +75,8 @@ composed, annotated or cropped; the two graph close-ups are the application's ow
 |---|---|
 | `01-workflow-library.png` | Workflow Library, 20 workflows by outcome |
 | `02-library-concept-note-card.png` | Library filtered to the flagship workflow |
-| `03-guided-run-overview.png` | Guided Run — five stages, attention queue, outputs |
-| `04-guided-run-outputs.png` | Guided Run — deliverables tab |
+| `03-guided-run-overview.png` | Historical workflow-progress overview — five stages, attention queue, outputs |
+| `04-guided-run-outputs.png` | Historical workflow-progress deliverables tab |
 | `06-cockpit-graph.png` | Cockpit — live graph and lifecycle counters |
 | `06b-cockpit-graph-fullscreen.png` | Cockpit — full-screen graph |
 | `07-cockpit-node-detail.png` | Cockpit — failed node, duration and diagnosis |
@@ -105,7 +105,7 @@ composed, annotated or cropped; the two graph close-ups are the application's ow
 
 | Run | Workflow | Outcome | Used for |
 |---|---|---|---|
-| `ed462b3e` | Concept Note to 10-Page Methodology Section | Completed, 14/14, 1,413 s, $6.6495 | Guided Run, Run History, cost ledger, output |
+| `ed462b3e` | Concept Note to 10-Page Methodology Section | Completed, 14/14, 1,413 s, $6.6495 | Workflow progress, Run History, cost ledger, output |
 | `3d46a8ee` | same workflow | Failed at `graphnormalizer_1` after 244.9 s | Cockpit live graph, failure diagnosis |
 | `1f2c3a4d` | Horizon Europe Part B — Evidence (Stage 1 of 3) | Completed, 14/14, 509.7 s, **0 verified claims** | Fail-closed evidence boundary |
 
@@ -145,12 +145,12 @@ cd ui && npm run dev                              # UI on :5173
 
 Sign in with the development bypass account (`app/config.py:250-252`), then drive the routes:
 
-- `/library`
-- `/history` → select a run → **Open in Guided** / **Open in Cockpit**
+- `/workflows`
+- `/workflow-runs` → select a run → **Open in Cockpit**
 - `/builder/<workflow-name>`
 
-Guided Run and Cockpit require in-app navigation to attach the run — a direct URL will not carry the
-workflow YAML into navigation state.
+Cockpit can receive Workflow YAML through in-app navigation; a direct URL may not carry that navigation
+state, so opening a run from Workflow Runs is preferred.
 
 ---
 

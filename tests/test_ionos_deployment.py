@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -87,3 +88,33 @@ def test_production_generator_covers_every_compose_variable(
     assert output.stat().st_mode & 0o077 == 0
     assert values["ENVIRONMENT"] == "production"
     assert values["DEV_BYPASS_ENABLED"] == "false"
+
+
+def test_retired_workflow_cleanup_is_narrow_and_idempotent(tmp_path):
+    workflows = tmp_path / "workflows"
+    (workflows / "pipelines").mkdir(parents=True)
+    (workflows / "pipelines" / "legacy.pipeline.yaml").write_text("name: legacy")
+    (workflows / "operator").mkdir()
+    (workflows / "operator" / "retired.pipeline.yaml").write_text("name: retired")
+    (workflows / "operator" / "keep.yaml").write_text("name: keep")
+    (workflows / "keep.yaml").write_text("name: keep root")
+    (workflows / ".builder").mkdir()
+    (workflows / ".builder" / "draft.json").write_text("{}")
+    script = ROOT / "deploy" / "ionos" / "cleanup_retired_workflow_artifacts.sh"
+
+    subprocess.run(["bash", str(script), str(workflows)], check=True)
+    subprocess.run(["bash", str(script), str(workflows)], check=True)
+
+    assert not (workflows / "pipelines").exists()
+    assert not (workflows / "operator" / "retired.pipeline.yaml").exists()
+    assert (workflows / "operator" / "keep.yaml").read_text() == "name: keep"
+    assert (workflows / "keep.yaml").read_text() == "name: keep root"
+    assert (workflows / ".builder" / "draft.json").read_text() == "{}"
+
+
+def test_deploy_and_restore_cleanup_retired_workflow_artifacts():
+    deploy = (ROOT / "deploy" / "ionos" / "deploy_release.sh").read_text()
+    restore = (ROOT / "deploy" / "ionos" / "restore.sh").read_text()
+
+    assert 'bash "${release_dir}/deploy/ionos/cleanup_retired_workflow_artifacts.sh"' in deploy
+    assert 'bash "${release_dir}/deploy/ionos/cleanup_retired_workflow_artifacts.sh"' in restore

@@ -2,7 +2,7 @@
 # Lives in workflows/reference/ (hidden from the Library UI; scanned by
 # about_synthesis for generation grounding and by preflight CI as a
 # regression net). Pattern: Chat Input → Knowledge Retrieval → AI → Chat
-# Output, the fundamental Business View capability shape.
+# Output, the fundamental conversational workflow shape.
 name: Reference — Chat Knowledge Q&A
 description: >-
   Canonical chat-shaped workflow: a chatbot Start collects the question,

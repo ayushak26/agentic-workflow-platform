@@ -23,6 +23,7 @@ exit: echo
 """
 
 INVALID_YAML = "not: [valid, workflow"
+PREVIOUSLY_VALID_YAML = VALID_YAML.replace("type: Literal", "type: RemovedHistoricalNode")
 
 
 @pytest.fixture
@@ -33,9 +34,6 @@ def client(tmp_path, monkeypatch) -> TestClient:
     monkeypatch.setattr(
         workflows_module, "BUILDER_STORE", WorkflowBuilderStore(tmp_path),
     )
-    # Same isolation for the pipeline-reference scan the delete route runs —
-    # point it at an empty scratch dir instead of the repo's real pipelines.
-    monkeypatch.setattr(workflows_module, "PIPELINES_DIR", tmp_path / "pipelines")
     scratch_app = FastAPI()
     scratch_app.include_router(workflows_module.router)
     scratch_app.dependency_overrides[require_consultant] = lambda: CurrentUser(
@@ -159,6 +157,20 @@ def test_restore_version_preflights_and_creates_new_version(client):
     assert body["version_id"] == version_id
 
 
+def test_version_list_quarantines_snapshot_incompatible_with_current_runtime(client):
+    store = workflows_module.BUILDER_STORE
+    version_id = store.record_version("routetest", PREVIOUSLY_VALID_YAML)
+
+    preview = client.get(f"/api/workflows/routetest/versions/{version_id}").json()
+    assert preview["restorable"] is False
+    assert "UNKNOWN_NODE_TYPE" in preview["preflight_issue_codes"]
+    assert preview["preflight_errors"]
+
+    res = client.post(f"/api/workflows/routetest/versions/{version_id}/restore")
+    assert res.status_code == 422
+    assert not store.workflow_path("routetest").exists()
+
+
 def test_restore_unknown_version_is_404(client):
     client.post("/api/workflows/save", json={"name": "routetest", "yaml": VALID_YAML})
     res = client.post("/api/workflows/routetest/versions/does-not-exist/restore")
@@ -187,25 +199,3 @@ def test_delete_workflow_requires_auth(client):
 
     res = client.delete("/api/workflows/routetest")
     assert res.status_code in {401, 403}
-
-
-def test_delete_workflow_blocked_when_referenced_by_a_pipeline(client, monkeypatch):
-    client.post("/api/workflows/save", json={"name": "routetest", "yaml": VALID_YAML})
-    pipelines_dir = workflows_module.PIPELINES_DIR
-    pipelines_dir.mkdir(parents=True, exist_ok=True)
-    (pipelines_dir / "demo.pipeline.yaml").write_text(
-        """
-name: Demo Pipeline
-version: '1.0'
-stages:
-  - id: stage_1
-    workflow: routetest
-"""
-    )
-
-    res = client.delete("/api/workflows/routetest")
-    assert res.status_code == 409
-    assert "Demo Pipeline" in res.json()["detail"]
-
-    # The workflow must still be intact — a blocked delete is not partial.
-    assert workflows_module.BUILDER_STORE.workflow_path("routetest").exists()

@@ -1,7 +1,7 @@
 name: Horizon Europe Part B - Drafts (Stage 2 of 3)
 description: >-
-  Second stage of the staged Horizon Europe RIA/IA Part B pipeline (evidence
-  -> drafts -> document; see workflows/pipelines/pipeline.yaml).
+  Drafting workflow for the Horizon Europe RIA/IA Part B sequence. It consumes
+  the approved evidence package and produces reviewed section drafts.
   Receives only the approved drafting package from Stage 1. A deterministic
   router checks truth_graph.drafting_allowed before any drafting or image
   generation begins. It drafts the six official Part B subsections in

@@ -2,12 +2,10 @@
 
 Unlike the AsyncMock-based FakeDB used elsewhere (test_run_history.py,
 test_durable_hitl.py) — which only records call args for one-shot
-assertions — pipeline tests need a *stateful* store: stage 0 must actually
-persist its output so stage 1's auto-match can read it back. Supports just
-the operators this codebase's run_history/pipeline_history modules use:
+assertions — integration tests need a *stateful* store with real
+read-after-write behaviour. Supports the operators this codebase's stores use:
 $set, $setOnInsert, $addToSet, $pull, $inc, plus dotted-path filters and
-updates (including into list-of-dict fields, e.g. "stages.0.run_id" or the
-Mongo array-element-match "stages.run_id").
+updates, including list-of-dict fields and Mongo array-element matching.
 """
 from __future__ import annotations
 
@@ -16,15 +14,18 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def _sort_key(doc: dict[str, Any], field: str) -> tuple[bool, Any]:
+    value = doc.get(field)
+    return value is None, value
+
+
 @dataclass
 class _DeleteResult:
     deleted_count: int
 
 
 def _matches_leaf(value: Any, expected: Any) -> bool:
-    if isinstance(expected, dict) and (
-        "$in" in expected or "$nin" in expected or "$ne" in expected
-    ):
+    if isinstance(expected, dict) and ("$in" in expected or "$nin" in expected or "$ne" in expected):
         if "$in" in expected:
             return value in expected["$in"]
         if "$ne" in expected:
@@ -40,7 +41,7 @@ def _match_path(value: Any, parts: list[str], expected: Any) -> bool:
     if isinstance(value, dict):
         if head not in value:
             return not rest and isinstance(expected, dict) and "$ne" in expected
-        return head in value and _match_path(value[head], rest, expected)
+        return _match_path(value[head], rest, expected)
     if isinstance(value, list):
         if head.isdigit():
             idx = int(head)
@@ -105,7 +106,9 @@ class InMemoryCollection:
             return None
         if sort:
             field, direction = sort[0]
-            matched = sorted(matched, key=lambda d: d.get(field), reverse=direction < 0)
+            matched = sorted(
+                matched, key=lambda d: _sort_key(d, field), reverse=direction < 0,
+            )
         return copy.deepcopy(matched[0])
 
     def find(self, filter_: dict[str, Any], projection: dict[str, Any] | None = None):
@@ -172,7 +175,9 @@ class _Cursor:
         self._docs = docs
 
     def sort(self, field: str, direction: int = 1) -> "_Cursor":
-        self._docs = sorted(self._docs, key=lambda d: d.get(field), reverse=direction < 0)
+        self._docs = sorted(
+            self._docs, key=lambda d: _sort_key(d, field), reverse=direction < 0,
+        )
         return self
 
     def limit(self, *args, **kwargs) -> "_Cursor":

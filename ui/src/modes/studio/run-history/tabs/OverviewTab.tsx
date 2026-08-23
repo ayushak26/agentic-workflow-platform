@@ -44,7 +44,6 @@ function FailureCard({
           </div>
         )}
       </div>
-      {run.stage_id && <div className="mt-0.5 text-xs text-red-700">Stage: {run.stage_id}</div>}
 
       <ul className="mt-3 space-y-1 text-xs text-red-900 list-disc pl-4">
         <li>The worker process stopped unexpectedly, or the node itself raised an error.</li>
@@ -143,10 +142,6 @@ export function OverviewTab({
           <div className="text-sm font-medium text-ink-900">
             {run.duration_s != null ? `${run.duration_s.toFixed(1)}s` : '—'}
           </div>
-        </div>
-        <div className="rounded-lg bg-slate-50 px-3 py-2.5">
-          <div className="text-[11px] text-ink-500 mb-1">Current / failed stage</div>
-          <div className="text-sm font-medium text-ink-900">{run.stage_id ?? '—'}</div>
         </div>
         <div className="rounded-lg bg-slate-50 px-3 py-2.5">
           <div className="text-[11px] text-ink-500 mb-1">Generated outputs</div>

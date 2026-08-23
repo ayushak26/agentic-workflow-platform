@@ -1471,7 +1471,7 @@ The full 14-node "Customer Request Routing" workflow from §4 is saved as real, 
 ```
 workflows/test_fixtures/interview_demo_customer_request_routing.yaml
 ```
-It uses exact live node identifiers, the platform's real edge/branch/mapping syntax throughout, a real `experience:` block on every node (required for Guided Run visibility), and the same `server_id: dynamics365_finance_scm` MCP connection the platform's own production pump-routing workflows use. It has been run through the repository's own preflight validator:
+It uses exact live node identifiers, the platform's real edge/branch/mapping syntax throughout, a real `experience:` block on every node (required for user-facing Workflow progress), and the same `server_id: dynamics365_finance_scm` MCP connection the platform's own production pump-routing workflows use. It has been run through the repository's own preflight validator:
 ```
 $ python scripts/preflight_workflows.py workflows/test_fixtures/interview_demo_customer_request_routing.yaml
 PASS workflows/test_fixtures/interview_demo_customer_request_routing.yaml — 14 nodes, 0 errors, 0 warnings, 0 tokens

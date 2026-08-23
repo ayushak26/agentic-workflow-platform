@@ -42,6 +42,9 @@ class ChatWorkflowRecord(BaseModel):
     source: Literal["generated", "imported", "existing"]
     status: Literal["private", "publish_requested", "published", "archived"] = "private"
     source_workflow_name: str | None = None
+    managed: bool = False
+    adapter_key: str | None = None
+    adapter_fingerprint: str | None = None
     output_compatibility: dict[str, Any] = Field(
         default_factory=_default_output_compatibility,
     )
@@ -60,6 +63,7 @@ class ChatWorkflowRecord(BaseModel):
             "visibility": "private",
             "status": self.status,
             "source_workflow_name": self.source_workflow_name,
+            "managed": self.managed,
             "output_compatibility": self.output_compatibility,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -74,6 +78,11 @@ async def ensure_chat_workflow_indexes(db: Any) -> None:
     )
     await collection.create_index(
         [("owner_scope_id", 1), ("status", 1), ("updated_at", -1)],
+    )
+    await collection.create_index(
+        [("owner_scope_id", 1), ("adapter_key", 1)],
+        unique=True,
+        partialFilterExpression={"adapter_key": {"$type": "string"}},
     )
 
 
@@ -94,6 +103,9 @@ class ChatWorkflowStore:
         source: Literal["generated", "imported", "existing"],
         source_workflow_name: str | None = None,
         output_compatibility: dict[str, Any] | None = None,
+        managed: bool = False,
+        adapter_key: str | None = None,
+        adapter_fingerprint: str | None = None,
     ) -> ChatWorkflowRecord:
         existing = await self.collection.find_one({
             "owner_scope_id": owner_scope_id,
@@ -112,6 +124,9 @@ class ChatWorkflowStore:
             yaml=yaml_text,
             source=source,
             source_workflow_name=source_workflow_name,
+            managed=managed,
+            adapter_key=adapter_key,
+            adapter_fingerprint=adapter_fingerprint,
             output_compatibility=(
                 output_compatibility
                 if output_compatibility is not None
@@ -150,6 +165,86 @@ class ChatWorkflowStore:
             "status": {"$nin": ["archived"]},
         })
         return ChatWorkflowRecord.model_validate(document) if document else None
+
+    async def get_by_adapter_key(self, owner_scope_id: str, adapter_key: str) -> ChatWorkflowRecord | None:
+        document = await self.collection.find_one({
+            "owner_scope_id": owner_scope_id,
+            "adapter_key": adapter_key,
+            "status": {"$nin": ["archived"]},
+        })
+        return ChatWorkflowRecord.model_validate(document) if document else None
+
+    async def replace_managed_adapter(
+        self,
+        owner_scope_id: str,
+        chat_workflow_id: str,
+        *,
+        display_name: str,
+        yaml_text: str,
+        description: str,
+        source: Literal["generated", "imported", "existing"],
+        source_workflow_name: str | None,
+        output_compatibility: dict[str, Any],
+        adapter_key: str,
+        adapter_fingerprint: str,
+    ) -> ChatWorkflowRecord:
+        """Claim or refresh a system-managed adapter without changing its stable ID."""
+        record = await self.get(owner_scope_id, chat_workflow_id)
+        updated_at = datetime.now(timezone.utc)
+        patch = {
+            "display_name": display_name,
+            "yaml": yaml_text,
+            "description": description,
+            "source": source,
+            "source_workflow_name": source_workflow_name,
+            "output_compatibility": output_compatibility,
+            "managed": True,
+            "adapter_key": adapter_key,
+            "adapter_fingerprint": adapter_fingerprint,
+            "updated_at": updated_at,
+            "schema_version": 2,
+        }
+        await self.collection.update_one(
+            {
+                "owner_scope_id": owner_scope_id,
+                "chat_workflow_id": chat_workflow_id,
+                "status": {"$nin": ["archived"]},
+            },
+            {"$set": patch},
+        )
+        return record.model_copy(update=patch)
+
+    async def replace_executable(
+        self,
+        owner_scope_id: str,
+        chat_workflow_id: str,
+        *,
+        yaml_text: str,
+        description: str,
+        output_compatibility: dict[str, Any],
+    ) -> ChatWorkflowRecord:
+        """Replace only executable metadata for an owner-scoped private workflow."""
+        record = await self.get(owner_scope_id, chat_workflow_id)
+        updated_at = datetime.now(timezone.utc)
+        await self.collection.update_one(
+            {
+                "owner_scope_id": owner_scope_id,
+                "chat_workflow_id": chat_workflow_id,
+                "status": {"$nin": ["archived"]},
+            },
+            {"$set": {
+                "yaml": yaml_text,
+                "description": description,
+                "output_compatibility": output_compatibility,
+                "updated_at": updated_at,
+            }},
+        )
+        return record.model_copy(update={
+            "yaml": yaml_text,
+            "description": description,
+            "output_compatibility": output_compatibility,
+            "updated_at": updated_at,
+        })
 
     async def archive(self, owner_scope_id: str, chat_workflow_id: str) -> bool:
         try:

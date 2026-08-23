@@ -15,7 +15,7 @@ uv run python scripts/build_documentation_pdf.py
 
 | Volume | File | Contents |
 |---|---|---|
-| 1 | `01_Eurskem_AI_Architecture_Overview.pdf` | System architecture, the three product surfaces, the run lifecycle, evidence & cost integrity, deployment model — with architecture diagram and product screenshots |
+| 1 | `01_Eurskem_AI_Architecture_Overview.pdf` | System architecture, the canonical Workflow surfaces, the run lifecycle, evidence & cost integrity, deployment model — with architecture diagram and product screenshots |
 | 2 | `02_Eurskem_AI_Backend_Code_Reference.pdf` | Module-by-module reference for the entire `app/` package: every file, class, and public function with signature and docstring summary |
 | 3 | `03_Eurskem_AI_Node_Type_Catalog.pdf` | Every registered node type: category, execution kind, config schema fields (required/optional), inputs, outputs, and author-facing guidance |
 | 4 | `04_Eurskem_AI_API_Reference.pdf` | Every HTTP endpoint with method, path, authorization level, and summary |
@@ -36,7 +36,7 @@ it only fills gaps and never rewrites existing documentation).
 | `CODEBASE_HANDBOOK.md` | Deep engineering handbook: architecture, lifecycles, security, failure modes, change-impact guide |
 | `NODE_TYPES_AND_WORKFLOW_AUTHORING_GUIDE.md` | Workflow authoring and node-type usage guide |
 | `VISUAL_WORKFLOW_BUILDER.md` | Builder feature documentation |
-| `BUSINESS_VIEW.md` | Guided Run / business projection documentation |
+| `WORKFLOW_NODE_AUDIT.md` | Workflow node inventory and consolidation analysis |
 | `AI_NATIVE_CHAT_NODE_EVALUATION.md` | Code-grounded evaluation of existing nodes for AI-native Chat, including the recommended node portfolio, unified source architecture, interaction model, gaps, roadmap, and validation prototype |
 | `KNOWLEDGE_STUDIO_ENGINEERING_REPORT.md` | Knowledge Studio engineering report |
 | `DYNAMICS_365_MCP.md` / `BUSINESS_RECORDS_MYSQL.md` | Integration documentation |

@@ -110,6 +110,40 @@ async def _backfill_knowledge_resources_v2(db: Any) -> None:
         await _set_missing(db["collections"], field, value)
 
 
+_REMOVED_PRODUCT_COLLECTIONS = (
+    "pipeline_runs",
+    "business_narrations",
+)
+
+_REMOVED_RUN_FIELDS = (
+    "pipeline_run_id",
+    "pipeline_name",
+    "stage_id",
+    "stage_index",
+    "business_notes",
+    "route_overrides",
+    "assigned_to",
+    "fact_edits",
+    "stale_decisions",
+)
+
+
+async def _remove_business_and_pipeline_persistence_v3(db: Any) -> None:
+    """Remove persistence owned exclusively by the retired product concepts.
+
+    ``stage_id`` is removed only as a top-level run-history field formerly used
+    for Pipeline stage linkage. Workflow YAML is not rewritten, so nested
+    ``experience.stage_id`` presentation grouping remains intact.
+    """
+
+    await db["run_history"].update_many(
+        {},
+        {"$unset": {field: "" for field in _REMOVED_RUN_FIELDS}},
+    )
+    for collection_name in _REMOVED_PRODUCT_COLLECTIONS:
+        await db.drop_collection(collection_name)
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         migration_id="0001_run_documents_v1",
@@ -120,6 +154,11 @@ MIGRATIONS: tuple[Migration, ...] = (
         migration_id="0002_knowledge_resources_v2",
         description="Expand legacy collection records with Knowledge Studio v2 lifecycle fields",
         apply=_backfill_knowledge_resources_v2,
+    ),
+    Migration(
+        migration_id="0003_remove_business_pipeline_persistence",
+        description="Drop retired Business View and Pipeline persistence",
+        apply=_remove_business_and_pipeline_persistence_v3,
     ),
 )
 

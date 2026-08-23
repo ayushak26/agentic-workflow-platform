@@ -1,0 +1,69 @@
+{
+  "generated_at": "2026-08-23",
+  "release_gate": "PASS_WITH_BLOCKED_LIVE_PROVIDER_COVERAGE",
+  "coverage": {
+    "workflow_yaml_discovered": 535,
+    "non_workflow_yaml_excluded": 2,
+    "workflow_definitions": 533,
+    "current_product_workflows": 34,
+    "modes": ["studio", "knowledge", "eval", "cost"],
+    "matrix_rows": 2132,
+    "current_workflows_strict_preflight_passed": 34,
+    "current_workflows_live_executed": 0,
+    "persisted_runs_counted_read_only": 211,
+    "persisted_private_chat_workflows": 0,
+    "persisted_run_chat_conversations": 0,
+    "synthetic_workflow_cards_browser_validated": 400,
+    "synthetic_runs_browser_validated": 120,
+    "browser_viewports": [
+      "1920x1080",
+      "1440x900",
+      "1280x720",
+      "768x1024",
+      "390x844",
+      "360x800"
+    ],
+    "browser_passed_case_viewports": 30,
+    "browser_failed_reproductions": 0,
+    "screenshots": 24,
+    "backend_tests_passed": 2006,
+    "backend_tests_skipped": 2,
+    "frontend_full_suite_passed": 418,
+    "frontend_focused_regressions_passed": 8
+  },
+  "workflow_static_results": {
+    "warnings_as_errors_pass": 496,
+    "warnings_as_errors_fail": 37,
+    "hard_preflight_invalid": 25,
+    "warning_only": 12,
+    "current_product_pass": 34,
+    "current_product_fail": 0
+  },
+  "bugs": [
+    {
+      "id": "QA-001",
+      "severity": "P1",
+      "status": "FIXED",
+      "title": "Business Chat transcript is durable across browser refresh"
+    },
+    {
+      "id": "QA-002",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "Incompatible immutable Builder versions are labelled and safely blocked from restore"
+    },
+    {
+      "id": "QA-003",
+      "severity": "P2",
+      "status": "FIXED",
+      "title": "Workflow Library API error had no in-place recovery"
+    }
+  ],
+  "artifacts": {
+    "matrix_json": "qa-results/workflow-matrix.json",
+    "matrix_csv": "qa-results/workflow-matrix.csv",
+    "report": "qa-results/RELEASE_GATE_REPORT.md",
+    "playwright_report": "qa-results/playwright-report/index.html",
+    "screenshots": "qa-results/screenshots/"
+  }
+}

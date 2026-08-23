@@ -214,6 +214,13 @@ export type RetrievalTraceSummary = {
   timings_ms: Record<string, number>;
 };
 
+export type RetrievalChunkContext = {
+  retrieval_request_id: string;
+  current: { chunk_id: string; document_id: string | null; title: string; text: string; page: number | null; section: string | null };
+  previous: { chunk_id: string; document_id: string | null; title: string; text: string; page: number | null; section: string | null } | null;
+  next: { chunk_id: string; document_id: string | null; title: string; text: string; page: number | null; section: string | null } | null;
+};
+
 // ---- Ingestion preset shape returned by GET /api/knowledge/ingestion-presets ----
 
 export type IngestionPreset = {
@@ -370,6 +377,11 @@ export const knowledgeApi = {
   getTrace: (retrievalRequestId: string): Promise<Record<string, unknown>> =>
     afetch(`${API}/retrieval/traces/${retrievalRequestId}`, { headers: getAuthHeaders() })
       .then(r => j<Record<string, unknown>>(r)),
+
+  getTraceChunkContext: (retrievalRequestId: string, chunkId: string): Promise<RetrievalChunkContext> =>
+    afetch(`${API}/retrieval/traces/${encodeURIComponent(retrievalRequestId)}/chunks/${encodeURIComponent(chunkId)}/context`, {
+      headers: getAuthHeaders(),
+    }).then(r => j<RetrievalChunkContext>(r)),
 
   // ---- RAG Agents ----
   createRagAgent: (payload: {

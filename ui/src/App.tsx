@@ -1,17 +1,22 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Sidebar } from "./components/layout/Sidebar";
 import { Topbar } from "./components/layout/Topbar";
 import { LoginPage } from "./components/auth/LoginPage";
 import { BrandMark } from "./components/ui/BrandMark";
-import { StudioRoot } from "./modes/studio/StudioRoot";
-import { EvalRoot } from "./modes/eval/EvalRoot";
-import { CostRoot } from "./modes/cost/CostRoot";
-import { KnowledgeRoot } from "./modes/knowledge/KnowledgeRoot";
 import { RunCostContext } from "./RunCostContext";
 import { currentUsername, isAuthed, onSessionExpired, rehydrate } from "./api/client";
 import type { RunCostSummary } from "./api/types";
 
 type Mode = "studio" | "eval" | "cost" | "knowledge";
+
+const StudioRoot = lazy(() => import("./modes/studio/StudioRoot").then(module => ({ default: module.StudioRoot })));
+const EvalRoot = lazy(() => import("./modes/eval/EvalRoot").then(module => ({ default: module.EvalRoot })));
+const CostRoot = lazy(() => import("./modes/cost/CostRoot").then(module => ({ default: module.CostRoot })));
+const KnowledgeRoot = lazy(() => import("./modes/knowledge/KnowledgeRoot").then(module => ({ default: module.KnowledgeRoot })));
+
+function ModeLoading() {
+  return <div className="p-8 text-sm text-ink-500" role="status">Loading workspace…</div>;
+}
 
 export default function App() {
   const [username, setUsername] = useState(currentUsername());
@@ -59,13 +64,22 @@ export default function App() {
     window.localStorage.setItem('eurskem.sidebar.collapsed', String(sidebarCollapsed));
   }, [sidebarCollapsed]);
 
+  useEffect(() => {
+    const openKnowledge = () => {
+      setMode('knowledge');
+      setMobileNavOpen(false);
+    };
+    window.addEventListener('eurskem:open-knowledge', openKnowledge);
+    return () => window.removeEventListener('eurskem:open-knowledge', openKnowledge);
+  }, []);
+
   if (checking) {
     return (
       <div className="brand-splash" role="status" aria-label="Loading Eurskem AI">
         <div className="brand-splash-card">
           <BrandMark size="md" />
           <span className="mt-5 h-5 w-5 animate-spin rounded-full border-2 border-accent-400 border-t-transparent" />
-          <span className="mt-3 text-xs text-ink-300">Preparing your workspaceâ¦</span>
+          <span className="mt-3 text-xs text-ink-300">Preparing your workspace…</span>
         </div>
       </div>
     );
@@ -98,10 +112,12 @@ export default function App() {
         <Topbar mode={mode} onOpenNavigation={() => setMobileNavOpen(true)} runCostUsd={runCostSummary?.total_usd ?? 0} />
         <RunCostContext.Provider value={setRunCostSummary}>
           <main className="app-content">
-            {mode === "studio" && <StudioRoot />}
-            {mode === "knowledge" && <KnowledgeRoot />}
-            {mode === "eval" && <EvalRoot />}
-            {mode === "cost" && <CostRoot />}
+            <Suspense fallback={<ModeLoading />}>
+              {mode === "studio" && <StudioRoot />}
+              {mode === "knowledge" && <KnowledgeRoot />}
+              {mode === "eval" && <EvalRoot />}
+              {mode === "cost" && <CostRoot />}
+            </Suspense>
           </main>
         </RunCostContext.Provider>
       </div>

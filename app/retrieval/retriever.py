@@ -30,7 +30,7 @@ log = structlog.get_logger(__name__)
 async def retrieve(
     q: RetrievalQuery,
     *,
-    weaviate_client: weaviate.WeaviateAsyncClient,
+    weaviate_client: object,
     llm: LLMGateway,
     embedder: Embedder,
     collection_registry=None, 

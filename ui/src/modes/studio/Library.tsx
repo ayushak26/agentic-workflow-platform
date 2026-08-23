@@ -128,7 +128,19 @@ export function Library() {
     ? (workflows ?? []).find(workflow => workflow.name === selectedName) ?? null
     : null;
 
-  if (error) return <div className="p-8 text-bad">Failed to load workflows: {error}</div>;
+  if (error) return (
+    <div className="p-8">
+      <div className="text-bad">Failed to load workflows: {error}</div>
+      <button
+        type="button"
+        className="ui-button ui-button--secondary mt-4"
+        disabled={refreshing}
+        onClick={() => void loadWorkflows()}
+      >
+        {refreshing ? 'Retrying…' : 'Retry'}
+      </button>
+    </div>
+  );
   if (workflows === null) return <div className="p-8"><Spinner label="Loading workflows…" /></div>;
 
   return (

@@ -54,42 +54,41 @@ export function useRunHistoryData(runId: string | undefined) {
     let cancelled = false;
     let timer: number | undefined;
 
-    const load = () => {
-      api.runHistory(RUN_LIST_LIMIT)
-        .then((data) => {
-          if (cancelled) return;
-          // Replacing the whole array on every poll is fine — selection is
-          // tracked by run_id (a stable id) in the URL, not by array index
-          // or object identity, so a new reference here never reorders or
-          // loses the run the user is currently looking at.
-          setRuns(data.runs);
-          setListErr(null);
-        })
-        .catch(async (error) => {
-          if (cancelled) return;
-          const msg = String(error);
-          // On auth failure, stop polling and try to recover the session from
-          // the cookie once. If that fails, surface it instead of hammering.
-          if (msg.includes('401')) {
-            if (timer) window.clearInterval(timer);
-            const user = await rehydrate();
-            if (!cancelled && user) {
-              load(); // session recovered — resume
-              timer = window.setInterval(load, 2500);
-            } else if (!cancelled) {
-              setListErr('Session expired — please log in again.');
-            }
-            return;
+    const schedule = () => {
+      if (!cancelled) timer = window.setTimeout(() => void load(), 2500);
+    };
+    const load = async () => {
+      let keepPolling = true;
+      try {
+        const data = await api.runHistory(RUN_LIST_LIMIT);
+        if (cancelled) return;
+        // Selection is tracked by stable run_id in the URL, not array index or
+        // object identity, so replacing the list cannot lose the selection.
+        setRuns(data.runs);
+        setListErr(null);
+      } catch (error) {
+        if (cancelled) return;
+        const msg = String(error);
+        // On auth failure, try to recover the cookie-backed session once. A
+        // failed recovery stops polling instead of hammering the endpoint.
+        if (msg.includes('401')) {
+          const user = await rehydrate();
+          if (!cancelled && !user) {
+            keepPolling = false;
+            setListErr('Session expired — please log in again.');
           }
+        } else {
           setListErr(msg);
-        });
+        }
+      } finally {
+        if (keepPolling) schedule();
+      }
     };
 
-    load();
-    timer = window.setInterval(load, 2500);
+    void load();
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
+      if (timer) window.clearTimeout(timer);
     };
   }, [refreshToken]);
 
@@ -97,34 +96,32 @@ export function useRunHistoryData(runId: string | undefined) {
     if (!runId) return;
     let cancelled = false;
     // Clear the previous route's detail before synchronizing the new run.
-     
     setDetail(null);
     setDetailErr(null);
     setRetryErr(null);
     setActionErr(null);
     let timer: number | undefined;
-    const load = () => {
-      api.runDetail(runId)
-        .then((data) => {
-          if (cancelled) return;
-          setDetail(data);
-          setDetailErr(null);
-          // Nothing left to change once the run has ended — stop polling
-          // instead of re-fetching an identical payload every 2s forever.
-          if (TERMINAL_STATUSES.has(data.run.status) && timer) {
-            window.clearInterval(timer);
-            timer = undefined;
-          }
-        })
-        .catch((error) => {
-          if (!cancelled) setDetailErr(String(error));
-        });
+    const schedule = () => {
+      if (!cancelled) timer = window.setTimeout(() => void load(), 2000);
     };
-    load();
-    timer = window.setInterval(load, 2000);
+    const load = async () => {
+      let terminal = false;
+      try {
+        const data = await api.runDetail(runId);
+        if (cancelled) return;
+        setDetail(data);
+        setDetailErr(null);
+        terminal = TERMINAL_STATUSES.has(data.run.status);
+      } catch (error) {
+        if (!cancelled) setDetailErr(String(error));
+      } finally {
+        if (!terminal) schedule();
+      }
+    };
+    void load();
     return () => {
       cancelled = true;
-      if (timer) window.clearInterval(timer);
+      if (timer) window.clearTimeout(timer);
     };
   }, [runId]);
 
@@ -146,17 +143,6 @@ export function useRunHistoryData(runId: string | undefined) {
         workflowYaml: detail.run.workflow_yaml,
         workflowName: detail.run.workflow_name,
         selectedNodeId: selectedNodeId ?? undefined,
-      },
-    });
-  }
-
-  function openInBusinessView() {
-    if (!detail?.run.workflow_yaml) return;
-    navigate(`/business/${detail.run.run_id}`, {
-      state: {
-        attach: true,
-        workflowYaml: detail.run.workflow_yaml,
-        workflowName: detail.run.workflow_name,
       },
     });
   }
@@ -208,7 +194,7 @@ export function useRunHistoryData(runId: string | undefined) {
     try {
       const newRunId = crypto.randomUUID();
       await api.restartRun(detail.run.run_id, newRunId);
-      navigate(`/history/${newRunId}`);
+      navigate(`/workflow-runs/${newRunId}`);
     } catch (error) {
       setActionErr(String(error));
     } finally {
@@ -225,28 +211,10 @@ export function useRunHistoryData(runId: string | undefined) {
       await api.deleteRun(deletedRunId);
       setRuns((prev) => prev.filter((r) => r.run_id !== deletedRunId));
       setDetail(null);
-      navigate('/history', { replace: true });
+      navigate('/workflow-runs', { replace: true });
     } catch (error) {
       setActionErr(String(error));
     } finally {
-      setActionBusy(null);
-    }
-  }
-
-  // The backend 409s a blocked delete with this exact wording (see
-  // app/api/runs.py delete_run_endpoint) — matched here only to offer a
-  // one-click way to unstick it, not as a structured error contract.
-  const blockingPipelineId = actionErr?.match(/active stage of pipeline '([^']+)'/)?.[1] ?? null;
-
-  async function abandonBlockingPipelineAndDelete() {
-    if (!blockingPipelineId) return;
-    setActionErr(null);
-    setActionBusy('delete');
-    try {
-      await api.abandonPipeline(blockingPipelineId);
-      await deleteRun();
-    } catch (error) {
-      setActionErr(String(error));
       setActionBusy(null);
     }
   }
@@ -260,10 +228,8 @@ export function useRunHistoryData(runId: string | undefined) {
     retryErr,
     actionErr,
     actionBusy,
-    blockingPipelineId,
     retryFailedRun,
     openInCockpit,
-    openInBusinessView,
     autofixBusy,
     autofixErr,
     autofixAndOpenInBuilder,
@@ -271,7 +237,6 @@ export function useRunHistoryData(runId: string | undefined) {
     resumeRun,
     restartRun,
     deleteRun,
-    abandonBlockingPipelineAndDelete,
     navigate,
   };
 }

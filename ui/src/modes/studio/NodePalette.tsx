@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { MCPToolInfo, NodeTypeManifest } from '../../api/types';
+import type { MCPToolInfo, NodePreset, NodeTypeManifest } from '../../api/types';
 import { Icon, type IconName } from '../../components/ui/Icon';
 import { ExecutionKindBadge } from './builder/ExecutionKindBadge';
 import { MCPToolPicker } from './builder/MCPToolPicker';
@@ -68,7 +68,8 @@ function groupByCategory(types: NodeTypeManifest[]): [string, NodeTypeManifest[]
 function matchesQuery(t: NodeTypeManifest, query: string): boolean {
   if (!query) return true;
   const label = PALETTE_LABELS[t.type_name] ?? '';
-  const haystack = `${t.type_name} ${label} ${t.description} ${t.category}`.toLowerCase();
+  const presets = t.presets.map(preset => `${preset.label} ${preset.summary ?? ''}`).join(' ');
+  const haystack = `${t.type_name} ${label} ${t.description} ${t.category} ${presets}`.toLowerCase();
   return haystack.includes(query);
 }
 
@@ -133,7 +134,7 @@ export function NodePalette({
   onClose,
 }: {
   types: NodeTypeManifest[];
-  onAdd: (typeName: string) => void;
+  onAdd: (typeName: string, config?: Record<string, unknown>) => void;
   /** When set, "+ Add" on the MCP Tool card opens a searchable tool picker
    *  instead of dropping a blank, unconfigured node — the author picks what
    *  the tool does and gets a pre-wired node in one action. */
@@ -152,6 +153,14 @@ export function NodePalette({
     [types, query],
   );
   const groups = useMemo(() => groupByCategory(filtered), [filtered]);
+  const quickActions = useMemo(() => types.flatMap(type =>
+    type.presets.map(preset => ({ type, preset })),
+  ).filter(({ type, preset }) => {
+    if (HIDDEN_FROM_PALETTE.has(type.type_name)) return false;
+    const needle = query.trim().toLowerCase();
+    if (!needle) return type.type_name === 'TransformAgent';
+    return `${preset.label} ${preset.summary ?? ''} ${type.type_name}`.toLowerCase().includes(needle);
+  }), [query, types]);
 
   function toggle(category: string) {
     setCollapsed(current => {
@@ -196,6 +205,25 @@ export function NodePalette({
         />
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        {quickActions.length > 0 && (
+          <div>
+            <div className="px-2 py-1 text-xs font-semibold text-ink-700">Quick actions</div>
+            <div className="mt-1 grid grid-cols-2 gap-1.5">
+              {quickActions.map(({ type, preset }: { type: NodeTypeManifest; preset: NodePreset }) => (
+                <button
+                  className="rounded-md border border-slate-200 bg-white p-2 text-left transition hover:border-accent-600 hover:bg-accent-50"
+                  key={`${type.type_name}:${preset.id}`}
+                  onClick={() => onAdd(type.type_name, preset.config)}
+                  title={preset.summary}
+                  type="button"
+                >
+                  <span className="block text-xs font-medium text-ink-900">{preset.label}</span>
+                  <span className="mt-0.5 line-clamp-2 block text-[10px] text-ink-500">{preset.summary}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {groups.length === 0 && (
           <div className="rounded-md border border-dashed border-slate-300 p-4 text-center text-xs text-ink-500">
             No node types match &ldquo;{query}&rdquo;.

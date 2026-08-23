@@ -834,7 +834,7 @@ async def test_a_single_ask_never_becomes_a_multi_department_case():
 )
 async def test_every_outcome_answers_the_same_four_questions(extraction, exit_node):
     """What was decided, who gets it, what it was decided from, and why — so
-    the Business View renders one shape whichever department received it."""
+    run inspectors render one shape whichever department received it."""
     result = await run_level_3(extraction, f"contract-{exit_node}")
     packet = exit_packet(result, exit_node)
 

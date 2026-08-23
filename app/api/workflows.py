@@ -5,6 +5,7 @@ Part of the http api layer: fastapi routers for auth, workflows, runs, knowledge
 Public symbols: list_workflows, list_node_types, allowed_models, RunRequest, ValidateWorkflowRequest, validate_workflow, ... (31 symbols total).
 """
 import asyncio
+from functools import lru_cache
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -19,8 +20,10 @@ from fastapi.responses import Response, StreamingResponse
 from app.nodes.registry import NodeRegistry
 from app.observability.logging import get_logger
 from app.runtime.autofix import (
+    MAX_LLM_REPAIR_ATTEMPTS,
     NOT_AUTOFIXABLE_CODES,
     apply_deterministic_fixes,
+    format_preflight_feedback,
     repair_with_llm,
 )
 from app.runtime.executor import run_workflow
@@ -30,7 +33,6 @@ from app.runtime.hitl import (
     resume_workflow_durable,
 )
 from app.runtime.loader import load_workflow_from_string
-from app.runtime.pipeline_loader import PIPELINES_DIR, load_pipeline_from_string
 from app.runtime.preflight import (
     DuplicateYamlKeyError,
     PreflightCheck,
@@ -59,6 +61,7 @@ from app.workflow.file_inputs import (
     WorkflowFileInputError,
     validate_workflow_inputs,
 )
+from app.api.builder import _friendly_validation_message
 
 router = APIRouter(prefix="/api", tags=["workflows"])
 log = get_logger(__name__)
@@ -140,7 +143,7 @@ def _scope(user: CurrentUser, body_session: str | None) -> str:
 
 
 @router.get("/")
-async def list_workflows():
+async def list_workflow_root():
     """List the workflows."""
     return {"workflows": []}
 
@@ -333,6 +336,65 @@ class AutofixWorkflowResponse(BaseModel):
     preflight_report: dict[str, Any]
 
 
+class AutofixNodeRequest(BaseModel):
+    workflow_yaml: str
+    node_id: str = Field(min_length=1)
+    inputs: dict[str, Any] | None = None
+
+
+class AutofixNodeResponse(BaseModel):
+    yaml: str
+    node_id: str
+    changed: bool
+    fixed: bool
+    deterministic_fixes_applied: list[str]
+    llm_attempts: list[dict[str, Any]]
+    preflight_report: dict[str, Any]
+
+
+_NODE_AUTOFIX_KEYS = {"config", "selected_model", "allowed_models", "model_routing"}
+
+
+def _node_autofix_scope_valid(original_yaml: str, candidate_yaml: str, node_id: str) -> bool:
+    """Only the selected node's configuration/model controls may change."""
+    try:
+        original = yaml.safe_load(original_yaml)
+        candidate = yaml.safe_load(candidate_yaml)
+    except yaml.YAMLError:
+        return False
+    if not isinstance(original, dict) or not isinstance(candidate, dict):
+        return False
+    original_nodes = original.get("nodes")
+    candidate_nodes = candidate.get("nodes")
+    if not isinstance(original_nodes, list) or not isinstance(candidate_nodes, list):
+        return False
+    if len(original_nodes) != len(candidate_nodes):
+        return False
+    selected_count = 0
+    for before, after in zip(original_nodes, candidate_nodes, strict=True):
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            return False
+        if before.get("id") != after.get("id") or before.get("type") != after.get("type"):
+            return False
+        if before.get("id") == node_id:
+            selected_count += 1
+            before_fixed = {key: value for key, value in before.items() if key not in _NODE_AUTOFIX_KEYS}
+            after_fixed = {key: value for key, value in after.items() if key not in _NODE_AUTOFIX_KEYS}
+            if before_fixed != after_fixed:
+                return False
+        elif before != after:
+            return False
+    if selected_count != 1:
+        return False
+    original_without_nodes = {key: value for key, value in original.items() if key != "nodes"}
+    candidate_without_nodes = {key: value for key, value in candidate.items() if key != "nodes"}
+    return original_without_nodes == candidate_without_nodes
+
+
+def _node_issues(report: WorkflowPreflightReport, node_id: str) -> list[PreflightIssue]:
+    return [issue for issue in report.errors if issue.node_id == node_id]
+
+
 async def _run_preflight(
     yaml_text: str, req: AutofixWorkflowRequest, services: dict[str, Any],
 ) -> WorkflowPreflightReport:
@@ -428,6 +490,125 @@ async def autofix_workflow(
     )
     return AutofixWorkflowResponse(
         yaml=current_yaml,
+        fixed=report.valid,
+        deterministic_fixes_applied=deterministic_fixes,
+        llm_attempts=llm_attempts,
+        preflight_report=report.model_dump(mode="json"),
+    )
+
+
+@router.post("/workflows/autofix-node")
+async def autofix_node(
+    req: AutofixNodeRequest,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Repair one selected node while rejecting every unrelated YAML change."""
+    services = getattr(request.app.state, "services", {})
+    report = preflight_workflow_yaml(
+        req.workflow_yaml,
+        provided_inputs=req.inputs,
+        services=services,
+        compile_graph=True,
+    )
+    try:
+        document = yaml.safe_load(req.workflow_yaml)
+        node = next(
+            item for item in document.get("nodes", [])
+            if isinstance(item, dict) and item.get("id") == req.node_id
+        )
+        node_class = NodeRegistry.get(str(node.get("type")))
+    except (AttributeError, KeyError, StopIteration, TypeError) as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Selected node not found") from exc
+
+    selected_issues = _node_issues(report, req.node_id)
+    if not selected_issues:
+        return AutofixNodeResponse(
+            yaml=req.workflow_yaml,
+            node_id=req.node_id,
+            changed=False,
+            fixed=report.valid,
+            deterministic_fixes_applied=[],
+            llm_attempts=[],
+            preflight_report=report.model_dump(mode="json"),
+        )
+
+    scoped_report = WorkflowPreflightReport(
+        valid=False,
+        workflow_name=report.workflow_name,
+        issues=selected_issues,
+    )
+    current_yaml = req.workflow_yaml
+    deterministic_fixes: list[str] = []
+    deterministic = apply_deterministic_fixes(current_yaml, scoped_report)
+    if deterministic.changed and _node_autofix_scope_valid(
+        req.workflow_yaml, deterministic.yaml_text, req.node_id,
+    ):
+        current_yaml = deterministic.yaml_text
+        deterministic_fixes = deterministic.fixes_applied
+        report = preflight_workflow_yaml(
+            current_yaml, provided_inputs=req.inputs, services=services, compile_graph=True,
+        )
+        selected_issues = _node_issues(report, req.node_id)
+
+    llm_attempts: list[dict[str, Any]] = []
+    if selected_issues:
+        llm = services.get("llm")
+        if llm is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "LLM gateway unavailable")
+        from app.api.workflow_generation import build_llm_yaml_generator
+
+        scope = getattr(user, "session_id", None) or user.username
+        generate_yaml = build_llm_yaml_generator(llm, services, scope, mode="repair")
+        for _ in range(MAX_LLM_REPAIR_ATTEMPTS):
+            selected_report = WorkflowPreflightReport(valid=False, issues=selected_issues)
+            feedback = (
+                f"Repair ONLY node {req.node_id!r}. You may change only its config, "
+                "selected_model, allowed_models, or model_routing. Do not change node IDs, "
+                "types, edges, workflow metadata, inputs, outputs, or any other node. "
+                f"Errors: {format_preflight_feedback(selected_report)}. Return complete YAML."
+            )
+            candidate = await generate_yaml(
+                f"Repair only node {req.node_id!r} while preserving the rest exactly.",
+                current_yaml,
+                feedback,
+            )
+            if not _node_autofix_scope_valid(req.workflow_yaml, candidate, req.node_id):
+                llm_attempts.append({
+                    "success": False,
+                    "detail": "Rejected: repair changed content outside the selected node configuration.",
+                })
+                continue
+            candidate_report = preflight_workflow_yaml(
+                candidate, provided_inputs=req.inputs, services=services, compile_graph=True,
+            )
+            candidate_document = yaml.safe_load(candidate)
+            candidate_node = next(
+                item for item in candidate_document["nodes"] if item.get("id") == req.node_id
+            )
+            try:
+                node_class.config_schema.model_validate(candidate_node.get("config") or {})
+            except ValidationError as exc:
+                llm_attempts.append({
+                    "success": False,
+                    "detail": f"Rejected: selected node configuration is invalid: {_friendly_validation_message(exc)}",
+                })
+                continue
+            remaining = _node_issues(candidate_report, req.node_id)
+            llm_attempts.append({
+                "success": candidate_report.valid,
+                "detail": "Full workflow preflight passed." if candidate_report.valid
+                else format_preflight_feedback(candidate_report),
+            })
+            if candidate_report.valid:
+                current_yaml = candidate
+                report = candidate_report
+                break
+
+    return AutofixNodeResponse(
+        yaml=current_yaml,
+        node_id=req.node_id,
+        changed=current_yaml != req.workflow_yaml,
         fixed=report.valid,
         deterministic_fixes_applied=deterministic_fixes,
         llm_attempts=llm_attempts,
@@ -897,48 +1078,16 @@ def save_workflow(req: SaveWorkflowRequest):
     return {"ok": True, "name": req.name, "version_id": version_id}
 
 
-def _pipelines_referencing_workflow(name: str) -> list[str]:
-    """Names of every pipeline whose stages reference this workflow. Deleting
-    a workflow out from under a pipeline would silently break that pipeline
-    the next time it's launched or advanced, so the delete route blocks on
-    this rather than leaving a dangling reference."""
-    referencing: list[str] = []
-    if not PIPELINES_DIR.exists():
-        return referencing
-    for path in sorted(PIPELINES_DIR.glob("*.yaml")):
-        try:
-            pipeline = load_pipeline_from_string(path.read_text())
-        except Exception:
-            # An unrelated broken pipeline file must not block deleting a
-            # perfectly good workflow — surfacing that belongs to whatever
-            # would actually try to load/run the broken pipeline.
-            continue
-        if any(stage.workflow == name for stage in pipeline.stages):
-            referencing.append(pipeline.name)
-    return referencing
-
-
 @router.delete("/workflows/{name}")
 def delete_workflow(
     name: str,
     user: CurrentUser = Depends(require_consultant),
 ):
     """Permanently removes a workflow's YAML together with its autosave
-    draft and full version history — there is no undo. Blocked (409) while
-    any pipeline still references this workflow by name."""
+    draft and full version history — there is no undo."""
     safe_name = _builder_name(name)
     if not BUILDER_STORE.workflow_path(safe_name).exists():
         raise HTTPException(status_code=404, detail=f"workflow '{name}' not found")
-
-    referencing = _pipelines_referencing_workflow(safe_name)
-    if referencing:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"'{name}' is used by pipeline(s): {', '.join(referencing)}. "
-                "Remove it from those pipelines before deleting it."
-            ),
-        )
 
     deleted = BUILDER_STORE.delete_workflow(safe_name)
     if not deleted:
@@ -987,6 +1136,25 @@ def _builder_version_id(version_id: str) -> str:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@lru_cache(maxsize=512)
+def _version_compatibility(yaml_text: str) -> dict[str, Any]:
+    """Return cached structural compatibility for immutable version content.
+
+    Immutable YAML content is the cache key, so the result is safe to reuse
+    across workflows. Full graph compilation still occurs in the restore
+    endpoint immediately before a snapshot can replace executable workflow
+    YAML.
+    """
+    report = preflight_workflow_yaml(yaml_text, compile_graph=False)
+    return {
+        "restorable": report.valid,
+        "preflight_issue_codes": list(dict.fromkeys(
+            issue.code for issue in report.errors
+        )),
+        "preflight_errors": [issue.message for issue in report.errors[:5]],
+    }
+
+
 @router.put("/workflows/{name}/draft")
 def save_workflow_draft(name: str, req: SaveDraftRequest):
     """Autosave a recoverable draft. Never compiled/preflighted — a draft may
@@ -1022,10 +1190,11 @@ def delete_workflow_draft(name: str):
 
 @router.get("/workflows/{name}/versions")
 def list_workflow_versions(name: str):
-    """List the workflow versions.
+    """List immutable versions without rewriting or preloading their YAML.
 
-    Args:
-        name (str): Workflow or resource name.
+    Compatibility is calculated lazily by the selected-version preview route,
+    keeping histories with many snapshots responsive. The restore endpoint
+    repeats the authoritative full check before writing.
     """
     safe_name = _builder_name(name)
     return BUILDER_STORE.list_versions(safe_name)
@@ -1045,7 +1214,10 @@ def get_workflow_version(name: str, version_id: str):
         yaml_text = BUILDER_STORE.get_version(safe_name, safe_version)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"version '{version_id}' not found")
-    return {"yaml": yaml_text}
+    return {
+        "yaml": yaml_text,
+        **_version_compatibility(yaml_text),
+    }
 
 
 @router.post("/workflows/{name}/versions/{version_id}/restore")

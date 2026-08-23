@@ -43,6 +43,8 @@ from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.runtime.state import WorkflowState
+
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.runtime.rules import (
@@ -204,7 +206,7 @@ class RouterConfig(BaseModel):
 class RouterOutput(BaseModel):
     #: In single selection: the one branch taken. In multi selection: the
     #: first selected branch, kept populated so anything reading `.route`
-    #: (Business View, ExplanationView, a `{{router.route}}` reference
+    #: (run inspectors, a `{{router.route}}` reference
     #: written before Multi-Route existed) still renders something
     #: meaningful — `.route` is display-only in multi mode, `.routes` is
     #: authoritative there.
@@ -359,7 +361,7 @@ class RouterAgent(NodeType):
 
     # -- deterministic: one field, one branch per value -----------------
 
-    def _route_by_field(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+    def _route_by_field(self, cfg: RouterConfig, state: WorkflowState) -> dict[str, Any]:
         """Internal helper for the route by field step.
 
         Args:
@@ -425,7 +427,7 @@ class RouterAgent(NodeType):
             "used_fallback": True,
         }
 
-    def _route_by_field_multi(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+    def _route_by_field_multi(self, cfg: RouterConfig, state: WorkflowState) -> dict[str, Any]:
         """Multi-Route, field mode: `route_field` resolves to a *list* of
         values (e.g. a Transform's classified `needs: [...]`), each mapped
         through `branches` the same way single-selection does — every match
@@ -496,7 +498,7 @@ class RouterAgent(NodeType):
 
     # -- deterministic: first matching condition group ------------------
 
-    def _route_by_conditions(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+    def _route_by_conditions(self, cfg: RouterConfig, state: WorkflowState) -> dict[str, Any]:
         """Internal helper for the route by conditions step.
 
         Args:
@@ -536,7 +538,9 @@ class RouterAgent(NodeType):
             "used_fallback": True,
         }
 
-    def _route_by_conditions_multi(self, cfg: RouterConfig, state: dict) -> dict[str, Any]:
+    def _route_by_conditions_multi(
+        self, cfg: RouterConfig, state: WorkflowState,
+    ) -> dict[str, Any]:
         """Multi-Route, conditions mode: every case is evaluated (never stop
         at the first match) and every matching route is collected — business
         policy here is additive, the same reasoning DecisionAgent's rule

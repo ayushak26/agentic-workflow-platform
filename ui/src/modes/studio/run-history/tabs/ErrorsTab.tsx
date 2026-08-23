@@ -86,13 +86,12 @@ export function ErrorsTab({
         </div>
       )}
       {hasRunLevelError && (
-        <ErrorCard title="Run-level failure" message={run.error ?? ''} stage={run.stage_id} />
+        <ErrorCard title="Run-level failure" message={run.error ?? ''} />
       )}
       {failedNodes.map((nodeRun) => (
         <ErrorCard
           key={nodeRun.node_id}
           title={`Node: ${nodeRun.node_id}`}
-          stage={run.stage_id}
           message={nodeRun.error ?? ''}
           errorType={nodeRun.error_type}
           traceback={nodeRun.error_traceback}

@@ -165,8 +165,8 @@ class NodeExperienceSpec(BaseModel):
     expected_output: str | None = None
     success_condition: str | None = None
     quality_checks: list[str] = Field(default_factory=list)
-    # In-progress vs. done copy for Business View's "current activity" line
-    # (§28/§79) — distinct from failure_message, which covers the error path.
+    # In-progress vs. done copy for workflow progress surfaces, distinct from
+    # failure_message, which covers the error path.
     running_message: str | None = None
     completed_message: str | None = None
     failure_message: str | None = None
@@ -530,6 +530,17 @@ class WorkflowSpec(BaseModel):
         for node in start_nodes:
             config = node.config
             if config.get("mode") == "chatbot":
+                # Chatbot Start always reads inputs.message (StartAgent.run),
+                # so expose that requirement through the same workflow input
+                # contract used by preflight, subprocesses, and Chat wrappers.
+                derived.setdefault(
+                    "message",
+                    WorkflowInputSpec(
+                        type="text",
+                        required=True,
+                        description="The user's chat message.",
+                    ),
+                )
                 if config.get("allow_attachments", True):
                     derived.setdefault(
                         "attachments",

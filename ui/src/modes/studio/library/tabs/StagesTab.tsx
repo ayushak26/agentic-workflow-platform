@@ -5,7 +5,7 @@ import type { YamlWorkflow } from '../../yaml-bridge';
 export function StagesTab({ parsed }: { parsed: YamlWorkflow }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // No live run — this is a structural preview of the same stage/step model
-  // Guided Run uses at execution time, computed with every node "pending".
+  // run progress uses at execution time, computed with every node "pending".
   const model = buildGuidedRuntimeModel({
     workflow: parsed,
     nodeStatuses: {},
@@ -23,7 +23,7 @@ export function StagesTab({ parsed }: { parsed: YamlWorkflow }) {
   return (
     <div className="library-tab-content">
       <p className="library-empty-note">
-        Business stages, not individual nodes — only steps that clarify
+        Workflow stages, not individual nodes — only steps that clarify
         responsibility or review independence show a role.
       </p>
       <ol className="library-stage-list">

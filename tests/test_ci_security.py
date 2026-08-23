@@ -42,6 +42,9 @@ def test_live_keys_are_confined_to_manual_protected_workflow():
     assert "persist-credentials: false" in raw
     assert "secrets.OPENAI_API_KEY" in raw
     assert "secrets.ANTHROPIC_API_KEY" in raw
+    assert "scripts/live_provider_smoke.py --provider openai" in raw
+    assert "scripts/live_provider_smoke.py --provider anthropic" in raw
+    assert "test_pipeline_integration.py" not in raw
 
 
 def test_commonly_leaked_secret_files_are_ignored():

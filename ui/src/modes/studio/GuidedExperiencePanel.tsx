@@ -44,8 +44,8 @@ export function GuidedExperiencePanel({
   if (!selected) {
     return (
       <div className="builder-panel-empty">
-        <strong>Select a node to design its Guided Run card.</strong>
-        <span>Business-language labels and explanations stay separate from the technical node ID.</span>
+        <strong>Select a node to design its workflow progress card.</strong>
+        <span>User-facing labels and explanations stay separate from the technical node ID.</span>
       </div>
     );
   }
@@ -60,7 +60,7 @@ export function GuidedExperiencePanel({
   const expectedOutput = experience.expected_output || 'Describe the usable result this activity produces.';
   const readabilityIssues = [
     !experience.display_name || /[_/]|(agent|node|\bllm\b|\bapi\b)/i.test(experience.display_name)
-      ? 'Use a short business-step name without technical terms.' : null,
+      ? 'Use a short workflow-step name without technical terms.' : null,
     !experience.purpose ? 'Explain why this step exists.' : null,
     !experience.contribution ? 'Explain how this result helps later work.' : null,
     !experience.expected_output ? 'Name the result a user can expect.' : null,
@@ -77,9 +77,9 @@ export function GuidedExperiencePanel({
   return (
     <div className="guided-experience-panel">
       <div className="builder-inspector-section">
-        <div className="builder-section-title">Guided Run identity</div>
+        <div className="builder-section-title">Workflow progress identity</div>
         <label className="guided-builder-field">
-          <span>Business step name <strong>Required to publish as visible</strong></span>
+          <span>Workflow step name <strong>Required to publish as visible</strong></span>
           <input
             value={experience.display_name ?? ''}
             onChange={event => update('display_name', event.target.value)}
@@ -88,7 +88,7 @@ export function GuidedExperiencePanel({
           <small>Shown instead of <code>{selected.data.nodeId}</code>.</small>
         </label>
         <label className="guided-builder-field">
-          <span>Business stage</span>
+          <span>Workflow stage</span>
           <select value={experience.stage_id ?? ''} onChange={event => update('stage_id', event.target.value || undefined)}>
             <option value="">Infer from this workflow</option>
             {stageOptions.map(([id, label]) => <option key={id} value={id}>{label}</option>)}

@@ -1,8 +1,8 @@
 import { useRef, useState, type FC } from "react";
-import { login } from "../../api/client";   // <-- add this import
+import { login } from "../../api/client";
 
 interface Props {
-  onLogin: (username: string) => void;       // <-- token no longer needed here
+  onLogin: (username: string) => void;
   /** Informational banner (e.g. "session expired") shown above the form. */
   notice?: string;
 }
@@ -22,7 +22,7 @@ export const LoginPage: FC<Props> = ({ onLogin, notice }) => {
     submittingRef.current = true;
     setLoading(true); setError("");
     try {
-      const result = await login(username, password);   // <-- sets _token in client.ts
+      const result = await login(username, password);
       onLogin(result.username);
     } catch {
       setError("Invalid credentials or cannot reach server");
@@ -73,10 +73,13 @@ export const LoginPage: FC<Props> = ({ onLogin, notice }) => {
           </div>
         )}
         <div style={{ marginBottom: 12 }}>
-          <label style={{ fontSize: 11, fontWeight: 500, color: "var(--eur-text-secondary)", display: "block", marginBottom: 5 }}>
+          <label htmlFor="login-username" style={{ fontSize: 11, fontWeight: 500, color: "var(--eur-text-secondary)", display: "block", marginBottom: 5 }}>
             Username
           </label>
           <input
+            id="login-username"
+            name="username"
+            autoComplete="username"
             value={username}
             onChange={e => setUsername(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleLogin()}
@@ -84,11 +87,14 @@ export const LoginPage: FC<Props> = ({ onLogin, notice }) => {
           />
         </div>
         <div style={{ marginBottom: 20 }}>
-          <label style={{ fontSize: 11, fontWeight: 500, color: "var(--eur-text-secondary)", display: "block", marginBottom: 5 }}>
+          <label htmlFor="login-password" style={{ fontSize: 11, fontWeight: 500, color: "var(--eur-text-secondary)", display: "block", marginBottom: 5 }}>
             Password
           </label>
           <input
+            id="login-password"
+            name="password"
             type="password"
+            autoComplete="current-password"
             value={password}
             onChange={e => setPassword(e.target.value)}
             onKeyDown={e => e.key === "Enter" && handleLogin()}

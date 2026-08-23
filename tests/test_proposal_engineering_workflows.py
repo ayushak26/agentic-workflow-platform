@@ -9,15 +9,11 @@ from app.runtime.loader import load_workflow
 from app.runtime.preflight import preflight_workflow_yaml
 
 
-# The monolithic horizon_partb_autonomous_docx.yaml and the monolithic
-# horizon_proposal_hitl_pdf.yaml were both retired in favor of the staged
-# Part B pipeline (see
-# workflows/horizon_partb_{evidence,drafts,drafts_to_docx}.yaml and
-# workflows/pipelines/horizon_partb.pipeline.yaml, its declared production
-# path). The structural invariants those monolith tests protected — human
-# review gates on the proposal path, explicit model selection for
-# generation-heavy steps, and a zero-token clean preflight — are asserted
-# here against the staged replacement instead.
+# The monolithic horizon_partb_autonomous_docx.yaml and
+# horizon_proposal_hitl_pdf.yaml were retired in favor of three standalone
+# Part B workflows. The structural invariants those monolith tests protected
+# — human review gates, explicit model selection for generation-heavy steps,
+# and a zero-token clean preflight — are asserted against those workflows.
 STAGED_PARTB = [
     Path("workflows/horizon_partb_evidence.yaml"),
     Path("workflows/horizon_partb_drafts.yaml"),

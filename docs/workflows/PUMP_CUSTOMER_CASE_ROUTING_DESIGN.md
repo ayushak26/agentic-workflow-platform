@@ -985,8 +985,8 @@ other six would mean adding an unknown branch to each.
 **G4 — No `experience` metadata.**
 This workflow declares no per-node `experience` block, while
 `crm_aware_customer_triage.yaml` and `multilingual_customer_request_triage.yaml`
-do. Business View therefore falls back to humanised node ids — a business user
-sees *"Rfq Named Kam"* rather than curated stage language. Adding `experience`
+do. Workflow progress surfaces therefore fall back to humanised node ids — a
+user sees *"Rfq Named Kam"* rather than curated stage language. Adding `experience`
 to the terminal routes and gates is pure YAML and changes no routing.
 
 **G5 — Work items are not child runs.**

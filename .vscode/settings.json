@@ -27,7 +27,11 @@
   "python.testing.pytestArgs": [
     "tests"
   ],
-  "js/ts.tsdk.path": "${workspaceFolder}/ui/node_modules/typescript/lib",
+  // Use the same TypeScript version as `npm run build`. This window-scoped
+  // setting expects a workspace-relative path; `${workspaceFolder}` here left
+  // the editor on its bundled TypeScript server.
+  "js/ts.tsdk.path": "ui/node_modules/typescript/lib",
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true,
   "eslint.workingDirectories": [
     "${workspaceFolder}/ui"
   ]

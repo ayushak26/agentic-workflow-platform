@@ -4,8 +4,7 @@ Covers the 6 workflows: `pump_routing_level_1`, `pump_routing_level_2`,
 `pump_manufacturer_case_routing`, `horizon_partb_evidence`,
 `horizon_partb_drafts`, `horizon_partb_drafts_to_docx`.
 
-Built from (1) a full read of all 6 YAML files plus
-`workflows/pipelines/horizon_partb.pipeline.yaml`, (2) the Builder frontend
+Built from (1) a full read of all 6 YAML files, (2) the Builder frontend
 source (`ui/src/modes/studio/**`) and the live `GET /api/node-types` schema,
 and (3) live verification in the running Builder — each of the 6 workflows
 was opened via `/builder/<slug>` and a representative node of every distinct
@@ -64,7 +63,7 @@ use_case, library, inputs, entry, exit, output, nodes, edges` (only
 | `nodes` | Canvas + node palette ("+ Add") + Inspector | **Structured** | Add/remove/select nodes on canvas; each node's own `config`/`experience` is covered in Part B/C below. |
 | `edges` (plain `{from,to}` or fan-out `{from,to:[...]}`) | Canvas — drag from a node's right (source) handle to another node's left (target) handle | **Structured** | Straightforward drag-to-connect. Deleting: click the edge, delete. |
 | `edges` (router branch shape: `{from,condition,branches:{NAME: node_id}}`) | **Router node's own Configure tab** — NOT drawn by dragging on canvas | **Structured, but indirect** | This is the one edge shape you don't create by dragging a connector. It's generated when you fill in a Router's "Route using" field / branches / "Otherwise, send to" fallback in Configure — the Builder writes the corresponding `condition`/`branches` edge for you. If you hand-edit a branch target in YAML without going through the Router's Configure tab, the canvas will still render it as a connection, but you've bypassed the normal authoring path. |
-| per-node `experience` block (`display_name, purpose, contribution, expected_output, failure_message`, sometimes `success_condition`) | Node's **Advanced** tab → "Guided Run Identity" section (`display_name`→"Business step name", `purpose`, `contribution`, `expected_output`, `failure_message` each get their own field; also `visibility` and "Business stage") | **Structured** | Fully editable per node. **Important:** all 66 nodes across the 3 Horizon files omit `experience` entirely — if you want Guided Run / Business View to say anything sensible for those workflows, this is 66 nodes of Advanced-tab work with zero existing examples to copy from in those files (the 59 pump nodes all have it filled in already, so copy the *shape* from there). |
+| per-node `experience` block (`display_name, purpose, contribution, expected_output, failure_message`, sometimes `success_condition`) | Node's **Advanced** tab → "Workflow progress identity" section (`display_name`→"Workflow step name", `purpose`, `contribution`, `expected_output`, `failure_message` each get their own field; also `visibility` and "Workflow stage") | **Structured** | Fully editable per node. **Important:** all 66 nodes across the 3 Horizon files omit `experience` entirely — if you want workflow progress surfaces to say anything sensible for those workflows, this is 66 nodes of Advanced-tab work with zero existing examples to copy from in those files (the 59 pump nodes all have it filled in already, so copy the *shape* from there). |
 
 ---
 
@@ -208,8 +207,8 @@ Router "layers," and 4 Human Review nodes.
 
 ### C.4 — `horizon_partb_evidence.yaml` (33 nodes, entry: `load_concept`, exit: 4 nodes)
 
-Stage 1 of the Horizon Part B pipeline. **No node in this file has an
-`experience` block** (unlike every pump node) — Advanced-tab Guided Run
+Evidence workflow in the Horizon Part B sequence. **No node in this file has an
+`experience` block** (unlike every pump node) — Advanced-tab workflow progress
 identity is currently blank for all 33 nodes.
 
 | id | type | Notes |
@@ -299,7 +298,7 @@ the UI in isolation:
    YAML-editing task, full stop.
 4. **`experience` blocks are all-or-nothing per node, and all 66 Horizon
    nodes currently have none.** If Horizon workflows need to show up
-   sensibly in Guided Run/Business View, that's ~66 nodes' worth of Advanced
+   sensibly in workflow progress surfaces, that's ~66 nodes' worth of Advanced
    tab data entry (or 66 nodes' worth of YAML you could paste in bulk,
    copying the 5-key shape already used by all 59 pump nodes) — either way,
    it's the single largest piece of *missing* content across these 6 files.

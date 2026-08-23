@@ -54,15 +54,12 @@ export function RunWorkspace({
   actionErr,
   retryErr,
   autofixErr,
-  blockingPipelineId,
   onPause,
   onResume,
   onRestart,
   onDelete,
-  onAbandonAndDelete,
   onRetry,
   onOpenInCockpit,
-  onOpenInBusinessView,
   onAutofix,
   autofixBusy,
   onOpenProposalReview,
@@ -76,15 +73,12 @@ export function RunWorkspace({
   actionErr: string | null;
   retryErr: string | null;
   autofixErr?: string | null;
-  blockingPipelineId?: string | null;
   onPause: () => void;
   onResume: () => void;
   onRestart: () => void;
   onDelete: () => void;
-  onAbandonAndDelete?: () => void;
   onRetry: () => void;
   onOpenInCockpit: () => void;
-  onOpenInBusinessView: () => void;
   onAutofix: () => void;
   autofixBusy: boolean;
   onOpenProposalReview: () => void;
@@ -121,11 +115,6 @@ export function RunWorkspace({
               <span className="text-base font-semibold text-ink-900 truncate" title={run.workflow_name}>
                 {run.workflow_name}
               </span>
-              {run.stage_id && (
-                <span className="flex-none px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-700 text-[11px] font-medium">
-                  {run.stage_id}{run.stage_index != null && run.total_stages ? ` (${run.stage_index + 1}/${run.total_stages})` : ''}
-                </span>
-              )}
               <StatusPill status={run.status} label={RUN_STATUS_LABEL[run.status] ?? run.status} />
               {(run.attempt ?? 1) > 1 && (
                 <span className="flex-none text-[11px] text-cyan-700">Attempt {run.attempt}</span>
@@ -187,12 +176,6 @@ export function RunWorkspace({
             {/* Secondary actions. */}
             {run.workflow_yaml && (
               <>
-                <button
-                  onClick={onOpenInBusinessView}
-                  className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
-                >
-                  Open Business View
-                </button>
                 <button
                   onClick={onOpenInCockpit}
                   className="px-3 py-1.5 rounded-md border border-slate-300 text-xs text-ink-700 hover:bg-slate-50"
@@ -303,15 +286,6 @@ export function RunWorkspace({
         {(actionErr || retryErr || autofixErr) && (
           <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
             <div>{actionErr ?? retryErr ?? autofixErr}</div>
-            {actionErr && blockingPipelineId && onAbandonAndDelete && (
-              <button
-                onClick={onAbandonAndDelete}
-                disabled={actionBusy !== null}
-                className="mt-1.5 px-2 py-1 rounded bg-red-600 text-white text-[11px] font-medium hover:bg-red-500 disabled:opacity-50"
-              >
-                {actionBusy === 'delete' ? 'Abandoning & deleting…' : 'Abandon pipeline & delete this run'}
-              </button>
-            )}
           </div>
         )}
 

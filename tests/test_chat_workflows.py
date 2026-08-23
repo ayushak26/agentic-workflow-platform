@@ -69,6 +69,68 @@ async def test_import_is_private_owner_scoped_and_forces_draft_visibility():
 
 
 @pytest.mark.asyncio
+async def test_private_workflow_list_hides_managed_and_legacy_workspace_adapters_by_default():
+    db = InMemoryDB()
+    store = ChatWorkflowStore(db)
+    authored = await store.create(
+        owner_scope_id="alice-scope", slug="my-workflow", display_name="My Workflow",
+        description="", yaml_text=VALID_YAML, source="imported",
+    )
+    managed = await store.create(
+        owner_scope_id="alice-scope", slug="managed-web", display_name="Web Assistant",
+        description="", yaml_text=VALID_YAML, source="imported",
+        managed=True, adapter_key="web:default", adapter_fingerprint="abc",
+    )
+    legacy = await store.create(
+        owner_scope_id="alice-scope", slug="workspace-legacy", display_name="Legacy Adapter",
+        description="", yaml_text=VALID_YAML, source="imported",
+    )
+
+    default_result = await api.list_private_chat_workflows(request(db), ALICE)
+    all_result = await api.list_private_chat_workflows(request(db), ALICE, include_managed=True)
+
+    assert [item["id"] for item in default_result["workflows"]] == [authored.chat_workflow_id]
+    assert {item["id"] for item in all_result["workflows"]} == {
+        authored.chat_workflow_id, managed.chat_workflow_id, legacy.chat_workflow_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_managed_adapter_upgrades_canonical_yaml_in_place():
+    db = InMemoryDB()
+    first = await api.ensure_managed_adapter(
+        request(db), ALICE,
+        adapter_key="capability:test", display_name="Managed Test",
+        yaml_text=VALID_YAML, source="imported",
+    )
+    updated_yaml = VALID_YAML.replace("value: hello", "value: upgraded")
+    second = await api.ensure_managed_adapter(
+        request(db), ALICE,
+        adapter_key="capability:test", display_name="Managed Test v2",
+        yaml_text=updated_yaml, source="imported",
+    )
+
+    assert second.chat_workflow_id == first.chat_workflow_id
+    assert second.display_name == "Managed Test v2"
+    assert "value: upgraded" in second.yaml
+    assert second.adapter_fingerprint != first.adapter_fingerprint
+    assert len(db["chat_workflows"].docs) == 1
+
+
+@pytest.mark.asyncio
+async def test_builder_execution_adapter_adds_universal_input_and_output_llm_calls():
+    result = await api.get_builder_chat_execution_adapter("verder_email_intake", ALICE)
+
+    assert result["adapted"] is True
+    assert result["yaml"].count("type: TransformAgent") >= 2
+    assert "workflow: verder_email_intake" in result["yaml"]
+    assert "email_text: '{{outputs.prepare_inputs.parsed.email_text}}'" in result["yaml"]
+    assert "source_file: '{{outputs.prepare_inputs.parsed.source_file}}'" in result["yaml"]
+    assert "processed_at: '{{outputs.prepare_inputs.parsed.processed_at}}'" in result["yaml"]
+    assert "structured_result: '{{outputs.run_workflow.result}}'" in result["yaml"]
+
+
+@pytest.mark.asyncio
 async def test_duplicate_slug_is_per_owner():
     db = InMemoryDB()
     body = api.ImportChatWorkflowRequest(
@@ -97,6 +159,42 @@ async def test_deep_research_preset_is_idempotent_and_owner_scoped():
     detail = await api.get_private_chat_workflow(alice_first["id"], request(db), ALICE)
     assert "BoundedDeepResearchAgent" in detail["yaml"]
     assert "ResearchSourceAcquirer" in detail["yaml"]
+    assert "WebSearchAgent" in detail["yaml"]
+    assert "paper-search-mcp" in detail["yaml"]
+    assert "WorkflowFileLoader" in detail["yaml"]
+    assert "gpt-5.6-sol" in detail["yaml"]
+    assert "visibility_status: draft" in detail["yaml"]
+
+
+@pytest.mark.asyncio
+async def test_deep_research_rag_variant_is_reusable_and_bound_to_saved_agent():
+    db = InMemoryDB()
+    first = await api.ensure_deep_research_chat_workflow(request(db), ALICE, "rag-agent-1")
+    second = await api.ensure_deep_research_chat_workflow(request(db), ALICE, "rag-agent-1")
+    other = await api.ensure_deep_research_chat_workflow(request(db), ALICE, "rag-agent-2")
+
+    assert first["id"] == second["id"]
+    assert other["id"] != first["id"]
+    detail = await api.get_private_chat_workflow(first["id"], request(db), ALICE)
+    assert "type: RAGAgent" in detail["yaml"]
+    assert "rag_agent_id: rag-agent-1" in detail["yaml"]
+    assert "paper-search-mcp" in detail["yaml"]
+
+
+@pytest.mark.asyncio
+async def test_general_chat_preset_is_idempotent_owner_scoped_and_saved():
+    db = InMemoryDB()
+    alice_first = await api.ensure_general_chat_workflow(request(db), ALICE)
+    alice_second = await api.ensure_general_chat_workflow(request(db), ALICE)
+    bob = await api.ensure_general_chat_workflow(request(db), BOB)
+
+    assert alice_first["id"] == alice_second["id"]
+    assert bob["id"] != alice_first["id"]
+    assert alice_first["slug"] == "general-chat"
+    assert alice_first["name"] == "General Chat"
+    detail = await api.get_private_chat_workflow(alice_first["id"], request(db), ALICE)
+    assert "name: General Chat" in detail["yaml"]
+    assert "TransformAgent" in detail["yaml"]
     assert "visibility_status: draft" in detail["yaml"]
 
 
@@ -119,6 +217,58 @@ async def test_copy_existing_never_changes_or_creates_a_global_workflow(tmp_path
     assert copied["source_workflow_name"] == "shared"
     assert source.read_text(encoding="utf-8") == VALID_YAML
     assert sorted(path.name for path in tmp_path.glob("*.yaml")) == ["shared.yaml"]
+
+
+@pytest.mark.asyncio
+async def test_get_repairs_legacy_planner_wrapper_for_chatbot_workflow():
+    db = InMemoryDB()
+    source_name = "w01_intelligent_customer_inquiry_resolution"
+    legacy_yaml = """
+name: Legacy Wrapper
+version: '1.0'
+entry: start
+exit: reply
+nodes:
+  - id: start
+    type: StartAgent
+    config:
+      mode: chatbot
+  - id: run_workflow
+    type: SubprocessAgent
+    config:
+      workflow: w01_intelligent_customer_inquiry_resolution
+      inputs:
+        attachments: '{{outputs.start.attachments}}'
+      result_from: workflow_output
+  - id: reply
+    type: EndAgent
+    config:
+      mode: chat_response
+      chat_message: done
+edges:
+  - from: start
+    to: run_workflow
+  - from: run_workflow
+    to: reply
+"""
+    record = await ChatWorkflowStore(db).create(
+        owner_scope_id="alice-scope",
+        slug="workspace-legacy",
+        display_name="Legacy",
+        description="",
+        yaml_text=legacy_yaml,
+        source="existing",
+        source_workflow_name=source_name,
+    )
+
+    detail = await api.get_private_chat_workflow(record.chat_workflow_id, request(db), ALICE)
+
+    assert "message: '{{outputs.prepare_inputs.parsed.message}}'" in detail["yaml"]
+    assert detail["yaml"].count("type: TransformAgent") >= 2
+    assert "structured_result: '{{outputs.run_workflow.result}}'" in detail["yaml"]
+    stored = db["chat_workflows"].docs[0]
+    assert stored["yaml"] == detail["yaml"]
+    assert stored["updated_at"] != record.updated_at
 
 
 @pytest.mark.asyncio

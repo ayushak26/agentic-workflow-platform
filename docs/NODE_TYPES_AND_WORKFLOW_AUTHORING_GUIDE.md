@@ -70,9 +70,9 @@ The Builder's palette groups every node type into one of nine categories (`app/n
 
 Every node also gets an **About tab** in the Builder's node inspector — `what` it does, `why` it exists, `receives`/`produces`, whether it `uses_ai` or performs an `external_action`, and optionally `presets` (pre-filled configuration starting points — never a distinct node type) and `operators`. The 8 core node types hand-author this dict. The ~40 specialized types don't — instead, `app/nodes/about_synthesis.py` derives a usable About tab for them automatically from the node's own schemas plus real adjacency mined from every workflow YAML already on disk (which node types most often precede/follow this one, and a link to a real example workflow). Nothing here is invented — every derived field is either a schema field name or a fact observed in a real workflow file.
 
-### 2.3 The `experience` block (Guided Run copy)
+### 2.3 The `experience` block (Workflow progress copy)
 
-A node in a YAML workflow may carry an `experience:` block alongside its `config:` — this is what a non-technical reviewer sees in "Guided Run" mode instead of raw node/field names:
+A node in a YAML workflow may carry an `experience:` block alongside its `config:`. Shared Workflow progress surfaces use this presentation metadata instead of raw node and field names:
 
 ```yaml
 experience:
@@ -464,11 +464,11 @@ The tables below are the full reference — organize your debugging by looking u
 | `FILE_INPUT_REFERENCE_INVALID` | A file input isn't a proper uploaded-file reference. | Upload through the platform rather than passing an arbitrary value. |
 | `UNDECLARED_INPUT` (warning) | A run supplied an input the workflow doesn't declare. | Remove it, or declare it. |
 
-### Guided Run authoring copy
+### Workflow progress authoring copy
 
 | Code | What it catches | How to fix |
 |---|---|---|
-| `GUIDED_EXPERIENCE_INCOMPLETE` | A user-visible node is missing one of `display_name`/`purpose`/`contribution`/`expected_output`/`failure_message`. | Fill in the Guided tab, or mark the step `visibility: advanced`. |
+| `GUIDED_EXPERIENCE_INCOMPLETE` | A user-visible node is missing one of `display_name`/`purpose`/`contribution`/`expected_output`/`failure_message`. | Fill in the Workflow progress fields, or mark the step `visibility: advanced`. |
 | `GUIDED_COPY_TECHNICAL` (warning) | `display_name` contains jargon (`agent`, `node`, `llm`, `api`, underscores, slashes). | Rewrite as a short business action, e.g. "Map the call requirements". |
 | `GUIDED_ROLE_MISSING` | `show_agent_role: true` but the role text is empty. | Name the role, or turn off `show_agent_role`. |
 

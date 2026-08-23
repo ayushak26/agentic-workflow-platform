@@ -36,6 +36,11 @@ def main() -> None:
     ready_status, _, ready_body = request(f"{base}/ready")
     docs_status, _, _ = request(f"{base}/docs")
     metrics_status, _, _ = request(f"{base}/metrics")
+    runs_status, _, _ = request(f"{base}/api/runs/mine")
+    pipelines_status, _, _ = request(f"{base}/api/pipelines")
+    business_status, _, _ = request(
+        f"{base}/api/runs/mine/removed-smoke-run/business-projection"
+    )
 
     failures: list[str] = []
     if health_status != 200:
@@ -50,6 +55,18 @@ def main() -> None:
         failures.append(f"/docs should be private but returned {docs_status}")
     if metrics_status != 404:
         failures.append(f"/metrics should be private but returned {metrics_status}")
+    if runs_status != 401:
+        failures.append(
+            "/api/runs/mine should be mounted and authentication-protected "
+            f"but returned {runs_status}"
+        )
+    if pipelines_status != 404:
+        failures.append(f"/api/pipelines should be removed but returned {pipelines_status}")
+    if business_status != 404:
+        failures.append(
+            "Removed Business run endpoint should return 404 but returned "
+            f"{business_status}"
+        )
     required_headers = (
         "Strict-Transport-Security",
         "Content-Security-Policy",

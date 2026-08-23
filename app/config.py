@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     retrieval_reranker_model: str = "gpt-5.6-sol"
     retrieval_compressor_model: str = "gpt-5.6-sol"
     retrieval_trace_retention_days: int = 30
+    # A Knowledge search is a multi-stage operation: vector queries, fusion,
+    # optional LLM rewrite/rerank/compression, and context assembly. Do not cap
+    # that whole pipeline with the generic 30-second per-service I/O deadline.
+    knowledge_retrieval_timeout_seconds: float = Field(default=240.0, gt=0, le=900)
 
     weaviate_host: str = "weaviate"
     weaviate_port: int = 8080

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import app.nodes  # noqa: F401
 from app.proposal_graph.graph import ProposalGraph
 from app.proposal_graph.models import Claim
 from app.proposal_graph.state import proposal_graph_state_update
-from app.runtime.pipeline_preflight import preflight_pipeline_yaml
 from app.tools.database_lookup import DatabaseResponse
 from app.tools.web_io import WebResult, WebSearchResponse
 from app.nodes.registry import NodeRegistry
+from app.runtime.state import WorkflowState
 
 
 class MemoryObjectStore:
@@ -98,7 +99,7 @@ class InternalExtractionLLM:
         )
 
 
-def _proposal_state() -> dict:
+def _proposal_state() -> WorkflowState:
     graph = ProposalGraph(
         claims={
             "CL-1": Claim(
@@ -107,7 +108,7 @@ def _proposal_state() -> dict:
             )
         }
     )
-    return proposal_graph_state_update(graph)
+    return cast(WorkflowState, proposal_graph_state_update(graph))
 
 
 async def test_structured_dataset_retriever_creates_hashed_traceable_rows():
@@ -272,12 +273,3 @@ async def test_truth_graph_fails_closed_without_evidence_gate_approval():
 
     assert approved_result["drafting_allowed"] is True
     assert approved_result["approval_required"] is False
-
-
-def test_staged_horizon_pipeline_passes_cross_stage_preflight():
-    path = Path("workflows/pipelines/horizon_partb.pipeline.yaml")
-
-    report = preflight_pipeline_yaml(path.read_text(encoding="utf-8"))
-
-    assert report.valid, [item.message for item in report.errors]
-    assert report.stage_count == 3

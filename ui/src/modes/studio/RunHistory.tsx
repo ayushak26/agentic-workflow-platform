@@ -52,7 +52,7 @@ export function RunHistory() {
   // Nothing selected yet — land on the most recent run rather than an
   // empty page, same as before.
   useEffect(() => {
-    if (!runId && data.runs.length > 0) navigate(`/history/${data.runs[0].run_id}`, { replace: true });
+    if (!runId && data.runs.length > 0) navigate(`/workflow-runs/${data.runs[0].run_id}`, { replace: true });
   }, [runId, data.runs, navigate]);
 
   // A stale `?node=` from the previous run must never leak into the new
@@ -70,7 +70,7 @@ export function RunHistory() {
   }, [runId]);
 
   function selectRun(nextRunId: string) {
-    navigate(`/history/${nextRunId}${tabParam ? `?tab=${tabParam}` : ''}`);
+    navigate(`/workflow-runs/${nextRunId}${tabParam ? `?tab=${tabParam}` : ''}`);
   }
 
   function setTab(tab: WorkspaceTab) {
@@ -135,15 +135,12 @@ export function RunHistory() {
             actionErr={data.actionErr}
             retryErr={data.retryErr}
             autofixErr={data.autofixErr}
-            blockingPipelineId={data.blockingPipelineId}
             onPause={data.pauseRun}
             onResume={data.resumeRun}
             onRestart={data.restartRun}
             onDelete={data.deleteRun}
-            onAbandonAndDelete={data.abandonBlockingPipelineAndDelete}
             onRetry={data.retryFailedRun}
             onOpenInCockpit={() => data.openInCockpit(selectedNodeId)}
-            onOpenInBusinessView={data.openInBusinessView}
             onAutofix={() => void data.autofixAndOpenInBuilder()}
             autofixBusy={data.autofixBusy}
             onOpenProposalReview={() => navigate(`/proposal-review/${data.detail!.run.run_id}`)}

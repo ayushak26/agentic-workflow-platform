@@ -55,9 +55,9 @@
 
 | User | Surface | What they need |
 |---|---|---|
-| Project administrator / domain expert | Guided Run (`/guided/:runId`) | Business stages, one attention queue, outputs, approve/reject/edit |
+| Project administrator / domain expert | Chat (`/chat`) and Workflows (`/workflows`) | Discover, launch and follow workflows in plain language |
 | Workflow author | Builder (`/builder/:name`) | Typed node config, data mapping, preflight, versions |
-| Technical reviewer | Cockpit (`/cockpit/:runId`), Run History (`/history`) | Node lifecycle, failures, audit, retry |
+| Technical reviewer | Cockpit (`/cockpit/:runId`), Run History (`/workflow-runs`) | Node lifecycle, failures, audit, retry |
 | Operator | Operator Console mode, `/health`, `/ready`, `/metrics` | Readiness, cost, corpus inspection |
 | Evaluator | Evaluation Lab mode, `/api/eval/*` | Scorecards, golden sets |
 
@@ -81,9 +81,7 @@ Before anything executes, **preflight** ([`app/runtime/preflight.py`](../app/run
 
 **Live progress** reaches the browser over **Server-Sent Events** at `GET /api/runs/{run_id}/events`. `RunEventBus` ([`app/runtime/events.py`](../app/runtime/events.py)) is a Redis stream + pub/sub with bounded, TTL'd replay (falling back to in-process queues when Redis is absent), so a reconnecting client can pass `Last-Event-ID` and catch up — across workers, not just within the one that ran the workflow. The frontend does not use `EventSource` (which cannot send an `Authorization` header) — it reads the response body stream manually in `streamRunEvents` ([`ui/src/api/client.ts:710`](../ui/src/api/client.ts)).
 
-**The frontend** is a React 19 SPA with three top-level modes selected by local state in `App.tsx`, not by URL: Workflow Studio, Evaluation Lab, Operator Console. Studio owns the router ([`ui/src/modes/studio/StudioRoot.tsx`](../ui/src/modes/studio/StudioRoot.tsx)) with routes for Library, Builder, Guided Run, Cockpit, Run History, Pipelines and Proposal Review. There is no Redux/Zustand/React-Query layer: server state is fetched in `useEffect` hooks and held in `useState`, with two large custom hooks (`useCockpitRun`, and the guided runtime model) doing the derivation work.
-
-**Beyond single workflows**, the repository also implements **pipelines** ([`app/runtime/pipeline_executor.py`](../app/runtime/pipeline_executor.py), `pipeline_schema.py`) — multi-stage orchestration where each stage is a whole workflow and later stages consume earlier stages' outputs, with explicit human advance between stages.
+**The frontend** is a React 19 SPA with three top-level modes selected by local state in `App.tsx`, not by URL: Workflow Studio, Evaluation Lab, Operator Console. Studio owns the router ([`ui/src/modes/studio/StudioRoot.tsx`](../ui/src/modes/studio/StudioRoot.tsx)) with canonical routes for Chat, Workflows, Builder, Cockpit, Run History and Proposal Review. There is no Redux/Zustand/React-Query layer: server state is fetched in `useEffect` hooks and held in `useState`, with custom hooks deriving live run state.
 
 **Evidence integrity** is the domain-specific heart of the system. `app/evidence/` declares fail-closed contracts (`EvidencePolicy` with every permissive flag defaulting to `False` and `extra="forbid"`), and a chain of node types moves material from *candidate* → *acquired immutable full text* → *exact-passage verification* → *VerifiedClaim* → drafting. The architectural rule, stated in code and comments throughout, is that search snippets and model summaries never become evidence by repetition.
 
@@ -108,7 +106,7 @@ Only capabilities I confirmed in code are listed.
 | Evidence lifecycle + claim verification | `app/evidence/`, `app/nodes/claim_evidence_verifier.py` |
 | Document rendering (DOCX/PDF/HTML/PPTX/XLSX) | `app/tools/`, `app/nodes/*renderer*.py` |
 | Confidential entity tokenisation | `app/security/entity_tokenizer.py`, `entity_vault.py` |
-| Multi-workflow pipelines | `app/runtime/pipeline_*.py`, `app/api/pipelines.py` |
+| Conversation-scoped workflow runs | `app/api/chat_workflows.py`, `app/workflow/chat_workflow_store.py` |
 | Evaluation / scorecards | `app/evaluation/`, `app/api/eval.py` |
 | File upload + extraction | `app/workflow/file_inputs.py`, `app/api/workflow_files.py` |
 | MCP tool integration | `app/mcp/`, `app/nodes/mcp_agent.py` |
@@ -134,7 +132,7 @@ Draw four boxes.
 
 **Box 3 — The boundary.** Nodes never touch the graph directly. `compile_workflow` wraps every node instance in `_make_runtime_fn`, and *that* function is what LangGraph calls. It is where the run ID gets bound to the LLM gateway (so cost lands on the right node), where lifecycle events are published, where audit rows are written, where `{{templates}}` in the node's config are resolved against live state, where a pause request is honoured, and where the node's return value is validated against its declared `output_schema`. Forty-three node types, one operational contract. When you are debugging "why did this node behave like that", this function is where you start.
 
-**Box 4 — The truth.** The durable record of a run is one MongoDB document in `run_history`, patched incrementally by the boundary as each node starts, completes, fails, is reused or pauses. Guided Run, Cockpit, Run History and the audit panel are four *renderings of that one document*, which is why you can move between them without starting a second run. When the document would exceed Mongo's 16 MB limit, `_externalize_if_large` transparently spills payloads to GridFS and stores a pointer.
+**Box 4 — The truth.** The durable record of a run is one MongoDB document in `run_history`, patched incrementally by the boundary as each node starts, completes, fails, is reused or pauses. Chat, Cockpit, Run History and the audit panel render that same document. Conversation-only Chat runs are hidden from global history but remain directly addressable. When the document would exceed Mongo's 16 MB limit, `_externalize_if_large` transparently spills payloads to GridFS and stores a pointer.
 
 **Now draw the arrows.**
 
@@ -244,7 +242,7 @@ agentic-workflow-platform/
 │   ├── runtime/                  # ★ Workflow engine: schema, preflight, compiler, executor, HITL, events, coordination
 │   ├── nodes/                    # 43 node types + registry + category map
 │   ├── llm/                      # Provider gateways, model registry, router, semantic cache, batch
-│   ├── workflow/                 # Durable stores: run history, builder store, file inputs, pipelines history
+│   ├── workflow/                 # Durable stores: run history, builder, chat workflows, prompt templates, file inputs
 │   ├── evidence/                 # Evidence contracts, claim verification, identifiers, retrieval
 │   ├── proposal_graph/           # Proposal-domain graph: concepts, coverage, Horizon evaluation
 │   ├── research/                 # Bounded Deep Research + scientific skill catalog
@@ -265,12 +263,11 @@ agentic-workflow-platform/
 │       ├── components/           # auth/, layout/, studio/, ui/ — small shared set
 │       ├── hooks/                # useRunEvents, useRunSocket
 │       ├── modes/
-│       │   ├── studio/           # ★ Library, Builder, Cockpit, GuidedRun, RunHistory, Pipelines
+│       │   ├── studio/           # ★ Chat, Workflows, Builder, Cockpit, Run History
 │       │   ├── eval/             # Evaluation Lab
 │       │   └── operator/         # Operator Console, corpus inspector
 │       └── styles/globals.css    # Brand tokens (navy #092536, teal #007f7b)
 ├── workflows/                    # ★ The workflow contract instances — 20 executable YAML files
-│   ├── pipelines/                # Multi-stage pipeline definitions
 │   ├── collections/              # Corpus/collection definitions (default, proposal)
 │   ├── test_fixtures/            # Small workflows used by tests
 │   └── .builder/                 # (runtime) autosaved drafts — not executable, gitignored
@@ -353,8 +350,9 @@ MongoDB           sync ping (3s timeout) → async motor wrapper
    │  ├─ CollectionRegistry, audit_db
    │  ├─ run_migrations(audit_db)  ← app/db/migrations.py; MigrationError is the
    │  │                              one Mongo failure that ABORTS boot (below)
-   │  ├─ ensure_indexes × 6 (run history, pipelines, claim verifications,
-   │  │                      run chat, preflight stats, proposal workspace)
+   │  ├─ ensure_indexes (run history, claim verifications, run chat,
+   │  │                  chat workflows, prompt templates, preflight stats,
+   │  │                  proposal workspace)
    │  ├─ EntityTokenizerService + index creation
    │  ├─ eager _load_kek() warning if entity protection ≠ public
    │  └─ CostLedger(db)  ← raw *sync* pymongo Database
@@ -418,7 +416,7 @@ Reverse order, after `yield`: cancel the cleanup task, close `background_run_man
 | **Test bootstrap** | `tests/conftest.py` | Provides `StubLLM` and fixtures; `tests/fake_mongo.py` provides an in-memory Mongo double |
 | **Operational scripts** | `scripts/*.py` (25) | `smoke_production.py`, `load_test.py`, `seed_collections.py`, `manage_user.py`, `generate_production_env.py`, `render_sample_proposal*.py`, … |
 
-**Schema evolution has two halves.** Indexes are handled by idempotent `ensure_indexes()` calls at startup (§9.5). *Document shape* is handled by a versioned migration runner, `run_migrations()` in [`app/db/migrations.py`](../app/db/migrations.py) — index creation is not a data-migration strategy, because old documents keep their old shape. Each `Migration` is recorded in the `schema_migrations` collection once applied, so it runs at most once; a Mongo lease (`__migration_lock__`, 300 s, renewed while working) stops concurrent Uvicorn workers from backfilling the same population simultaneously. `CURRENT_RUN_SCHEMA_VERSION` is `1`, whose migration backfills the explicit v1 shape onto legacy run and checkpoint documents. Failure raises `MigrationError`, which is the one Mongo problem that aborts boot rather than degrading.
+**Schema evolution has two halves.** Indexes are handled by idempotent `ensure_indexes()` calls at startup (§9.5). *Document shape* is handled by a versioned migration runner, `run_migrations()` in [`app/db/migrations.py`](../app/db/migrations.py) — index creation is not a data-migration strategy, because old documents keep their old shape. Each `Migration` is recorded in the `schema_migrations` collection once applied, so it runs at most once; a Mongo lease (`__migration_lock__`, 300 s, renewed while working) stops concurrent Uvicorn workers from changing the same population simultaneously. Migration `0001` backfills the explicit v1 run shape, `0002` expands legacy Knowledge resources, and `0003` removes persistence owned by the retired Business View and Pipeline products while preserving Workflow run documents and authored `experience.stage_id` grouping. Failure raises `MigrationError`, which is the one Mongo problem that aborts boot rather than degrading.
 
 ---
 
@@ -517,9 +515,9 @@ There is **no** `UserService`/`OrderService`-style layer. Business orchestration
 ```mermaid
 flowchart TB
     subgraph Client["Browser — React 19 SPA"]
-        Lib["Workflow Library"]
+        Chat["Chat"]
+        Lib["Workflows"]
         Bld["Builder (reactflow)"]
-        Gui["Guided Run"]
         Cok["Cockpit"]
         Hist["Run History"]
     end
@@ -529,7 +527,7 @@ flowchart TB
         Auth["/auth/token · JWT in HttpOnly cookie"]
         R1["/api/workflows/*"]
         R2["/api/runs/*"]
-        R3["/api/proposals/* · /api/eval/* · /api/pipelines/*"]
+        R3["/api/chat-workflows/* · /api/proposals/* · /api/eval/*"]
         SSE["GET /api/runs/:id/events (SSE)"]
         Health["/health · /ready · /metrics"]
     end
@@ -634,7 +632,7 @@ This system has **two domain layers**. The *platform domain* (workflow, node, ru
 | `edges` | `list[EdgeSpec]` | Topology |
 | `entry` / `exit` | `str` / `str \| list[str]` | Graph endpoints; exit defaults to all non-source nodes |
 | `output` | `WorkflowOutputSpec` | Which node outputs to project into the run result |
-| `experience` | `WorkflowExperienceSpec` | Guided Run stages — **presentation only, never graph semantics** |
+| `experience` | `WorkflowExperienceSpec` | Workflow progress stages — **presentation only, never graph semantics** |
 | `library` | `LibraryMetadataSpec` | Library card copy, duration range, review count, evidence policy claims |
 | `data_protection_mode` | `str \| None` | Per-workflow override of entity-protection mode |
 
@@ -770,7 +768,6 @@ erDiagram
     PROPOSAL_SNAPSHOTS ||--o{ PROPOSAL_APPROVALS : "proposal_id"
     PROPOSAL_SNAPSHOTS ||--o{ PROPOSAL_SOURCE_VERSIONS : "proposal_id"
     USERS ||--o{ RUN_HISTORY : "session_id == username"
-    PIPELINE_RUNS ||--o{ RUN_HISTORY : "stage run_ids"
 ```
 
 **Note the identity shortcut:** the JWT is minted with `session_id = username` ([`app/api/auth.py:88`](../app/api/auth.py)), so *user*, *session* and *tenant scope* are the same string. See §21 for why that matters.
@@ -788,7 +785,7 @@ Three handles coexist, deliberately:
 | Key | Type | Used by |
 |---|---|---|
 | `services["mongo"]` | `app.db.mongo.MongoClient` (motor wrapper with typed CRUD: `manifests`, `scorecards`, `collections`) | evaluation, ingestion |
-| `services["audit_db"]` | raw motor `Database` | run history, audit, entity vault, pipelines — the bulk of writes |
+| `services["audit_db"]` | raw motor `Database` | run history, audit, entity vault, chat workflows — the bulk of writes |
 | `services["db"]` | **sync** `pymongo.Database` | `CostLedger` only, because it is synchronous |
 
 ## 9.2 Collections
@@ -806,7 +803,6 @@ Confirmed by inspecting a live instance and by the `ensure_indexes` calls in `ap
 | `entity_mappings`, `entity_placeholder_counters` | `app/security/entity_vault.py` | Encrypted real-value ↔ placeholder map, scoped |
 | `claim_verifications` | `app/workflow/claim_verifications.py` | Per-record verification results |
 | `proposal_snapshots`, `proposal_approvals`, `proposal_source_versions` | `app/proposal_graph/`, `app/api/proposals.py` | Proposal workspace state |
-| `pipeline_runs` | `app/workflow/pipeline_history.py` | Multi-stage pipeline state |
 | `run_chats` | `app/workflow/run_chat_store.py` | Ask-AI conversation per run |
 | `preflight_stats` | `app/workflow/preflight_stats.py` | Aggregated preflight coverage stats |
 | `manifests`, `scorecards`, `horizon_evaluations` | `app/db/mongo.py`, `app/evaluation/` | Ingestion manifests and evaluation results |
@@ -846,7 +842,7 @@ async def delete_run(db, *, run_id, session_id)
 No Alembic — the runner is hand-rolled in [`app/db/migrations.py`](../app/db/migrations.py). Schema evolution has three layers:
 
 1. **Idempotent index creation** at startup — six `ensure_indexes()` calls in `app/main.py`, each doing `create_index(...)`.
-2. **Versioned data migrations** — `run_migrations(audit_db)` runs in the lifespan *before* the API serves traffic. Each `Migration` (a frozen dataclass of `migration_id`, `description`, `apply`) is recorded in the `schema_migrations` collection once applied, so it executes at most once per database. A Mongo lease (`__migration_lock__`, 300 s, renewed while working) keeps concurrent Uvicorn workers from backfilling the same population simultaneously. `CURRENT_RUN_SCHEMA_VERSION` is `1`; its migration stamps the explicit v1 shape (`active_nodes`, `completed_nodes`, `node_runs`, `outputs`, counters, `attempt`, `error`, `schema_version`) onto legacy run and checkpoint documents via `$exists: false` updates, so it is safe to re-run.
+2. **Versioned data migrations** — `run_migrations(audit_db)` runs in the lifespan *before* the API serves traffic. Each `Migration` (a frozen dataclass of `migration_id`, `description`, `apply`) is recorded in the `schema_migrations` collection once applied, so it executes at most once per database. A Mongo lease (`__migration_lock__`, 300 s, renewed while working) keeps concurrent Uvicorn workers from changing the same population simultaneously. `0001` stamps the explicit v1 run shape, `0002` expands Knowledge lifecycle fields, and `0003` drops retired Business/Pipeline collections and unsets only their top-level run metadata. Workflow YAML and nested `experience.stage_id` values are not rewritten.
 3. **MongoDB's schemaless documents** — new fields simply appear; readers still use `.get()` with defaults.
 
 **Residual risk (see §38.3):** a migration failure raises `MigrationError` and **aborts boot** — deliberate, since serving traffic against a half-migrated database is the worse outcome. Documents are backfilled rather than re-validated, so defensive reads remain the second line of defence for anything written before v1.
@@ -901,7 +897,6 @@ No Alembic — the runner is hand-rolled in [`app/db/migrations.py`](../app/db/m
 | inspect | `/api/inspect` | `app/api/inspect.py` |
 | proposals | `/api/proposals` | `app/api/proposals.py` |
 | research | `/api/research` | `app/api/research.py` |
-| pipelines | `/api/pipelines` | `app/api/pipelines.py` |
 | candidates | `/api/candidates` | `app/api/candidates.py` |
 | llm providers | `/api/llm` | `app/api/llm_providers.py` |
 | workflow files | `/api/workflow-input-files` | `app/api/workflow_files.py` |
@@ -1009,12 +1004,18 @@ ui/src/main.tsx
        └─ logged in →
             <Sidebar mode onModeChange/>  <Topbar runCostUsd/>
             <RunCostContext.Provider>
-              mode === 'studio'   → <StudioRoot/>   ← owns react-router Routes
-              mode === 'eval'     → <EvalRoot/>
-              mode === 'operator' → <OperatorRoot/>
+              mode === 'studio'    → <StudioRoot/>   ← owns react-router Routes
+              mode === 'knowledge' → <KnowledgeRoot/>
+              mode === 'eval'      → <EvalRoot/>
+              mode === 'cost'      → <CostRoot/>
 ```
 
-**Important quirk:** the three modes are **local `useState` in `App.tsx`, not routes.** Only Studio uses the URL. So a Cockpit deep link works, but "Operator Console" cannot be linked to — switching modes is invisible to the router and to browser history.
+**Important quirk:** the four modes are **local `useState` in `App.tsx`, not routes.** Only Studio uses the URL. So a Cockpit deep link works, but the other modes cannot be linked to — switching modes is invisible to the router and to browser history.
+
+Top-level modes and Studio route screens are loaded with `React.lazy`. The
+application shell and Studio navigation stay mounted while the selected screen
+chunk loads; Builder, Cockpit, Run History, Knowledge, Cost and Eval code is not
+part of the initial Chat/login bundle.
 
 ## 11.2 Studio routes
 
@@ -1022,20 +1023,19 @@ ui/src/main.tsx
 
 | Route | Component |
 |---|---|
-| `/library` (index redirect) | `Library.tsx` |
-| `/builder` · `/builder/:name` | `Builder.tsx` (994 lines — the largest UI file) |
-| `/guided/:runId` | `GuidedRun.tsx` |
+| `/chat` | `business-chat/BusinessChat.tsx` |
+| `/workflows` | `Library.tsx` |
+| `/builder` · `/builder/:name` | `Builder.tsx` |
 | `/cockpit/:runId` | `Cockpit.tsx` |
-| `/history` · `/history/:runId` | `RunHistory.tsx` |
+| `/workflow-runs` · `/workflow-runs/:runId` | `RunHistory.tsx` |
 | `/candidates/:runId` | `RunCandidates.tsx` |
-| `/pipelines` · `/pipelines/runs[/:id]` | `Pipelines.tsx` |
 | `/proposal-review[/:runId]` | `ProposalReview.tsx` |
 
 ## 11.3 State management — there is no library
 
 | Kind of state | How it is held |
 |---|---|
-| Server state | `useState` + `useEffect` fetch. No cache, no dedupe, no retry layer |
+| Server state | `useState` + `useEffect` fetch. No general cache layer; auth rehydration is deduplicated and Run History schedules its next poll only after the current request settles |
 | Auth identity | Module-level `let _token` / `let _username` in `ui/src/api/client.ts` — **in-memory, lost on refresh**; the HttpOnly cookie is the durable part and `rehydrate()` restores identity |
 | Cross-component | Exactly one React context: `RunCostContext` (`ui/src/RunCostContext.tsx`), used only to push the run cost into the Topbar |
 | Persisted client state | `localStorage` for `eurskem.sidebar.collapsed`; **navigation state** (`location.state`) carries the workflow YAML into Cockpit/Guided |
@@ -1047,13 +1047,13 @@ A second behaviour to know: `Cockpit.tsx:370` short-circuits to `<OutputViewer>`
 
 ## 11.4 API layer
 
-**File:** [`ui/src/api/client.ts`](../ui/src/api/client.ts) (782 lines) — every backend call in the application lives here, exported as one `api` object plus a few standalone functions.
+**File:** [`ui/src/api/client.ts`](../ui/src/api/client.ts) — every backend call in the application lives here, exported as one `api` object plus a few standalone functions.
 
 - Base URL: `import.meta.env.VITE_API_URL ?? 'http://localhost:8000'`.
 - `afetch()` wraps `fetch` with `credentials: 'include'` (for the cookie) and adds `Authorization: Bearer` when an in-memory token exists — belt and braces.
 - `login()` posts form-encoded creds to `/auth/token`, stores `_token` + `_username`; the server also sets the HttpOnly cookie.
 - `streamRunEvents()` (line 710) is a **hand-written SSE parser**: it reads `response.body.getReader()`, decodes chunks, splits on `\n\n`, parses `event:` / `id:` / `data:` lines, tracks `lastEventId`, and stops on a terminal event. `EventSource` was not usable because it cannot send an `Authorization` header.
-- Types live in `ui/src/api/types.ts` (577 lines) and are **hand-maintained**, not generated from the OpenAPI schema — so backend/frontend drift is possible and is not caught by CI.
+- Types live in `ui/src/api/types.ts` and are **hand-maintained**, not generated from the OpenAPI schema — so backend/frontend drift is possible and is not caught by CI.
 
 ## 11.5 Component structure
 
@@ -1337,24 +1337,9 @@ verify_evidence                        → ClaimEvidenceLink + VerifiedClaim
 call_coverage · truth_graph · proposal_blueprint · research_documentation
 ```
 
-**Observed behaviour on real data:** in run `1f2c3a4d` the acquisition node resolved 0 canonical URLs, so `verify_evidence` returned `verified_claims: 0` against 19 critical claims, 19 `evidence_gaps` and 19 `blocking_issues`, with `warnings: ["No proposal-grade citations passed all hard gates."]`. This is the fail-closed rule working — the pipeline completed successfully and promoted nothing.
+**Observed behaviour on real data:** in run `1f2c3a4d` the acquisition node resolved 0 canonical URLs, so `verify_evidence` returned `verified_claims: 0` against 19 critical claims, 19 `evidence_gaps` and 19 `blocking_issues`, with `warnings: ["No proposal-grade citations passed all hard gates."]`. This is the fail-closed rule working — the workflow completed successfully and promoted nothing.
 
-## 15.3 Pipelines — multi-workflow orchestration
-
-**Files:** `app/runtime/pipeline_schema.py`, `pipeline_executor.py`, `pipeline_preflight.py`, `app/api/pipelines.py`, `workflows/pipelines/horizon_partb.pipeline.yaml`.
-
-```text
-PipelineSpec { stages: [PipelineStageSpec] }
-   each stage names a workflow + input sources
-run_pipeline(spec)      → runs stage 1, records PipelineRunState
-   ↓ human reviews the stage output
-advance_pipeline(id)    → materialize_stage_inputs() maps prior outputs
-                          into the next stage's typed inputs, then runs it
-```
-
-`resolve_input_source` + `_coerce_for_target` handle mapping a previous stage's output field into the next workflow's declared input type. Stages are **not** automatically chained — `POST /api/pipelines/{id}/advance` is an explicit human action, which is the whole point of splitting a 34-node workflow into stages.
-
-## 15.4 Builder authoring loop
+## 15.3 Builder authoring loop
 
 ```text
 Edit on canvas → yaml-bridge serialises → PUT /workflows/{name}/draft   (autosave, .builder/)
@@ -1639,7 +1624,6 @@ There is no single base exception. Errors are grouped by module:
 |---|---|---|
 | `NodeRegistryError(KeyError)` | `app/nodes/registry.py` | Unknown node type |
 | `HITLResumeError(KeyError)` | `app/runtime/hitl.py` | Resume without a valid paused checkpoint |
-| `PipelineExecutionError(RuntimeError)` | `app/runtime/pipeline_executor.py` | Stage orchestration failure |
 | `ModelRoutingError(RuntimeError)` | `app/llm/model_router.py` | No compatible model |
 | `GuardrailViolation` | `app/security/guardrails.py` | Input tripped a guardrail |
 | `WorkflowFileInputError` | `app/workflow/file_inputs.py` | Bad/missing/oversized file input |
@@ -1876,11 +1860,11 @@ Probes run concurrently with a per-probe timeout (`HEALTH_PROBE_TIMEOUT_SECONDS`
 | Preflight | `test_workflow_preflight*.py`, `test_node_preflight_coverage.py`, `test_new_integrations_preflight.py`, `test_node_output_field_materialization.py`, `test_autofix.py` |
 | LLM layer | `test_llm_resilience.py`, `test_model_router.py`, `test_model_catalog.py`, `test_local_llm_gateway.py` |
 | Evidence | `test_evidence_verification.py`, `test_evidence_retrieval.py`, `test_evidence_authority_weighting.py`, `test_canonical_identifiers.py`, `test_cross_lane_dedup.py`, `test_deep_research_claim_attribution.py` |
-| Persistence | `test_mongo.py`, `test_builder_store.py`, `test_pipeline_history.py` |
+| Persistence | `test_mongo.py`, `test_builder_store.py`, `test_chat_workflows.py`, `test_prompt_templates.py` |
 | Rendering | `test_horizon_docx_renderer.py`, `test_horizon_html_renderer.py`, `test_pdf_tool.py`, `test_powerpoint_tool.py`, `test_excel_tool.py`, `test_figure_embedder.py` |
 | Security / ops | `test_production_controls.py`, `test_ci_security.py`, `test_ionos_deployment.py`, `test_metrics.py`, `test_health.py` |
-| End-to-end-ish | `test_flagship_workflow.py`, `test_methodology_engineering.py`, `test_pipeline_integration.py` |
-| API surface | `test_api_route_registration.py`, `test_candidates_api.py`, `test_pipelines_api.py`, `test_node_types_chat.py` |
+| End-to-end-ish | `test_flagship_workflow.py`, `test_methodology_engineering.py`, `test_executor.py` |
+| API surface | `test_api_route_registration.py`, `test_candidates_api.py`, `test_chat_workflows.py`, `test_node_types_chat.py` |
 
 **`test_node_preflight_coverage.py` deserves special mention:** it forces every newly registered node type to be explicitly reviewed against the preflight extension points. It is a *governance* test — it makes adding a node without considering validation a build failure.
 
@@ -1890,7 +1874,7 @@ The backend CI job starts **real** MongoDB, Weaviate, MinIO and Redis containers
 
 ## 23.5 Live-provider tests
 
-`.github/workflows/live-llm-tests.yml` is `workflow_dispatch` only (manual). Two jobs — `openai-pipeline` and `anthropic-smoke` — install without dependency cache and run controlled integration tests against real credentials. Deliberately kept out of the PR path so provider spend and flakiness never gate a merge.
+`.github/workflows/live-llm-tests.yml` is `workflow_dispatch` only (manual). Two jobs — `openai-smoke` and `anthropic-smoke` — install without dependency cache and run bounded provider connectivity checks against real credentials. Deliberately kept out of the PR path so provider spend and flakiness never gate a merge.
 
 ## 23.6 Coverage and gaps
 
@@ -1899,7 +1883,7 @@ There is **no coverage tool configured** (no `pytest-cov` settings, no coverage 
 | Well covered | Weakly covered |
 |---|---|
 | Preflight, runtime semantics, HITL/join-gates, evidence, renderers, model routing | Route modules (only registration + a few APIs are tested; `app/api/workflows.py` has no dedicated module) |
-| Builder store, pipeline history | Frontend — 12 test files for ~21k lines, concentrated in `builder-graph`, `cockpit-state`, `guided/runtime-model`, `yaml-bridge` |
+| Builder store, run history | Frontend tests are concentrated in Builder, Cockpit, Chat, shared workflow components and YAML bridging |
 | Production config gate, deployment scripts | The unmounted middlewares — tested in isolation, so tests pass while production behaviour differs (§21.6) |
 
 ## 23.7 Running the suites
@@ -2083,7 +2067,7 @@ main push ─────► CI ──► success? ──► Deploy IONOS Produc
 
 ## 26.3 `live-llm-tests.yml`
 
-`workflow_dispatch` only. Two jobs (`openai-pipeline`, `anthropic-smoke`) run controlled integration tests against real provider credentials, installing without dependency cache. Deliberately manual.
+`workflow_dispatch` only. Two jobs (`openai-smoke`, `anthropic-smoke`) run bounded provider connectivity checks against real credentials, installing without dependency cache. Deliberately manual.
 
 ---
 
@@ -2098,7 +2082,8 @@ A single **Ubuntu 24.04 IONOS VPS**, provisioned by `deploy/ionos/setup_host.sh`
 ├── releases/<sha>/          immutable extracted release
 ├── shared/
 │   ├── .env.production      mode 0600, never in git
-│   ├── workflows/           rsync'd, --ignore-existing (operator edits survive)
+│   ├── workflows/           rsync'd, --ignore-existing (operator edits survive);
+│   │                        retired *.pipeline.yaml artifacts are removed narrowly
 │   └── deployed-sha
 └── current -> releases/<sha>    symlink flipped only after all gates pass
 ```
@@ -2107,7 +2092,8 @@ A single **Ubuntu 24.04 IONOS VPS**, provisioned by `deploy/ionos/setup_host.sh`
 
 ```text
 1.  require /opt/eurskem/shared/.env.production, chmod 600, symlink into the release
-2.  rsync workflows → shared/workflows (--ignore-existing, mode D2770/F0660)
+2.  rsync workflows → shared/workflows (--ignore-existing, mode D2770/F0660),
+    then remove only retired workflows/pipelines/ and *.pipeline.yaml artifacts
 3.  python3 scripts/production_preflight.py --env-file <env>     ← config gate
 4.  docker compose config --quiet                                ← compose validity
 5.  docker compose build --pull
@@ -2181,7 +2167,7 @@ These are the eight concepts you must hold to read this codebase fluently.
 ### 8. `RunEventBus`
 **`app/runtime/events.py`.** Pub/sub keyed by `(run_id, session_id)` with bounded, TTL'd replay, feeding SSE — Redis stream + channel when Redis is up, in-process queues otherwise. Observational only — nothing server-side reacts to an event.
 
-**Secondary but worth knowing:** `EvidencePolicy` (fail-closed rules), `ObjectStore` (`app/storage/minio_client.py`), `CostLedger`, `WorkflowBuilderStore`, `MCPClient`, `PipelineSpec`.
+**Secondary but worth knowing:** `EvidencePolicy` (fail-closed rules), `ObjectStore` (`app/storage/minio_client.py`), `CostLedger`, `WorkflowBuilderStore`, `MCPClient`.
 
 ---
 
@@ -2263,7 +2249,7 @@ Distinguish **written rules** (enforced by config or CI) from **observed convent
 | **Preflight** | `PreflightPanel.tsx` | `POST /workflows/validate`, `/autofix`, `GET /preflight-stats` | `runtime/preflight.py`, `autofix.py` | `preflight_stats` | `test_workflow_preflight*.py`, `test_node_preflight_coverage.py`, `test_autofix.py` |
 | **Run execution** | `RunDialog.tsx`, `Cockpit.tsx` | `POST /api/workflows/run` | `runtime/executor.py`, `compiler.py`, `workflow/orchestration.py` | `run_history`, Redis checkpoints | `test_executor.py`, `test_flagship_workflow.py` |
 | **Live streaming** | `hooks/useRunEvents.ts`, `api/client.ts:streamRunEvents` | `GET /api/runs/{id}/events` | `runtime/events.py` | in-process ring buffer | `test_executor_events.py`, `test_node_events.py` |
-| **Guided Run** | `GuidedRun.tsx`, `guided/runtime-model.ts`, `GuidedExperiencePanel.tsx` | reuses run APIs | `schema.py` `WorkflowExperienceSpec`/`NodeExperienceSpec` | run doc + YAML | `guided/runtime-model.test.ts` |
+| **Workflow progress** | shared workflow components, `guided/runtime-model.ts`, `GuidedExperiencePanel.tsx` | reuses run APIs | `schema.py` `WorkflowExperienceSpec`/`NodeExperienceSpec` | run doc + YAML | `guided/runtime-model.test.ts` |
 | **HITL** | `HITLPanel.tsx`, `RichTextEditor.tsx` | `POST /workflows/{id}/resume`, `GET /pending-gate` | `runtime/hitl.py`, `nodes/human_in_loop.py` | `run_checkpoints`, `audit_log` | `test_hitl_agent.py`, `test_durable_hitl.py`, `test_hitl_mixed_fanin.py` |
 | **Run history / retry** | `RunHistory.tsx`, `run-history/` | `/api/runs/mine*` (+ retry/pause/resume/restart/delete) | `workflow/run_history.py` | `run_history` + GridFS | `test_mongo.py` |
 | **Cost** | Topbar badge, `RunCostContext` | `/api/cost/*` | `observability/cost_ledger.py`, `llm/registry.py` | `cost_ledger` | `test_metrics.py` |
@@ -2273,7 +2259,6 @@ Distinguish **written rules** (enforced by config or CI) from **observed convent
 | **Evidence** | `ProposalReview.tsx`, `RunCandidates.tsx` | `/api/proposals/*`, `/api/candidates/*` | `evidence/*`, `nodes/claim_evidence_verifier.py`, `proposal_evidence_factory.py` | `claim_verifications`, `proposal_*` | `test_evidence_verification.py`, `test_evidence_authority_weighting.py` |
 | **Document rendering** | `OutputViewer.tsx` | `/api/proposals/{id}/render[/docx]`, `/api/files` | `tools/docx_proposal_rendering.py`, `nodes/*renderer*.py` | MinIO | `test_horizon_docx_renderer.py`, `test_pdf_tool.py` |
 | **File inputs** | `FileInputField.tsx`, `WorkflowInputsPanel.tsx` | `/api/workflow-input-files*` | `workflow/file_inputs.py` | MinIO + `workflow_input_files` | `test_workflow_file_inputs.py`* |
-| **Pipelines** | `Pipelines.tsx` | `/api/pipelines/*` | `runtime/pipeline_*.py`, `workflow/pipeline_history.py` | `pipeline_runs` | `test_pipeline_*.py` |
 | **Evaluation** | `modes/eval/EvalRoot.tsx` | `/api/eval/*` | `evaluation/*` | `scorecards`, `horizon_evaluations` | `test_eval_runner.py`, `test_judge.py` |
 | **Entity protection** | `/api/entity-registry` UI | `/api/entity-registry` | `security/entity_*.py` | `entity_mappings` | — (**weak**) |
 | **MCP** | — | — | `mcp/client.py`, `nodes/mcp_agent.py` | — | `test_mcp_*.py` |
@@ -2399,7 +2384,6 @@ Ranked. Each entry says why it matters and what to read next.
 | 25 | `tests/conftest.py` | `StubLLM` — how to test anything that calls a model | `tests/test_executor.py` |
 | 26 | `.github/workflows/ci.yml` | What must pass, and that CI runs against real services | `deploy/ionos/deploy_release.sh` |
 | 27 | `deploy/ionos/deploy_release.sh` | The release gate chain and the rollback rule | `docker-compose.production.yml` |
-| 28 | `app/runtime/pipeline_executor.py` | Multi-workflow orchestration | `workflows/pipelines/horizon_partb.pipeline.yaml` |
 
 **Recommended order:** 1 → 2 → 3 → 4 → 7 → 5 → 6 → 8 → 9 → 10 → 11 → 12, then the frontend (17 → 18 → 19), then the specialisation you need.
 
@@ -2746,12 +2730,13 @@ Now:         app/db/migrations.py provides a versioned, idempotent runner
              invoked from the lifespan before the API serves traffic. Applied
              migrations are recorded in `schema_migrations`; a Mongo lease
              (__migration_lock__, 300s, renewed) serialises concurrent workers;
-             CURRENT_RUN_SCHEMA_VERSION = 1 backfills the explicit v1 shape onto
-             legacy run and checkpoint documents. Failure raises MigrationError,
-             which aborts boot.
-Residual:    Documents written before v1 are backfilled, not re-validated, and
-             the read path still tolerates absent fields. The .get()-with-default
-             convention is now a belt-and-braces, not the only guarantee.
+             0001 backfills the explicit v1 run/checkpoint shape, 0002 expands
+             Knowledge lifecycle fields, and 0003 removes retired Business View
+             and Pipeline persistence without rewriting Workflow YAML. Failure
+             raises MigrationError, which aborts boot.
+Residual:    Backfilled documents are not fully re-validated, and the read path
+             still tolerates absent fields. The .get()-with-default convention is
+             now a belt-and-braces, not the only guarantee.
 ```
 
 ### 38.4 In-process state prevents horizontal scaling — LARGELY ADDRESSED
@@ -2899,7 +2884,6 @@ Places the system is *designed* to be extended, and how registration works.
 | **Guided-Run presentation** | Author `experience:` blocks in the YAML | `WorkflowExperienceSpec` / `NodeExperienceSpec`; presentation only, never graph semantics |
 | **Library presentation** | Author `library:` metadata | `LibraryMetadataSpec` |
 | **Evaluation criteria** | Extend judges and golden sets | `app/evaluation/judge.py`, `golden_set.py` |
-| **Pipelines** | Author a `.pipeline.yaml` | `PipelineSpec`, `workflows/pipelines/` |
 | **Health probes** | Add a `_x_probe(services)` function | `app/api/health.py` + `READINESS_REQUIRED_SERVICES` |
 
 **The cleanest seam is the node type.** Adding one touches exactly two files (the node module and `categories.py`) and automatically propagates to the registry, the Builder palette, the generated config form, preflight, the compiler and the API manifest.
@@ -2912,9 +2896,9 @@ Places the system is *designed* to be extended, and how registration works.
 |---|---|---|---|---|
 | `app/runtime/schema.py` | Every workflow YAML, preflight, compiler, Builder round-trip, `ui/api/types.ts` | `pytest -k "preflight or schema"` + `preflight_workflows.py --warnings-as-errors` | — | A field without a default breaks every existing workflow |
 | `_make_runtime_fn` | **All 43 node types, all runs** | `test_executor*.py`, `test_node_events.py`, `test_hitl_*.py`, `test_flagship_workflow.py` | — | Highest-blast-radius function in the repo |
-| `_wire_edges` | Every workflow with fan-out, routers or HITL | **`test_hitl_mixed_fanin.py`** (the regression that motivated it), `test_pipeline_integration.py` | — | Silent races or premature node firing; re-read the docstring before touching |
+| `_wire_edges` | Every workflow with fan-out, routers or HITL | **`test_hitl_mixed_fanin.py`** (the regression that motivated it), `test_executor.py` | — | Silent races or premature node firing; re-read the docstring before touching |
 | `WorkflowState` reducers | Parallel branches | `test_executor.py`, `test_parallel*` fixtures | — | Wrong reducer → `InvalidUpdateError` or lost writes |
-| `app/workflow/run_history.py` | Run History, Cockpit, Guided Run, audit, retry, cleanup | `test_mongo.py`, `test_durable_hitl.py` | `STALE_RUN_*`, `RUN_AUTO_CLEANUP_*`, `DISTRIBUTED_LEASE_SECONDS` | A shape change needs a migration in `app/db/migrations.py` **and** must still read pre-v1 documents |
+| `app/workflow/run_history.py` | Chat inspection, Run History, Cockpit, audit, retry, cleanup | `test_mongo.py`, `test_durable_hitl.py`, `test_run_history.py` | `STALE_RUN_*`, `RUN_AUTO_CLEANUP_*`, `DISTRIBUTED_LEASE_SECONDS` | A shape change needs a migration in `app/db/migrations.py` **and** must still read pre-v1 documents |
 | `app/llm/registry.py` | Every model call, cost, fallback, tokenisation | `test_llm_resilience.py`, `test_model_router.py`, `test_local_llm_gateway.py` | `LLM_RETRY_*`, `LLM_*_TIMEOUT_*` | Breaking `with_context()` silently misattributes cost |
 | `app/observability/cost_ledger.py` | Cost API, Topbar badge | `test_metrics.py` | — | Pricing is sourced from `OPENAI_MODEL_REGISTRY`; do not reintroduce a second table |
 | `app/security/dependencies.py` / `rbac.py` | Every guarded route | `test_production_controls.py` | — | A permission rename silently 403s everything using it |
@@ -2946,10 +2930,11 @@ Places the system is *designed* to be extended, and how registration works.
 | **Reuse / safe retry** | Replaying a completed node's stored output on retry, returning before a gateway is bound so it costs nothing |
 | **Session / session_id** | The tenant scope. Currently equals the username, taken from the JWT |
 | **Collection / collection_id** | The logical corpus a run reads from; AND-ed into the retrieval filter |
-| **Guided Run** | The business-stage UI for non-technical users |
+| **Chat** | Conversational workflow launch and inspection; its runs may be conversation-only |
+| **Workflows** | The canonical workflow discovery and launch surface |
 | **Cockpit** | The technical execution UI (graph, lifecycle, failures) |
 | **Builder** | The four-area workflow authoring UI |
-| **Experience metadata** | `experience:` blocks that drive Guided Run copy; never affects graph semantics |
+| **Experience metadata** | `experience:` blocks that drive workflow progress copy; never affects graph semantics |
 | **Library metadata** | `library:` blocks that drive the Workflow Library card |
 | **Draft vs version** | Autosave under `.builder/` (not executable) vs an immutable saved YAML version |
 | **Candidate** | A discovered source that is explicitly **not** evidence |
@@ -2995,7 +2980,7 @@ Places the system is *designed* to be extended, and how registration works.
 11. Start a run in the UI with the network tab open: watch `POST /run` return immediately and the SSE stream carry the outcome.
 12. Break a workflow deliberately (rename a node id in a template) → watch preflight reject it with an issue code and node id.
 13. Run `hitl_editor_demo.yaml` → pause → resume. Read `app/runtime/hitl.py` while the run is paused.
-14. Open the run in Run History, then Cockpit, then Guided Run — confirm all three read one Mongo document.
+14. Open the run in Run History and Cockpit — confirm both read one Mongo document. Then inspect a Chat-launched run directly and confirm it uses the same run model while remaining absent from global history.
 15. Read `app/workflow/run_history.py` (skim), then `app/llm/registry.py:516-640` (`with_context`).
 16. `pytest tests/test_executor.py tests/test_hitl_mixed_fanin.py -q` and read those tests.
 
@@ -3033,7 +3018,6 @@ Places the system is *designed* to be extended, and how registration works.
 | Retrieval | `app/retrieval/`, `app/ingestion/` | `hybrid_search`, `_build_where_filter`, reranker, compressor | Weaviate, embedder | `test_evidence_retrieval`, `test_chunker` | **Medium-High** |
 | Evidence domain | `app/evidence/`, `app/proposal_graph/` | `EvidencePolicy`, `ClaimEvidenceLink`, `VerifiedClaim` | retrieval, llm | several dedicated modules | **Medium-High** |
 | Research | `app/research/` | bounded loop, skill catalog | llm, web search | `test_bounded_deep_research` | **Medium-High** |
-| Pipelines | `app/runtime/pipeline_*.py` | `PipelineSpec`, `advance_pipeline` | executor, run history | `test_pipeline_*` | **Medium** |
 | Entity protection | `app/security/entity_*.py` | tokenizer, vault, KEK, right-to-left splice | Mongo, spaCy | **thin** | **Medium** |
 | Frontend architecture | `ui/src/` | modes, `client.ts`, `useCockpitRun`, `runtime-model` | React 19, reactflow | 12 vitest files | **Medium** |
 | Background processing | `app/workflow/orchestration.py`, `main.py` loop | `asyncio.create_task`, in-process sweeper | — | indirect | **Medium** |
@@ -3122,7 +3106,7 @@ Behaviour that is **not visible from the folder structure** and that regularly c
 ### A.2 The `services` dict is dynamically typed and silently partial
 There is no interface listing valid keys. A typo in `services.get("objectstore")` returns `None` and the caller degrades as though the service were down. **To find what a component needs, grep for `services[` and `services.get(` inside it** — there is no other declaration.
 
-### A.3 `location.state` carries the workflow into Cockpit and Guided Run
+### A.3 `location.state` can carry the workflow into Cockpit
 React Router navigation state — invisible in the URL — supplies `workflowYaml`, `workflowName` and `attach` flags (`ui/src/modes/studio/cockpit/useCockpitRun.ts:53-104`). A page refresh or a pasted link loses it. This is the single most surprising frontend behaviour.
 
 ### A.4 Settings are a module-level singleton imported everywhere
@@ -3257,7 +3241,7 @@ No formal ownership (`CODEOWNERS`) exists. This maps *responsibilities* to locat
 | **Research** | `app/research/`, `app/mcp/` |
 | **Knowledge / retrieval** | `app/retrieval/`, `app/ingestion/` |
 | **Model access & spend** | `app/llm/`, `app/observability/cost_ledger.py` |
-| **Persistence** | `app/workflow/run_history.py`, `pipeline_history.py`, `claim_verifications.py`, `preflight_stats.py`, `run_chat_store.py`, `app/db/`, `app/storage/` |
+| **Persistence** | `app/workflow/run_history.py`, `chat_workflow_store.py`, `prompt_template_store.py`, `claim_verifications.py`, `preflight_stats.py`, `run_chat_store.py`, `app/db/`, `app/storage/` |
 | **Identity & confidentiality** | `app/security/` |
 | **Observability** | `app/observability/`, `app/api/health.py`, `observability/` (Prometheus/Grafana config) |
 | **Background processing** | `app/workflow/orchestration.py`, the cleanup loop in `app/main.py` |

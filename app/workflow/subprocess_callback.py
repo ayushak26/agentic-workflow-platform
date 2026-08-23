@@ -185,10 +185,12 @@ async def deliver_by_child_run_id(
     node_outputs: dict[str, Any],
     error: str | None,
 ) -> None:
-    """Best-effort: the overwhelming majority of runs are not a Subprocess
-    child, so this is one cheap indexed lookup either way — the same
-    contract app.workflow.orchestration._reconcile_pipeline_stage already
-    keeps for pipelines."""
+    """Deliver completion when the run belongs to a Subprocess launch.
+
+    The overwhelming majority of runs are not Subprocess children, so this is
+    one cheap indexed lookup and an immediate return for ordinary Workflow
+    runs.
+    """
     if db is None:
         return
     launch = await subprocess_launches.find_by_child_run_id(db, child_run_id)

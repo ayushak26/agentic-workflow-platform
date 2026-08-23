@@ -20,9 +20,8 @@ Element.prototype.scrollIntoView = vi.fn();
  * Regression coverage for the "answers from the wrong run" bug: a run's
  * conversation must never survive into a request for a *different* run.
  *
- * Both call sites (BusinessView's chat modal, RunHistory's Ask AI tab) reuse
- * this component across a change of `runId` without necessarily unmounting
- * it on their own — RunHistory in particular keeps the "ask-ai" tab active
+ * RunHistory can reuse this component across a change of `runId` without
+ * necessarily unmounting it — in particular, it keeps the "ask-ai" tab active
  * across a run selection change. The fix is a `key={runId}` at each call
  * site, which forces React to fully unmount and remount this component
  * instead of reusing the instance — clearing `turns` before any further

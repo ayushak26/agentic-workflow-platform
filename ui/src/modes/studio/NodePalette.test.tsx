@@ -57,4 +57,26 @@ describe('NodePalette', () => {
     render(<NodePalette onAdd={vi.fn()} types={types} />);
     expect(screen.queryByText('Input')).not.toBeInTheDocument();
   });
+
+  it('searches task presets and adds the underlying node with preset config', async () => {
+    const user = userEvent.setup();
+    const onAdd = vi.fn();
+    const presetTypes = [manifest({
+      presets: [{
+        id: 'summarize',
+        label: 'Summarize',
+        summary: 'Create a concise summary.',
+        config: { mode: 'ai', instructions: 'Summarize faithfully.' },
+      }],
+    })];
+    render(<NodePalette onAdd={onAdd} types={presetTypes} />);
+
+    await user.type(screen.getByLabelText(/search node types/i), 'summary');
+    await user.click(screen.getByRole('button', { name: /summarize/i }));
+
+    expect(onAdd).toHaveBeenCalledWith('TransformAgent', {
+      mode: 'ai',
+      instructions: 'Summarize faithfully.',
+    });
+  });
 });

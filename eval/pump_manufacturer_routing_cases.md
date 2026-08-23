@@ -61,7 +61,7 @@ Companion to `eval/sample_routing_cases.md`, which covers a **different** workfl
 schema fields and no customers — do not read either one as describing the other.
 
 Paste `Subject` / `Message` / `Sender` into the Run dialog and open the run in
-Business View to watch understanding → Dynamics 365 lookup → decision → routing.
+Cockpit to watch understanding → Dynamics 365 lookup → decision → routing.
 
 ## How far these are verified
 

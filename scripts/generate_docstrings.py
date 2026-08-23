@@ -278,8 +278,7 @@ PACKAGE_DESCRIPTIONS: dict[str, str] = {
     "app.security": "Security layer: auth, RBAC, middleware, guardrails, and entity protection",
     "app.storage": "Object storage abstraction over MinIO/S3",
     "app.tools": "Node-facing tools: web search, vision, image generation, and rendering",
-    "app.workflow": "Workflow services: run history, builder store, business view, and pipelines",
-    "app.workflow.business_view": "Business view projection, narration, and activities",
+    "app.workflow": "Workflow services: run history, builder store, chat workflows, and prompt templates",
     "scripts": "Operational and development scripts",
 }
 
@@ -370,7 +369,7 @@ def _args_section(node) -> list[str]:
     args = node.args
     positional = list(args.posonlyargs) + list(args.args)
     skip = {'self', 'cls'}
-    entries: list[tuple[str, str, str]] = []
+    entries: list[tuple[str, str, str | None]] = []
     defaults = list(args.defaults)
     pad = len(positional) - len(defaults)
     for i, arg in enumerate(positional):
@@ -541,8 +540,9 @@ def collect_insertions(tree: ast.Module, path: Path):
                 continue
             first = node.body[0]
             sig_end = node.lineno
-            if getattr(node, 'returns', None) is not None:
-                sig_end = node.returns.end_lineno
+            returns = node.returns
+            if returns is not None:
+                sig_end = returns.end_lineno or node.lineno
             else:
                 sig_end = getattr(node.args, 'end_lineno', None) or node.lineno
             if first.lineno <= sig_end:

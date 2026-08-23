@@ -3,11 +3,8 @@
 Both a fresh run (``POST /workflows/run``) and a HITL resume
 (``POST /workflows/{run_id}/resume``) need the same "create the durable
 record, run it, persist whatever terminal or re-paused state comes back"
-shape. A pipeline stage (``app/runtime/pipeline_executor.py``) is just a third
-caller of that same shape — factoring it here means a pipeline stage behaves
-identically to a standalone run in Run History (same status transitions, same
-retry-checkpoint behavior) with no special-casing, and it gives pipeline
-reconciliation exactly one place to hook in rather than three.
+    shape. Keeping this bookkeeping in one module ensures every Workflow run
+    follows the same status transitions and retry-checkpoint behavior.
 """
 from __future__ import annotations
 
@@ -39,11 +36,6 @@ async def start_new_run_record(
     collection_id: str,
     retry_of_run_id: str | None = None,
     attempt: int = 1,
-    pipeline_run_id: str | None = None,
-    pipeline_name: str | None = None,
-    stage_id: str | None = None,
-    stage_index: int | None = None,
-    total_stages: int | None = None,
     origin: str = "direct",
     history_visibility: str = "global",
     workflow_id: str | None = None,
@@ -55,10 +47,6 @@ async def start_new_run_record(
 
     Mirrors what ``POST /workflows/run`` always did before this extraction —
     called once, before the first attempt to execute a workflow's graph.
-    The ``pipeline_*``/``stage_*`` params are only ever passed by a pipeline
-    stage launch (``app/runtime/pipeline_executor.py``) so this run's own
-    Run History entry can show which stage it belongs to without a
-    separate lookup into the pipeline_runs collection.
     """
     if db is None:
         return
@@ -81,11 +69,6 @@ async def start_new_run_record(
         node_types=node_types,
         retry_of_run_id=retry_of_run_id,
         attempt=attempt,
-        pipeline_run_id=pipeline_run_id,
-        pipeline_name=pipeline_name,
-        stage_id=stage_id,
-        stage_index=stage_index,
-        total_stages=total_stages,
         origin=origin,
         history_visibility=history_visibility,
         workflow_id=workflow_id,
@@ -133,7 +116,6 @@ async def record_run_failure(
         await mark_checkpoint_status(
             db, run_id=run_id, session_id=session, status="failed",
         )
-    await _reconcile_pipeline_stage(db, run_id, session)
     await _reconcile_subprocess_callback(
         db, run_id, session, services,
         status="failed", output=None, node_outputs={}, error=message,
@@ -184,7 +166,6 @@ async def finalize_run_result(
         await mark_checkpoint_status(
             db, run_id=run_id, session_id=session, status=run_status,
         )
-    await _reconcile_pipeline_stage(db, run_id, session)
     await _reconcile_subprocess_callback(
         db, run_id, session, services,
         status=run_status,
@@ -425,27 +406,6 @@ class BackgroundRunManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def _reconcile_pipeline_stage(db: Any, run_id: str, session: str) -> None:
-    """Best-effort: if this run_id is a pipeline stage, sync the pipeline.
-
-    Never allowed to break a plain workflow run — every normal run pays one
-    extra (cheap, indexed) Mongo lookup for this, and the overwhelming
-    majority won't belong to any pipeline.
-    """
-    if db is None:
-        return
-    try:
-        from app.workflow.pipeline_history import reconcile_stage_completion
-
-        await reconcile_stage_completion(db, run_id=run_id, session_id=session)
-    except Exception as exc:
-        log.error(
-            "pipeline_stage_reconcile_failed",
-            error=str(exc),
-            run_id=run_id,
-        )
-
-
 async def _reconcile_subprocess_callback(
     db: Any,
     run_id: str,
@@ -461,7 +421,7 @@ async def _reconcile_subprocess_callback(
     result to the waiting parent (app.workflow.subprocess_callback).
 
     Never allowed to break a plain workflow run — one cheap indexed Mongo
-    lookup either way, same contract as _reconcile_pipeline_stage above.
+    lookup either way.
     A child still "paused" (its own HITL gate, say) has not actually
     finished, so this only fires on a genuinely terminal status.
     """

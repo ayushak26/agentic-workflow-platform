@@ -11,8 +11,7 @@ OpenAIImageGenerationAgent/FigureEmbedder fit together.
 - simple: one new integration alone (the existing demo workflows).
 - medium: several new integrations chained (web search -> synthesis that
   emits a figure marker -> image generation -> figure embedding).
-- complex: the real, shipped multi-stage Horizon Part B workflows, standalone
-  and as the staged pipeline.
+- complex: the real, shipped Horizon Part B workflows.
 """
 from __future__ import annotations
 
@@ -20,7 +19,6 @@ from pathlib import Path
 
 import pytest
 
-from app.runtime.pipeline_preflight import preflight_pipeline_yaml
 from app.runtime.preflight import preflight_workflow_yaml
 
 # ---- simple: one new integration alone -------------------------------------
@@ -121,9 +119,3 @@ def test_complex_tier_full_horizon_workflow_passes_preflight(path: Path):
     report = preflight_workflow_yaml(path.read_text(), compile_graph=True)
     assert report.valid, [i.message for i in report.errors]
     assert report.tokens_spent == 0
-
-
-def test_complex_tier_staged_pipeline_resolves_every_cross_stage_input():
-    path = Path("workflows/pipelines/horizon_partb.pipeline.yaml")
-    report = preflight_pipeline_yaml(path.read_text())
-    assert report.valid, [i.message for i in report.errors]

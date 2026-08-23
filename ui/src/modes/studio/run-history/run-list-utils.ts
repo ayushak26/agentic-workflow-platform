@@ -24,7 +24,6 @@ export type RunFilters = {
   dateFrom?: number; // epoch seconds, inclusive
   dateTo?: number; // epoch seconds, inclusive
   workflowName?: string;
-  stageId?: string;
   // RunSummary has no direct "has outputs" flag — completed_node_count > 0
   // is used as a proxy (documented approximation: a completed node usually,
   // but not always, produces output).
@@ -45,8 +44,6 @@ export function matchesSearch(run: RunSummary, query: string): boolean {
     run.workflow_name,
     run.run_id,
     run.status,
-    run.stage_id,
-    run.pipeline_name,
     run.failed_node,
   ]
     .filter((value): value is string => Boolean(value))
@@ -68,7 +65,6 @@ export function filterRuns(runs: RunSummary[], filters: RunFilters): RunSummary[
     if (filters.dateFrom != null && (ts == null || ts < filters.dateFrom)) return false;
     if (filters.dateTo != null && (ts == null || ts > filters.dateTo)) return false;
     if (filters.workflowName && run.workflow_name !== filters.workflowName) return false;
-    if (filters.stageId && run.stage_id !== filters.stageId) return false;
     if (filters.hasOutputs && (run.completed_node_count ?? 0) === 0) return false;
     if (filters.hasErrors && !runHasErrors(run)) return false;
     if (filters.query && !matchesSearch(run, filters.query)) return false;

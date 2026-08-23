@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from app.evidence.claim_verification import verify_claim
@@ -47,6 +48,50 @@ _DISCOVERY_NODE_TYPES = {
 
 _INTERNAL_EVIDENCE_NODE_TYPE = "InternalProjectEvidenceRetrieverAgent"
 _STRUCTURED_DATASET_NODE_TYPE = "StructuredDatasetRetrieverAgent"
+
+
+def _acquired_document_from_run(
+    run: dict[str, Any], document_id: str,
+) -> dict[str, Any] | None:
+    """Find an acquired document only in recorded acquisition-node output."""
+    for node in (run.get("node_runs") or {}).values():
+        if not isinstance(node, dict) or node.get("type_name") != "ResearchSourceAcquirer":
+            continue
+        output = node.get("output") or {}
+        if not isinstance(output, dict):
+            continue
+        for document in output.get("documents") or []:
+            if isinstance(document, dict) and document.get("document_id") == document_id:
+                return document
+    return None
+
+
+@router.get("/{run_id}/documents/{document_id}/download")
+async def download_acquired_research_document(
+    run_id: str,
+    document_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_consultant),
+):
+    """Authorize against owned run provenance, then issue a short-lived PDF URL."""
+    services = getattr(request.app.state, "services", {})
+    db = services.get("audit_db")
+    store = services.get("object_store")
+    if db is None or store is None:
+        raise HTTPException(status_code=503, detail="Research document storage unavailable")
+    scope = getattr(user, "session_id", None) or user.username
+    run = await get_run(db, scope, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Research document not found")
+    document = _acquired_document_from_run(run, document_id)
+    key = document.get("pdf_object_key") if document else None
+    if not isinstance(key, str) or not key.lower().endswith(".pdf"):
+        raise HTTPException(status_code=404, detail="Research PDF not found")
+    url = store.presigned_url(key, expires_seconds=600)
+    return RedirectResponse(url=url, status_code=307, headers={
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    })
 
 
 def _discovery_candidate_url(candidate: dict[str, Any]) -> str | None:

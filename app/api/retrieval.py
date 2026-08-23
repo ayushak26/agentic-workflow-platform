@@ -270,3 +270,62 @@ async def get_trace(
         )
     except ResourceNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+@router.get("/traces/{retrieval_request_id}/chunks/{chunk_id}/context")
+async def get_trace_chunk_context(
+    retrieval_request_id: str,
+    chunk_id: str,
+    request: Request,
+    user: CurrentUser = Depends(require_permission("knowledge:read")),
+):
+    """Return cited and adjacent same-document passages from one scoped trace."""
+    try:
+        trace = await request.app.state.services["knowledge_repository"].get_trace(
+            _scope(user), retrieval_request_id,
+        )
+    except ResourceNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+    selected = trace.selected_context
+    current_index = next((
+        index for index, chunk in enumerate(selected)
+        if str(chunk.get("chunk_id", "")) == chunk_id
+    ), None)
+    if current_index is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Cited chunk was not found in this retrieval trace")
+
+    current = selected[current_index]
+    document_id = current.get("document_id") or current.get("doc_id") or current.get("source_doc")
+
+    def same_document(chunk: dict[str, Any]) -> bool:
+        candidate = chunk.get("document_id") or chunk.get("doc_id") or chunk.get("source_doc")
+        return bool(document_id) and candidate == document_id
+
+    previous = next((
+        selected[index] for index in range(current_index - 1, -1, -1)
+        if same_document(selected[index])
+    ), None)
+    following = next((
+        selected[index] for index in range(current_index + 1, len(selected))
+        if same_document(selected[index])
+    ), None)
+
+    def public_chunk(chunk: dict[str, Any] | None) -> dict[str, Any] | None:
+        if chunk is None:
+            return None
+        return {
+            "chunk_id": str(chunk.get("chunk_id", "")),
+            "document_id": chunk.get("document_id"),
+            "title": chunk.get("doc_title") or chunk.get("source_doc") or "Knowledge source",
+            "text": chunk.get("compressed_text") or chunk.get("context_content") or chunk.get("text") or "",
+            "page": chunk.get("page"),
+            "section": chunk.get("section"),
+        }
+
+    return {
+        "retrieval_request_id": retrieval_request_id,
+        "current": public_chunk(current),
+        "previous": public_chunk(previous),
+        "next": public_chunk(following),
+    }

@@ -55,11 +55,6 @@ function RunRow({ run, selected, onSelect }: { run: RunSummary; selected: boolea
         <StatusPill status={run.status} label={RUN_STATUS_LABEL[run.status] ?? run.status} />
       </div>
       <div className="mt-1 flex items-center gap-1.5 min-w-0 text-[11px] text-ink-500">
-        {run.stage_id && (
-          <span className="flex-none px-1.5 py-0.5 rounded bg-cyan-50 text-cyan-700 font-medium">
-            {run.stage_id}
-          </span>
-        )}
         <span className="truncate">
           {relativeTime(run.started_at ?? Date.parse(run.created_at) / 1000)}
           {run.duration_s != null ? ` · ${run.duration_s.toFixed(0)}s` : ''}

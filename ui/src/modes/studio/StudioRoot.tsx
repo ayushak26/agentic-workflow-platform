@@ -1,20 +1,18 @@
+import { lazy } from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { StudioLayout } from './StudioLayout';
-import { Library } from './Library';
-import { Builder } from './Builder';
-import { Cockpit } from './Cockpit';
-import { BusinessView } from './BusinessView';
-import { BusinessChat } from './business-chat/BusinessChat';
-import { RunHistory } from './RunHistory';
-import { RunCandidates } from './RunCandidates';
-import { ProposalReview } from './ProposalReview';
-import { PipelineLibrary, PipelineRuns, PipelineRunView } from './Pipelines';
 
-// Guided Run was replaced by Business View; this keeps any old bookmarked
-// or cached `/guided/:runId` link working rather than 404ing.
-function GuidedRunRedirect() {
+const Library = lazy(() => import('./Library').then(module => ({ default: module.Library })));
+const Builder = lazy(() => import('./Builder').then(module => ({ default: module.Builder })));
+const Cockpit = lazy(() => import('./Cockpit').then(module => ({ default: module.Cockpit })));
+const BusinessChat = lazy(() => import('./business-chat/BusinessChat').then(module => ({ default: module.BusinessChat })));
+const RunHistory = lazy(() => import('./RunHistory').then(module => ({ default: module.RunHistory })));
+const RunCandidates = lazy(() => import('./RunCandidates').then(module => ({ default: module.RunCandidates })));
+const ProposalReview = lazy(() => import('./ProposalReview').then(module => ({ default: module.ProposalReview })));
+
+function LegacyRunRedirect() {
   const { runId } = useParams();
-  return <Navigate to={`/business/${runId}`} replace />;
+  return <Navigate to={`/workflow-runs/${runId}`} replace />;
 }
 
 export function StudioRoot() {
@@ -28,24 +26,19 @@ export function StudioRoot() {
         <Route path="chat/private/:chatWorkflowId" element={<BusinessChat />} />
         <Route path="chat/:workflowName" element={<BusinessChat />} />
         <Route path="workflows" element={<Library />} />
-        <Route path="library" element={<Library />} />
         <Route path="builder/:name" element={<Builder />} />
         <Route path="builder" element={<Builder />} />
-        <Route path="business/:runId" element={<BusinessView />} />
-        <Route path="business-chat" element={<BusinessChat />} />
-        <Route path="business-chat/:workflowName" element={<BusinessChat />} />
-        <Route path="guided/:runId" element={<GuidedRunRedirect />} />
-        <Route path="cockpit/:runId" element={<Cockpit />} />
-        <Route path="history" element={<RunHistory />} />
-        <Route path="history/:runId" element={<RunHistory />} />
         <Route path="workflow-runs" element={<RunHistory />} />
         <Route path="workflow-runs/:runId" element={<RunHistory />} />
+        <Route path="cockpit/:runId" element={<Cockpit />} />
         <Route path="candidates/:runId" element={<RunCandidates />} />
-        <Route path="pipelines" element={<PipelineLibrary />} />
-        <Route path="pipelines/runs" element={<PipelineRuns />} />
-        <Route path="pipelines/runs/:pipelineRunId" element={<PipelineRunView />} />
         <Route path="proposal-review" element={<ProposalReview />} />
         <Route path="proposal-review/:runId" element={<ProposalReview />} />
+        <Route path="guided/:runId" element={<LegacyRunRedirect />} />
+        <Route path="history" element={<Navigate to="/workflow-runs" replace />} />
+        <Route path="history/:runId" element={<LegacyRunRedirect />} />
+        <Route path="library" element={<Navigate to="/workflows" replace />} />
+        <Route path="business-chat/*" element={<Navigate to="/chat" replace />} />
       </Route>
     </Routes>
   );

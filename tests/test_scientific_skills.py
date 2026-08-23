@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -10,6 +11,7 @@ from app.nodes.scientific_research_planner import ScientificResearchPlannerAgent
 from app.nodes.scientific_skill_agent import ScientificSkillAgent
 from app.research.deep_research import ResearchBrief, ResearchDossier
 from app.research.skills import ScientificSkillCatalog
+from app.runtime.state import WorkflowState
 
 _VENDORED_SKILLS_ROOT = (
     Path(__file__).resolve().parent.parent
@@ -181,6 +183,29 @@ def test_vendored_research_and_database_lookup_skills_load_and_select():
     assert "database-lookup" in bundle
 
 
+def test_prompt_bundle_represents_every_selected_skill_within_the_size_cap(tmp_path):
+    _write_skill(tmp_path, "first-skill", "A" * 2_000)
+    _write_skill(tmp_path, "second-skill", "B" * 2_000)
+    catalog = ScientificSkillCatalog(
+        tmp_path,
+        allowlist=("first-skill", "second-skill"),
+        max_prompt_chars=1_000,
+    )
+    catalog.refresh()
+    selection = catalog.select(
+        objective="first-skill second-skill",
+        requested=("first-skill", "second-skill"),
+        auto_select=False,
+        max_skills=2,
+    )
+
+    bundle = catalog.prompt_bundle(selection)
+
+    assert len(bundle) <= catalog.max_prompt_chars
+    assert "name='first-skill'" in bundle
+    assert "name='second-skill'" in bundle
+
+
 @pytest.mark.asyncio
 async def test_research_lookup_skill_reaches_deep_research_instructions():
     """Planner-selected skills must actually shape the Deep Research call.
@@ -222,7 +247,7 @@ async def test_research_lookup_skill_reaches_deep_research_instructions():
         {"call_context": "", "concept_context": ""},
         services={"llm": PlannerLLM(), "scientific_skill_catalog": catalog},
     )
-    graph_state = {
+    graph_state = cast(WorkflowState, {
         "domain_state": {
             "eu_proposal": {
                 "claims": {
@@ -234,7 +259,7 @@ async def test_research_lookup_skill_reaches_deep_research_instructions():
                 }
             }
         }
-    }
+    })
     plan_result = await planner.run(
         graph_state,
         planner.config.model_dump(),

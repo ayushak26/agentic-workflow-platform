@@ -11,8 +11,10 @@ from app.runtime.schema import WorkflowFileRef
 from app.workflow.chat_workspace_planner import (
     build_artifact_adapter,
     build_file_adapter,
+    build_grounded_diagram_adapter,
     build_llm_adapter,
 )
+from app.tools.image_io import GeneratedImage
 
 
 class DeterministicLLM:
@@ -39,6 +41,20 @@ class ObjectStore:
     def put_bytes(self, data: bytes, key: str, content_type: str | None = None) -> None:
         self.blobs[key] = data
         self.puts.append((key, content_type))
+
+
+class ImageGenerator:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def generate(self, prompt: str, **kwargs: Any) -> GeneratedImage:
+        self.calls.append({"prompt": prompt, **kwargs})
+        return GeneratedImage(
+            data=b"grounded-diagram-png",
+            model="gpt-image-2-2026-04-21",
+            output_format="png",
+            requested_model="gpt-image-2-2026-04-21",
+        )
 
 
 async def execute(yaml_text: str, inputs: dict[str, Any], services: dict[str, Any], run_id: str):
@@ -79,6 +95,36 @@ async def test_generated_file_adapter_extracts_uploaded_text_before_answering():
     assert result["output"]["message"] == "Reliability is the dominant interview theme."
     assert "Reliability is the top concern" in llm.calls[0]["user"]
     assert result["state"]["node_outputs"]["load_files"]["text_file_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_grounded_diagram_adapter_reads_source_then_generates_real_image():
+    ref = WorkflowFileRef(
+        file_id="architecture", name="architecture.md", extension=".md", category="document",
+        content_type="text/markdown", size_bytes=80, sha256="b" * 64,
+        minio_key="workflow-inputs/workspace/architecture.md", parseable_text=True,
+    )
+    store = ObjectStore({
+        ref.minio_key: b"EURSKEM AI has React, FastAPI, storage, integrations, and observability layers.",
+    })
+    llm = DeterministicLLM([{
+        "answer": "Eurskem AI uses four main layers with observability spanning them.",
+        "image_prompt": "Four-layer Eurskem AI architecture diagram with React, FastAPI, storage, integrations, and observability.",
+    }])
+    images = ImageGenerator()
+    result = await execute(
+        build_grounded_diagram_adapter(),
+        {"message": "Explain Eurskem AI and create a diagram.", "attachments": [ref.model_dump()]},
+        {"llm": llm, "image_generator": images, "object_store": store},
+        "workspace-diagram",
+    )
+
+    assert result["status"] == "completed"
+    assert result["output"]["message"].startswith("Eurskem AI uses four main layers")
+    assert result["output"]["handoff"]["image"].endswith("generate_image.png")
+    assert "EURSKEM AI has React" in llm.calls[0]["user"]
+    assert images.calls[0]["prompt"].startswith("Four-layer Eurskem AI architecture")
+    assert store.blobs[result["output"]["handoff"]["image"]] == b"grounded-diagram-png"
 
 
 @pytest.mark.parametrize(

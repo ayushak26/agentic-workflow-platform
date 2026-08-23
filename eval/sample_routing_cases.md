@@ -10,7 +10,7 @@ Workflow: `workflows/crm_aware_customer_triage.yaml` (CRM-Aware Customer Request
 Each case below has been **run live against the real workflow** (real LLM extraction,
 fixture-backed Dynamics 365 CRM — not stubbed) to confirm the outcome shown actually
 happens. Paste `subject` / `message` / `sender_email` into the Run dialog for this
-workflow in the UI, then open the run in Business View to watch it work through
+workflow in the UI, then open the run in Cockpit to watch it work through
 understanding → CRM lookup → decision → routing.
 
 Live models have some run-to-run variance in wording, so field values like

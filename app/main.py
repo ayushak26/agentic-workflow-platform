@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import warnings
 from contextlib import asynccontextmanager
+from typing import Any
 
 import redis.asyncio as aioredis
 from fastapi import FastAPI
@@ -35,9 +36,7 @@ from app.runtime.events import RunEventBus
 from app.runtime.coordination import RedisLease
 from app.ingestion.collections import CollectionRegistry
 from app.workflow.run_history import ensure_indexes as ensure_run_indexes
-from app.workflow.pipeline_history import ensure_pipeline_indexes
 from app.workflow.claim_verifications import ensure_indexes as ensure_claim_verification_indexes
-from app.workflow.business_view.store import ensure_business_view_indexes
 from app.workflow.run_chat_store import ensure_run_chat_indexes
 from app.workflow.chat_workflow_store import ensure_chat_workflow_indexes
 from app.workflow.chat_conversation_store import ensure_chat_conversation_indexes
@@ -67,7 +66,6 @@ from app.api import proposals as proposals_api
 from app.api import research as research_api
 from app.api import workflow_files as workflow_files_api
 from app.api import llm_providers as llm_providers_api
-from app.api import pipelines as pipelines_api
 from app.api import candidates as candidates_api
 from app.api import run_chat as run_chat_api
 from app.api import node_types_chat as node_types_chat_api
@@ -137,13 +135,11 @@ async def lifespan(app: FastAPI):
         )
         try:
             await ensure_run_indexes(services["audit_db"])
-            await ensure_pipeline_indexes(services["audit_db"])
             await ensure_claim_verification_indexes(services["audit_db"])
             await ensure_run_chat_indexes(services["audit_db"])
             await ensure_chat_workflow_indexes(services["audit_db"])
             await ensure_chat_conversation_indexes(services["audit_db"])
             await ensure_prompt_template_indexes(services["audit_db"])
-            await ensure_business_view_indexes(services["audit_db"])
             await ensure_preflight_stats_indexes(services["audit_db"])
             await ProposalWorkspaceStore(
                 services["audit_db"],
@@ -234,7 +230,7 @@ async def lifespan(app: FastAPI):
 
     # ── Redis ──────────────────────────────────────────────────────────────────
     try:
-        redis_client = await aioredis.from_url(settings.redis_url)
+        redis_client: Any = aioredis.from_url(settings.redis_url)
         await redis_client.ping()
         services["redis"] = redis_client
         logger.info("redis.connected")
@@ -439,10 +435,11 @@ async def lifespan(app: FastAPI):
     if "weaviate_client" in services:
         from app.retrieval import retrieve
         from app.ingestion.embedder import get_embedder
+        from app.retrieval.weaviate_client import COLLECTION_NAME, upsert_objects_on
         try:
             _embedder = get_embedder()
             services["embedder"] = _embedder
-            _wv = services["weaviate_client"]
+            _wv: Any = services["weaviate_client"]
             _llm = services["llm"]
             _registry = services["collection_registry"]
             services["retriever"] = lambda q, llm=None: retrieve(
@@ -454,7 +451,7 @@ async def lifespan(app: FastAPI):
             )
             # Write path for evidence ingestion (MinIOEvidenceIngestion node).
             services["evidence_indexer"] = lambda chunks, vectors: (
-                _wv.upsert_chunks(chunks, vectors)
+                upsert_objects_on(_wv, COLLECTION_NAME, chunks, vectors)
             )
             logger.info("retriever.ready")
         except Exception as exc:
@@ -721,7 +718,6 @@ app.include_router(proposals_api.router)
 app.include_router(research_api.router)
 app.include_router(workflow_files_api.router)
 app.include_router(llm_providers_api.router)
-app.include_router(pipelines_api.router)
 app.include_router(candidates_api.router)
 app.include_router(run_chat_api.router)
 app.include_router(node_types_chat_api.router)

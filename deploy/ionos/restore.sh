@@ -88,6 +88,8 @@ docker run --rm \
 # ---- shared workflows ---------------------------------------------------------
 echo "Restoring shared workflows..."
 tar -C "${root_dir}/shared" -xzf "${work_dir}/workflows.tar.gz"
+bash "${release_dir}/deploy/ionos/cleanup_retired_workflow_artifacts.sh" \
+  "${root_dir}/shared/workflows"
 
 # ---- restart ------------------------------------------------------------------
 echo "Starting the stack..."

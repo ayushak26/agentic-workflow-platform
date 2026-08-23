@@ -3,7 +3,7 @@ prompt, autofix), so we can actually measure — instead of guess — how often
 workflows come out with basic/repetitive structural errors and which error
 codes recur most.
 
-Deliberately global, not session-scoped (unlike run_history/pipeline_history):
+Deliberately global, not session-scoped (unlike run history):
 the question this answers ("are we near error-free workflows?") is a
 platform-wide reliability question, not a per-user one, and error codes carry
 no run content/PII. Exposed read-only via GET /api/workflows/preflight-stats,

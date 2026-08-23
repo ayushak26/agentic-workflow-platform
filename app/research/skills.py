@@ -387,7 +387,7 @@ class ScientificSkillCatalog:
         )
 
     def prompt_bundle(self, selection: SkillSelection) -> str:
-        """Compute the prompt bundle.
+        """Build a bounded prompt that represents every selected skill.
 
         Args:
             selection (SkillSelection): The selection.
@@ -395,20 +395,29 @@ class ScientificSkillCatalog:
         Returns:
             str: The bundle.
         """
-        chunks: list[str] = []
-        remaining = self.max_prompt_chars
-        for skill in selection.skills:
-            header = (
+        if not selection.skills:
+            return ""
+
+        wrappers = [
+            (
                 f"\n<scientific-skill name={skill.name!r} "
-                f"version={skill.version!r}>\n"
+                f"version={skill.version!r}>\n",
+                "\n</scientific-skill>\n",
             )
-            footer = "\n</scientific-skill>\n"
-            available = remaining - len(header) - len(footer)
-            if available <= 0:
-                break
+            for skill in selection.skills
+        ]
+        wrapper_chars = sum(len(header) + len(footer) for header, footer in wrappers)
+        body_budget = max(0, self.max_prompt_chars - wrapper_chars)
+        remaining_skills = len(selection.skills)
+        chunks: list[str] = []
+        for skill, (header, footer) in zip(selection.skills, wrappers, strict=True):
+            # Share the remaining body budget so an oversized first skill cannot
+            # crowd later selected skills out of the prompt entirely.
+            available = body_budget // remaining_skills
             body = skill.instructions[:available]
             chunks.append(f"{header}{body}{footer}")
-            remaining -= len(header) + len(body) + len(footer)
+            body_budget -= len(body)
+            remaining_skills -= 1
         return "".join(chunks)
 
 

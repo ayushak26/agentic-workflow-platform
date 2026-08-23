@@ -289,6 +289,13 @@ class TestDeriveInputsFromStartNode:
         assert spec.inputs["attachments"].type == "file"
         assert spec.inputs["attachments"].multiple is True
 
+    def test_chatbot_mode_derives_a_required_message_input(self):
+        spec = _spec([
+            {"id": "begin", "type": "StartAgent", "config": {"mode": "chatbot"}},
+        ])
+        assert spec.inputs["message"].type == "text"
+        assert spec.inputs["message"].required is True
+
     def test_no_start_node_leaves_inputs_untouched(self):
         spec = _spec([{"id": "echo", "type": "Echo", "config": {"template": "hi"}}])
         assert spec.inputs == {}

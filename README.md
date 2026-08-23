@@ -3,7 +3,7 @@
 <p align="center">
   <strong>An agentic workflow platform for high-stakes work.</strong><br>
   Typed workflows compiled to LangGraph, a zero-token preflight, a strict evidence lifecycle,
-  and three product surfaces over one run.
+  and five canonical surfaces over one Workflow model.
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@ schema, and checkpoints for recovery.
 
 ## Contents
 
-- [Three surfaces, one run](#three-surfaces-one-run)
+- [Five surfaces, one workflow model](#five-surfaces-one-workflow-model)
 - [What makes it different](#what-makes-it-different)
 - [Quick start](#quick-start)
 - [How a workflow works](#how-a-workflow-works)
@@ -48,18 +48,20 @@ schema, and checkpoints for recovery.
 
 ---
 
-## Three surfaces, one run
+## Five surfaces, one workflow model
 
-The interface changes by audience. The workflow identity, run ID, node outputs, approvals and durable
-history do not — there is no second, simplified engine behind the business view.
+Chat, Workflows, Builder, Cockpit and Run History all use the same Workflow definition and durable run
+record. A workflow launched from Chat is conversation-scoped; a workflow launched elsewhere appears in
+global Run History. Both retain the same workflow/version identity, node outputs, approvals and status.
 
-### Guided Run — for project administrators and domain experts
+### Chat — for conversational workflow use
 
-Nodes become business stages. Plain-language explanation of what is happening and why it matters, one
-consolidated attention queue, and the deliverables. No node IDs, prompts, payloads or stack traces in
-the primary reading path.
+Start and inspect workflows inside a conversation. Shared workflow progress and step inspection keep
+the conversational view aligned with Cockpit without adding a second execution model.
 
-<p align="center"><img src="portfolio/screenshots/03-guided-run-overview.png" width="88%" alt="Guided Run"></p>
+### Workflows — for discovery and launch
+
+Browse canonical Workflow definitions, inspect their inputs and stages, and launch them into Cockpit.
 
 ### Builder — for workflow authors
 
@@ -85,7 +87,7 @@ downstream explicitly skipped, provider-level cause attached, retry route beside
 
 Nine deterministic checks run before any provider call: YAML key uniqueness, the Pydantic workflow
 contract, registry discovery, per-node config and model compatibility, graph topology, template roots
-and upstream ordering, Guided Run copy quality, and a real LangGraph compile. Every issue carries a
+and upstream ordering, workflow progress copy quality, and a real LangGraph compile. Every issue carries a
 code, severity, path, node ID and suggestion, so the Builder can navigate straight to the problem.
 
 The token counter is a product surface, not an implementation detail.
@@ -135,6 +137,7 @@ docker compose up -d
 
 # 2. Backend
 uv sync --frozen --all-extras --dev
+./scripts/start_snippet_runner_local.sh
 .venv/bin/uvicorn app.main:app --reload --port 8000
 
 # 3. UI
@@ -145,6 +148,13 @@ Docker Compose ships isolated development defaults, so a missing `.env` no longe
 interpolation errors. Copy `.env.example` to `.env` only when you need custom local credentials or
 provider keys — and never reuse development defaults in production.
 
+When the API runs directly on the host, `start_snippet_runner_local.sh` starts the separate local
+executor used by `PythonSnippetAgent` at `SNIPPET_RUNNER_SOCKET_PATH` (normally
+`/tmp/snippet-runner.sock` in the local `.env`) and performs a real health probe. When the API runs
+inside Docker Compose, the existing network-isolated `snippet-runner` service and shared
+`/run/snippet-runner/snippet-runner.sock` volume are used instead; do not start the host helper for
+that deployment shape.
+
 Confirm the stack is up before doing anything else:
 
 ```bash
@@ -152,7 +162,7 @@ curl -s localhost:8000/health | jq '{status, ready}'
 # { "status": "ok", "ready": true }
 ```
 
-Sign in with the development bypass account (see `app/config.py`), then open **Library**, pick a
+Sign in with the development bypass account (see `app/config.py`), then open **Workflows**, pick a
 workflow, and press **Prepare and run**.
 
 > **Troubleshooting — "run store unavailable" (503)** — The API opens its MongoDB connection once,
@@ -161,9 +171,8 @@ workflow, and press **Prepare and run**.
 > process's life. Fix: confirm Mongo is healthy first (`docker compose ps mongo`), then restart
 > `uvicorn` — bringing Mongo up afterward is not enough on its own.
 
-> **Note** — Guided Run and Cockpit attach a run through in-app navigation. Reaching them by pasting a
-> URL will not carry the workflow YAML into navigation state; go via **Run history → select a run →
-> Open in Guided / Open in Cockpit**.
+> **Note** — Cockpit can attach to a run through in-app navigation. Reaching it by pasting a URL may not
+> carry the workflow YAML in navigation state; open the run from **Run History** when possible.
 
 ---
 
@@ -233,7 +242,7 @@ method — the registry, Builder forms, preflight and compiler pick it up withou
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │  React 19 application                                                │
-│  Library · Guided Run · Builder · Cockpit · Run History · Evaluation │
+│  Chat · Workflows · Builder · Cockpit · Run History · Evaluation      │
 └───────────────────────────────┬──────────────────────────────────────┘
                                 │  authenticated actions + live events
 ┌───────────────────────────────▼──────────────────────────────────────┐

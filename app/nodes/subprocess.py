@@ -46,6 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.nodes.base import NodeType
 from app.nodes.registry import NodeRegistry
 from app.observability.logging import get_logger
+from app.runtime.state import WorkflowState
 
 log = get_logger(__name__)
 
@@ -196,7 +197,7 @@ class SubprocessAgent(NodeType):
         return self._finalize(cfg, decision)
 
     async def _get_or_create_launch(
-        self, cfg: SubprocessConfig, state: dict[str, Any],
+        self, cfg: SubprocessConfig, state: WorkflowState,
     ) -> dict[str, Any]:
         """Return the or create launch.
 
@@ -384,18 +385,14 @@ def _load_child_workflow(name: str):
 def _resolve_child_inputs(
     cfg: SubprocessConfig,
     child_spec: Any,
-    state: dict[str, Any],
+    state: WorkflowState,
 ) -> dict[str, Any]:
     """Explicit mapping -> same-named parent workflow input -> same-named
     parent node's whole output -> None.
 
-    Mirrors app.runtime.pipeline_executor.materialize_stage_inputs, which
-    solves the identical problem for a pipeline stage — reused, not
-    reinvented, including its {raw, parsed} envelope-unwrap convention for
-    json-typed inputs (_coerce_for_target).
+    Structured ``{raw, parsed}`` Transform outputs are unwrapped for JSON
+    inputs; non-string values are JSON encoded for text inputs.
     """
-    from app.runtime.pipeline_executor import _coerce_for_target
-
     explicit = cfg.inputs
     parent_inputs = state.get("inputs") or {}
     parent_node_outputs = state.get("node_outputs") or {}
@@ -410,5 +407,19 @@ def _resolve_child_inputs(
             value = parent_node_outputs[name]
         else:
             value = None
-        resolved[name] = _coerce_for_target(value, input_spec)
+        resolved[name] = _coerce_child_input(value, input_spec)
     return resolved
+
+
+def _coerce_child_input(value: Any, input_spec: Any) -> Any:
+    if value is None:
+        return None
+    if input_spec.type == "json":
+        if isinstance(value, dict) and "parsed" in value and "raw" in value:
+            return value["parsed"]
+        return value
+    if input_spec.type == "text" and not isinstance(value, str):
+        import json
+
+        return json.dumps(value, indent=2, ensure_ascii=False)
+    return value

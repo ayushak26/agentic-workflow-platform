@@ -573,7 +573,7 @@ def build_vol1() -> None:
 
     body = cover("1", "Architecture Overview",
                  "How the platform is built: one typed workflow runtime, "
-                 "three product surfaces, and the infrastructure beneath.")
+                 "five canonical Workflow surfaces, and the infrastructure beneath.")
     body += f"""
     <h1 class="section">1. What the platform is</h1>
     <p><b>{esc(PROJECT)}</b> is an agentic workflow platform for
@@ -584,12 +584,10 @@ def build_vol1() -> None:
     output against a schema, and checkpoints for recovery. The result is
     visible automation with typed steps, explicit evidence, bounded
     provider use, and human control at material decisions.</p>
-    <div class="callout">Three product surfaces share one run: the
-    <b>Guided Run</b> for domain experts, the <b>Builder</b> for workflow
-    authors, and the <b>Cockpit</b> for technical review. There is no
-    second, simplified engine behind the business view &mdash; the workflow
-    identity, run ID, node outputs, approvals and durable history are
-    identical across all three.</div>
+    <div class="callout">Five product surfaces share one Workflow model:
+    <b>Chat</b>, <b>Workflows</b>, <b>Builder</b>, <b>Cockpit</b>, and
+    <b>Run History</b>. Workflow identity, run ID, node outputs, approvals and
+    durable history remain consistent across them.</div>
 
     <h1 class="section">2. System Architecture</h1>
     <p>Figure 1 shows the four layers: the React SPA surfaces, the FastAPI
@@ -599,14 +597,12 @@ def build_vol1() -> None:
     <figure>{ARCH_SVG}<figcaption>Figure 1 &mdash; System architecture.
     </figcaption></figure>
 
-    <h1 class="section pagebreak">3. The three surfaces</h1>
-    <h2>3.1 Workflow Library &amp; Guided Run</h2>
-    <p>Workflows are presented by outcome, not by graph shape. A run
-    becomes business stages with plain-language explanation, one
-    consolidated attention queue, and the deliverables.</p>
+    <h1 class="section pagebreak">3. Workflow surfaces</h1>
+    <h2>3.1 Chat &amp; Workflows</h2>
+    <p>Workflows are presented by outcome, not by graph shape. Chat can launch
+    conversation-scoped runs, while Workflows provides canonical discovery and
+    launch into Cockpit.</p>
     {shot('01-workflow-library.png', 'The Workflow Library.')}
-    {shot('03-guided-run-overview.png', 'Guided Run overview.')}
-    {shot('04-guided-run-outputs.png', 'Guided Run deliverables.')}
 
     <h2 class="pagebreak">3.2 Workflow Builder</h2>
     <p>A stable four-area layout: action bar, registry-driven node library,

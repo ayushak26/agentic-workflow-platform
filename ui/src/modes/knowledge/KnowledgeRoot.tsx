@@ -33,7 +33,11 @@ function KnowledgeTabs({ tab, setTab }: { tab: Tab; setTab: (value: Tab) => void
 }
 
 export function KnowledgeRoot() {
-  const [tab, setTab] = useState<Tab>(() => window.localStorage.getItem('eurskem.knowledge.trace') ? 'traces' : 'collections');
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = window.localStorage.getItem('eurskem.knowledge.tab') as Tab | null;
+    window.localStorage.removeItem('eurskem.knowledge.tab');
+    return requested ?? (window.localStorage.getItem('eurskem.knowledge.trace') ? 'traces' : 'collections');
+  });
   useEffect(() => {
     const handler = () => setTab('traces');
     window.addEventListener('eurskem:open-knowledge-trace', handler);

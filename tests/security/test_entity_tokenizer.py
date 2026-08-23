@@ -1,6 +1,7 @@
 import pytest
 
 from app.config import settings
+from app.security.entity_ner import EntityMatch
 from app.security.entity_tokenizer import EntityTokenizerService, ProcessingMode
 from tests.security._fake_mongo import FakeAsyncDatabase
 
@@ -139,6 +140,64 @@ async def test_ner_safety_net_catches_unregistered_person_and_org(
     assert "Jane Smith" not in result.text
     assert "Beta Systems SA" not in result.text
     assert len(result.placeholders_used) == 2
+
+
+async def test_ner_safety_net_does_not_tokenize_ambiguous_short_acronyms(
+    service: EntityTokenizerService, monkeypatch,
+):
+    monkeypatch.setattr(
+        "app.security.entity_tokenizer.extract_entities",
+        lambda text: [EntityMatch(start=16, end=18, text="AI", entity_type="organisation")],
+    )
+    result = await service.tokenize(
+        "Identify top 10 AI companies.", session_id="s1", collection_id="c1",
+    )
+    assert result.text == "Identify top 10 AI companies."
+    assert result.placeholders_used == frozenset()
+
+
+async def test_registered_short_acronym_remains_protected(
+    service: EntityTokenizerService, monkeypatch,
+):
+    await service.registry.register(
+        session_id="s1", collection_id="c1", entity_type="organisation", value="AI",
+    )
+    monkeypatch.setattr(
+        "app.security.entity_tokenizer.extract_entities",
+        lambda text: [EntityMatch(start=16, end=18, text="AI", entity_type="organisation")],
+    )
+    result = await service.tokenize(
+        "Identify top 10 AI companies.", session_id="s1", collection_id="c1",
+    )
+    assert "AI" not in result.text
+    assert "[[ENTITY_ORGANISATION_1]]" in result.text
+
+
+async def test_stale_auto_detected_short_acronym_is_ignored_but_manual_is_not(
+    service: EntityTokenizerService, monkeypatch,
+):
+    await service.registry.register(
+        session_id="s1", collection_id="c1", entity_type="organisation",
+        value="AI", source="auto_detected",
+    )
+    monkeypatch.setattr("app.security.entity_tokenizer.extract_entities", lambda text: [])
+    result = await service.tokenize(
+        "Create a list of 100 AI companies in Europe.",
+        session_id="s1", collection_id="c1",
+    )
+    assert result.text == "Create a list of 100 AI companies in Europe."
+    assert result.placeholders_used == frozenset()
+
+    await service.registry.register(
+        session_id="s2", collection_id="c1", entity_type="project_acronym",
+        value="AI", source="manual",
+    )
+    protected = await service.tokenize(
+        "Create a list of 100 AI companies in Europe.",
+        session_id="s2", collection_id="c1",
+    )
+    assert "AI" not in protected.text
+    assert protected.placeholders_used
 
 
 async def test_registry_hit_wins_over_ner_on_overlap(service: EntityTokenizerService):

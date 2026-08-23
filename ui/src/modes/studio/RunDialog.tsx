@@ -28,13 +28,10 @@ function startFormFieldsFrom(workflowYaml: string): StartFormField[] {
   }
 }
 
-/** A chatbot-mode Start node declares no `fields:` — its whole "form" is one
- * free-text message (StartAgent reads it from `inputs.message`, see
- * app/nodes/start.py). `derive_inputs_from_start_node` never adds `message`
- * to the workflow's declared `inputs:` contract either (only `attachments`
- * is derived for chatbot mode), so nothing else in this dialog would ever
- * collect it — without this, `runInputs.message` is simply never set and
- * every downstream step reading `outputs.start.message` gets `null`. */
+/** A chatbot-mode Start node uses one dedicated free-text message control.
+ * The backend also declares `message` in the workflow input contract so
+ * preflight and subprocess callers can validate/forward it; this dialog keeps
+ * the richer chatbot control and filters that key out of generic inputs. */
 function chatbotStartConfigFrom(
   workflowYaml: string,
 ): { chatbotName: string; welcomeMessage: string } | null {
@@ -105,7 +102,9 @@ export function RunDialog({
       });
   }, []);
 
-  const keys = Object.keys(inputs).filter(key => !startFieldNames.has(key));
+  const keys = Object.keys(inputs).filter(key => (
+    !startFieldNames.has(key) && !(chatbotConfig && key === 'message')
+  ));
 
   function applyImportedJson(raw: string) {
     let parsed: unknown;
@@ -254,8 +253,8 @@ export function RunDialog({
     setLaunchStage('Checking workflow structure…');
     setLaunchError(null);
     try {
-      // Business View retains test-before-run. Technical Cockpit launches
-      // defer that choice to its separate Test and Run buttons.
+      // Builder-originated Cockpit launches defer that choice to their
+      // separate Test and Run buttons.
       const preflight = launchContext ? null : await api.validateWorkflow(workflowYaml);
       if (preflight && !preflight.valid) {
         const errors = preflight.issues
@@ -314,12 +313,7 @@ export function RunDialog({
       }
 
       const runId = crypto.randomUUID();
-      // A Builder-originated launch (a "Run in Cockpit" or a node/branch
-      // test) always carries launchContext and stays on the technical
-      // Cockpit surface. A normal Library launch has none and defaults to
-      // the business-language Business View surface instead.
-      const surface = launchContext ? 'cockpit' : 'business';
-      navigate(`/${surface}/${runId}`, {
+      navigate(`/cockpit/${runId}`, {
         state: {
           workflowYaml,
           workflowName,

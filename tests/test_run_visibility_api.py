@@ -16,19 +16,41 @@ def _client_with_runs() -> TestClient:
     now = datetime.now(timezone.utc)
     db["run_history"].docs.extend([
         {
-            "run_id": "global-run", "session_id": "tenant-a",
-            "workflow_name": "Shared workflow", "status": "completed",
-            "origin": "direct", "history_visibility": "global",
-            "created_at": now, "updated_at": now,
+            "run_id": "global-run",
+            "session_id": "tenant-a",
+            "workflow_name": "Shared workflow",
+            "status": "completed",
+            "origin": "direct",
+            "history_visibility": "global",
+            "created_at": now,
+            "updated_at": now,
         },
         {
-            "run_id": "chat-run", "session_id": "tenant-a",
-            "workflow_name": "Shared workflow", "status": "completed",
+            "run_id": "saved-workflow-chat-run",
+            "session_id": "tenant-a",
+            "workflow_name": "Shared workflow",
+            "status": "completed",
+            "origin": "chat_saved_workflow",
+            "history_visibility": "global",
+            "workflow_id": "research-helper",
+            "workflow_version_id": "version-3",
+            "conversation_id": "conversation-1",
+            "message_id": "message-1",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "run_id": "general-chat-run",
+            "session_id": "tenant-a",
+            "workflow_name": "General Chat",
+            "status": "completed",
             "origin": "chat_saved_workflow",
             "history_visibility": "conversation_only",
-            "workflow_id": "research-helper", "workflow_version_id": "version-3",
-            "conversation_id": "conversation-1", "message_id": "message-1",
-            "created_at": now, "updated_at": now,
+            "workflow_id": "general-chat-workflow",
+            "conversation_id": "conversation-2",
+            "message_id": "message-2",
+            "created_at": now,
+            "updated_at": now,
         },
     ])
     app = FastAPI()
@@ -40,24 +62,30 @@ def _client_with_runs() -> TestClient:
     return TestClient(app)
 
 
-def test_conversation_only_run_is_hidden_from_list_but_available_by_id():
+def test_only_general_chat_is_hidden_from_global_history_but_available_by_id():
     with _client_with_runs() as client:
-        listed = client.get("/api/runs/mine")
-        detail = client.get("/api/runs/mine/chat-run")
+        list_response = client.get("/api/runs/mine")
+        detail_response = client.get("/api/runs/mine/general-chat-run")
 
-    assert listed.status_code == 200
-    assert [run["run_id"] for run in listed.json()["runs"]] == ["global-run"]
-    assert detail.status_code == 200
-    run = detail.json()["run"]
+    assert list_response.status_code == 200
+    listed_ids = [run["run_id"] for run in list_response.json()["runs"]]
+    assert set(listed_ids) == {"global-run", "saved-workflow-chat-run"}
+    saved_chat = next(run for run in list_response.json()["runs"] if run["run_id"] == "saved-workflow-chat-run")
+    assert saved_chat["workflow_id"] == "research-helper"
+    assert saved_chat["origin"] == "chat_saved_workflow"
+
+    assert detail_response.status_code == 200
+    run = detail_response.json()["run"]
+    assert run["run_id"] == "general-chat-run"
     assert run["origin"] == "chat_saved_workflow"
     assert run["history_visibility"] == "conversation_only"
-    assert run["workflow_id"] == "research-helper"
-    assert run["workflow_version_id"] == "version-3"
-    assert run["conversation_id"] == "conversation-1"
-    assert run["message_id"] == "message-1"
+    assert run["workflow_id"] == "general-chat-workflow"
+    assert run["conversation_id"] == "conversation-2"
+    assert run["message_id"] == "message-2"
 
 
 def test_run_history_limit_is_bounded():
     with _client_with_runs() as client:
         response = client.get("/api/runs/mine?limit=201")
+
     assert response.status_code == 422

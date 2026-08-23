@@ -27,14 +27,11 @@ describe('matchesSearch', () => {
   const run = makeRun({
     workflow_name: 'Horizon Europe Part B — Evidence',
     run_id: 'abc-123',
-    stage_id: 'evidence',
-    pipeline_name: 'Horizon Staged Pipeline',
   });
 
-  it('matches on workflow name, run id, stage id, and pipeline name (case-insensitive)', () => {
+  it('matches on workflow name and run id (case-insensitive)', () => {
     expect(matchesSearch(run, 'evidence')).toBe(true);
     expect(matchesSearch(run, 'ABC-123')).toBe(true);
-    expect(matchesSearch(run, 'staged pipeline')).toBe(true);
     expect(matchesSearch(run, 'nonexistent')).toBe(false);
   });
 

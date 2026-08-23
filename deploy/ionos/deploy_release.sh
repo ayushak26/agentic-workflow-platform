@@ -25,6 +25,8 @@ ln -sfn "${env_file}" "${release_dir}/.env.production"
 mkdir -p "${shared_dir}/workflows"
 rsync -a --ignore-existing --chmod=D2770,F0660 \
   "${release_dir}/workflows/" "${shared_dir}/workflows/"
+bash "${release_dir}/deploy/ionos/cleanup_retired_workflow_artifacts.sh" \
+  "${shared_dir}/workflows"
 
 cd "${release_dir}"
 python3 scripts/production_preflight.py --env-file "${env_file}"

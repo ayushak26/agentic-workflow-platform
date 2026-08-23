@@ -2,7 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Extracted, behavior-preserving, from the original Cockpit.tsx: owns the
 // run/resume trigger, SSE subscription, run-detail polling, HITL gate
-// state, attach-mode reconstruction, and pipeline-stage bookkeeping. None
+// state, and attach-mode reconstruction. None
 // of this changed during the Cockpit redesign — only the presentation
 // (graph/panels) around it did — so this hook is a straight lift, not a
 // rewrite, to keep the existing execution behavior intact.
@@ -14,7 +14,7 @@ import { useSetRunCost } from '../../../RunCostContext';
 import { deriveCockpitState } from '../cockpit-state';
 import { parseYaml, type YamlWorkflow } from '../yaml-bridge';
 import { NODE_RUN_STATUS_MAP } from './node-render';
-import type { HITLReviewContent, PipelineRunDetail, RunCostSummary, RunDetail } from '../../../api/types';
+import type { HITLReviewContent, RunCostSummary, RunDetail } from '../../../api/types';
 import type { NodeStatus } from '../cockpit-state';
 
 export type Gate = {
@@ -36,26 +36,11 @@ export type Finished = {
   reason?: string;
 };
 
-// Present when this Cockpit is running one stage of a pipeline rather than a
-// standalone workflow. 'start' triggers POST /pipelines/run (stage 0 of a
-// fresh pipeline run); 'advance' triggers POST /pipelines/{id}/advance (any
-// later stage, reached via the "Continue to next stage" action).
-export type PipelineNavState = {
-  mode: 'start' | 'advance';
-  pipelineYaml?: string;
-  pipelineRunId: string;
-  pipelineName?: string;
-  stageId: string;
-  stageIndex: number;
-  totalStages: number;
-};
-
 export type CockpitNavState = {
   workflowYaml?: string;
   inputs?: Record<string, unknown>;
   workflowName?: string;
   retrySourceRunId?: string;
-  pipeline?: PipelineNavState;
   // Reopening an existing run (Run History's "Open in Cockpit") rather
   // than launching a new one. Skips triggering run/resume/pipeline — this
   // run already exists — and instead reconstructs graph + HITL gate state
@@ -197,32 +182,21 @@ export function useCockpitRun() {
     // This state guards the one external run request owned by this effect.
 
     setRunTriggered(true);
-    const pipeline = navState.pipeline;
-    const request = pipeline
-      ? pipeline.mode === 'advance'
-        ? api.advancePipeline(pipeline.pipelineRunId, undefined, runId)
-        : api.runPipeline(
-            pipeline.pipelineYaml!,
-            navState.inputs ?? {},
-            undefined,
-            pipeline.pipelineRunId,
-            runId,
-          )
-      : navState.retrySourceRunId
+    const request = navState.retrySourceRunId
       ? api.retryFailedRun(navState.retrySourceRunId, runId)
       // Do not send a made-up "default" session. The API derives the durable
       // history/retrieval scope from the authenticated user.
       : api.runWorkflow(
           navState.workflowYaml,
           navState.inputs ?? {},
-          undefined,
-          runId,
-          navState.awaitLaunch === true,
+          {
+            run_id: runId,
+            skip_preflight: navState.awaitLaunch === true,
+            origin: navState.builderReturnPath ? 'builder' : 'direct',
+          },
         );
     request
-      // A pipeline call's result is nested under stage_result — the same
-      // {status, run_id, state, ...} shape run_workflow returns directly.
-      .then((res) => applyResumeResult(pipeline ? (res as any).stage_result : res))
+      .then(applyResumeResult)
       .catch((e) => {
         const message = String(e.message ?? e);
         setTriggerError(message);
@@ -235,8 +209,8 @@ export function useCockpitRun() {
     navState.workflowYaml,
     navState.inputs,
     navState.retrySourceRunId,
-    navState.pipeline,
     navState.awaitLaunch,
+    navState.builderReturnPath,
     launchRequested,
     runId,
   ]);
@@ -358,59 +332,6 @@ export function useCockpitRun() {
     [events],
   );
 
-  // Pipeline mode: keep the pipeline's own gate/advance state alongside this
-  // stage's run so the banner can offer "Continue to next stage" as soon as
-  // this stage finishes. Re-fetched (not read off the trigger response) so it
-  // stays correct even when this stage finished via a mid-run HITL resume,
-  // which doesn't return the pipeline doc itself.
-  const [pipelineDoc, setPipelineDoc] = useState<PipelineRunDetail | null>(null);
-  const [continuingStage, setContinuingStage] = useState(false);
-  const [continueError, setContinueError] = useState<string | null>(null);
-  const pipelineRunId = navState.pipeline?.pipelineRunId;
-  useEffect(() => {
-    if (!pipelineRunId) return;
-    let cancelled = false;
-    api.pipelineRunDetail(pipelineRunId)
-      .then((doc) => { if (!cancelled) setPipelineDoc(doc); })
-      .catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [pipelineRunId, finished]);
-
-  // Business View and Cockpit share this one hook mount, so "Continue to
-  // next stage" must land back on whichever surface the user is currently
-  // on rather than hardcoding one — detected from the route, not passed in.
-  const surface = location.pathname.startsWith('/business') ? 'business' : 'cockpit';
-
-  const continueToNextStage = useCallback(async () => {
-    if (!pipelineDoc) return;
-    const nextIndex = pipelineDoc.current_stage_index + 1;
-    const nextStage = pipelineDoc.stages[nextIndex];
-    if (!nextStage) return;
-    setContinuingStage(true);
-    setContinueError(null);
-    try {
-      const { yaml: stageYaml } = await api.getWorkflow(nextStage.workflow);
-      const stageRunId = crypto.randomUUID();
-      navigate(`/${surface}/${stageRunId}`, {
-        state: {
-          workflowYaml: stageYaml,
-          workflowName: nextStage.id,
-          pipeline: {
-            mode: 'advance',
-            pipelineRunId: pipelineDoc.pipeline_run_id,
-            pipelineName: pipelineDoc.pipeline_name,
-            stageId: nextStage.id,
-            stageIndex: nextIndex,
-            totalStages: pipelineDoc.stages.length,
-          },
-        },
-      });
-    } catch (e: unknown) {
-      setContinueError(e instanceof Error ? e.message : String(e));
-      setContinuingStage(false);
-    }
-  }, [pipelineDoc, navigate, surface]);
-
   const retryGateFetch = useCallback(() => {
     setGateFetchError(null);
     setGateRetryToken((value) => value + 1);
@@ -447,10 +368,6 @@ export function useCockpitRun() {
     reusedNodeCount,
     applyResumeResult,
     setTriggerError,
-    pipelineDoc,
-    continueToNextStage,
-    continuingStage,
-    continueError,
     liveRunNodeStatus: getLiveRunNodeStatus,
     costSummary,
     runTriggered,

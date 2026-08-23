@@ -260,11 +260,6 @@ async def upsert_run(
     reused_node_count: int | None = None,
     reused_nodes: list[str] | None = None,
     error: str | None = None,
-    pipeline_run_id: str | None = None,
-    pipeline_name: str | None = None,
-    stage_id: str | None = None,
-    stage_index: int | None = None,
-    total_stages: int | None = None,
     origin: str | None = None,
     history_visibility: str | None = None,
     workflow_id: str | None = None,
@@ -308,11 +303,6 @@ async def upsert_run(
         "attempt": attempt,
         "reused_node_count": reused_node_count,
         "reused_nodes": reused_nodes,
-        "pipeline_run_id": pipeline_run_id,
-        "pipeline_name": pipeline_name,
-        "stage_id": stage_id,
-        "stage_index": stage_index,
-        "total_stages": total_stages,
         "origin": origin,
         "history_visibility": history_visibility,
         "workflow_id": workflow_id,
@@ -1197,23 +1187,6 @@ async def _reconcile_if_stale(db, doc: dict[str, Any] | None) -> dict[str, Any] 
         }
     )
 
-    # This run may be a pipeline stage. The normal completion path
-    # (app/workflow/orchestration.py) always syncs the parent pipeline via
-    # reconcile_stage_completion, but that path never runs here — without
-    # this call, a pipeline whose stage run got orphaned would stay
-    # status="running" forever, permanently blocking deletion of the run
-    # (see find_active_pipeline_stage in pipeline_history.py).
-    from app.workflow.pipeline_history import reconcile_stage_completion
-
-    try:
-        await reconcile_stage_completion(db, run_id=run_id, session_id=session_id)
-    except Exception as exc:
-        logger.error(
-            "run_history.stale_reconcile_pipeline_sync_failed",
-            error=str(exc),
-            run_id=run_id,
-        )
-
     return doc
 
 
@@ -1236,7 +1209,12 @@ async def list_runs(
     *,
     include_conversation_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return summaries, excluding conversation-owned Chat runs by default."""
+    """Return light run summaries, newest first, including active runs.
+
+    Conversation-owned Chat executions use the same durable execution store but
+    are excluded from the global Workflow Run History by default. Direct lookup
+    by run id remains available to the owning conversation.
+    """
 
     _require_session(session_id)
     projection = {
@@ -1248,6 +1226,8 @@ async def list_runs(
     }
     query: dict[str, Any] = {"session_id": session_id}
     if not include_conversation_only:
+        # `$ne` also includes legacy records where this field is absent; those
+        # runs predate Chat isolation and are therefore ordinary global runs.
         query["history_visibility"] = {"$ne": "conversation_only"}
     cursor = (
         db["run_history"]
@@ -1256,7 +1236,8 @@ async def list_runs(
         .limit(limit)
     )
     docs = [doc async for doc in cursor]
-    return [await _reconcile_if_stale(db, doc) for doc in docs]
+    reconciled = [await _reconcile_if_stale(db, doc) for doc in docs]
+    return [doc for doc in reconciled if doc is not None]
 
 
 _MIN_SAMPLE_FOR_ESTIMATES = 3
@@ -1393,9 +1374,7 @@ async def _delete_run_blobs(db, *, run_id: str) -> None:
 async def delete_run(db, *, run_id: str, session_id: str) -> bool:
     """Permanently remove a run's history, checkpoint, and externalized blobs.
 
-    Returns whether a matching run_history document existed. Callers are
-    responsible for checking the run isn't a live pipeline stage first (see
-    app/workflow/pipeline_history.py) — this function only deletes.
+    Returns whether a matching run_history document existed.
     """
 
     _require_session(session_id)
@@ -1421,15 +1400,8 @@ async def cleanup_stale_runs(db) -> list[str]:
     uses — so a genuinely still-executing long job is never touched, even if
     the sweep interval catches it mid-run.
 
-    Any matching run that is a pipeline stage has its parent pipeline synced
-    via reconcile_stage_completion before deletion, exactly like a normal
-    stale-reconcile would, so deleting it never leaves a pipeline pointing at
-    a run_id that no longer exists.
-
     Returns the run_ids actually deleted.
     """
-    from app.workflow.pipeline_history import reconcile_stage_completion
-
     cutoff = datetime.now(timezone.utc).timestamp() - settings.run_auto_cleanup_after_seconds
     cursor = db["run_history"].find(
         {"status": {"$in": ["running", "paused"]}},
@@ -1449,7 +1421,6 @@ async def cleanup_stale_runs(db) -> list[str]:
         run_id = doc["run_id"]
         session_id = doc["session_id"]
         try:
-            await reconcile_stage_completion(db, run_id=run_id, session_id=session_id)
             await delete_run(db, run_id=run_id, session_id=session_id)
         except Exception as exc:
             logger.error(

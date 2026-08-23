@@ -53,12 +53,23 @@ export function VersionHistoryPanel({
     setPreviewYaml(null);
     setPreviewError(null);
     api.getWorkflowVersion(workflowName, selectedId)
-      .then(result => setPreviewYaml(result.yaml))
+      .then(result => {
+        setPreviewYaml(result.yaml);
+        setVersions(current => current?.map(version => version.version_id === selectedId
+          ? {
+              ...version,
+              restorable: result.restorable,
+              preflight_issue_codes: result.preflight_issue_codes,
+              preflight_errors: result.preflight_errors,
+            }
+          : version) ?? null);
+      })
       .catch(reason => setPreviewError(reason instanceof Error ? reason.message : String(reason)));
   }, [selectedId, workflowName]);
 
   const currentSummary = summarize(currentYaml);
   const previewSummary = previewYaml ? summarize(previewYaml) : null;
+  const selectedVersion = versions?.find(version => version.version_id === selectedId) ?? null;
 
   async function restore() {
     if (!selectedId) return;
@@ -128,6 +139,11 @@ export function VersionHistoryPanel({
                             Current
                           </span>
                         )}
+                        {version.restorable === false && (
+                          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                            Incompatible
+                          </span>
+                        )}
                       </div>
                       <div className="mt-1 text-ink-500">
                         {version.node_count} nodes · workflow v{version.workflow_version}
@@ -154,6 +170,22 @@ export function VersionHistoryPanel({
             )}
             {selectedId && previewYaml !== null && (
               <>
+                {selectedVersion && !selectedVersion.restorable && (
+                  <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900" role="alert">
+                    <div className="font-semibold">This historical version cannot be restored under the current runtime.</div>
+                    <p className="mt-1">
+                      Its immutable YAML is preserved for audit and comparison. Update the current workflow instead of restoring this snapshot.
+                    </p>
+                    {(selectedVersion.preflight_issue_codes?.length ?? 0) > 0 && (
+                      <p className="mt-1 font-mono text-[10px]">
+                        {selectedVersion.preflight_issue_codes?.join(', ')}
+                      </p>
+                    )}
+                    {selectedVersion.preflight_errors?.[0] && (
+                      <p className="mt-2">{selectedVersion.preflight_errors[0]}</p>
+                    )}
+                  </div>
+                )}
                 {currentSummary && previewSummary && (
                   <div className="mb-3 rounded-md border border-ink-100 bg-brand-softer p-3 text-xs text-ink-700">
                     Compared to current: {previewSummary.nodes} vs {currentSummary.nodes} nodes,{' '}
@@ -174,11 +206,15 @@ export function VersionHistoryPanel({
           </button>
           <button
             className="ui-button ui-button--primary"
-            disabled={!selectedId || restoring}
+            disabled={!selectedId || restoring || selectedVersion?.restorable === false}
             onClick={() => void restore()}
             type="button"
           >
-            {restoring ? 'Restoring…' : 'Restore this version'}
+            {restoring
+              ? 'Restoring…'
+              : selectedVersion?.restorable === false
+                ? 'Version cannot be restored'
+                : 'Restore this version'}
           </button>
         </div>
       </div>

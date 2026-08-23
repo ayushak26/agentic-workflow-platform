@@ -122,6 +122,18 @@ def _boundary_pattern(value: str) -> re.Pattern[str]:
     return re.compile(prefix + escaped + suffix, re.I)
 
 
+def _ambiguous_short_ner_match(value: str) -> bool:
+    """Return True for short acronym-like NER guesses that are too ambiguous.
+
+    The registry remains authoritative, so an explicitly registered value such
+    as ``AI`` is still protected before this NER-only filter is reached. This
+    only prevents the safety net from turning ordinary public-topic acronyms
+    into placeholders that make downstream prompts unintelligible.
+    """
+    compact = "".join(character for character in value if character.isalpha())
+    return 0 < len(compact) <= 2 and compact.isupper()
+
+
 class EntityTokenizerService:
     """Provides the EntityTokenizerService behaviour."""
     def __init__(self, db: Any) -> None:
@@ -216,10 +228,15 @@ class EntityTokenizerService:
         spans: list[_Span] = []
 
         # 1. Registry — longest known value first; this must beat any
-        # NER/regex hit on an overlapping span.
+        # NER/regex hit on an overlapping span. Auto-detected short acronyms
+        # may already exist from an older run; treat those as the same
+        # ambiguous NER guesses we now ignore. Explicit manual/proposal
+        # registrations remain authoritative and protected.
         for entry in sorted(known, key=lambda e: len(e["value"]), reverse=True):
             value = entry["value"]
             if not value:
+                continue
+            if entry.get("source") == "auto_detected" and _ambiguous_short_ner_match(value):
                 continue
             for match in _boundary_pattern(value).finditer(text):
                 if _overlaps(match.start(), match.end(), claimed):
@@ -231,7 +248,7 @@ class EntityTokenizerService:
                         match.end(),
                         entry["entity_type"],
                         match.group(0),
-                        "manual",
+                        entry.get("source", "manual"),
                     )
                 )
 
@@ -278,6 +295,8 @@ class EntityTokenizerService:
         ner_matches = await asyncio.to_thread(extract_entities, text)
         for ner_match in ner_matches:
             if _overlaps(ner_match.start, ner_match.end, claimed):
+                continue
+            if _ambiguous_short_ner_match(ner_match.text):
                 continue
             claimed.append((ner_match.start, ner_match.end))
             spans.append(

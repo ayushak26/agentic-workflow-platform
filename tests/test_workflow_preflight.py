@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 import pytest
 
 from app.api.workflows import (
@@ -528,7 +529,7 @@ nodes:
         ),
         "parseable_text": True,
     }
-    request = SimpleNamespace(
+    request = cast(Request, SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
                 services={
@@ -538,7 +539,7 @@ nodes:
                 }
             )
         )
-    )
+    ))
     user = CurrentUser(
         username="user@example.com",
         role=Role.CONSULTANT,
@@ -582,13 +583,13 @@ async def test_run_api_blocks_unknown_node_before_history_or_llm():
 
     llm = GuardLLM()
     db = GuardDB()
-    request = SimpleNamespace(
+    request = cast(Request, SimpleNamespace(
         app=SimpleNamespace(
             state=SimpleNamespace(
                 services={"llm": llm, "audit_db": db}
             )
         )
-    )
+    ))
     user = CurrentUser(
         username="user@example.com",
         role=Role.CONSULTANT,
@@ -607,7 +608,8 @@ async def test_run_api_blocks_unknown_node_before_history_or_llm():
         )
 
     assert caught.value.status_code == 422
-    assert caught.value.detail["preflight"]["tokens_spent"] == 0
+    detail = cast(dict[str, Any], caught.value.detail)
+    assert detail["preflight"]["tokens_spent"] == 0
     assert llm.calls == 0
     assert db.writes == 0
 
@@ -615,7 +617,7 @@ async def test_run_api_blocks_unknown_node_before_history_or_llm():
 def test_every_shipped_workflow_passes_structural_preflight():
     failures: list[str] = []
     for path in sorted(Path("workflows").glob("*.yaml")):
-        report = preflight_workflow_yaml(path.read_text())
+        report = preflight_workflow_yaml(path.read_text(), compile_graph=True)
         if not report.valid:
             failures.append(
                 f"{path.name}: "
@@ -623,6 +625,17 @@ def test_every_shipped_workflow_passes_structural_preflight():
             )
 
     assert failures == []
+
+
+def test_every_registered_node_exposes_a_builder_editable_config_schema():
+    """The generic SchemaForm accepts object schemas, including empty ones;
+    custom editors are overlays, never a replacement for this registry contract."""
+    manifests = NodeRegistry.manifest()
+    assert len(manifests) == len(NodeRegistry._registry)
+    for manifest in manifests:
+        schema = manifest["config_schema"]
+        assert schema.get("type") == "object", manifest["type_name"]
+        assert isinstance(schema.get("properties"), dict), manifest["type_name"]
 
 
 @pytest.mark.asyncio
@@ -633,9 +646,11 @@ async def test_explicit_direct_run_skips_preflight_but_keeps_runtime_boundaries(
         raise AssertionError("direct run must not invoke preflight")
 
     records: list[str] = []
+    recorded_metadata: dict[str, object] = {}
 
     async def record_run(_db, *, run_id, **_kwargs):
         records.append(run_id)
+        recorded_metadata.update(_kwargs)
 
     class RunManager:
         def launch(self, coro, *, run_id, **_kwargs):
@@ -644,10 +659,10 @@ async def test_explicit_direct_run_skips_preflight_but_keeps_runtime_boundaries(
 
     monkeypatch.setattr("app.api.workflows.preflight_workflow_for_run", forbidden_preflight)
     monkeypatch.setattr("app.api.workflows.start_new_run_record", record_run)
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services={
+    request = cast(Request, SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(services={
         "audit_db": object(),
         "background_run_manager": RunManager(),
-    })))
+    }))))
     user = CurrentUser(username="user@example.com", role=Role.CONSULTANT, session_id=None)
 
     response = await run(
@@ -655,6 +670,12 @@ async def test_explicit_direct_run_skips_preflight_but_keeps_runtime_boundaries(
             workflow_yaml=VALID,
             inputs={"message": "world"},
             skip_preflight=True,
+            origin="chat_saved_workflow",
+            history_visibility="conversation_only",
+            workflow_id="research-helper",
+            workflow_version_id="version-3",
+            conversation_id="conversation-1",
+            message_id="message-1",
         ),
         request,
         user,
@@ -662,6 +683,12 @@ async def test_explicit_direct_run_skips_preflight_but_keeps_runtime_boundaries(
 
     assert response["status"] == "running"
     assert records == [response["run_id"], f"launched:{response['run_id']}"]
+    assert recorded_metadata["origin"] == "chat_saved_workflow"
+    assert recorded_metadata["history_visibility"] == "conversation_only"
+    assert recorded_metadata["workflow_id"] == "research-helper"
+    assert recorded_metadata["workflow_version_id"] == "version-3"
+    assert recorded_metadata["conversation_id"] == "conversation-1"
+    assert recorded_metadata["message_id"] == "message-1"
 
 
 GUIDED_COMPLETE = """

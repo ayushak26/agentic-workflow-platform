@@ -59,6 +59,36 @@ const TABS: Array<{ id: BuilderInspectorTab; label: string }> = [
   { id: 'checks', label: 'Checks' },
 ];
 
+export function NodeActions({
+  autofixing,
+  onAutofix,
+  onTest,
+}: {
+  autofixing?: boolean;
+  onAutofix?: () => void;
+  onTest: () => void;
+}) {
+  return (
+    <>
+      <button
+        className="rounded border border-slate-300 px-2 py-1 text-[10px] font-medium text-ink-700 hover:bg-slate-50"
+        onClick={onTest}
+        type="button"
+      >
+        Test node
+      </button>
+      <button
+        className="rounded border border-accent-300 px-2 py-1 text-[10px] font-medium text-accent-700 hover:bg-accent-50 disabled:opacity-50"
+        disabled={autofixing}
+        onClick={onAutofix}
+        type="button"
+      >
+        {autofixing ? 'Fixing…' : '✨ Autofix node'}
+      </button>
+    </>
+  );
+}
+
 export function BuilderInspector({
   edges,
   llmModels,
@@ -73,6 +103,7 @@ export function BuilderInspector({
   onIdChange,
   onInputsChange,
   onAutofix,
+  onAutofixNode,
   onLaunchTest,
   onModelRoutingChange,
   onModelSelectionChange,
@@ -85,6 +116,7 @@ export function BuilderInspector({
   onToggleWide,
   onValidate,
   autofixing,
+  nodeAutofixing,
   preflight,
   selected,
   showInputs,
@@ -100,6 +132,7 @@ export function BuilderInspector({
   nodes: Node<WorkflowNodeData>[];
   onAddNextTool?: (serverId: string, tool: MCPToolInfo) => void;
   onAutofix?: () => void;
+  onAutofixNode?: () => void;
   onClose: () => void;
   onCloseInputs: () => void;
   onConfigChange: (next: Record<string, unknown>) => void;
@@ -120,6 +153,7 @@ export function BuilderInspector({
   onToggleWide?: () => void;
   onValidate: () => void;
   autofixing?: boolean;
+  nodeAutofixing?: boolean;
   preflight: WorkflowPreflightReport | null;
   selected: Node<WorkflowNodeData> | null;
   showInputs: boolean;
@@ -188,6 +222,13 @@ export function BuilderInspector({
           )}
         </div>
         <div className="flex flex-none items-center gap-2">
+          {!showInputs && selected && (
+            <NodeActions
+              autofixing={nodeAutofixing}
+              onAutofix={onAutofixNode}
+              onTest={() => onTabChange('test')}
+            />
+          )}
           {onToggleWide && (
             <button
               aria-label={wide ? 'Narrow inspector' : 'Widen inspector'}
