@@ -24,6 +24,14 @@ describe('runControlState', () => {
     });
   });
 
+  it('shows subprocess pauses as an automatic wait, never a review', () => {
+    expect(runControlState({ status: 'paused', pauseKind: 'subprocess' })).toMatchObject({
+      statusLabel: 'Waiting for selected workflow',
+      canResume: false,
+      needsReview: false,
+    });
+  });
+
   it('offers retry only for a failed attempt with a reusable checkpoint', () => {
     expect(runControlState({ status: 'failed', retryAvailable: true })).toMatchObject({
       canRetry: true, canRestart: true,

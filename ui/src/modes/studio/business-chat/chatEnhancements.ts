@@ -60,13 +60,6 @@ export function formatHint(format: ResponseFormat, style: WritingStyle): string 
   return `[Response preference: ${formatInstruction[format]} Writing style: ${style}.]`;
 }
 
-export function followUpExecutionOutput(text: string): 'pdf' | 'pptx' | null {
-  if (!/\b(create|make|generate|export|turn|convert)\b/i.test(text)) return null;
-  if (/\b(slides?|presentation|deck|powerpoint|pptx)\b/i.test(text)) return 'pptx';
-  if (/\b(pdf|report|document)\b/i.test(text)) return 'pdf';
-  return null;
-}
-
 export function applySlashCommand(command: SlashCommand, currentText: string): {
   text: string;
   format?: ResponseFormat;

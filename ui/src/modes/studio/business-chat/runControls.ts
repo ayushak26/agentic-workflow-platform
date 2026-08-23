@@ -22,7 +22,7 @@ export type RunControlState = {
 
 export function runControlState(input: RunControlInput): RunControlState {
   const busy = input.actionBusy != null;
-  const needsReview = input.status === 'paused' && input.pauseKind !== 'user_requested';
+  const needsReview = input.status === 'paused' && input.pauseKind === 'hitl_gate';
   if (input.status === 'running') {
     return {
       statusLabel: input.pausePending ? 'Pause requested' : 'Workflow is running',
@@ -37,6 +37,17 @@ export function runControlState(input: RunControlInput): RunControlState {
     };
   }
   if (input.status === 'paused') {
+    if (input.pauseKind === 'subprocess') {
+      return {
+        statusLabel: 'Waiting for selected workflow',
+        explanation: 'The selected workflow is running separately. This attempt continues automatically when it finishes.',
+        canPause: false,
+        canResume: false,
+        canRetry: false,
+        canRestart: !busy,
+        needsReview: false,
+      };
+    }
     return {
       statusLabel: needsReview ? 'Review required' : 'Workflow paused',
       explanation: needsReview

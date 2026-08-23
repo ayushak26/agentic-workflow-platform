@@ -156,8 +156,8 @@ async function installApi(page: Page, workflowYaml: string) {
       return;
     }
     if (url.pathname === '/auth/me') return json(route, { username: 'multimodal-user' });
-    if (url.pathname === `/api/workflows/by-name/${WORKFLOW_NAME}`) {
-      return json(route, { name: WORKFLOW_NAME, yaml: workflowYaml });
+    if (url.pathname === `/api/chat-workflows/adapters/by-name/${WORKFLOW_NAME}`) {
+      return json(route, { workflow_name: WORKFLOW_NAME, yaml: workflowYaml, adapted: true });
     }
     if (url.pathname === '/api/chat-conversations/resolve') {
       return json(route, { conversation, messages: transcript });
@@ -256,7 +256,7 @@ test('dictated chat runs Knowledge Retrieval, five models and image generation, 
   const state = await installApi(page, workflowYaml);
 
   await page.goto(`/chat/shared/${WORKFLOW_NAME}`);
-  const composer = page.getByPlaceholder('Ask a question…');
+  const composer = page.getByPlaceholder('Ask anything about your sources…');
   await expect(composer).toBeVisible();
   await page.getByRole('button', { name: '🎙 Dictate' }).click();
   await expect(composer).toHaveValue(DICTATED_QUESTION);
@@ -266,7 +266,12 @@ test('dictated chat runs Knowledge Retrieval, five models and image generation, 
   await expect(userMessage).toBeVisible();
   const assistant = page.locator('div.flex.justify-start:visible').filter({ hasText: ANSWER }).last();
   await expect(assistant.locator('p.whitespace-pre-wrap').filter({ hasText: ANSWER })).toBeVisible();
-  await expect(assistant.locator('summary').filter({ hasText: 'Operations Handbook.pdf' })).toBeVisible();
+  const citation = assistant.getByRole('button', { name: 'Open source 1: Operations Handbook.pdf' });
+  await expect(citation).toBeVisible();
+  await citation.click();
+  await expect(page.getByRole('dialog', { name: 'Source 1' })).toContainText('Operations Handbook.pdf');
+  await expect(page.getByRole('dialog', { name: 'Source 1' })).toContainText('The approved verification code is KS-4827.');
+  await page.getByRole('button', { name: 'Close Source 1' }).click();
   await expect(assistant.getByRole('img', { name: 'visual.png' })).toHaveAttribute(
     'src', /chat-multimodal-run%2Fimages%2Fvisual\.png/,
   );
@@ -274,10 +279,20 @@ test('dictated chat runs Knowledge Retrieval, five models and image generation, 
     'Model 1 · Extract', 'Model 2 · Verify', 'Model 3 · Analyze',
     'Model 4 · Outline', 'Model 5 · Finalize',
   ]) {
-    await expect(page.getByRole('button', { name: `Inspect ${label}` })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: `Inspect ${label}` })).toHaveCount(0);
   }
-  await expect(page.getByRole('button', { name: 'Inspect Knowledge Source' })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: 'Inspect Generate Answer Image' })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Inspect Knowledge Source' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Inspect Generate Answer Image' })).toHaveCount(0);
+  if ((page.viewportSize()?.width ?? 1280) <= 1180) await page.getByRole('button', { name: 'Session', exact: true }).last().click();
+  await page.getByRole('tab', { name: 'Activity' }).click();
+  const activity = page.getByRole('complementary', { name: 'Session panel' });
+  await expect(activity).toContainText('Read knowledge sources');
+  await expect(activity).toContainText('Generate Answer Image');
+  await expect(activity.getByRole('button', { name: 'Open technical execution' })).toBeVisible();
+  if ((page.viewportSize()?.width ?? 1280) <= 1180) await page.getByRole('button', { name: 'Chat', exact: true }).click();
+
+  await expect(assistant.getByText('visual.png', { exact: false })).toBeVisible();
+  await expect(assistant.getByRole('button', { name: 'Download' })).toBeVisible();
 
   await assistant.getByRole('button', { name: '🔊 Read aloud' })
     .evaluate((button: HTMLButtonElement) => button.click());
@@ -288,7 +303,7 @@ test('dictated chat runs Knowledge Retrieval, five models and image generation, 
   expect(state.runBodies).toHaveLength(1);
   expect(state.runBodies[0]).toMatchObject({
     origin: 'chat_saved_workflow',
-    history_visibility: 'conversation_only',
+    history_visibility: 'global',
     workflow_id: WORKFLOW_NAME,
     conversation_id: 'conversation-multimodal',
     inputs: { message: expect.stringContaining(DICTATED_QUESTION) },
@@ -300,7 +315,11 @@ test('dictated chat runs Knowledge Retrieval, five models and image generation, 
   await expect(restoredUserMessage).toBeVisible();
   const restoredAssistant = page.locator('div.flex.justify-start:visible').filter({ hasText: ANSWER }).last();
   await expect(restoredAssistant.locator('p.whitespace-pre-wrap').filter({ hasText: ANSWER })).toBeVisible();
-  await expect(restoredAssistant.locator('summary').filter({ hasText: 'Operations Handbook.pdf' })).toBeVisible();
+  const restoredCitation = restoredAssistant.getByRole('button', { name: 'Open source 1: Operations Handbook.pdf' });
+  await expect(restoredCitation).toBeVisible();
+  await restoredCitation.click();
+  await expect(page.getByRole('dialog', { name: 'Source 1' })).toContainText('Page 4 · Verification');
+  await page.getByRole('button', { name: 'Close Source 1' }).click();
   await expect(restoredAssistant.getByRole('img', { name: 'visual.png' })).toHaveAttribute(
     'src', /chat-multimodal-run%2Fimages%2Fvisual\.png/,
   );

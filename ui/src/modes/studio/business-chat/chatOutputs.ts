@@ -41,6 +41,7 @@ const NON_VISIBLE_KEYS = new Set([
   'sha256', 'page_count', 'estimated_page_count', 'page_count_basis', 'slide_count',
   'sheet_count', 'row_count', 'total_rows', 'provider', 'model', 'generated',
   'pdf_key', 'docx_key', 'pptx_key', 'xlsx_key', 'file_key', 'output_key', 'key',
+  'handoff',
 ]);
 
 export function isWorkflowFileReference(value: unknown): value is WorkflowFileReference {
@@ -257,16 +258,54 @@ function appendText(outputs: ChatOutput[], text: string): void {
   for (const output of splitFencedCode(text)) outputs.push(output);
 }
 
+function answerFromTransformEnvelope(value: unknown): string | null {
+  const envelope = record(value);
+  if (!envelope) return null;
+  const parsed = record(envelope.parsed);
+  if (typeof parsed?.answer === 'string' && parsed.answer.trim()) return parsed.answer.trim();
+  if (typeof envelope.raw !== 'string' || !envelope.raw.trim()) return null;
+  try {
+    const raw = record(JSON.parse(envelope.raw));
+    return typeof raw?.answer === 'string' && raw.answer.trim() ? raw.answer.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function nonEmptyText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function projectedFinalAnswer(run: ChatOutputRun): string | null {
+  const outputs = run.outputs ?? {};
+  const direct = nonEmptyText(outputs.message);
+  if (direct) return direct;
+
+  const reply = record(outputs.reply);
+  const replyResult = record(reply?.result);
+  const replyAnswer = nonEmptyText(reply?.chat_message) ?? nonEmptyText(replyResult?.message);
+  if (replyAnswer) return replyAnswer;
+
+  const rag = record(outputs.rag);
+  const ragAnswer = nonEmptyText(rag?.answer);
+  if (ragAnswer) return ragAnswer;
+
+  for (const [nodeId, nodeRun] of Object.entries(run.node_runs ?? {})) {
+    if (run.node_types?.[nodeId] !== 'RAGAgent') continue;
+    const answer = nonEmptyText(record(nodeRun?.output)?.answer);
+    if (answer) return answer;
+  }
+  return null;
+}
+
 /** Normalize the primary visible result. Sources and inspector state stay outside this union. */
 export function normalizeChatOutputs(run: ChatOutputRun): ChatOutput[] {
   const visible: ChatOutput[] = [];
   const artifacts: ChatArtifact[] = [];
   const nodeRuns = run.node_runs ?? {};
-  const nodeTypes = run.node_types ?? {};
   const chatMessages = new Set<string>();
 
-  for (const [nodeId, nodeRun] of Object.entries(nodeRuns)) {
-    if (nodeTypes[nodeId] !== 'EndAgent') continue;
+  for (const nodeRun of Object.values(nodeRuns)) {
     const message = record(nodeRun?.output)?.chat_message;
     if (typeof message === 'string' && message.trim()) {
       chatMessages.add(message.trim());
@@ -274,10 +313,31 @@ export function normalizeChatOutputs(run: ChatOutputRun): ChatOutput[] {
     }
   }
 
+  // Compact run projections can omit node_runs while retaining the generated
+  // TransformAgent envelope under outputs.answer. That envelope still carries
+  // the workflow's explicit single-field answer contract; prefer it over
+  // rendering Start/Load Files/Answer/Reply internals as separate chat text.
+  if (chatMessages.size === 0) {
+    const projectedAnswer = projectedFinalAnswer(run)
+      ?? answerFromTransformEnvelope(run.outputs?.answer);
+    if (projectedAnswer) {
+      chatMessages.add(projectedAnswer);
+      appendText(visible, projectedAnswer);
+    }
+  }
+
+  // A reached chat-response node is the workflow's user-facing contract. Use
+  // the output shape rather than node_types because older run records and
+  // compact API projections may omit that optional map.
+  // Keep collecting real artifacts below, but do not append the run's
+  // intermediate structured projection (Transform envelopes, Result objects,
+  // status/data/defaulted fields) beside the final answer.
+  const hasChatResponse = chatMessages.size > 0;
   const structured: string[] = [];
   for (const [key, value] of Object.entries(run.outputs ?? {})) {
     const hasArtifact = collectArtifacts(value, `output:${key}`, artifacts);
     if (hasArtifact && (isWorkflowFileReference(value) || Array.isArray(value))) continue;
+    if (hasChatResponse) continue;
     const text = structuredValueAsText(value, key);
     if (text && !chatMessages.has(text) && !chatMessages.has(scalarText(value) ?? '')) structured.push(text);
   }

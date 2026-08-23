@@ -12,16 +12,46 @@
 import yaml from 'js-yaml';
 
 import type {
+  HITLReviewContent,
+  HITLReviewPanel,
   NodeRun,
   RunEvent,
   WorkflowFileReference,
-  WorkflowSummary,
 } from '../../../api/types';
 import {
   isWorkflowFileReference,
   normalizeChatOutputs,
   type ChatOutput,
 } from './chatOutputs';
+
+export type GenericChatExperienceId = 'general' | 'analyze' | 'research' | 'create';
+
+export const GENERIC_CHAT_EXPERIENCES: Array<{
+  id: GenericChatExperienceId;
+  title: string;
+  description: string;
+}> = [
+  {
+    id: 'general',
+    title: 'General',
+    description: 'Ask anything. Chat chooses the best combination of reasoning, sources, and web research.',
+  },
+  {
+    id: 'analyze',
+    title: 'Analyze sources',
+    description: 'Compare files, find patterns, surface risks, and identify contradictions.',
+  },
+  {
+    id: 'research',
+    title: 'Research',
+    description: 'Investigate a topic deeply using available documents and current web information.',
+  },
+  {
+    id: 'create',
+    title: 'Create',
+    description: 'Turn your request and sources into a report, presentation, brief, or other deliverable.',
+  },
+];
 
 export type ChatFormField = {
   name: string;
@@ -45,6 +75,7 @@ export type WorkflowChatMeta = {
   nodes: WorkflowChatNode[];
   allowAttachments: boolean;
   capabilities: { web: boolean; tools: boolean; mcp: boolean; sources: boolean; models: boolean; images: boolean };
+  declaredInputs?: string[];
 };
 
 export type WorkflowChatNode = {
@@ -60,6 +91,17 @@ export type WorkflowChatNode = {
   upstream: string[];
   downstream: string[];
 };
+
+export function businessActivityLabel(node: WorkflowChatNode): string | null {
+  if (node.type === 'StartAgent' || node.type === 'EndAgent') return null;
+  if (node.type === 'TransformAgent' && ['Prepare Answer', 'Chat Reply'].includes(node.displayName)) {
+    return 'Prepared response';
+  }
+  if (node.type === 'WorkflowFileLoader') return 'Read attached sources';
+  if (node.type === 'KnowledgeRetrieval') return 'Read knowledge sources';
+  if (node.type === 'WebSearchAgent') return 'Searched the web';
+  return node.displayName;
+}
 
 export type AgentActivity = {
   nodeId: string;
@@ -77,12 +119,6 @@ export type AgentActivity = {
   recoveryActions: string[];
 };
 
-/** Business Chat only offers workflows the Library already publishes —
- *  the same visibility gate, not a second lifecycle. */
-export function chatEligibleWorkflows(workflows: WorkflowSummary[]): WorkflowSummary[] {
-  return workflows.filter(w => w.library?.visibility_status === 'approved');
-}
-
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export function chatMetaFromYaml(yamlText: string): WorkflowChatMeta {
@@ -98,6 +134,7 @@ export function chatMetaFromYaml(yamlText: string): WorkflowChatMeta {
     nodes: [],
     allowAttachments: false,
     capabilities: { web: false, tools: false, mcp: false, sources: false, models: false, images: false },
+    declaredInputs: [],
   };
   let doc: any;
   try {
@@ -106,6 +143,9 @@ export function chatMetaFromYaml(yamlText: string): WorkflowChatMeta {
     return meta;
   }
   if (!doc || typeof doc !== 'object') return meta;
+  meta.declaredInputs = doc.inputs && typeof doc.inputs === 'object' && !Array.isArray(doc.inputs)
+    ? Object.keys(doc.inputs)
+    : [];
   const nodes: any[] = Array.isArray(doc.nodes) ? doc.nodes : [];
   const upstream: Record<string, string[]> = {};
   const downstream: Record<string, string[]> = {};
@@ -254,9 +294,13 @@ export function buildRunInputs(
   message: string,
   formValues: Record<string, string>,
   attachments: WorkflowFileReference[] = [],
+  optionalInputs: Record<string, unknown> = {},
 ): Record<string, unknown> {
   if (meta.startMode === 'chatbot') {
-    return { message, ...(attachments.length > 0 ? { attachments } : {}) };
+    const allowedOptionalInputs = Object.fromEntries(
+      Object.entries(optionalInputs).filter(([name]) => (meta.declaredInputs ?? []).includes(name)),
+    );
+    return { message, ...(attachments.length > 0 ? { attachments } : {}), ...allowedOptionalInputs };
   }
   const inputs: Record<string, unknown> = {};
   for (const field of meta.formFields) {
@@ -297,9 +341,10 @@ export function activityFromNodeRun(
   nodeRun: NodeRun | undefined,
   meta: WorkflowChatMeta,
 ): AgentActivity {
+  const displayName = businessActivityLabel(node) ?? '';
   if (!nodeRun) {
     return {
-      nodeId: node.id, nodeType: node.type, displayName: node.displayName,
+      nodeId: node.id, nodeType: node.type, displayName,
       agentRole: node.agentRole, status: 'waiting', text: node.purpose ?? 'Waiting to start.',
       recoveryActions: node.recoveryActions,
     };
@@ -308,7 +353,7 @@ export function activityFromNodeRun(
   const base: AgentActivity = {
     nodeId: node.id,
     nodeType: node.type,
-    displayName: node.displayName,
+    displayName,
     agentRole: node.agentRole,
     status: nodeRun.status === 'paused' ? 'needs_input' : nodeRun.status,
     text: '',
@@ -316,7 +361,7 @@ export function activityFromNodeRun(
     recoveryActions: node.recoveryActions,
   };
   if (nodeRun.status === 'running') {
-    return { ...base, text: meta.runningMessages[node.id] ?? node.purpose ?? `Working on ${node.displayName}…` };
+    return { ...base, text: meta.runningMessages[node.id] ?? node.purpose ?? `Working on ${displayName || 'this step'}…` };
   }
   if (nodeRun.status === 'failed') {
     return {
@@ -362,6 +407,15 @@ export function activityFromNodeRun(
         ?? `I retrieved ${count} relevant passage${count === 1 ? '' : 's'} from the connected knowledge sources.`,
       tool: { kind: 'tool', label: 'Knowledge Retrieval', detail: `${sources.length} citation${sources.length === 1 ? '' : 's'}` },
       sources,
+    };
+  }
+  if (node.type === 'TransformAgent' && node.id === 'rewrite_query') {
+    const parsed = asRecord(output.parsed);
+    const rewritten = typeof parsed.retrieval_query === 'string' ? parsed.retrieval_query.trim() : '';
+    return {
+      ...base,
+      text: rewritten ? `Retrieval query: ${rewritten}` : meta.completedMessages[node.id] ?? 'Prepared the Knowledge search query.',
+      tool: { kind: 'tool', label: 'Knowledge query rewrite' },
     };
   }
   if (node.type === 'OpenAIImageGenerationAgent') {
@@ -423,14 +477,16 @@ export function activityFromNodeRun(
   };
 }
 
-/** Deterministic first-message vs follow-up intent: a fresh conversation
- *  runs the workflow; once a run exists, messages ask AI about it. */
+/** General Chat executes its saved workflow on every turn. Purpose-specific
+ * workflows use run-context Ask AI after their first completed execution. */
 export function resolveComposerIntent(
   hasCompletedRun: boolean,
   explicitMode: 'ask' | 'run' | 'auto',
+  generalChat = false,
 ): 'ask' | 'run' {
   if (explicitMode === 'ask') return 'ask';
   if (explicitMode === 'run') return 'run';
+  if (generalChat) return 'run';
   return hasCompletedRun ? 'ask' : 'run';
 }
 
@@ -467,17 +523,20 @@ export function eventProgressLabel(
 
 // ---- Human Intervention ----------------------------------------------
 
-/** Normalized intervention request — what the chat's approval card needs,
- *  shaped to feed the existing HITLPanel unchanged. Built from the durable
- *  pending-gate payload, so it survives page reloads. */
+/** Normalized intervention request for Chat's inline, business-first review
+ * card. The actionable gate may belong to a subprocess child while the
+ * conversation remains attached to the parent run. */
 export type InterventionRequest = {
+  gateId: string;
   runId: string;
+  parentRunId: string | null;
   nodeId: string;
   question: string;
   reviewPurpose: string;
   context: Record<string, unknown>;
   allowedActions: string[];
-  content: unknown;
+  content: HITLReviewContent | null;
+  panels: HITLReviewPanel[];
   allowDocumentOverride: boolean;
   maxEditChars: number;
   displayName: string;
@@ -486,6 +545,8 @@ export type InterventionRequest = {
 export function interventionFromPendingGate(
   gate: {
     run_id: string;
+    gate_id?: string;
+    parent_run_id?: string | null;
     paused?: boolean;
     pause_kind?: string;
     node_id?: string | null;
@@ -497,6 +558,8 @@ export function interventionFromPendingGate(
     context?: unknown;
     allowed_actions?: unknown;
     content?: unknown;
+    panels?: unknown;
+    display_name?: unknown;
     allow_document_override?: unknown;
     max_edit_chars?: unknown;
     interrupt?: Record<string, unknown> | null;
@@ -504,11 +567,12 @@ export function interventionFromPendingGate(
   meta: WorkflowChatMeta,
 ): InterventionRequest | null {
   if (!gate || gate.paused === false) return null;
-  // A cooperative run-history pause is not a review gate.
-  if (gate.pause_kind === 'user_requested') return null;
+  // Cooperative pauses and internal subprocess waits are not review gates.
+  if (gate.pause_kind === 'user_requested' || gate.pause_kind === 'subprocess') return null;
   const source: Record<string, unknown> = (
     gate.interrupt && typeof gate.interrupt === 'object' ? gate.interrupt : gate
   ) as Record<string, unknown>;
+  if (source.kind === 'subprocess_pause') return null;
   const hasReviewContent = 'question' in source || 'context' in source
     || 'allowed_actions' in source;
   if (!hasReviewContent) return null;
@@ -516,7 +580,11 @@ export function interventionFromPendingGate(
     ? source.node_id
     : (gate.node_id ?? '');
   return {
+    gateId: typeof gate.gate_id === 'string' && gate.gate_id
+      ? gate.gate_id
+      : `${gate.run_id}:${nodeId}`,
     runId: gate.run_id,
+    parentRunId: typeof gate.parent_run_id === 'string' ? gate.parent_run_id : null,
     nodeId,
     question: typeof source.question === 'string' && source.question !== ''
       ? source.question
@@ -528,10 +596,15 @@ export function interventionFromPendingGate(
     allowedActions: Array.isArray(source.allowed_actions)
       ? source.allowed_actions.filter((a): a is string => typeof a === 'string')
       : ['approve', 'reject', 'edit'],
-    content: source.content ?? null,
+    content: source.content && typeof source.content === 'object'
+      ? source.content as HITLReviewContent
+      : null,
+    panels: Array.isArray(source.panels) ? source.panels as HITLReviewPanel[] : [],
     allowDocumentOverride: Boolean(source.allow_document_override ?? true),
     maxEditChars: typeof source.max_edit_chars === 'number' ? source.max_edit_chars : 1_000_000,
-    displayName: meta.displayNames[nodeId] ?? 'Human Review',
+    displayName: typeof source.display_name === 'string' && source.display_name.trim()
+      ? source.display_name
+      : meta.displayNames[nodeId] ?? 'Human Review',
   };
 }
 
@@ -558,6 +631,7 @@ export type ChatCitation = {
   sourceUri?: string;
   documentId?: string;
   chunkId?: string;
+  retrievalTraceId?: string;
   evidenceStatus?: string;
   sourceType?: 'webpage' | 'research_paper' | 'internal_document';
   downloadUrl?: string;
@@ -591,7 +665,7 @@ function outputAsRecord(value: unknown): Record<string, unknown> {
 /** Build the assistant message from a finished run's state. Chat-reply End
  *  nodes become text; files become image previews / document cards; other
  *  workflow outputs become labelled fields (JSON as text); citations come
- *  only from real KnowledgeRetrieval and WebSearchAgent output — never fabricated. */
+ *  only from real source-producing node output — never fabricated. */
 export function assistantSegments(run: {
   run_id?: string;
   outputs?: Record<string, unknown> | null;
@@ -614,9 +688,37 @@ export function assistantSegments(run: {
       if (typeof record.candidate_id === 'string') acquiredByCandidate.set(record.candidate_id, record);
     }
   }
-  for (const [nodeId, nodeRun] of Object.entries(nodeRuns)) {
+  const sourcePriority: Record<string, number> = {
+    WorkflowFileLoader: 0,
+    WebSearchAgent: 1,
+    MCPToolAgent: 2,
+    BoundedDeepResearchAgent: 3,
+    ScholarlyCandidateDiscoveryAgent: 3,
+    KnowledgeRetrieval: 4,
+    RAGAgent: 4,
+  };
+  const sourceNodeRuns = Object.entries(nodeRuns).sort(([leftId], [rightId]) => {
+    const priority = (nodeId: string) => sourcePriority[nodeTypes[nodeId] ?? ''] ?? 99;
+    return priority(leftId) - priority(rightId) || leftId.localeCompare(rightId);
+  });
+  for (const [nodeId, nodeRun] of sourceNodeRuns) {
     const nodeType = nodeTypes[nodeId];
     const output = outputAsRecord(nodeRun?.output);
+    if (nodeType === 'WorkflowFileLoader') {
+      const files = output.files;
+      if (!Array.isArray(files)) continue;
+      for (const file of files) {
+        const record = outputAsRecord(file);
+        if (typeof record.name !== 'string' || !record.name.trim()) continue;
+        sourceItems.push({
+          number: sourceItems.length + 1,
+          title: record.name,
+          evidenceStatus: typeof record.status === 'string' ? record.status : 'added_source',
+          sourceType: 'internal_document',
+        });
+      }
+      continue;
+    }
     if (nodeType === 'WebSearchAgent') {
       const results = output.results;
       if (!Array.isArray(results)) continue;
@@ -637,6 +739,36 @@ export function assistantSegments(run: {
           ...(sourceUri ? { sourceUri } : {}),
           evidenceStatus: 'candidate_only',
           sourceType: 'webpage',
+        });
+      }
+      continue;
+    }
+    if (nodeType === 'MCPToolAgent' && output.server === 'paper-search-mcp' && output.tool === 'search_papers') {
+      const data = outputAsRecord(output.data);
+      const papers = Array.isArray(data.papers)
+        ? data.papers
+        : Array.isArray(data.results)
+          ? data.results
+          : Array.isArray(data.data) ? data.data : [];
+      for (const paper of papers) {
+        const record = outputAsRecord(paper);
+        const rawDoi = record.doi ?? record.DOI;
+        const rawUrl = record.canonical_url ?? record.url ?? record.pdf_url ?? (
+          typeof rawDoi === 'string' ? `https://doi.org/${rawDoi.replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')}` : undefined
+        );
+        const sourceUri = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl) ? rawUrl : undefined;
+        const title = typeof record.title === 'string' && record.title.trim() ? record.title : sourceUri;
+        if (!title) continue;
+        const snippet = typeof record.abstract === 'string' && record.abstract
+          ? record.abstract
+          : typeof record.snippet === 'string' && record.snippet ? record.snippet : undefined;
+        sourceItems.push({
+          number: sourceItems.length + 1,
+          title,
+          ...(snippet ? { snippet } : {}),
+          ...(sourceUri ? { sourceUri } : {}),
+          evidenceStatus: 'candidate_only',
+          sourceType: 'research_paper',
         });
       }
       continue;
@@ -692,15 +824,18 @@ export function assistantSegments(run: {
       }
       continue;
     }
-    if (nodeType !== 'KnowledgeRetrieval') continue;
+    if (nodeType !== 'KnowledgeRetrieval' && nodeType !== 'RAGAgent') continue;
     const citations = output.citations;
-    const chunks = output.retrieved_chunks;
+    const chunks = output.retrieved_chunks ?? output.retrievals ?? output.relevant_context;
+    const retrievalTraceId = typeof output.retrieval_trace_id === 'string' && output.retrieval_trace_id
+      ? output.retrieval_trace_id
+      : undefined;
     if (!Array.isArray(citations)) continue;
     const chunkList = Array.isArray(chunks) ? chunks.map(outputAsRecord) : [];
     for (const [citationIndex, citation] of citations.entries()) {
       if (citation && typeof citation === 'object') {
         const record = citation as Record<string, unknown>;
-        const name = record.filename ?? record.doc_title ?? record.document_id;
+        const name = record.filename ?? record.doc_title ?? record.source_doc ?? record.document_id;
         if (typeof name !== 'string' || name === '') continue;
         const chunk = chunkList.find(item => item.chunk_id === record.chunk_id) ?? {};
         const metadata = outputAsRecord(chunk.metadata);
@@ -718,6 +853,7 @@ export function assistantSegments(run: {
           ...(sourceUri ? { sourceUri } : {}),
           ...(typeof record.document_id === 'string' ? { documentId: record.document_id } : {}),
           ...(typeof record.chunk_id === 'string' ? { chunkId: record.chunk_id } : {}),
+          ...(retrievalTraceId ? { retrievalTraceId } : {}),
           ...(typeof record.evidence_status === 'string' ? { evidenceStatus: record.evidence_status } : {}),
           sourceType: 'internal_document',
         });
@@ -736,4 +872,18 @@ export function assistantSegments(run: {
   if (deduped.length > 0) segments.push({ kind: 'sources', items: deduped });
 
   return segments;
+}
+
+export function structuredResultFromRun(run: {
+  outputs?: Record<string, unknown> | null;
+  node_runs?: Record<string, { output?: unknown } | null> | null;
+}): unknown | null {
+  const directHandoff = outputAsRecord(run.outputs?.handoff);
+  if ('structured_result' in directHandoff) return directHandoff.structured_result;
+  for (const nodeRun of Object.values(run.node_runs ?? {})) {
+    const result = outputAsRecord(outputAsRecord(nodeRun?.output).result);
+    const handoff = outputAsRecord(result.handoff);
+    if ('structured_result' in handoff) return handoff.structured_result;
+  }
+  return null;
 }

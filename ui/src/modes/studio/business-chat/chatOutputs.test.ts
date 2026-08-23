@@ -30,6 +30,68 @@ describe('normalizeChatOutputs', () => {
     })).toEqual([{ kind: 'text', text: 'Finished.' }]);
   });
 
+  it('renders only the extracted Chat Reply instead of intermediate structured envelopes', () => {
+    expect(normalizeChatOutputs({
+      outputs: {
+        result: { raw: '{"answer":"Finished."}', parsed: { answer: 'Finished.' }, status: 'ok', data: {}, defaulted: [] },
+      },
+      node_runs: {
+        answer: { output: { raw: '{"answer":"Finished."}', parsed: { answer: 'Finished.' }, status: 'ok', data: {}, defaulted: [] } },
+        reply: { output: { chat_message: 'Finished.', result: { outcome: 'answered' } } },
+      },
+      node_types: { answer: 'TransformAgent', reply: 'EndAgent' },
+    })).toEqual([{ kind: 'text', text: 'Finished.' }]);
+  });
+
+  it('recognizes a Chat Reply when the optional node_types map is missing', () => {
+    expect(normalizeChatOutputs({
+      outputs: {
+        start: { data: {}, message: 'Explain React JS', attachments: [], missing: [] },
+        answer: {
+          raw: '{"answer":"React is a UI library."}',
+          parsed: { answer: 'React is a UI library.' },
+          status: 'ok', data: {}, defaulted: [],
+        },
+        reply: { result: { outcome: 'answered' } },
+      },
+      node_runs: {
+        reply: { output: { chat_message: 'React is a UI library.', result: { outcome: 'answered' } } },
+      },
+    })).toEqual([{ kind: 'text', text: 'React is a UI library.' }]);
+  });
+
+  it('uses the answer contract when compact run history omits all node runs', () => {
+    const answer = '# Eurskem AI architecture\n\n```mermaid\ngraph TD\n  UI --> API\n```';
+    expect(normalizeChatOutputs({
+      outputs: {
+        start: { data: {}, message: 'Explain Eurskem AI', attachments: [], missing: [] },
+        load_files: { text: 'EURSKEM AI · ENGINEERING DOCUMENTATION', files: [{}] },
+        answer: {
+          raw: JSON.stringify({ answer }), parsed: { answer }, status: 'ok', data: {}, defaulted: [],
+        },
+        reply: { result: { outcome: 'answered' } },
+      },
+    })).toEqual([
+      { kind: 'text', text: '# Eurskem AI architecture' },
+      { kind: 'code', code: 'graph TD\n  UI --> API', language: 'mermaid' },
+    ]);
+  });
+
+  it('projects a compact zero-result RAG run as its final answer only', () => {
+    expect(normalizeChatOutputs({
+      outputs: {
+        start: { data: {}, message: 'Give examples of different pumps in different industries', attachments: [], missing: [] },
+        rag: {
+          query: 'Give examples of different pumps in different industries',
+          answer: 'No supporting information was found in the selected knowledge collection.',
+          citations: [], sources: [], relevant_context: [], retrievals: [],
+          grounding_for_drafter: {}, retrieval_trace_id: 'retreq-1', collection_id: 'col-1', resolved_index_id: 'idx-1',
+        },
+        reply: { result: { outcome: 'answered', message: 'No supporting information was found in the selected knowledge collection.' } },
+      },
+    })).toEqual([{ kind: 'text', text: 'No supporting information was found in the selected knowledge collection.' }]);
+  });
+
   it('splits fenced Python and multiple fenced blocks in source order', () => {
     expect(splitFencedCode('Before\n```python\nprint(1)\n```\nBetween\n```sql\nselect 1;\n```')).toEqual([
       { kind: 'text', text: 'Before' },

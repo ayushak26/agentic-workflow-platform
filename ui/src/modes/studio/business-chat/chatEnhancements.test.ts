@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applySlashCommand, classifyResponseFormat, extractTemplateVariables, followUpExecutionOutput,
+  applySlashCommand, classifyResponseFormat, extractTemplateVariables,
   matchingSlashCommands, renderPromptTemplate, SLASH_COMMANDS,
 } from './chatEnhancements';
 
@@ -40,13 +40,5 @@ describe('adaptive format classifier', () => {
     ['Explain why the sky is blue', 'prose'],
   ] as const)('classifies %s as %s', (query, expected) => {
     expect(classifyResponseFormat(query)).toBe(expected);
-  });
-});
-
-describe('follow-up execution intent', () => {
-  it('routes only artifact-producing continuations to another workflow', () => {
-    expect(followUpExecutionOutput('Turn that into a presentation')).toBe('pptx');
-    expect(followUpExecutionOutput('Export this as a PDF')).toBe('pdf');
-    expect(followUpExecutionOutput('Explain the risks')).toBeNull();
   });
 });

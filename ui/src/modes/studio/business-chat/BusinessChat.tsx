@@ -2,21 +2,53 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 
 import { api, apiBase, getAuthHeaders } from '../../../api/client';
-import type { ChatWorkspaceExperience, LLMModelInfo, NodeRun, PrivateChatWorkflowSummary, RunDetail, RunEvent, WorkflowFileReference, WorkflowSummary } from '../../../api/types';
-import { HITLPanel } from '../HITLPanel';
+import { knowledgeApi } from '../../../api/knowledge';
+import type { AuditEvent, RunDetail, RunEvent, WorkflowFileReference } from '../../../api/types';
 import { CopyButton } from '../../../components/CopyButton';
-import { AgentActivityCard } from './AgentActivityCard';
-import { ChatNodeInspector } from './ChatNodeInspector';
-import { WorkflowContextPanel, WorkflowExecutionStrip } from './WorkflowContextPanel';
 import { RunControlBar } from './RunControlBar';
-import { AddWorkflowDialog } from './AddWorkflowDialog';
 import { PromptTemplateLibrary } from './PromptTemplateLibrary';
+import { SourceFirstChatHome } from './SourceFirstChatHome';
+import { ArtifactCreationDrawer, ChatHistoryDrawer, CitationDrawer, NoteEditor } from './ChatWorkspaceOverlays';
+import { NotebookSourcesPanel } from './NotebookSourcesPanel';
+import { ChatWorkspaceShell, type ChatWorkspacePanel } from './ChatWorkspaceShell';
+import { SessionAuditPanel, type SessionTab } from './SessionAuditPanel';
+import { AgentActivityGroup } from './AgentActivityGroup';
+import { ChatInterventionCard } from './ChatInterventionCard';
+import { ComposerMenu, type ComposerMenuItem } from './ComposerMenu';
 import {
-  applySlashCommand, classifyResponseFormat, followUpExecutionOutput, formatHint, matchingSlashCommands,
-  type ResponseFormat, type SlashCommand, type WritingStyle,
+  consumePendingSources,
+  createLocalChat,
+  createNote,
+  deleteLocalChat,
+  loadLocalChatHistory,
+  loadNotes,
+  loadWorkspaceSources,
+  loadWorkspacePreferences,
+  saveNotes,
+  savePendingSources,
+  saveWorkspacePreferences,
+  saveWorkspaceSources,
+  updateLocalChat,
+  type LocalChatRecord,
+} from './chatWorkspaceStorage';
+import {
+  CREATE_OPTIONS,
+  friendlyError,
+  selectedSourceCount,
+  selectedFiles,
+  uploadsAsSources,
+  webSourcesFromText,
+  type CitationTarget,
+  type CreateArtifactKind,
+  type WorkspaceNote,
+  type WorkspaceSource,
+} from './chatWorkspaceModel';
+import {
+  applySlashCommand, matchingSlashCommands,
+  type SlashCommand,
 } from './chatEnhancements';
 import { observeChatRun } from './observeChatRun';
-import { attemptLabel, type RunControlAction } from './runControls';
+import type { RunControlAction } from './runControls';
 import {
   collectRecognitionText,
   recognitionConstructor,
@@ -29,20 +61,19 @@ import {
 import {
   assistantSegments,
   activityFromNodeRun,
+  businessActivityLabel,
   buildRunInputs,
-  chatEligibleWorkflows,
   chatMetaFromYaml,
-  compatibleTransformModels,
   composerDisabledReason,
   interventionFromPendingGate,
-  resolveComposerIntent,
-  withTransformModel,
+  structuredResultFromRun,
   type AssistantSegment,
   type AgentActivity,
   type WorkflowChatMeta,
 } from './businessChatModel';
 import type { ChatArtifact } from './chatOutputs';
 import {
+  boundedConversationSummary,
   deserializeDurableMessage,
   serializeDurableMessage,
   type DurableChatMessage,
@@ -53,26 +84,23 @@ import {
  *
  * The first message runs the real workflow through the existing execution
  * API and SSE stream; a Human Intervention node switches the conversation
- * into the existing HITLPanel approval card (backed by the durable
+ * into an inline Chat review card (backed by the durable
  * pending-gate record, so a refresh restores it); follow-up messages ask
  * the existing Ask AI service about the run. Nothing here bypasses the
  * workflow runtime or re-implements retrieval, execution, or review.
  */
 
-type ChatMessage = DurableChatMessage
-  | { id: string; role: 'activity'; nodeId: string; activityKey: string };
+type ChatMessage = DurableChatMessage;
 
 function newId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
-
 function activityKey(runId: string, nodeId: string): string {
   return `${runId}:${nodeId}`;
 }
-
 export function BusinessChat() {
   const { workflowName, chatWorkflowId } = useParams();
-  if (!workflowName && !chatWorkflowId) return <BusinessChatHome />;
+  if (!workflowName && !chatWorkflowId) return <SourceFirstChatHome />;
   if (chatWorkflowId) {
     return (
       <BusinessChatConversation
@@ -91,268 +119,21 @@ export function BusinessChat() {
   );
 }
 
-// ---- Home: pick a workflow to talk to --------------------------------
-
-function BusinessChatHome() {
-  const navigate = useNavigate();
-  const [shared, setShared] = useState<WorkflowSummary[] | null>(null);
-  const [personal, setPersonal] = useState<PrivateChatWorkflowSummary[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [addOpen, setAddOpen] = useState(false);
-  const [personalActionId, setPersonalActionId] = useState<string | null>(null);
-  const [personalActionError, setPersonalActionError] = useState<string | null>(null);
-  const [experiences, setExperiences] = useState<ChatWorkspaceExperience[]>([]);
-  const [objective, setObjective] = useState('');
-  const [experienceId, setExperienceId] = useState('');
-  const [preferredOutput, setPreferredOutput] = useState<'auto' | 'text' | 'pdf' | 'pptx'>('auto');
-  const [selectedWorkflow, setSelectedWorkflow] = useState('');
-  const [collectionId, setCollectionId] = useState('');
-  const [retrievalProfileId, setRetrievalProfileId] = useState('');
-  const [ragAgentId, setRagAgentId] = useState('');
-  const [integrationConnection, setIntegrationConnection] = useState('');
-  const [integrationTool, setIntegrationTool] = useState('');
-  const [workspaceFiles, setWorkspaceFiles] = useState<WorkflowFileReference[]>([]);
-  const [workspaceBusy, setWorkspaceBusy] = useState(false);
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const workspaceFileRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    Promise.all([
-      api.listChatWorkflows(), api.listPrivateChatWorkflows(), api.listChatWorkspaceExperiences(),
-    ])
-      .then(([sharedItems, privateItems, workspaceExperiences]) => {
-        if (cancelled) return;
-        setShared(chatEligibleWorkflows(sharedItems));
-        setPersonal(privateItems.workflows);
-        setExperiences(workspaceExperiences.experiences);
-      })
-      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : String(err)); });
-    return () => { cancelled = true; };
-  }, []);
-
-  const visibleShared = (shared ?? []).filter(item => {
-    if (query.trim() === '') return true;
-    const haystack = `${item.name} ${item.description} ${item.library?.title ?? ''} ${item.use_case}`;
-    return haystack.toLowerCase().includes(query.trim().toLowerCase());
-  });
-  const visiblePersonal = (personal ?? []).filter(item => (
-    `${item.name} ${item.description} ${item.slug}`.toLowerCase().includes(query.trim().toLowerCase())
-  ));
-  const loaded = shared !== null && personal !== null;
-
-  async function requestPublication(item: PrivateChatWorkflowSummary) {
-    if (personalActionId) return;
-    setPersonalActionId(item.id);
-    setPersonalActionError(null);
-    try {
-      const updated = await api.requestPrivateChatWorkflowPublication(item.id);
-      setPersonal(current => (current ?? []).map(existing => (
-        existing.id === item.id ? updated : existing
-      )));
-    } catch (reason) {
-      setPersonalActionError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setPersonalActionId(null);
-    }
-  }
-
-  async function archivePersonal(item: PrivateChatWorkflowSummary) {
-    if (personalActionId) return;
-    setPersonalActionId(item.id);
-    setPersonalActionError(null);
-    try {
-      await api.archivePrivateChatWorkflow(item.id);
-      setPersonal(current => (current ?? []).filter(existing => existing.id !== item.id));
-    } catch (reason) {
-      setPersonalActionError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setPersonalActionId(null);
-    }
-  }
-
-  async function uploadWorkspaceFiles(files: File[]) {
-    if (files.length === 0) return;
-    setWorkspaceBusy(true);
-    setWorkspaceError(null);
-    try {
-      const uploaded = await api.uploadWorkflowFiles(files);
-      setWorkspaceFiles(current => [
-        ...current,
-        ...uploaded.files.filter(file => !current.some(item => item.file_id === file.file_id)),
-      ]);
-    } catch (reason) {
-      setWorkspaceError(reason instanceof Error ? reason.message : 'The files could not be uploaded.');
-    } finally {
-      setWorkspaceBusy(false);
-      if (workspaceFileRef.current) workspaceFileRef.current.value = '';
-    }
-  }
-
-  async function startWorkspace() {
-    if (!objective.trim() || workspaceBusy) return;
-    setWorkspaceBusy(true);
-    setWorkspaceError(null);
-    try {
-      const prepared = await api.prepareChatWorkspace({
-        objective: objective.trim(),
-        experience_id: experienceId || null,
-        selected_workflow: selectedWorkflow || null,
-        preferred_output: preferredOutput,
-        has_attachments: workspaceFiles.length > 0,
-        attachment_categories: [...new Set(workspaceFiles.map(file => file.category))],
-        collection_id: collectionId.trim() || null,
-        retrieval_profile_id: retrievalProfileId.trim() || null,
-        rag_agent_id: ragAgentId.trim() || null,
-        integration_connection: integrationConnection.trim() || null,
-        integration_tool: integrationTool.trim() || null,
-      });
-      if (workspaceFiles.length > 0) {
-        window.sessionStorage.setItem(
-          `eurskem.chat.pending-attachments:${prepared.workflow.id}`,
-          JSON.stringify(workspaceFiles),
-        );
-      }
-      navigate(`/chat/private/${encodeURIComponent(prepared.workflow.id)}?prompt=${encodeURIComponent(objective.trim())}`);
-    } catch (reason) {
-      setWorkspaceError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setWorkspaceBusy(false);
-    }
-  }
-
-  return (
-    <div className="mx-auto max-w-4xl px-6 py-10">
-      <section className="rounded-2xl border border-accent-200 bg-gradient-to-br from-white to-accent-50 p-5 shadow-sm">
-        <div className="max-w-2xl">
-          <h1 className="text-2xl font-semibold text-ink-900">What do you want to accomplish?</h1>
-          <p className="mt-1 text-sm text-ink-500">Ask directly, attach files, select a Knowledge source, or choose an existing workflow. The workspace uses the smallest valid workflow path.</p>
-        </div>
-        <textarea
-          value={objective}
-          onChange={event => setObjective(event.target.value)}
-          rows={4}
-          placeholder="Analyze these documents, identify the key risks, and create an executive presentation…"
-          className="mt-4 block w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm shadow-inner"
-        />
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-xs font-medium text-ink-600">Experience
-            <select aria-label="Workspace experience" value={experienceId} onChange={event => setExperienceId(event.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs">
-              <option value="">Auto</option>
-              {experiences.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-medium text-ink-600">Output
-            <select aria-label="Workspace output" value={preferredOutput} onChange={event => setPreferredOutput(event.target.value as typeof preferredOutput)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs">
-              <option value="auto">Auto</option><option value="text">Chat answer</option><option value="pdf">PDF</option><option value="pptx">Presentation</option>
-            </select>
-          </label>
-          <label className="text-xs font-medium text-ink-600">Existing workflow
-            <select aria-label="Existing workflow" value={selectedWorkflow} onChange={event => setSelectedWorkflow(event.target.value)} className="mt-1 block w-full rounded-md border border-slate-300 bg-white px-2 py-2 text-xs">
-              <option value="">Auto-select</option>
-              {(shared ?? []).map(item => <option key={item.name} value={item.name}>{item.library?.title ?? item.name}</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-medium text-ink-600">Files
-            <input ref={workspaceFileRef} type="file" multiple onChange={event => void uploadWorkspaceFiles(Array.from(event.target.files ?? []))} className="mt-1 block w-full text-xs" />
-          </label>
-        </div>
-        <details className="mt-3 text-xs text-ink-600">
-          <summary className="cursor-pointer font-medium">Use an indexed Knowledge source</summary>
-          <div className="mt-2 grid gap-3 sm:grid-cols-3">
-            <input aria-label="Knowledge collection ID" value={collectionId} onChange={event => setCollectionId(event.target.value)} placeholder="Collection ID" className="rounded-md border border-slate-300 px-3 py-2" />
-            <input aria-label="Retrieval profile ID" value={retrievalProfileId} onChange={event => setRetrievalProfileId(event.target.value)} placeholder="Retrieval Profile ID" className="rounded-md border border-slate-300 px-3 py-2" />
-            <input aria-label="RAG Agent ID" value={ragAgentId} onChange={event => setRagAgentId(event.target.value)} placeholder="Or saved RAG Agent ID" className="rounded-md border border-slate-300 px-3 py-2" />
-          </div>
-        </details>
-        <details className="mt-3 text-xs text-ink-600">
-          <summary className="cursor-pointer font-medium">Use a configured MCP or integration tool</summary>
-          <div className="mt-2 grid gap-3 sm:grid-cols-2">
-            <input aria-label="Integration connection ID" value={integrationConnection} onChange={event => setIntegrationConnection(event.target.value)} placeholder="MCP server / connection ID" className="rounded-md border border-slate-300 px-3 py-2" />
-            <input aria-label="Integration tool name" value={integrationTool} onChange={event => setIntegrationTool(event.target.value)} placeholder="Tool name" className="rounded-md border border-slate-300 px-3 py-2" />
-          </div>
-        </details>
-        {workspaceFiles.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{workspaceFiles.map(file => <span key={file.file_id} className="rounded-full bg-white px-2 py-1 text-[11px] text-ink-600 ring-1 ring-slate-200">{file.name}</span>)}</div>}
-        {workspaceError && <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-bad">{workspaceError}</p>}
-        <button type="button" disabled={!objective.trim() || workspaceBusy} onClick={() => void startWorkspace()} className="mt-4 rounded-lg bg-accent-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-accent-700 disabled:opacity-50">
-          {workspaceBusy ? 'Preparing workflow…' : 'Start in Chat →'}
-        </button>
-      </section>
-
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="mt-10 text-xl font-semibold text-ink-900">Or open a workflow directly</h2>
-          <p className="mt-1 text-sm text-ink-500">Power users can keep selecting the exact workflow.</p>
-        </div>
-        <button type="button" onClick={() => setAddOpen(true)} className="rounded-md bg-accent-600 px-4 py-2 text-sm font-medium text-white hover:bg-accent-700">+ Add workflow</button>
-      </div>
-      <input
-        type="search"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder="Search workflows…"
-        className="mt-5 block w-full rounded-md border-slate-300 text-sm py-2 px-3 border"
-      />
-      {error && <p className="mt-4 text-sm text-bad">{error}</p>}
-      {personalActionError && <p className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-bad">{personalActionError}</p>}
-      {!loaded && !error && <p className="mt-6 text-sm text-ink-500">Loading workflows…</p>}
-      {loaded && visibleShared.length === 0 && visiblePersonal.length === 0 && (
-        <p className="mt-6 text-sm text-ink-500">
-          No workflows match your search.
-        </p>
-      )}
-      {loaded && <h2 className="mt-7 text-sm font-semibold text-ink-800">My workflows</h2>}
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        {visiblePersonal.map(item => (
-          <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm hover:border-accent-300 hover:shadow">
-            <button type="button" onClick={() => navigate(`/chat/private/${encodeURIComponent(item.id)}`)} className="block w-full text-left">
-              <div className="flex items-center justify-between gap-2"><div className="text-sm font-semibold text-ink-900">🔒 {item.name}</div><span className="text-[10px] uppercase tracking-wide text-ink-400">Private</span></div>
-              <div className="mt-1 line-clamp-2 text-xs text-ink-500">{item.description}</div>
-              {item.output_compatibility.detected_types.length > 0 && (
-                <div className="mt-2 text-[10px] uppercase tracking-wide text-ink-400">
-                  Output · {item.output_compatibility.detected_types.join(' · ')}
-                </div>
-              )}
-              {item.status === 'publish_requested' && <div className="mt-2 text-[11px] text-amber-700">Publication requested</div>}
-              <div className="mt-3 text-xs font-medium text-accent-700">Open →</div>
-            </button>
-            <div className="mt-3 flex items-center gap-3 border-t border-slate-100 pt-3 text-[11px]">
-              {item.status === 'private' && (
-                <button type="button" disabled={personalActionId !== null} onClick={() => void requestPublication(item)} className="font-medium text-accent-700 hover:underline disabled:opacity-50">
-                  {personalActionId === item.id ? 'Requesting…' : 'Request publication'}
-                </button>
-              )}
-              <button type="button" disabled={personalActionId !== null} onClick={() => void archivePersonal(item)} className="text-ink-500 hover:text-bad hover:underline disabled:opacity-50">
-                {personalActionId === item.id ? 'Working…' : 'Archive'}
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-      {visibleShared.length > 0 && <h2 className="mt-7 text-sm font-semibold text-ink-800">Shared workflows</h2>}
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        {visibleShared.map(item => (
-          <button key={item.name} type="button" onClick={() => navigate(`/chat/shared/${encodeURIComponent(item.name)}`)} className="rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm hover:border-accent-300 hover:shadow">
-            <div className="text-sm font-semibold text-ink-900">{item.library?.title ?? item.name}</div>
-            <div className="mt-1 line-clamp-2 text-xs text-ink-500">{item.library?.summary ?? item.description}</div>
-            <div className="mt-3 text-xs font-medium text-accent-700">Open →</div>
-          </button>
-        ))}
-      </div>
-      {addOpen && <AddWorkflowDialog onClose={() => setAddOpen(false)} onCreated={item => { setPersonal(current => [item, ...(current ?? [])]); setAddOpen(false); navigate(`/chat/private/${encodeURIComponent(item.id)}`); }} />}
-    </div>
-  );
-}
-
 // ---- Conversation ------------------------------------------------------
 
 function BusinessChatConversation({ workflowId, source }: { workflowId: string; source: 'shared' | 'private' }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [localChat, setLocalChat] = useState(() => {
+    const history = loadLocalChatHistory();
+    const matching = history.chats.find(chat => chat.id === searchParams.get('chat'))
+      ?? history.chats.find(chat => chat.workflowId === workflowId && chat.workflowSource === source);
+    return matching ?? createLocalChat();
+  });
   const [yamlText, setYamlText] = useState<string | null>(null);
   const [resourceName, setResourceName] = useState(workflowId);
   const [meta, setMeta] = useState<WorkflowChatMeta | null>(null);
+  const [workflowIsGeneralPreset, setWorkflowIsGeneralPreset] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -360,52 +141,99 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
   const [transcriptSyncError, setTranscriptSyncError] = useState<string | null>(null);
   const [composerText, setComposerText] = useState('');
   const [templatesOpen, setTemplatesOpen] = useState(false);
-  const [responseFormat, setResponseFormat] = useState<ResponseFormat>('auto');
-  const [writingStyle, setWritingStyle] = useState<WritingStyle>('concise');
-  const [composerMode, setComposerMode] = useState<'auto' | 'ask' | 'run'>('auto');
-  const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [running, setRunning] = useState(false);
   const [askBusy, setAskBusy] = useState(false);
   const [currentRunId, setCurrentRunId] = useState<string | null>(null);
   const [hasCompletedRun, setHasCompletedRun] = useState(false);
   const [activities, setActivities] = useState<Record<string, AgentActivity>>({});
   const [runDetail, setRunDetail] = useState<RunDetail | null>(null);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [sessionTab, setSessionTab] = useState<SessionTab>('overview');
+  const [selectedActivityNodeId, setSelectedActivityNodeId] = useState<string | null>(null);
   const [pausePending, setPausePending] = useState(false);
   const [controlBusy, setControlBusy] = useState<RunControlAction | null>(null);
   const [controlError, setControlError] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [contextOpen, setContextOpen] = useState(() => window.innerWidth >= 640);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [citation, setCitation] = useState<CitationTarget | null>(null);
+  const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
+  const [noteEditorOpen, setNoteEditorOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState<WorkspaceNote | null>(null);
+  const workspaceStorageId = `local:${localChat.id}`;
+  const [notes, setNotes] = useState<WorkspaceNote[]>(() => loadNotes(workspaceStorageId));
+  const [workspaceSources, setWorkspaceSources] = useState<WorkspaceSource[]>(() => loadWorkspaceSources(workspaceStorageId));
+  const [initialPreferences] = useState(() => loadWorkspacePreferences());
+  const [sourcesCollapsed, setSourcesCollapsed] = useState(initialPreferences.sourcesCollapsed);
+  const [sessionsCollapsed, setSessionsCollapsed] = useState(initialPreferences.sessionsCollapsed);
+  const [sourcesWidth, setSourcesWidth] = useState(initialPreferences.sourcesWidth);
+  const [sessionWidth, setSessionWidth] = useState(initialPreferences.sessionWidth);
+  const [distractionFree, setDistractionFree] = useState(initialPreferences.distractionFree);
+  const [mobilePanel, setMobilePanel] = useState<ChatWorkspacePanel>('chat');
+  const [createKind, setCreateKind] = useState<CreateArtifactKind | null>(null);
+  const [composerMenu, setComposerMenu] = useState<'skill' | 'create' | null>(null);
+  const [skills, setSkills] = useState<ComposerMenuItem[]>([]);
+  const [selectedSkill, setSelectedSkill] = useState<ComposerMenuItem | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const [attachments, setAttachments] = useState<WorkflowFileReference[]>([]);
   const [uploading, setUploading] = useState(false);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
-  const [models, setModels] = useState<LLMModelInfo[]>([]);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-  const [selectedModel, setSelectedModel] = useState('workflow_default');
   const [listening, setListening] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [knowledgeScope, setKnowledgeScope] = useState<{ collection: string; agent: string } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const runSubmissionRef = useRef(false);
   const finalizedRunsRef = useRef(new Set<string>());
+  const responseLabelsRef = useRef(new Map<string, string>());
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const contextManuallyToggledRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
+  function openLocalChat(chat: LocalChatRecord) {
+    setHistoryOpen(false);
+    if (chat.workflowId && chat.workflowSource) {
+      navigate(`/chat/${chat.workflowSource}/${encodeURIComponent(chat.workflowId)}?chat=${encodeURIComponent(chat.id)}`);
+    } else {
+      navigate(`/chat?chat=${encodeURIComponent(chat.id)}`);
+    }
+  }
+
+  function startLocalChat() {
+    openLocalChat(createLocalChat());
+  }
+
   useEffect(() => {
-    const syncContextPanel = () => {
-      if (!contextManuallyToggledRef.current) setContextOpen(window.innerWidth >= 640);
-    };
-    window.addEventListener('resize', syncContextPanel);
-    return () => window.removeEventListener('resize', syncContextPanel);
-  }, []);
+    const updated = updateLocalChat(localChat.id, { workflowId, workflowSource: source });
+    if (updated) setLocalChat(updated);
+    if (searchParams.get('chat') !== localChat.id) {
+      const next = new URLSearchParams(searchParams);
+      next.set('chat', localChat.id);
+      setSearchParams(next, { replace: true });
+    }
+  // The route identity is intentionally adopted once per workflow transition.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowId, source, localChat.id]);
 
   useEffect(() => {
     const prompt = searchParams.get('prompt');
     if (!prompt) return;
     setComposerText(prompt);
-    setSearchParams({}, { replace: true });
+    const next = new URLSearchParams(searchParams);
+    next.delete('prompt');
+    setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.researchSkills()
+      .then(result => {
+        if (!cancelled) setSkills(result.skills.map(skill => ({
+          id: skill.name,
+          label: skill.name.split('-').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
+          description: skill.description,
+        })));
+      })
+      .catch(() => { if (!cancelled) setSkills([]); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const key = `eurskem.chat.pending-attachments:${workflowId}`;
@@ -422,34 +250,57 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
   }, [workflowId]);
 
   useEffect(() => {
+    const handedOff = consumePendingSources(workflowId);
+    if (handedOff.length > 0) setWorkspaceSources(handedOff);
+  }, [workflowId]);
+
+  useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 10_000);
     setLoadError(null);
     const workflowLoad = source === 'private'
       ? api.getPrivateChatWorkflow(workflowId, controller.signal)
-          .then(item => ({ yaml: item.yaml, name: item.name }))
-      : api.getWorkflow(workflowId, controller.signal)
-          .then(item => ({ yaml: item.yaml, name: item.name }));
+          .then(item => ({ yaml: item.yaml, name: item.name, isGeneralChat: item.slug === 'general-chat' }))
+      : api.getBuilderChatExecutionAdapter(workflowId, controller.signal)
+          .then(item => ({ yaml: item.yaml, name: item.workflow_name, isGeneralChat: false }));
     Promise.all([
       workflowLoad,
       api.resolveBusinessChatConversation(source, workflowId),
     ])
-      .then(([{ yaml, name }, transcript]) => {
+      .then(([{ yaml, name, isGeneralChat }, transcript]) => {
         if (cancelled) return;
+        const loadedMeta = chatMetaFromYaml(yaml);
         const restored = transcript.messages
           .map(deserializeDurableMessage)
-          .filter((message): message is DurableChatMessage => message !== null);
+          .filter((message): message is DurableChatMessage => message !== null)
+          // Older clients briefly exposed SubprocessAgent's internal wait as
+          // a human approval card. It was never actionable; remove those
+          // persisted false interventions while retaining real HITL reviews.
+          .filter(message => (
+            message.role !== 'intervention'
+            || loadedMeta.nodes.find(node => node.id === message.request.nodeId)?.type !== 'SubprocessAgent'
+          ));
         setYamlText(yaml);
         setResourceName(name);
-        setMeta(chatMetaFromYaml(yaml));
+        setMeta(loadedMeta);
+        setWorkflowIsGeneralPreset(isGeneralChat);
+        setLocalChat(current => {
+          const patch = {
+            ...(current.title === 'New chat' ? { title: name } : {}),
+            ...(isGeneralChat && !current.isGeneralChat ? { isGeneralChat: true } : {}),
+          };
+          if (Object.keys(patch).length === 0) return current;
+          return updateLocalChat(current.id, patch) ?? current;
+        });
         setConversationId(transcript.conversation.id);
+        updateLocalChat(localChat.id, { conversationId: transcript.conversation.id });
         setMessages(restored);
         const latestRunMessage = [...restored].reverse().find(message => (
           'runId' in message && message.runId
         ) || message.role === 'intervention');
         const latestRunId = latestRunMessage?.role === 'intervention'
-          ? latestRunMessage.request.runId
+          ? latestRunMessage.request.parentRunId ?? latestRunMessage.request.runId
           : latestRunMessage && 'runId' in latestRunMessage ? latestRunMessage.runId : null;
         setCurrentRunId(latestRunId ?? null);
         setHasCompletedRun(restored.some(message => message.role === 'assistant' && Boolean(message.runId)));
@@ -467,7 +318,7 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [workflowId, source, loadAttempt]);
+  }, [workflowId, source, loadAttempt, localChat.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -480,15 +331,33 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
   }, []);
 
   useEffect(() => {
-    if (!meta?.capabilities.models) return;
+    saveNotes(workspaceStorageId, notes);
+  }, [notes, workspaceStorageId]);
+
+  useEffect(() => {
+    saveWorkspacePreferences({ sourcesCollapsed, sessionsCollapsed, sourcesWidth, sessionWidth, distractionFree });
+  }, [distractionFree, sessionWidth, sessionsCollapsed, sourcesCollapsed, sourcesWidth]);
+
+  useEffect(() => {
+    saveWorkspaceSources(workspaceStorageId, workspaceSources);
+  }, [workspaceSources, workspaceStorageId]);
+
+  useEffect(() => {
     let cancelled = false;
-    api.llmModels()
-      .then(response => { if (!cancelled) setModels(response.models.filter(model => model.enabled)); })
-      .catch(error => {
-        if (!cancelled) setModelsError(error instanceof Error ? error.message : 'Model choices are unavailable.');
-      });
+    if (!localChat.collectionId || !localChat.ragAgentId) {
+      setKnowledgeScope(null);
+      return;
+    }
+    Promise.all([
+      knowledgeApi.getCollection(localChat.collectionId),
+      knowledgeApi.getRagAgent(localChat.ragAgentId),
+    ]).then(([collection, agent]) => {
+      if (!cancelled) setKnowledgeScope({ collection: collection.name, agent: agent.name });
+    }).catch(() => {
+      if (!cancelled) setKnowledgeScope({ collection: 'Selected collection', agent: 'Knowledge search' });
+    });
     return () => { cancelled = true; };
-  }, [meta?.capabilities.models]);
+  }, [localChat.collectionId, localChat.ragAgentId]);
 
   const patchMessage = useCallback((id: string, patch: (message: ChatMessage) => ChatMessage) => {
     setMessages(current => current.map(item => (item.id === id ? patch(item) : item)));
@@ -513,19 +382,10 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     });
   }, [persistMessage]);
 
-  const selectNode = useCallback((nodeId: string, openInspector = true) => {
-    setSelectedNodeId(nodeId);
-    setInspectorOpen(openInspector);
-    window.requestAnimationFrame(() => {
-      document.querySelector(`[data-node-id="${CSS.escape(nodeId)}"]`)?.scrollIntoView({
-        behavior: 'smooth', block: 'center',
-      });
-    });
-  }, []);
-
   const hydrateRun = useCallback(async (runId: string) => {
-    const { run } = await api.runDetail(runId);
+    const { run, audit } = await api.runDetail(runId);
     setRunDetail(run);
+    setAuditEvents(audit);
     if (meta) {
       setActivities(current => {
         const next = { ...current };
@@ -539,13 +399,6 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     }
     return run;
   }, [meta]);
-
-  const ensureActivityMessage = useCallback((runId: string, nodeId: string) => {
-    const key = activityKey(runId, nodeId);
-    setMessages(current => current.some(message => message.role === 'activity' && message.activityKey === key)
-      ? current
-      : [...current, { id: `activity-${runId}-${nodeId}`, role: 'activity', nodeId, activityKey: key }]);
-  }, []);
 
   const appendAssistantFromRun = useCallback(async (runId: string) => {
     if (finalizedRunsRef.current.has(runId)) return;
@@ -565,14 +418,19 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
         });
         return;
       }
+      const responseLabel = responseLabelsRef.current.get(runId);
+      responseLabelsRef.current.delete(runId);
       appendDurableMessage({
         id: `run-result-${runId}`,
         role: 'assistant',
         segments: assistantSegments(run),
         runId,
+        ...(structuredResultFromRun(run) !== null ? { structuredResult: structuredResultFromRun(run) } : {}),
+        ...(responseLabel ? { responseLabel } : {}),
       });
       setHasCompletedRun(true);
       setCurrentRunId(runId);
+      updateLocalChat(localChat.id, { runId });
     } catch {
       finalizedRunsRef.current.delete(runId);
       appendDurableMessage({
@@ -582,7 +440,7 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
         runId,
       });
     }
-  }, [appendDurableMessage, hydrateRun]);
+  }, [appendDurableMessage, hydrateRun, localChat.id]);
 
   const showGateOrResult = useCallback(async (runId: string) => {
     try {
@@ -590,7 +448,7 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
       const intervention = meta ? interventionFromPendingGate(gate, meta) : null;
       if (intervention) {
         appendDurableMessage({
-          id: `intervention-${runId}-${intervention.nodeId}`,
+          id: `intervention-${intervention.gateId}`,
           role: 'intervention',
           request: intervention,
           status: 'pending',
@@ -613,26 +471,28 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
         if (event.type === 'node_paused') {
           setRunning(false);
           const node = meta.nodes.find(item => item.id === event.node_id);
-          if (node) ensureActivityMessage(runId, node.id);
           void hydrateRun(runId).then(run => {
             setPausePending(false);
             if (node) {
+              const waitingForSubprocess = run.pause_kind === 'subprocess';
               setActivities(current => ({
                 ...current,
                 [activityKey(runId, node.id)]: {
                   nodeId: node.id,
                   nodeType: node.type,
-                  displayName: node.displayName,
+                  displayName: businessActivityLabel(node) ?? '',
                   agentRole: node.agentRole,
-                  status: 'needs_input',
+                  status: waitingForSubprocess ? 'running' : 'needs_input',
                   text: run.pause_kind === 'user_requested'
                     ? 'Paused before this step. Resume when you are ready.'
-                    : 'I need your input before the workflow can continue.',
+                    : waitingForSubprocess
+                      ? 'Waiting for the selected workflow to finish…'
+                      : 'I need your input before the workflow can continue.',
                   recoveryActions: node.recoveryActions,
                 },
               }));
             }
-            if (run.pause_kind !== 'user_requested') void showGateOrResult(runId);
+            if (run.pause_kind === 'hitl_gate') void showGateOrResult(runId);
           }).catch(() => undefined);
           return;
         }
@@ -645,14 +505,13 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
         if (!('node_id' in event) || !event.node_id) return;
         const node = meta.nodes.find(item => item.id === event.node_id);
         if (!node) return;
-        ensureActivityMessage(runId, node.id);
         if (event.type === 'node_started') {
           setActivities(current => ({
             ...current,
             [activityKey(runId, node.id)]: {
               nodeId: node.id,
               nodeType: node.type,
-              displayName: node.displayName,
+              displayName: businessActivityLabel(node) ?? '',
               agentRole: node.agentRole,
               status: 'running',
               text: meta.runningMessages[node.id] ?? node.purpose ?? `Working on ${node.displayName}…`,
@@ -671,14 +530,21 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     }).finally(() => {
       if (abortRef.current === controller) abortRef.current = null;
     });
-  }, [appendAssistantFromRun, ensureActivityMessage, hydrateRun, meta, showGateOrResult]);
+  }, [appendAssistantFromRun, hydrateRun, meta, showGateOrResult]);
 
 
-  const runWorkflowOnce = useCallback(async (text: string, displayText = text) => {
-    if (!yamlText || !meta || !conversationId || runSubmissionRef.current) return;
+  const runWorkflowOnce = useCallback(async (
+    text: string,
+    displayText = text,
+    execution?: { yaml: string; meta: WorkflowChatMeta; workflowId: string; responseLabel?: string },
+  ) => {
+    const executionYaml = execution?.yaml ?? yamlText;
+    const executionMeta = execution?.meta ?? meta;
+    const executionWorkflowId = execution?.workflowId ?? workflowId;
+    if (!executionYaml || !executionMeta || !conversationId || runSubmissionRef.current) return;
     runSubmissionRef.current = true;
     setRunDetail(null);
-    setSelectedNodeId(null);
+    setAuditEvents([]);
     const messageId = newId();
     const requestedRunId = crypto.randomUUID();
     const userMessage: DurableChatMessage = {
@@ -686,21 +552,33 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
       runId: requestedRunId,
       ...(attachments.length > 0 ? { attachments } : {}),
     };
+    if (localChat.isGeneralChat && ['New chat', 'General Chat'].includes(localChat.title)) {
+      const updated = updateLocalChat(localChat.id, { title: userMessage.text.slice(0, 60) });
+      if (updated) setLocalChat(updated);
+    }
     setMessages(current => [...current, userMessage]);
     setRunning(true);
     try {
       await persistMessage(userMessage);
-      const inputs = buildRunInputs(meta, text, formValues, attachments);
-      const executionYaml = withTransformModel(yamlText, selectedModel);
+      const conversationSummary = boundedConversationSummary(messages);
+      const webSourceUrls = workspaceSources.flatMap(source => (
+        source.selected && source.kind === 'web' && source.sourceUrl ? [source.sourceUrl] : []
+      ));
+      const inputs = buildRunInputs(executionMeta, text, {}, attachments, {
+        ...(conversationSummary ? { conversation_summary: conversationSummary } : {}),
+        ...(webSourceUrls.length > 0 ? { web_source_urls: webSourceUrls } : {}),
+      });
       const { run_id: runId } = await api.runWorkflow(executionYaml, inputs, {
         origin: 'chat_saved_workflow',
-        history_visibility: 'conversation_only',
+        history_visibility: localChat.isGeneralChat ? 'conversation_only' : 'global',
         run_id: requestedRunId,
-        workflow_id: workflowId,
+        workflow_id: executionWorkflowId,
         conversation_id: conversationId,
         message_id: messageId,
       });
+      if (execution?.responseLabel) responseLabelsRef.current.set(runId, execution.responseLabel);
       setCurrentRunId(runId);
+      updateLocalChat(localChat.id, { runId });
       setAttachments([]);
       observeAttempt(runId);
       await hydrateRun(runId).catch(() => undefined);
@@ -714,9 +592,9 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
       });
       runSubmissionRef.current = false;
     } finally {
-      setComposerMode('auto');
+      // The next message is classified automatically from conversation state.
     }
-  }, [appendDurableMessage, attachments, conversationId, formValues, hydrateRun, meta, observeAttempt, persistMessage, selectedModel, workflowId, yamlText]);
+  }, [appendDurableMessage, attachments, conversationId, hydrateRun, localChat.id, localChat.isGeneralChat, localChat.title, messages, meta, observeAttempt, persistMessage, workflowId, workspaceSources, yamlText]);
 
   useEffect(() => {
     if (!running) runSubmissionRef.current = false;
@@ -732,12 +610,22 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
         ...current,
         ...uploaded.files.filter(file => !current.some(existing => existing.file_id === file.file_id)),
       ]);
+      setWorkspaceSources(current => {
+        const incoming = uploadsAsSources(uploaded.files);
+        return [...current, ...incoming.filter(item => !current.some(existing => existing.id === item.id))];
+      });
     } catch (error) {
       setAttachmentError(error instanceof Error ? error.message : 'The files could not be uploaded.');
     } finally {
       setUploading(false);
     }
   }, [meta?.allowAttachments]);
+
+  const addWebSources = useCallback((text: string) => {
+    const incoming = webSourcesFromText(text);
+    if (incoming.length === 0) return;
+    setWorkspaceSources(current => [...current, ...incoming.filter(item => !current.some(existing => existing.id === item.id))]);
+  }, []);
 
   const toggleDictation = useCallback(() => {
     if (listening) {
@@ -858,7 +746,6 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     setPausePending(false);
     setCurrentRunId(newRunId);
     setRunDetail(null);
-    setSelectedNodeId(null);
     const attemptMessage: DurableChatMessage = {
       id: `attempt-${newRunId}`,
       role: 'attempt',
@@ -888,12 +775,14 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     }
   }, [currentRunId, hydrateRun, observeAttempt, persistMessage, runDetail]);
 
-  const onInterventionResult = useCallback(async (result: unknown, messageId: string) => {
+  const onInterventionResult = useCallback(async (result: unknown, messageId: string, decision?: string) => {
     const record = (result ?? {}) as Record<string, unknown>;
     const status = typeof record.status === 'string' ? record.status : 'completed';
     const interventionMessage = messages.find(message => message.id === messageId);
+    const nestedChildGate = interventionMessage?.role === 'intervention'
+      && Boolean(interventionMessage.request.parentRunId);
     const resolvedMessage = interventionMessage?.role === 'intervention'
-      ? { ...interventionMessage, status: 'resolved' as const, resolution: status }
+      ? { ...interventionMessage, status: 'resolved' as const, resolution: decision ?? status }
       : null;
     if (resolvedMessage) {
       patchMessage(messageId, () => resolvedMessage);
@@ -909,6 +798,14 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
     const runId = currentRunId;
     if (!runId) return;
     observeAttempt(runId);
+    if (nestedChildGate) {
+      // The decision resumed a child workflow. Its terminal result is delivered
+      // to the parent through the subprocess callback; keep observing the
+      // parent instead of mistaking the child's response for the Chat result.
+      await hydrateRun(runId).catch(() => undefined);
+      if (status === 'paused') await showGateOrResult(runId);
+      return;
+    }
     if (status === 'paused') {
       // The resumed run paused at the next gate — surface it.
       await hydrateRun(runId);
@@ -936,36 +833,19 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
   }, [appendAssistantFromRun, currentRunId, hydrateRun, meta, observeAttempt, showGateOrResult]);
 
   const interventionPending = messages.some(
-    message => message.role === 'intervention' && message.status === 'pending',
+    message => message.role === 'intervention'
+      && message.status === 'pending'
+      && meta?.nodes.find(node => node.id === message.request.nodeId)?.type !== 'SubprocessAgent',
   );
   const busy = running || askBusy || uploading;
   const disabledReason = runDetail?.status === 'paused'
     ? runDetail.pause_kind === 'user_requested'
       ? 'Resume this paused attempt before sending another message.'
-      : 'Resolve the pending review to continue.'
+      : runDetail.pause_kind === 'subprocess'
+        ? 'Waiting for the selected workflow to finish…'
+        : 'Resolve the pending review to continue.'
     : composerDisabledReason(interventionPending, busy);
 
-  // These projections depend on workflow/run metadata, not composer text.
-  // Keeping them stable avoids rebuilding model menus and activity maps on
-  // every keystroke in this otherwise large conversation component.
-  const modelOptions = useMemo(() => {
-    if (!meta) return { visibleModels: [], workflowOpenRouterModels: [] };
-    const compatibleModels = compatibleTransformModels(meta);
-    const hasModelConstraints = meta.nodes.some(node => (
-      node.type === 'TransformAgent'
-      && node.config.mode !== 'deterministic'
-      && node.allowedModels.length > 0
-    ));
-    const visibleModels = models.filter(model => (
-      model.automatic || !hasModelConstraints || compatibleModels.includes(model.name)
-    ));
-    const workflowOpenRouterModels = [...new Set(meta.nodes.flatMap(node => (
-      node.type === 'TransformAgent' && node.selectedModel?.startsWith('openrouter/')
-        ? [node.selectedModel]
-        : []
-    )))].filter(model => !visibleModels.some(item => item.name === model));
-    return { visibleModels, workflowOpenRouterModels };
-  }, [meta, models]);
   const contextActivities = useMemo(() => (
     currentRunId && meta
       ? Object.fromEntries(meta.nodes.flatMap(node => {
@@ -974,39 +854,36 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
         }))
       : {}
   ), [activities, currentRunId, meta]);
-  const selectedNode = useMemo(
-    () => meta?.nodes.find(node => node.id === selectedNodeId) ?? null,
-    [meta, selectedNodeId],
-  );
-
+  const activeSourceCount = selectedSourceCount(workspaceSources);
+  const activeSources = workspaceSources.filter(source => source.selected);
   const openDeepResearch = useCallback(async (question = '') => {
     setControlError(null);
     try {
-      const workflow = await api.ensureDeepResearchChatWorkflow();
-      const query = question.trim() ? `?prompt=${encodeURIComponent(question.trim())}` : '';
-      navigate(`/chat/private/${encodeURIComponent(workflow.id)}${query}`);
+      const workflow = await api.ensureDeepResearchChatWorkflow(localChat.ragAgentId);
+      const selectedSources = workspaceSources.filter(source => source.selected);
+      const files = selectedFiles(selectedSources);
+      if (files.length > 0) {
+        window.sessionStorage.setItem(
+          `eurskem.chat.pending-attachments:${workflow.id}`,
+          JSON.stringify(files),
+        );
+      }
+      savePendingSources(workflow.id, selectedSources);
+      const deepResearchChat = createLocalChat(question.trim().slice(0, 60) || 'Deep Research');
+      updateLocalChat(deepResearchChat.id, {
+        workflowId: workflow.id,
+        workflowSource: 'private',
+        isGeneralChat: true,
+        collectionId: localChat.collectionId ?? null,
+        ragAgentId: localChat.ragAgentId ?? null,
+      });
+      const params = new URLSearchParams({ chat: deepResearchChat.id });
+      if (question.trim()) params.set('prompt', question.trim());
+      navigate(`/chat/private/${encodeURIComponent(workflow.id)}?${params.toString()}`);
     } catch (reason) {
       setControlError(reason instanceof Error ? reason.message : 'Deep Research is unavailable.');
     }
-  }, [navigate]);
-
-  const executeFollowUp = useCallback(async (text: string, output: 'pdf' | 'pptx') => {
-    if (!currentRunId) return;
-    setAskBusy(true);
-    setControlError(null);
-    try {
-      const prepared = await api.prepareChatWorkspace({
-        objective: text,
-        preferred_output: output,
-        previous_run_id: currentRunId,
-      });
-      navigate(`/chat/private/${encodeURIComponent(prepared.workflow.id)}?prompt=${encodeURIComponent(text)}`);
-    } catch (reason) {
-      setControlError(reason instanceof Error ? reason.message : 'The follow-up workflow could not be prepared.');
-    } finally {
-      setAskBusy(false);
-    }
-  }, [currentRunId, navigate]);
+  }, [localChat.collectionId, localChat.ragAgentId, navigate, workspaceSources]);
 
   const submit = useCallback((event?: FormEvent) => {
     event?.preventDefault();
@@ -1017,22 +894,99 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
       void openDeepResearch(text.replace(/^\/research\s*/i, ''));
       return;
     }
-    const effectiveFormat = responseFormat === 'auto' ? classifyResponseFormat(text) : responseFormat;
-    const instructedText = `${formatHint(effectiveFormat, writingStyle)}\n\n${text}`;
     setComposerText('');
-    const intent = resolveComposerIntent(hasCompletedRun, composerMode);
-    const executionOutput = composerMode === 'auto' && hasCompletedRun
-      ? followUpExecutionOutput(text)
-      : null;
-    if (executionOutput) void executeFollowUp(text, executionOutput);
-    else if (intent === 'run') void runWorkflowOnce(instructedText, text);
-    else void askFollowUp(instructedText, text);
-  }, [askFollowUp, composerMode, composerText, disabledReason, executeFollowUp, hasCompletedRun, meta, openDeepResearch, responseFormat, runWorkflowOnce, writingStyle]);
+    if (selectedSkill && localChat.isGeneralChat) {
+      const skill = selectedSkill;
+      setSelectedSkill(null);
+      void api.prepareChatWorkspace({ objective: text, skill_name: skill.id })
+        .then(async prepared => {
+          const detail = await api.getPrivateChatWorkflow(prepared.workflow.id);
+          await runWorkflowOnce(text, text, {
+            yaml: detail.yaml,
+            meta: chatMetaFromYaml(detail.yaml),
+            workflowId: prepared.workflow.id,
+          });
+        })
+        .catch(reason => {
+          setComposerText(text);
+          setSelectedSkill(skill);
+          setControlError(reason instanceof Error ? reason.message : 'The selected skill could not be prepared.');
+        });
+      return;
+    }
+    if (localChat.isGeneralChat) {
+      if (localChat.collectionId && localChat.ragAgentId && !workflowIsGeneralPreset) {
+        void runWorkflowOnce(text, text);
+        return;
+      }
+      if (!hasCompletedRun && !workflowIsGeneralPreset) {
+        void runWorkflowOnce(text, text);
+        return;
+      }
+      void api.planChatWorkspace({ objective: text })
+        .then(async plan => {
+          if (plan.kind === 'llm') {
+            const workflow = await api.ensureGeneralChatWorkflow();
+            const detail = await api.getPrivateChatWorkflow(workflow.id);
+            await runWorkflowOnce(text, text, {
+              yaml: detail.yaml,
+              meta: chatMetaFromYaml(detail.yaml),
+              workflowId: workflow.id,
+            });
+            return;
+          }
+          const prepared = await api.prepareChatWorkspace({ objective: text });
+          const detail = await api.getPrivateChatWorkflow(prepared.workflow.id);
+          await runWorkflowOnce(text, text, {
+            yaml: detail.yaml,
+            meta: chatMetaFromYaml(detail.yaml),
+            workflowId: prepared.workflow.id,
+          });
+        })
+        .catch(reason => {
+          setComposerText(text);
+          setControlError(reason instanceof Error ? reason.message : 'The request could not be routed to the required capability.');
+        });
+      return;
+    }
+    if (!hasCompletedRun) void runWorkflowOnce(text, text);
+    else void askFollowUp(text, text);
+  }, [askFollowUp, composerText, disabledReason, hasCompletedRun, localChat.collectionId, localChat.isGeneralChat, localChat.ragAgentId, meta, openDeepResearch, runWorkflowOnce, selectedSkill, workflowIsGeneralPreset]);
+
+  const askWithoutKnowledge = useCallback(async (question: string) => {
+    setControlError(null);
+    try {
+      const workflow = await api.ensureGeneralChatWorkflow();
+      const detail = await api.getPrivateChatWorkflow(workflow.id);
+      await runWorkflowOnce(question, question, {
+        yaml: detail.yaml,
+        meta: chatMetaFromYaml(detail.yaml),
+        workflowId: workflow.id,
+        responseLabel: 'General answer · not grounded in selected Knowledge',
+      });
+    } catch (reason) {
+      setControlError(reason instanceof Error ? reason.message : 'General Chat could not answer this question.');
+    }
+  }, [runWorkflowOnce]);
+
+  function removeKnowledgeScope() {
+    const updated = updateLocalChat(localChat.id, { collectionId: null, ragAgentId: null });
+    if (updated) setLocalChat(updated);
+    setKnowledgeScope(null);
+  }
 
   function chooseSlashCommand(command: SlashCommand) {
     const result = applySlashCommand(command, composerText);
-    setComposerText(result.text);
-    if (result.format) setResponseFormat(result.format);
+    const naturalFormat = result.format === 'table'
+      ? 'Present the answer as a table. '
+      : result.format === 'chart'
+        ? 'Use a chart when the data supports it, with a text fallback. '
+        : result.format === 'bullets'
+          ? 'Use concise bullet points. '
+          : result.format === 'prose'
+            ? 'Use clear prose. '
+            : '';
+    setComposerText(`${naturalFormat}${result.text}`);
     if (result.action === 'templates') setTemplatesOpen(true);
     if (result.action === 'workflows') navigate('/chat');
     if (result.action === 'research') void openDeepResearch(result.text);
@@ -1058,7 +1012,7 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
           onClick={() => navigate('/chat')}
           className="ml-2 mt-4 rounded-md border border-slate-300 px-3 py-1.5 text-sm"
         >
-          ← Back to workflows
+          ← Back to Chat
         </button>
       </div>
     );
@@ -1069,33 +1023,112 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
   }
 
   const title = meta.chatbotName ?? resourceName;
-  const selectedModelInfo = models.find(model => model.name === selectedModel);
-  const { visibleModels, workflowOpenRouterModels } = modelOptions;
-  const selectedNodeRun: NodeRun | undefined = selectedNodeId
-    ? runDetail?.node_runs[selectedNodeId]
-    : undefined;
+  const activityItems = Object.values(contextActivities);
+  const createMenuItems: ComposerMenuItem[] = CREATE_OPTIONS.map(item => ({ ...item }));
+
+  function openNoteDraft(titleValue: string, body: string) {
+    setNoteDraft(createNote(titleValue, body));
+    setNoteEditorOpen(true);
+  }
+
+  function saveNoteDraft(titleValue: string, body: string) {
+    const note = noteDraft
+      ? { ...noteDraft, title: titleValue.trim() || 'Untitled note', body: body.trim(), updatedAt: new Date().toISOString() }
+      : createNote(titleValue, body);
+    setNotes(current => [...current.filter(item => item.id !== note.id), note]);
+    setNoteDraft(null);
+    setNoteEditorOpen(false);
+  }
+
+  function openCitation(item: CitationTarget) {
+    setCitation(item);
+    const matching = workspaceSources.find(source => (
+      (item.documentId && source.documentId === item.documentId)
+      || source.title.toLowerCase() === item.title.toLowerCase()
+    ));
+    if (matching) {
+      setHighlightedSourceId(matching.id);
+      setWorkspaceSources(current => current.map(source => source.id === matching.id ? { ...source, referenced: true } : source));
+      setSourcesCollapsed(false);
+      setMobilePanel('sources');
+    }
+  }
+
+  function selectActivity(nodeId: string, tab: SessionTab = 'activity') {
+    setSelectedActivityNodeId(nodeId);
+    setSessionTab(tab);
+    setSessionsCollapsed(false);
+    setMobilePanel('session');
+  }
+
+  function activitiesForRun(runId: string | null | undefined): AgentActivity[] {
+    if (!runId || !meta) return [];
+    return meta.nodes.flatMap(node => {
+      const activity = activities[activityKey(runId, node.id)];
+      return activity ? [activity] : [];
+    });
+  }
+
+  function showSourceUsage(source: WorkspaceSource) {
+    setHighlightedSourceId(source.id);
+    setSessionTab('sources');
+    setSessionsCollapsed(false);
+    setMobilePanel('session');
+  }
+
+  function selectSourceFromSession(sourceId: string) {
+    setHighlightedSourceId(sourceId);
+    setSourcesCollapsed(false);
+    setMobilePanel('sources');
+  }
+
+  function openTechnicalExecution(nodeId?: string | null) {
+    if (!runDetail?.run_id) return;
+    navigate(`/cockpit/${encodeURIComponent(runDetail.run_id)}`, {
+      state: {
+        attach: true,
+        workflowYaml: runDetail.workflow_yaml ?? yamlText ?? undefined,
+        workflowName: runDetail.workflow_name,
+        selectedNodeId: nodeId ?? undefined,
+      },
+    });
+  }
 
   return (
-    <div className="relative flex h-full min-h-0 bg-white">
-      <div className="mx-auto flex min-w-0 max-w-4xl flex-1 flex-col px-4 py-4 sm:px-6">
-      <header className="flex items-start justify-between gap-4 border-b border-slate-200 pb-3">
+    <div className="chat-workspace chat-active-conversation">
+      <ChatWorkspaceShell
+        sources={<NotebookSourcesPanel
+          sources={workspaceSources}
+          notes={notes}
+          collapsed={sourcesCollapsed}
+          loading={false}
+          highlightedSourceId={highlightedSourceId}
+          onCollapse={() => setSourcesCollapsed(value => !value)}
+          onToggle={sourceId => setWorkspaceSources(current => current.map(item => item.id === sourceId ? { ...item, selected: !item.selected } : item))}
+          onToggleAll={selected => setWorkspaceSources(current => current.map(item => ({ ...item, selected: selected && ['ready', 'synced', 'outdated'].includes(item.status) })))}
+          onAddSources={() => fileInputRef.current?.click()}
+          onOpenSource={source => { setHighlightedSourceId(source.id); if (source.sourceUrl) window.open(source.sourceUrl, '_blank', 'noopener,noreferrer'); }}
+          onShowUsage={showSourceUsage}
+          onFilesDropped={files => void uploadAttachments(files)}
+          onOpenNote={note => { setNoteDraft(note); setNoteEditorOpen(true); }}
+          onNewNote={() => { setNoteDraft(null); setNoteEditorOpen(true); }}
+        />}
+        conversation={<main className="chat-active-center">
+      <div className="mx-auto flex h-full min-w-0 max-w-4xl flex-1 flex-col px-4 py-4 sm:px-6">
+      <header className="chat-conversation-header">
         <div>
-          <h1 className="text-lg font-semibold text-ink-900">{title}</h1>
-          <p className="mt-0.5 text-xs text-ink-500">{source === 'private' ? `🔒 ${resourceName} · Private` : resourceName}</p>
+          <h1 className="text-lg font-semibold text-ink-900">{localChat.title === 'New chat' ? title : localChat.title}</h1>
+          <p>{title} · {activeSourceCount} active source{activeSourceCount === 1 ? '' : 's'} · {runDetail?.status ?? 'Ready'}</p>
         </div>
-        <div className="flex gap-2">
-          {!contextOpen && <button type="button" onClick={() => { contextManuallyToggledRef.current = true; setContextOpen(true); }} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-ink-700 hover:bg-slate-50">Workflow</button>}
-          <button type="button" onClick={() => navigate('/chat')} className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-ink-700 hover:bg-slate-50">← All workflows</button>
+        <div className="chat-conversation-header-actions">
+          <button type="button" onClick={() => { setSessionsCollapsed(false); setMobilePanel('session'); }}>Session</button>
+          <button type="button" onClick={() => setHistoryOpen(true)}>Chats</button>
+          <button type="button" onClick={startLocalChat}>New chat</button>
+          <button type="button" aria-pressed={distractionFree} onClick={() => setDistractionFree(value => !value)} title="Toggle distraction-free mode">{distractionFree ? 'Show panels' : 'Focus'}</button>
         </div>
       </header>
 
-      {currentRunId && (
-        <div className="border-b border-slate-100 py-2">
-          <WorkflowExecutionStrip meta={meta} activities={contextActivities} selectedNodeId={selectedNodeId} onSelect={nodeId => selectNode(nodeId)} />
-        </div>
-      )}
-
-      {runDetail && runDetail.run_id === currentRunId && (
+      {!localChat.isGeneralChat && runDetail && runDetail.run_id === currentRunId && (
         <RunControlBar
           run={runDetail}
           pausePending={pausePending}
@@ -1131,60 +1164,46 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
             )}
           </div>
         )}
-        {messages.map(message => (
-          <MessageView
-            key={message.id}
-            message={message}
-            activities={activities}
-            selectedNodeId={selectedNodeId}
-            onSelectNode={selectNode}
-            onInterventionResult={onInterventionResult}
-            onOpenActivity={runId => navigate(`/workflow-runs/${runId}`)}
-          />
-        ))}
+        {messages.map((message, index) => {
+          const precedingQuestion = [...messages.slice(0, index)].reverse().find(item => item.role === 'user');
+          const runActivities = message.role === 'user' ? activitiesForRun(message.runId) : [];
+          return <div key={message.id} className="chat-transcript-entry">
+            <MessageView
+              message={message}
+              onInterventionResult={onInterventionResult}
+              onOpenCitation={openCitation}
+              onSaveAnswer={(titleValue, body) => openNoteDraft(titleValue, body)}
+              onBroadenQuestion={question => setComposerText(`Answer this more broadly using the selected Knowledge: ${question}`)}
+              onChooseSources={() => setMobilePanel('sources')}
+              onAskWithoutKnowledge={question => void askWithoutKnowledge(question)}
+              precedingQuestion={precedingQuestion?.role === 'user' ? precedingQuestion.text : ''}
+              knowledgeBound={Boolean(localChat.collectionId && localChat.ragAgentId)}
+              canRetry={message.role === 'error'
+                && Boolean(message.runId)
+                && message.runId === currentRunId
+                && runDetail?.status === 'failed'
+                && Boolean(runDetail.retry_available)}
+              retryBusy={controlBusy === 'retry'}
+              onRetry={() => void startNewAttempt('retry')}
+            />
+            {message.role === 'user' && runActivities.length > 0 && <AgentActivityGroup activities={runActivities} selectedNodeId={selectedActivityNodeId} onSelectNode={nodeId => selectActivity(nodeId)} />}
+          </div>;
+        })}
       </div>
 
       <form onSubmit={submit} className="mt-4 border-t border-slate-200 pt-3">
+        {knowledgeScope && (
+          <div className="chat-knowledge-scope" aria-label="Active Knowledge scope">
+            <strong>Knowledge</strong>
+            <span>{knowledgeScope.collection} · {knowledgeScope.agent}</span>
+            <button type="button" aria-label="Remove Knowledge scope" onClick={removeKnowledgeScope}>×</button>
+          </div>
+        )}
+        {activeSources.length > 0 && <div className="chat-context-chips" aria-label="Active context"><strong>Active context</strong>{activeSources.slice(0, 5).map(source => <button type="button" key={source.id} onClick={() => { setHighlightedSourceId(source.id); setSourcesCollapsed(false); setMobilePanel('sources'); }}>{source.title}<span onClick={event => { event.stopPropagation(); setWorkspaceSources(current => current.map(item => item.id === source.id ? { ...item, selected: false } : item)); }} aria-hidden>×</span></button>)}{activeSources.length > 5 && <button type="button" onClick={() => { setSourcesCollapsed(false); setMobilePanel('sources'); }}>+{activeSources.length - 5} sources</button>}</div>}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <button type="button" onClick={() => setTemplatesOpen(true)} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-ink-700">Templates</button>
           <button type="button" onClick={() => void openDeepResearch(composerText)} className="rounded-md border border-slate-300 px-2 py-1 text-xs text-ink-700">Deep research</button>
-          <label className="text-[11px] text-ink-500">Format <select aria-label="Response format" value={responseFormat} onChange={e => setResponseFormat(e.target.value as ResponseFormat)} className="ml-1 rounded border border-slate-300 py-1 text-xs"><option value="auto">Auto</option><option value="prose">Prose</option><option value="bullets">Bullets</option><option value="numbered">Numbered</option><option value="table">Table</option><option value="chart">Chart</option></select></label>
-          <label className="text-[11px] text-ink-500">Style <select aria-label="Writing style" value={writingStyle} onChange={e => setWritingStyle(e.target.value as WritingStyle)} className="ml-1 rounded border border-slate-300 py-1 text-xs"><option value="concise">Concise</option><option value="detailed">Detailed</option><option value="academic">Academic</option><option value="casual">Casual</option><option value="executive">Executive</option><option value="bullet-first">Bullet-first</option></select></label>
-          <span className="text-[10px] text-ink-400">Auto: {classifyResponseFormat(composerText || 'explain')}</span>
         </div>
-        {meta.startMode === 'input_form' && meta.formFields.length > 0 && (
-          <div className="mb-3 grid gap-2 sm:grid-cols-2">
-            {meta.formFields.map(field => (
-              <label key={field.name} className="block text-xs text-ink-700">
-                {field.label}
-                {field.required && <span className="ml-1 text-bad">*</span>}
-                <input
-                  type={field.fieldType === 'number' ? 'number' : 'text'}
-                  value={formValues[field.name] ?? ''}
-                  onChange={e => setFormValues(current => ({
-                    ...current, [field.name]: e.target.value,
-                  }))}
-                  disabled={busy || interventionPending}
-                  className="mt-1 block w-full rounded-md border-slate-300 text-sm py-1.5 px-2 border disabled:bg-slate-50"
-                />
-              </label>
-            ))}
-          </div>
-        )}
-        {hasCompletedRun && (
-          <select
-            value={composerMode}
-            onChange={e => setComposerMode(e.target.value as 'auto' | 'ask' | 'run')}
-            className="mb-2 block rounded-md border-slate-300 text-xs py-1 px-2 border"
-            disabled={busy || interventionPending}
-          >
-            <option value="auto">
-              {hasCompletedRun ? 'Ask AI about this result' : 'Run workflow'}
-            </option>
-            <option value="ask">Ask AI about this result</option>
-            <option value="run">Run workflow again</option>
-          </select>
-        )}
         {attachments.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {attachments.map(file => (
@@ -1202,9 +1221,29 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
           onDrop={event => { if (!meta.allowAttachments) return; event.preventDefault(); void uploadAttachments(Array.from(event.dataTransfer.files)); }}
         >
           {slashMatches.length > 0 && <div className="absolute bottom-full left-0 z-20 mb-2 w-72 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">{slashMatches.map(command => <button key={command.command} type="button" onClick={() => chooseSlashCommand(command)} className="block w-full px-3 py-2 text-left hover:bg-slate-50"><span className="text-xs font-medium text-accent-700">{command.command}</span><span className="ml-2 text-xs text-ink-700">{command.label}</span><span className="block text-[10px] text-ink-400">{command.description}</span></button>)}</div>}
+          {composerMenu === 'skill' && (
+            <ComposerMenu label="Choose a skill" items={skills} onClose={() => setComposerMenu(null)} onChoose={item => {
+              setSelectedSkill(item);
+              setComposerMenu(null);
+            }} />
+          )}
+          {composerMenu === 'create' && (
+            <ComposerMenu label="Create something" items={createMenuItems} onClose={() => setComposerMenu(null)} onChoose={item => { setCreateKind(item.id as CreateArtifactKind); setComposerMenu(null); }} />
+          )}
           <textarea
             value={composerText}
             onChange={e => setComposerText(e.target.value)}
+            onPaste={event => {
+              const images = [...event.clipboardData.items]
+                .filter(item => item.kind === 'file' && item.type.startsWith('image/'))
+                .flatMap(item => item.getAsFile() ? [item.getAsFile() as File] : []);
+              if (images.length > 0 && meta.allowAttachments) {
+                event.preventDefault();
+                void uploadAttachments(images);
+                return;
+              }
+              addWebSources(event.clipboardData.getData('text/plain'));
+            }}
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -1212,46 +1251,15 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
               }
             }}
             rows={2}
-            placeholder={
-              meta.startMode === 'input_form'
-                ? 'Fill the fields above, then send…'
-                : 'Ask a question…'
-            }
+            placeholder="Ask anything about your sources…"
             disabled={Boolean(disabledReason)}
             className="block w-full resize-none border-0 bg-transparent px-2 py-2 text-sm outline-none disabled:bg-slate-50"
           />
           <div className="flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
             <div className="flex flex-wrap items-center gap-1">
               {meta.allowAttachments && <button type="button" onClick={() => fileInputRef.current?.click()} disabled={busy} className="rounded-md px-2 py-1.5 text-xs text-ink-600 hover:bg-slate-100 disabled:opacity-50">+ Attach</button>}
-              {meta.capabilities.web && <span title="This workflow can use Web Search" className="rounded-md bg-sky-50 px-2 py-1.5 text-xs text-sky-700">🌐 Web</span>}
-              {meta.capabilities.sources && <span title="This workflow retrieves citations from configured knowledge sources" className="rounded-md bg-amber-50 px-2 py-1.5 text-xs text-amber-700">📚 Sources</span>}
-              {meta.capabilities.images && <span title="This workflow can create image artifacts" className="rounded-md bg-fuchsia-50 px-2 py-1.5 text-xs text-fuchsia-700">🎨 Images</span>}
-              {meta.capabilities.tools && <span title="Tools configured by this workflow" className="rounded-md bg-violet-50 px-2 py-1.5 text-xs text-violet-700">Tools</span>}
-              {meta.capabilities.mcp && <span title="MCP resources configured by this workflow" className="rounded-md bg-emerald-50 px-2 py-1.5 text-xs text-emerald-700">🔌 MCP</span>}
-              {meta.capabilities.models && (
-                <label className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-xs text-ink-600">
-                  <span>Model</span>
-                  <select
-                    aria-label="Model for Transform agents"
-                    value={selectedModel}
-                    onChange={event => setSelectedModel(event.target.value)}
-                    disabled={busy || visibleModels.length === 0}
-                    className="max-w-44 border-0 bg-transparent py-0 pl-1 pr-5 text-xs font-medium text-ink-800 outline-none disabled:opacity-50"
-                  >
-                    <option value="workflow_default">Workflow default</option>
-                    {visibleModels.map(model => (
-                      <option key={model.name} value={model.name}>
-                        {model.display_name}{model.local ? ' · Local' : ''}
-                      </option>
-                    ))}
-                    {workflowOpenRouterModels.map(model => (
-                      <option key={model} value={model}>
-                        {model.replace(/^openrouter\//, '')} · OpenRouter
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
+              <button type="button" aria-expanded={composerMenu === 'skill'} onClick={() => setComposerMenu(value => value === 'skill' ? null : 'skill')} className="rounded-md px-2 py-1.5 text-xs text-ink-600 hover:bg-slate-100">{selectedSkill ? `@ ${selectedSkill.label}` : '@ Skill'}</button>
+              <button type="button" aria-expanded={composerMenu === 'create'} onClick={() => setComposerMenu(value => value === 'create' ? null : 'create')} className="rounded-md px-2 py-1.5 text-xs text-ink-600 hover:bg-slate-100">/ Create</button>
               {typeof window !== 'undefined' && speechRecognitionSupported() && (
                 <button
                   type="button"
@@ -1267,25 +1275,55 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
             </div>
             <button type="submit" disabled={Boolean(disabledReason)} className="rounded-lg bg-accent-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-accent-700 disabled:opacity-50">Send ↑</button>
           </div>
+          <p className="chat-execution-summary">{title} · {activeSourceCount} source{activeSourceCount === 1 ? '' : 's'} · {meta.capabilities.web ? 'Web available' : 'Workflow tools'}{selectedSkill ? ` · ${selectedSkill.label}` : ''}</p>
         </div>
         {attachmentError && <p className="mt-1 text-xs text-bad">{attachmentError}</p>}
-        {modelsError && <p className="mt-1 text-xs text-bad">{modelsError}</p>}
         {speechError && <p className="mt-1 text-xs text-bad">{speechError}</p>}
         {transcriptSyncError && (
           <p className="mt-1 text-xs text-bad" role="alert">
             Transcript sync failed: {transcriptSyncError}. New messages may not survive refresh.
           </p>
         )}
-        {selectedModel !== 'workflow_default' && (
-          <p className="mt-1 text-xs text-ink-500">
-            {selectedModelInfo?.display_name ?? selectedModel} will be used by compatible LLM Transform steps for this run only.
-          </p>
-        )}
         {disabledReason && <p className="mt-1 text-xs text-ink-500">{disabledReason}</p>}
       </form>
       </div>
-      {contextOpen && <WorkflowContextPanel meta={meta} activities={contextActivities} attemptLabel={runDetail ? attemptLabel(runDetail.attempt, runDetail.reused_node_count) : undefined} selectedNodeId={selectedNodeId} onSelect={nodeId => selectNode(nodeId)} onClose={() => { contextManuallyToggledRef.current = true; setContextOpen(false); }} />}
-      {inspectorOpen && selectedNode && <ChatNodeInspector node={selectedNode} nodeRun={selectedNodeRun} onClose={() => setInspectorOpen(false)} />}
+      </main>}
+        session={<SessionAuditPanel title={localChat.title === 'New chat' ? title : localChat.title} collapsed={sessionsCollapsed} run={runDetail} audit={auditEvents} activities={activityItems} sources={workspaceSources} messageCount={messages.length} workflowLabel={title} activeTab={sessionTab} selectedNodeId={selectedActivityNodeId} onCollapse={() => setSessionsCollapsed(value => !value)} onOpenHistory={() => setHistoryOpen(true)} onNewChat={startLocalChat} onTabChange={setSessionTab} onSelectNode={nodeId => { setSelectedActivityNodeId(nodeId); }} onSelectSource={selectSourceFromSession} onOpenTechnical={openTechnicalExecution} />}
+        sourcesCollapsed={sourcesCollapsed}
+        sessionCollapsed={sessionsCollapsed}
+        sourcesWidth={sourcesWidth}
+        sessionWidth={sessionWidth}
+        mobilePanel={mobilePanel}
+        distractionFree={distractionFree}
+        onSourcesWidthChange={setSourcesWidth}
+        onSessionWidthChange={setSessionWidth}
+        onMobilePanelChange={setMobilePanel}
+      />
+      <CitationDrawer
+        citation={citation}
+        onClose={() => setCitation(null)}
+        onSave={item => {
+          setNotes(current => [...current, createNote(item.title, item.snippet ?? item.title)]);
+          setCitation(null);
+        }}
+        onAsk={item => {
+          setComposerText(`What does this passage mean in context?\n\n${item.snippet ?? item.title}`);
+          setCitation(null);
+        }}
+      />
+      <NoteEditor
+        note={noteDraft}
+        open={noteEditorOpen}
+        onClose={() => { setNoteEditorOpen(false); setNoteDraft(null); }}
+        onSave={saveNoteDraft}
+      />
+      <ArtifactCreationDrawer
+        kind={createKind}
+        sourceCount={activeSourceCount}
+        onClose={() => setCreateKind(null)}
+        onGenerate={prompt => { setComposerText(prompt); setCreateKind(null); setMobilePanel('chat'); }}
+      />
+      <ChatHistoryDrawer open={historyOpen} chats={loadLocalChatHistory().chats} activeChatId={localChat.id} onClose={() => setHistoryOpen(false)} onNew={startLocalChat} onOpen={openLocalChat} onRename={chat => { const nextTitle = window.prompt('Rename chat', chat.title)?.trim(); if (!nextTitle) return; const updated = updateLocalChat(chat.id, { title: nextTitle }); if (updated?.id === localChat.id) setLocalChat(updated); setHistoryRevision(value => value + 1); }} onDelete={chat => { if (!window.confirm(`Delete “${chat.title}” from this browser?`)) return; const next = deleteLocalChat(chat.id) ?? createLocalChat(); setHistoryRevision(value => value + 1); if (chat.id === localChat.id) openLocalChat(next); }} key={historyRevision} />
       {templatesOpen && <PromptTemplateLibrary onClose={() => setTemplatesOpen(false)} onInsert={text => setComposerText(text)} />}
     </div>
   );
@@ -1296,18 +1334,30 @@ function BusinessChatConversation({ workflowId, source }: { workflowId: string; 
 
 function MessageView({
   message,
-  activities,
-  selectedNodeId,
-  onSelectNode,
   onInterventionResult,
-  onOpenActivity,
+  onOpenCitation,
+  onSaveAnswer,
+  canRetry,
+  retryBusy,
+  onRetry,
+  precedingQuestion,
+  knowledgeBound,
+  onBroadenQuestion,
+  onChooseSources,
+  onAskWithoutKnowledge,
 }: {
   message: ChatMessage;
-  activities: Record<string, AgentActivity>;
-  selectedNodeId: string | null;
-  onSelectNode: (nodeId: string) => void;
-  onInterventionResult: (result: unknown, messageId: string) => void;
-  onOpenActivity: (runId: string) => void;
+  onInterventionResult: (result: unknown, messageId: string, decision?: string) => void;
+  onOpenCitation: (citation: CitationTarget) => void;
+  onSaveAnswer: (title: string, body: string) => void;
+  canRetry: boolean;
+  retryBusy: boolean;
+  onRetry: () => void;
+  precedingQuestion: string;
+  knowledgeBound: boolean;
+  onBroadenQuestion: (question: string) => void;
+  onChooseSources: () => void;
+  onAskWithoutKnowledge: (question: string) => void;
 }) {
   if (message.role === 'user') {
     return (
@@ -1326,12 +1376,6 @@ function MessageView({
     );
   }
 
-  if (message.role === 'activity') {
-    const activity = activities[message.activityKey];
-    if (!activity) return null;
-    return <AgentActivityCard activity={activity} selected={selectedNodeId === message.nodeId} onSelect={() => onSelectNode(message.nodeId)} />;
-  }
-
   if (message.role === 'attempt') {
     return (
       <div className="flex items-center gap-3 py-1" role="separator">
@@ -1343,40 +1387,73 @@ function MessageView({
   }
 
   if (message.role === 'error') {
+    const projection = friendlyError(message.text);
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
-        <p>{message.text}</p>
-        {message.runId && (
-          <button
-            type="button"
-            onClick={() => onOpenActivity(message.runId as string)}
-            className="mt-2 text-xs font-medium underline"
-          >
-            View workflow activity
+      <div className="chat-friendly-error" role="alert">
+        <strong>{projection.title}</strong>
+        <p>{projection.message}</p>
+        {canRetry && projection.actions.includes('Retry Knowledge search') && (
+          <button type="button" className="chat-error-action" disabled={retryBusy} onClick={onRetry}>
+            {retryBusy ? 'Retrying Knowledge search…' : 'Retry Knowledge search'}
           </button>
         )}
+        <details>
+          <summary>Technical details</summary>
+          <pre>{message.text}</pre>
+        </details>
       </div>
     );
   }
 
   if (message.role === 'intervention') {
     return (
-      <InterventionCard
+      <ChatInterventionCard
         message={message}
-        onResult={result => onInterventionResult(result, message.id)}
+        onResult={(result, decision) => onInterventionResult(result, message.id, decision)}
       />
     );
   }
 
+  const citations = message.segments.flatMap(segment => segment.kind === 'sources' ? segment.items : []);
+  const answerText = message.segments.flatMap(segment => segment.kind === 'text' ? [segment.text] : []).join('\n\n');
+  const noKnowledgeEvidence = knowledgeBound
+    && citations.length === 0
+    && /(?:no supporting information was found|could not find supporting sources)/i.test(answerText);
+  const downloadJson = () => {
+    if (message.structuredResult === undefined) return;
+    const blob = new Blob([JSON.stringify(message.structuredResult, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${message.runId ?? 'workflow-result'}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
   return (
     <div className="flex justify-start">
-      <div className="max-w-[90%] space-y-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-        {message.segments.map((segment, index) => <SegmentView key={index} segment={segment} />)}
-        {message.runId && (
-          <button type="button" onClick={() => onOpenActivity(message.runId as string)} className="text-[11px] text-ink-400 hover:underline">
-            View workflow activity
-          </button>
+      <div className="chat-grounded-answer max-w-[90%] space-y-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        {message.responseLabel && <div className="chat-response-label">{message.responseLabel}</div>}
+        {message.segments.map((segment, index) => (
+          <SegmentView
+            key={index}
+            segment={segment}
+            citations={citations}
+            onOpenCitation={onOpenCitation}
+          />
+        ))}
+        {noKnowledgeEvidence && precedingQuestion && (
+          <div className="chat-no-evidence-actions">
+            <button type="button" onClick={() => onBroadenQuestion(precedingQuestion)}>Broaden the question</button>
+            <button type="button" onClick={onChooseSources}>Choose other sources</button>
+            <button type="button" onClick={() => onAskWithoutKnowledge(precedingQuestion)}>Ask without Knowledge</button>
+          </div>
         )}
+        <div className="chat-answer-actions">
+          {answerText && <CopyButton text={answerText} />}
+          {answerText && <button type="button" onClick={() => onSaveAnswer('Saved answer', answerText)}>Save note</button>}
+          {message.structuredResult !== undefined && <button type="button" onClick={downloadJson}>Download JSON</button>}
+          {citations.length > 0 && <span>{citations.length} source{citations.length === 1 ? '' : 's'}</span>}
+        </div>
         {typeof window !== 'undefined' && speechSynthesisSupported() && (
           <div className="flex gap-3 text-[11px] text-ink-400">
             <button type="button" onClick={() => speakText(assistantSpeechText(message.segments))}>🔊 Read aloud</button>
@@ -1397,17 +1474,24 @@ function assistantSpeechText(segments: AssistantSegment[]): string {
   }).join('. ');
 }
 
-function SegmentView({ segment }: { segment: AssistantSegment }) {
+function SegmentView({
+  segment,
+  citations,
+  onOpenCitation,
+}: {
+  segment: AssistantSegment;
+  citations: CitationTarget[];
+  onOpenCitation: (citation: CitationTarget) => void;
+}) {
   if (segment.kind === 'text') {
     const parts = segment.text.split(/(\[\d+\])/g);
     return <p className="whitespace-pre-wrap text-sm text-ink-800">{parts.map((part, index) => {
       const match = /^\[(\d+)\]$/.exec(part);
       if (!match) return part;
-      const number = match[1];
-      return <button key={`${part}-${index}`} type="button" onClick={() => {
-        const target = document.getElementById(`chat-citation-${number}`) as HTMLDetailsElement | null;
-        if (target) { target.open = true; target.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
-      }} className="mx-0.5 font-medium text-accent-700 hover:underline">{part}</button>;
+      const number = Number(match[1]);
+      const citationItem = citations.find(item => item.number === number);
+      if (!citationItem) return part;
+      return <button key={`${part}-${index}`} type="button" aria-label={`Open source ${number}: ${citationItem.title}`} onClick={() => onOpenCitation(citationItem)} className="chat-citation-chip">{part}</button>;
     })}</p>;
   }
   if (segment.kind === 'code') {
@@ -1423,20 +1507,18 @@ function SegmentView({ segment }: { segment: AssistantSegment }) {
   }
   if (segment.kind === 'sources') {
     return (
-      <div>
-        <div className="text-xs font-semibold uppercase tracking-wide text-ink-400">Sources</div>
-        <div className="mt-2 grid gap-2">
-          {segment.items.map(item => <details id={`chat-citation-${item.number}`} key={`${item.documentId ?? item.title}:${item.chunkId ?? item.number}`} className="scroll-mt-4 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-            <summary className="cursor-pointer font-medium text-ink-700"><span className="mr-1 text-accent-700">[{item.number}]</span>{item.title}{item.page ? ` · page ${item.page}` : ''}{item.section ? ` · ${item.section}` : ''}</summary>
-            {item.snippet && <blockquote className="mt-2 border-l-2 border-accent-300 pl-2 text-ink-600">{item.snippet}</blockquote>}
-            <div className="mt-2 flex items-center gap-3 text-[10px] text-ink-400">
-              {item.evidenceStatus === 'retrieved_not_verified' && <span>Retrieved passage · not independently verified</span>}
-              {item.evidenceStatus === 'candidate_only' && <span>{item.sourceType === 'research_paper' ? 'Research paper' : 'Web result'} · candidate source</span>}
-              {item.evidenceStatus === 'acquired_full_text' && <span>Acquired full text · not independently verified</span>}
-              {item.sourceUri && <a href={item.sourceUri} target="_blank" rel="noreferrer" className="text-accent-700 hover:underline">Visit webpage</a>}
-              {item.downloadUrl && <a href={`${apiBase()}${item.downloadUrl}`} className="text-accent-700 hover:underline">Download PDF</a>}
-            </div>
-          </details>)}
+      <div className="chat-answer-sources">
+        <div>Sources</div>
+        <div>
+          {segment.items.map(item => (
+            <button type="button" key={`${item.documentId ?? item.title}:${item.chunkId ?? item.number}`} onClick={() => onOpenCitation(item)}>
+              <span>[{item.number}]</span>
+              <strong>{item.title}</strong>
+              <small>{[item.page ? `Page ${item.page}` : null, item.section].filter(Boolean).join(' · ') || 'View source passage'}</small>
+              {item.snippet && <p>{item.snippet}</p>}
+              <em>{item.evidenceStatus === 'retrieved_not_verified' ? 'Retrieved · not independently verified' : item.evidenceStatus === 'acquired_full_text' ? 'Full text acquired' : 'Candidate source'}</em>
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -1539,47 +1621,3 @@ function ArtifactCard({ artifact }: { artifact: ChatArtifact }) {
     </div>
   );
 }
-
-function InterventionCard({
-  message,
-  onResult,
-}: {
-  message: Extract<ChatMessage, { role: 'intervention' }>;
-  onResult: (result: unknown) => void;
-}) {
-  const { request } = message;
-  if (message.status === 'resolved') {
-    return (
-      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm">
-        Review resolved{message.resolution ? ` — ${message.resolution}` : ''}.
-      </div>
-    );
-  }
-  return (
-    <div className="rounded-lg border border-accent-200 bg-white shadow-sm">
-      <div className="border-b border-accent-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-accent-700">
-        Approval required — {request.displayName}
-      </div>
-      <div className="p-4">
-        <HITLPanel
-          runId={request.runId}
-          pausedNodeId={request.nodeId}
-          pausedStepName={request.displayName}
-          reviewPurpose={request.reviewPurpose}
-          question={request.question}
-          context={request.context}
-          allowedActions={request.allowedActions}
-          content={request.content as never}
-          allowDocumentOverride={request.allowDocumentOverride}
-          maxEditChars={request.maxEditChars}
-          onResult={onResult}
-          onSubmitting={() => undefined}
-          onSubmitError={() => undefined}
-          onClose={() => undefined}
-          plainTextJsonEditing
-        />
-      </div>
-    </div>
-  );
-}
-

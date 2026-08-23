@@ -4,23 +4,33 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import yaml from 'js-yaml';
 
-import type { RunEvent, WorkflowFileReference, WorkflowSummary } from '../../../api/types';
+import type { RunEvent, WorkflowFileReference } from '../../../api/types';
 import {
   assistantSegments,
   activityFromNodeRun,
+  businessActivityLabel,
   buildRunInputs,
-  chatEligibleWorkflows,
   chatMetaFromYaml,
   compatibleTransformModels,
   composerDisabledReason,
   eventProgressLabel,
+  GENERIC_CHAT_EXPERIENCES,
   interventionFromPendingGate,
+  structuredResultFromRun,
   isFileReference,
   resolveComposerIntent,
   valueAsText,
   withTransformModel,
   type WorkflowChatMeta,
 } from './businessChatModel';
+
+describe('generic Chat experiences', () => {
+  it('offers only the four business-level choices', () => {
+    expect(GENERIC_CHAT_EXPERIENCES.map(item => item.title)).toEqual([
+      'General', 'Analyze sources', 'Research', 'Create',
+    ]);
+  });
+});
 
 // Node-side test reading the repo's reference corpus (same convention as
 // yaml-roundtrip.shipped.test.ts; excluded from the DOM-scoped tsconfig).
@@ -48,17 +58,6 @@ const metaDefaults = {
   allowAttachments: true,
   capabilities: { web: false, tools: false, mcp: false, sources: false, models: false, images: false },
 };
-
-describe('chatEligibleWorkflows', () => {
-  it('only offers Library-approved workflows', () => {
-    const approved = { name: 'a' } as unknown as WorkflowSummary;
-    approved.library = { visibility_status: 'approved' } as WorkflowSummary['library'];
-    const draft = { name: 'b' } as unknown as WorkflowSummary;
-    draft.library = { visibility_status: 'draft' } as WorkflowSummary['library'];
-    const bare = { name: 'c' } as unknown as WorkflowSummary;
-    expect(chatEligibleWorkflows([approved, draft, bare]).map(w => w.name)).toEqual(['a']);
-  });
-});
 
 describe('chatMetaFromYaml', () => {
   it('extracts the chatbot Start experience from the reference QA workflow', () => {
@@ -101,6 +100,26 @@ describe('buildRunInputs', () => {
     expect(buildRunInputs(chatbotMeta, 'What is our cancellation policy?', {}))
       .toEqual({ message: 'What is our cancellation policy?' });
   });
+  it('passes only optional inputs declared by the workflow', () => {
+    expect(buildRunInputs(
+      { ...chatbotMeta, declaredInputs: ['conversation_summary'] },
+      'What about maintenance?', {}, [],
+      { conversation_summary: 'User: Which pumps suit chemical transfer?', collection_id: 'forbidden' },
+    )).toEqual({
+      message: 'What about maintenance?',
+      conversation_summary: 'User: Which pumps suit chemical transfer?',
+    });
+  });
+  it('passes selected web-page constraints only when the workflow declares them', () => {
+    expect(buildRunInputs(
+      { ...chatbotMeta, declaredInputs: ['web_source_urls'] },
+      'Compare these sources', {}, [],
+      { web_source_urls: ['https://example.com/policy'], collection_id: 'forbidden' },
+    )).toEqual({
+      message: 'Compare these sources',
+      web_source_urls: ['https://example.com/policy'],
+    });
+  });
   it('maps form fields by name for input_form Starts', () => {
     const meta = chatMetaFromYaml(
       readFileSync(resolve(REFERENCE_DIR, 'ref_knowledge_triage.yaml'), 'utf8'),
@@ -110,10 +129,26 @@ describe('buildRunInputs', () => {
   });
 });
 
+describe('structuredResultFromRun', () => {
+  it('extracts the original workflow result from a Chat adapter handoff', () => {
+    const result = { source_file: 'Chat message', processed_at: '2026-08-23T22:00:00Z', extraction: { customer_name: 'Ada' } };
+    expect(structuredResultFromRun({
+      outputs: { outcome: 'answered', message: 'The order request was processed.', handoff: { structured_result: result } },
+    })).toEqual(result);
+  });
+
+  it('returns null for ordinary chat responses without a structured handoff', () => {
+    expect(structuredResultFromRun({ outputs: { outcome: 'answered', message: 'Hello' } })).toBeNull();
+  });
+});
+
 describe('resolveComposerIntent', () => {
   it('first message runs the workflow; follow-ups ask AI', () => {
     expect(resolveComposerIntent(false, 'auto')).toBe('run');
     expect(resolveComposerIntent(true, 'auto')).toBe('ask');
+  });
+  it('runs General Chat again for every turn', () => {
+    expect(resolveComposerIntent(true, 'auto', true)).toBe('run');
   });
   it('explicit modes always win', () => {
     expect(resolveComposerIntent(true, 'run')).toBe('run');
@@ -171,25 +206,34 @@ describe('interventionFromPendingGate', () => {
   it('normalizes a durable HITL gate payload (flattened API shape)', () => {
     const request = interventionFromPendingGate({
       run_id: 'run-1',
+      gate_id: 'gate-1',
       paused: true,
       pause_kind: 'hitl_gate',
       node_id: 'review',
+      parent_run_id: 'parent-1',
       question: 'Approve the drafted answer?',
       review_purpose: 'Customer-facing answers need a human check.',
       context: { 'draft.parsed.draft': 'Hello…' },
       allowed_actions: ['approve', 'edit', 'reject'],
       content: { text: 'Hello…', format: 'text', source: 'workflow' },
+      panels: [{
+        label: 'Draft', field: 'draft.text', hint: 'Customer-facing copy',
+        editable: false, value: 'Hello…', available: true,
+      }],
       allow_document_override: false,
       max_edit_chars: 5000,
     }, meta);
     expect(request).not.toBeNull();
     expect(request?.runId).toBe('run-1');
+    expect(request?.gateId).toBe('gate-1');
+    expect(request?.parentRunId).toBe('parent-1');
     expect(request?.nodeId).toBe('review');
     expect(request?.question).toBe('Approve the drafted answer?');
     expect(request?.allowedActions).toEqual(['approve', 'edit', 'reject']);
     expect(request?.allowDocumentOverride).toBe(false);
     expect(request?.maxEditChars).toBe(5000);
     expect(request?.displayName).toBe('Human Review');
+    expect(request?.panels[0].label).toBe('Draft');
   });
   it('also accepts a nested interrupt payload', () => {
     const request = interventionFromPendingGate({
@@ -215,6 +259,16 @@ describe('interventionFromPendingGate', () => {
       meta,
     )).toBeNull();
   });
+  it('is null for internal subprocess waits', () => {
+    expect(interventionFromPendingGate(
+      { run_id: 'r', paused: true, pause_kind: 'subprocess', node_id: 'run_workflow' },
+      meta,
+    )).toBeNull();
+    expect(interventionFromPendingGate({
+      run_id: 'r', paused: true, pause_kind: 'hitl_gate',
+      interrupt: { kind: 'subprocess_pause', node_id: 'run_workflow', context: {} },
+    }, meta)).toBeNull();
+  });
   it('is null when the checkpoint carries no interrupt payload', () => {
     expect(interventionFromPendingGate(
       { run_id: 'r', paused: true, pause_kind: 'hitl_gate', node_id: 'x' },
@@ -232,7 +286,7 @@ describe('composerDisabledReason', () => {
 });
 
 describe('assistantSegments', () => {
-  it('renders normalized chat text, supported artifacts, fallbacks, and citations', () => {
+  it('renders the final chat answer with supported artifacts and citations', () => {
     const segments = assistantSegments({
       outputs: {
         risk: 'Medium',
@@ -257,15 +311,10 @@ describe('assistantSegments', () => {
       node_types: { reply: 'EndAgent', search: 'KnowledgeRetrieval' },
     });
     const kinds = segments.map(s => s.kind);
-    expect(kinds).toEqual(['text', 'image', 'text', 'text', 'text', 'sources']);
+    expect(kinds).toEqual(['text', 'image', 'sources']);
     expect(segments[0]).toEqual({ kind: 'text', text: 'Contoso has expanded…' });
     expect(segments[1]).toEqual(expect.objectContaining({ kind: 'image', title: 'chart.png' }));
-    expect(segments[2]).toEqual({ kind: 'text', text: 'Risk: Medium' });
-    expect(segments[3]).toEqual({ kind: 'text', text: 'Brief\nSummary: ok\nItems: 2 items' });
-    // Unsupported file references remain a readable text fallback instead of
-    // becoming a new primary output kind.
-    expect(segments[4]).toEqual(expect.objectContaining({ kind: 'text' }));
-    expect(segments[5]).toEqual({ kind: 'sources', items: [{
+    expect(segments[2]).toEqual({ kind: 'sources', items: [{
       number: 1, title: 'Handbook.pdf', documentId: 'd1', sourceType: 'internal_document',
     }] });
   });
@@ -277,6 +326,18 @@ describe('assistantSegments', () => {
       node_types: { e: 'EndAgent' },
     });
     expect(segments.some(s => s.kind === 'sources')).toBe(false);
+  });
+
+  it('renders a RAGAgent answer without exposing technical fields when retrieval is empty', () => {
+    const segments = assistantSegments({
+      outputs: { rag: { answer: 'No supporting information was found in the selected knowledge collection.', citations: [], retrievals: [] } },
+      node_types: { rag: 'RAGAgent' },
+      node_runs: { rag: { output: {
+        answer: 'No supporting information was found in the selected knowledge collection.',
+        citations: [], retrievals: [], retrieval_trace_id: 'retreq-1', collection_id: 'col-1', resolved_index_id: 'idx-1',
+      } } },
+    });
+    expect(segments).toEqual([{ kind: 'text', text: 'No supporting information was found in the selected knowledge collection.' }]);
   });
 
   it('projects real web results as citation cards with snippets and safe links', () => {
@@ -352,6 +413,38 @@ describe('assistantSegments', () => {
       },
     ] });
   });
+
+  it('projects added files, paper-search-mcp papers, web, and RAG sources in stable lane order', () => {
+    const segments = assistantSegments({
+      node_types: {
+        knowledge: 'RAGAgent', research: 'BoundedDeepResearchAgent', papers: 'MCPToolAgent',
+        web: 'WebSearchAgent', files: 'WorkflowFileLoader',
+      },
+      node_runs: {
+        knowledge: { output: {
+          citations: [{ filename: 'Internal handbook.pdf', document_id: 'internal-1', chunk_id: 'chunk-1' }],
+          retrievals: [{ chunk_id: 'chunk-1', text: 'Internal policy passage.' }],
+        } },
+        research: { output: { candidates: [{
+          candidate_id: 'candidate-1', title: 'Official guidance', canonical_url: 'https://agency.example/guidance', source: 'web',
+        }] } },
+        papers: { output: {
+          server: 'paper-search-mcp', tool: 'search_papers',
+          data: { papers: [{ title: 'Scholarly result', doi: '10.1000/example', abstract: 'Peer-reviewed abstract.' }] },
+        } },
+        web: { output: { results: [{ title: 'Current web result', url: 'https://example.com/current', snippet: 'Current web evidence.' }] } },
+        files: { output: { files: [{ name: 'Drive source.docx', status: 'extracted' }] } },
+      },
+    });
+
+    expect(segments.at(-1)).toEqual({ kind: 'sources', items: [
+      { number: 1, title: 'Drive source.docx', evidenceStatus: 'extracted', sourceType: 'internal_document' },
+      { number: 2, title: 'Current web result', snippet: 'Current web evidence.', sourceUri: 'https://example.com/current', evidenceStatus: 'candidate_only', sourceType: 'webpage' },
+      { number: 3, title: 'Scholarly result', snippet: 'Peer-reviewed abstract.', sourceUri: 'https://doi.org/10.1000/example', evidenceStatus: 'candidate_only', sourceType: 'research_paper' },
+      { number: 4, title: 'Official guidance', sourceUri: 'https://agency.example/guidance', evidenceStatus: 'candidate_only', sourceType: 'webpage' },
+      { number: 5, title: 'Internal handbook.pdf', snippet: 'Internal policy passage.', documentId: 'internal-1', chunkId: 'chunk-1', sourceType: 'internal_document' },
+    ] });
+  });
 });
 
 describe('universal agent activity projection', () => {
@@ -404,6 +497,23 @@ edges:
     });
   });
 
+  it('hides runtime plumbing and gives generic transforms a business label', () => {
+    expect(businessActivityLabel(workflowMeta.nodes[0])).toBeNull();
+    expect(businessActivityLabel({
+      ...workflowMeta.nodes[1], type: 'TransformAgent', displayName: 'Prepare Answer',
+    })).toBe('Prepared response');
+    expect(businessActivityLabel({
+      ...workflowMeta.nodes[1], type: 'EndAgent', displayName: 'Chat Reply',
+    })).toBeNull();
+    const prepared = activityFromNodeRun({
+      ...workflowMeta.nodes[1], type: 'TransformAgent', displayName: 'Prepare Answer',
+    }, {
+      node_id: 'research', type_name: 'TransformAgent', status: 'completed', input: {}, output: {},
+      started_at: 1, ended_at: 2, duration_s: 1, error: null,
+    }, workflowMeta);
+    expect(prepared.displayName).toBe('Prepared response');
+  });
+
   it('projects web search output into compact tool activity with real sources', () => {
     const activity = activityFromNodeRun(workflowMeta.nodes[1], {
       node_id: 'research', type_name: 'WebSearchAgent', status: 'completed',
@@ -414,7 +524,7 @@ edges:
     }, workflowMeta);
     expect(activity.tool).toEqual({ kind: 'web', label: 'Web Search', detail: '2 sources' });
     expect(activity.sources).toHaveLength(2);
-    expect(activity.displayName).toBe('Research Agent');
+    expect(activity.displayName).toBe('Searched the web');
   });
 
   it('projects routes conversationally and MCP failures with recovery actions', () => {
@@ -460,6 +570,19 @@ edges:
       { title: 'Handbook.pdf · page 4 · Refunds' },
       { title: 'Terms.docx · page 2' },
     ]);
+  });
+
+  it('shows a private conversation-aware retrieval rewrite in Activity', () => {
+    const rewriteNode = {
+      ...workflowMeta.nodes[1], id: 'rewrite_query', type: 'TransformAgent', displayName: 'Prepare Retrieval Query',
+    };
+    const activity = activityFromNodeRun(rewriteNode, {
+      node_id: 'rewrite_query', type_name: 'TransformAgent', status: 'completed', input: {},
+      output: { parsed: { retrieval_query: 'Maintenance requirements for the industrial pumps discussed previously' } },
+      started_at: 1, ended_at: 2, duration_s: 1, error: null,
+    }, workflowMeta);
+    expect(activity.text).toBe('Retrieval query: Maintenance requirements for the industrial pumps discussed previously');
+    expect(activity.tool?.label).toBe('Knowledge query rewrite');
   });
 });
 
@@ -563,12 +686,13 @@ describe('rich source citations', () => {
       node_runs: { retrieve: { output: {
         citations: [{ document_id: 'doc-1', chunk_id: 'chunk-1', filename: 'Policy.pdf', page: 4, section: 'Scope', evidence_status: 'retrieved_not_verified' }],
         retrieved_chunks: [{ chunk_id: 'chunk-1', display_number: 7, compressed_text: 'The exact passage used by generation.', metadata: { source_uri: 'https://example.com/policy.pdf' } }],
+        retrieval_trace_id: 'trace-1',
       } } },
     });
     expect(segments.at(-1)).toEqual({ kind: 'sources', items: [{
       number: 1, title: 'Policy.pdf', snippet: 'The exact passage used by generation.',
       page: 4, section: 'Scope', sourceUri: 'https://example.com/policy.pdf',
-      documentId: 'doc-1', chunkId: 'chunk-1', evidenceStatus: 'retrieved_not_verified', sourceType: 'internal_document',
+      documentId: 'doc-1', chunkId: 'chunk-1', retrievalTraceId: 'trace-1', evidenceStatus: 'retrieved_not_verified', sourceType: 'internal_document',
     }] });
   });
 });
