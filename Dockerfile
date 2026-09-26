@@ -1,4 +1,4 @@
-FROM alpine:3.22 AS scientific-skills
+FROM alpine:3.24 AS scientific-skills
 
 ARG SCIENTIFIC_SKILLS_REF=v2.59.0
 
